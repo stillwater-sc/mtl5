@@ -1,7 +1,11 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/operation/num_cols.hpp
-// Free function: number of columns
-// Key changes from MTL4:
-//   - Simple forwarding to member function
-namespace mtl::operation {
-} // namespace mtl::operation
+// MTL5 — Free function: number of columns
+#include <mtl/concepts/matrix.hpp>
+
+namespace mtl {
+
+/// Return the number of columns
+template <Matrix M>
+auto num_cols(const M& m) { return m.num_cols(); }
+
+} // namespace mtl

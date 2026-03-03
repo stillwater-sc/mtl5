@@ -1,7 +1,14 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/operation/fill.hpp
-// Fill collection with a constant value
-// Key changes from MTL4:
-//   - Replace enable_if with requires Collection<T>
-namespace mtl::operation {
-} // namespace mtl::operation
+// MTL5 — Fill collection with a constant value
+#include <algorithm>
+#include <mtl/concepts/collection.hpp>
+
+namespace mtl {
+
+/// Fill all elements of a collection with the given value
+template <MutableCollection C>
+void fill(C& c, const typename C::value_type& val) {
+    std::fill(c.begin(), c.end(), val);
+}
+
+} // namespace mtl

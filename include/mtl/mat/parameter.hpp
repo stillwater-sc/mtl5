@@ -24,6 +24,10 @@ struct parameters {
     using storage     = Storage;
     using size_type   = SizeType;
 
+    static constexpr bool is_fixed = Dimensions::is_fixed;
+    static_assert(!std::is_same_v<Storage, tag::on_stack> || is_fixed,
+        "Stack storage requires fixed-size dimensions");
+
     static_assert(
         std::is_same_v<Orientation, tag::row_major> ||
         std::is_same_v<Orientation, tag::col_major>,

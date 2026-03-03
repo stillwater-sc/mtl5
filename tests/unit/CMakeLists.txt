@@ -11,6 +11,9 @@ mtl5_add_test(test_concepts concepts/test_concepts.cpp)
 # Math tests
 mtl5_add_test(test_zero_one math/test_zero_one.cpp)
 
+# Detail tests
+mtl5_add_test(test_contiguous_memory_block detail/test_contiguous_memory_block.cpp)
+
 # Matrix tests
 mtl5_add_test(test_dense2D mat/test_dense2D.cpp)
 

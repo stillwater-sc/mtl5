@@ -1,7 +1,11 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/operation/num_rows.hpp
-// Free function: number of rows
-// Key changes from MTL4:
-//   - Simple forwarding to member function
-namespace mtl::operation {
-} // namespace mtl::operation
+// MTL5 — Free function: number of rows
+#include <mtl/concepts/matrix.hpp>
+
+namespace mtl {
+
+/// Return the number of rows
+template <Matrix M>
+auto num_rows(const M& m) { return m.num_rows(); }
+
+} // namespace mtl

@@ -1,7 +1,11 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/operation/size.hpp
-// Free function: collection size
-// Key changes from MTL4:
-//   - Simple forwarding to member function
-namespace mtl::operation {
-} // namespace mtl::operation
+// MTL5 — Free function: collection size
+#include <mtl/concepts/collection.hpp>
+
+namespace mtl {
+
+/// Return the number of elements in a collection
+template <Collection C>
+auto size(const C& c) { return c.size(); }
+
+} // namespace mtl

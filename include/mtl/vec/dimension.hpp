@@ -22,6 +22,7 @@ namespace non_fixed {
 
 /// Runtime vector dimension
 struct dimension {
+    static constexpr std::size_t value = 0;  // signals dynamic size
     static constexpr bool is_fixed = false;
 
     constexpr dimension() : size_(0) {}

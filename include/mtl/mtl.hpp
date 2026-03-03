@@ -42,3 +42,16 @@
 #include <mtl/mat/parameter.hpp>
 #include <mtl/vec/dimension.hpp>
 #include <mtl/vec/parameter.hpp>
+
+// Core data types
+#include <mtl/detail/contiguous_memory_block.hpp>
+#include <mtl/vec/dense_vector.hpp>
+#include <mtl/mat/dense2D.hpp>
+
+// Operations
+#include <mtl/operation/set_to_zero.hpp>
+#include <mtl/operation/fill.hpp>
+#include <mtl/operation/print.hpp>
+#include <mtl/operation/size.hpp>
+#include <mtl/operation/num_rows.hpp>
+#include <mtl/operation/num_cols.hpp>
