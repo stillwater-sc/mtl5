@@ -129,6 +129,11 @@ TEST_CASE("product of single element", "[operation][product]") {
     REQUIRE(product(v) == 7);
 }
 
+TEST_CASE("product of empty vector", "[operation][product]") {
+	dense_vector<int> v;
+	REQUIRE(product(v) == 1);
+}
+
 TEST_CASE("max of vector", "[operation][max]") {
     dense_vector<double> v = {1.0, 5.0, 3.0, 2.0};
     REQUIRE(max(v) == 5.0);
@@ -258,4 +263,41 @@ TEST_CASE("y = alpha*x + b pattern", "[vec][operators]") {
     REQUIRE(y(0) == 12.0);
     REQUIRE(y(1) == 24.0);
     REQUIRE(y(2) == 36.0);
+}
+
+// -- construction from std::vector and initializer list
+
+TEST_CASE("construct from std::vector", "[vec][construction]") {
+    std::vector<double> std_vec = {1.0, 2.0, 3.0};
+    dense_vector<double> v(std_vec);
+    REQUIRE(v(0) == 1.0);
+    REQUIRE(v(1) == 2.0);
+    REQUIRE(v(2) == 3.0);
+}
+
+// -- move semantics
+
+TEST_CASE("move constructor", "[vec][move]") {
+    dense_vector<double> a = {1.0, 2.0, 3.0};
+    dense_vector<double> b = std::move(a);
+    REQUIRE(b(0) == 1.0);
+    REQUIRE(b(1) == 2.0);
+    REQUIRE(b(2) == 3.0);
+}
+
+// -- construct/destruct
+
+TEST_CASE("construct and destruct", "[vec][lifetime]") {
+    {
+        dense_vector<double> v(1024*1024, 3.14);
+        REQUIRE(v(0) == 3.14);
+        REQUIRE(v(999) == 3.14);
+		REQUIRE(v(1024 * 1024 - 1) == 3.14);
+    } // v goes out of scope here, should not leak memory
+    {
+		dense_vector<std::complex<double>> v(1024 * 1024, std::complex<double>(1.0, 2.0));
+		REQUIRE(v(0) == std::complex<double>(1.0, 2.0));
+		REQUIRE(v(1024) == std::complex<double>(1.0, 2.0));
+		REQUIRE(v(1024 * 1024 - 1) == std::complex<double>(1.0, 2.0));
+    }
 }
