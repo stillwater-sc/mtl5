@@ -1,0 +1,26 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: ForIndentation
+ColumnLimit: 120
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+PointerAlignment: Left
+ReferenceAlignment: Left
+SpaceAfterTemplateKeyword: true
+AlignAfterOpenBracket: Align
+AlignTrailingComments: true
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<mtl/'
+    Priority: 2
+  - Regex: '^<catch2/'
+    Priority: 3
+  - Regex: '^<'
+    Priority: 4
+  - Regex: '.*'
+    Priority: 1
+Standard: c++20

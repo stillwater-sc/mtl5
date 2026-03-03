@@ -1,0 +1,16 @@
+#pragma once
+// MTL5 — Version information (configured by CMake)
+
+#define MTL5_VERSION_MAJOR @MTL5_VERSION_MAJOR@
+#define MTL5_VERSION_MINOR @MTL5_VERSION_MINOR@
+#define MTL5_VERSION_PATCH @MTL5_VERSION_PATCH@
+#define MTL5_VERSION_STRING "@MTL5_VERSION@"
+
+namespace mtl {
+
+inline constexpr int version_major = MTL5_VERSION_MAJOR;
+inline constexpr int version_minor = MTL5_VERSION_MINOR;
+inline constexpr int version_patch = MTL5_VERSION_PATCH;
+inline constexpr const char* version_string = MTL5_VERSION_STRING;
+
+} // namespace mtl
