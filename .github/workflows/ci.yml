@@ -38,19 +38,18 @@ jobs:
             cxx: clang++-18
             name: Linux ARM64 (Clang 18)
 
-          # ── macOS x86_64 ──────────────────────────────────────────────
-          - os: macos-13
-            compiler: apple-clang
-            cc: clang
-            cxx: clang++
-            name: macOS x64 (Apple Clang)
-
           # ── macOS ARM64 (Apple Silicon) ───────────────────────────────
           - os: macos-14
             compiler: apple-clang
             cc: clang
             cxx: clang++
             name: macOS ARM64 (Apple Clang)
+
+          - os: macos-15
+            compiler: apple-clang
+            cc: clang
+            cxx: clang++
+            name: macOS ARM64 (Apple Clang, latest)
 
           # ── Windows x86_64 ────────────────────────────────────────────
           - os: windows-2022
@@ -91,8 +90,18 @@ jobs:
           -T ClangCL
           -DCMAKE_CXX_STANDARD=20
 
-      - name: Build
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: cmake --build build --parallel
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         run: cmake --build build --config Release --parallel
 
-      - name: Test
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
         run: ctest --test-dir build --config Release --output-on-failure
