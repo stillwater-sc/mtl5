@@ -29,6 +29,7 @@
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
 #include <mtl/traits/transposed_orientation.hpp>
+#include <mtl/traits/flatcat.hpp>
 
 // Math
 #include <mtl/math/operations.hpp>
@@ -48,6 +49,25 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 
+// Scalar functors
+#include <mtl/functor/scalar/plus.hpp>
+#include <mtl/functor/scalar/minus.hpp>
+#include <mtl/functor/scalar/times.hpp>
+#include <mtl/functor/scalar/divide.hpp>
+#include <mtl/functor/scalar/assign.hpp>
+#include <mtl/functor/scalar/negate.hpp>
+#include <mtl/functor/scalar/abs.hpp>
+#include <mtl/functor/scalar/conj.hpp>
+#include <mtl/functor/scalar/sqrt.hpp>
+
+// Typed functors
+#include <mtl/functor/typed/scale.hpp>
+#include <mtl/functor/typed/rscale.hpp>
+#include <mtl/functor/typed/divide_by.hpp>
+
+// Views
+#include <mtl/mat/view/transposed_view.hpp>
+
 // Operations
 #include <mtl/operation/set_to_zero.hpp>
 #include <mtl/operation/fill.hpp>
@@ -55,3 +75,19 @@
 #include <mtl/operation/size.hpp>
 #include <mtl/operation/num_rows.hpp>
 #include <mtl/operation/num_cols.hpp>
+#include <mtl/operation/dot.hpp>
+#include <mtl/operation/sum.hpp>
+#include <mtl/operation/product.hpp>
+#include <mtl/operation/norms.hpp>
+#include <mtl/operation/scale.hpp>
+#include <mtl/operation/abs.hpp>
+#include <mtl/operation/conj.hpp>
+#include <mtl/operation/negate.hpp>
+#include <mtl/operation/sqrt.hpp>
+#include <mtl/operation/max.hpp>
+#include <mtl/operation/min.hpp>
+#include <mtl/operation/trans.hpp>
+#include <mtl/operation/mult.hpp>
+
+// Operators
+#include <mtl/operation/operators.hpp>

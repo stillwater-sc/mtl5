@@ -1,7 +1,20 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/utility/tfunctor.hpp (scale)
-// Left-scale functor: alpha * x
-// Key changes from MTL4:
-//   - Replace boost::enable_if with requires Scalar<S>
+// MTL5 — Left-scale functor: alpha * x
+#include <type_traits>
+#include <mtl/concepts/scalar.hpp>
+
 namespace mtl::functor::typed {
+
+template <typename S>
+    requires Scalar<S>
+struct scale {
+    explicit constexpr scale(const S& alpha) : alpha_(alpha) {}
+
+    template <typename T>
+    constexpr auto operator()(const T& x) const { return alpha_ * x; }
+
+private:
+    S alpha_;
+};
+
 } // namespace mtl::functor::typed

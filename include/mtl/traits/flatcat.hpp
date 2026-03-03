@@ -1,7 +1,11 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/utility/flatcat.hpp
-// Flat category for efficient dispatch without virtual inheritance
-// Key changes from MTL4:
-//   - Replace boost::mpl logic with constexpr if and concepts
+// MTL5 — Flat category trait
+#include <mtl/traits/category.hpp>
+
 namespace mtl::traits {
+
+/// Maps T to its category — trivial alias for now
+template <typename T>
+using flatcat_t = category_t<T>;
+
 } // namespace mtl::traits

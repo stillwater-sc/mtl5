@@ -22,6 +22,12 @@ mtl5_add_test(test_dense_vector vec/test_dense_vector.cpp)
 
 # Operation tests
 mtl5_add_test(test_dot operation/test_dot.cpp)
+mtl5_add_test(test_norms operation/test_norms.cpp)
+mtl5_add_test(test_vector_ops operation/test_vector_ops.cpp)
+mtl5_add_test(test_matrix_ops operation/test_matrix_ops.cpp)
+
+# Functor tests
+mtl5_add_test(test_scalar_functors functor/test_scalar_functors.cpp)
 
 # ITL tests
 mtl5_add_test(test_cg itl/test_cg.cpp)

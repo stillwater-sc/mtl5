@@ -15,6 +15,7 @@
 #include <mtl/tag/sparsity.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
 #include <mtl/detail/index.hpp>
 #include <mtl/mat/dimension.hpp>
@@ -207,6 +208,31 @@ public:
         } else {
             change_dim(r, c);
         }
+    }
+
+    // ── Compound assignment operators ───────────────────────────────────
+    dense2D& operator+=(const dense2D& other) {
+        assert(num_rows() == other.num_rows() && num_cols() == other.num_cols());
+        for (size_type i = 0; i < size(); ++i) mem_[i] += other.mem_[i];
+        return *this;
+    }
+
+    dense2D& operator-=(const dense2D& other) {
+        assert(num_rows() == other.num_rows() && num_cols() == other.num_cols());
+        for (size_type i = 0; i < size(); ++i) mem_[i] -= other.mem_[i];
+        return *this;
+    }
+
+    template <typename S> requires Scalar<S>
+    dense2D& operator*=(const S& alpha) {
+        for (size_type i = 0; i < size(); ++i) mem_[i] *= alpha;
+        return *this;
+    }
+
+    template <typename S> requires Field<S>
+    dense2D& operator/=(const S& alpha) {
+        for (size_type i = 0; i < size(); ++i) mem_[i] /= alpha;
+        return *this;
     }
 
     // ── Swap ────────────────────────────────────────────────────────────

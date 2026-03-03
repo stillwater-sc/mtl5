@@ -1,7 +1,14 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/utility/sfunctor.hpp (negate)
-// Scalar negation functor
-// Key changes from MTL4:
-//   - Simple unary minus
+// MTL5 — Scalar negation functor
+
 namespace mtl::functor::scalar {
+
+template <typename T>
+struct negate {
+    using result_type = T;
+
+    static constexpr T apply(const T& v) { return -v; }
+    constexpr T operator()(const T& v) const { return apply(v); }
+};
+
 } // namespace mtl::functor::scalar

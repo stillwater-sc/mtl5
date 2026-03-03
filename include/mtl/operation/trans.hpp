@@ -1,7 +1,14 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/operation/trans.hpp
-// Return transposed view of a matrix
-// Key changes from MTL4:
-//   - Return transposed_view<M> using deduced return type
-namespace mtl::operation {
-} // namespace mtl::operation
+// MTL5 — Return transposed view of a matrix
+#include <mtl/concepts/matrix.hpp>
+#include <mtl/mat/view/transposed_view.hpp>
+
+namespace mtl {
+
+/// Returns a lightweight transposed view of matrix m
+template <Matrix M>
+auto trans(const M& m) {
+    return mat::view::transposed_view<M>(m);
+}
+
+} // namespace mtl

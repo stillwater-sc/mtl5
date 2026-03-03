@@ -16,6 +16,7 @@
 #include <mtl/tag/sparsity.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
 #include <mtl/vec/dimension.hpp>
 #include <mtl/vec/parameter.hpp>
@@ -166,6 +167,31 @@ public:
         } else {
             change_dim(n);
         }
+    }
+
+    // ── Compound assignment operators ───────────────────────────────────
+    dense_vector& operator+=(const dense_vector& other) {
+        assert(size() == other.size());
+        for (size_type i = 0; i < size(); ++i) mem_[i] += other.mem_[i];
+        return *this;
+    }
+
+    dense_vector& operator-=(const dense_vector& other) {
+        assert(size() == other.size());
+        for (size_type i = 0; i < size(); ++i) mem_[i] -= other.mem_[i];
+        return *this;
+    }
+
+    template <typename S> requires Scalar<S>
+    dense_vector& operator*=(const S& alpha) {
+        for (size_type i = 0; i < size(); ++i) mem_[i] *= alpha;
+        return *this;
+    }
+
+    template <typename S> requires Field<S>
+    dense_vector& operator/=(const S& alpha) {
+        for (size_type i = 0; i < size(); ++i) mem_[i] /= alpha;
+        return *this;
     }
 
     // ── Swap ────────────────────────────────────────────────────────────
