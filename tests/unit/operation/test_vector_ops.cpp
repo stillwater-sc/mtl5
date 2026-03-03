@@ -10,7 +10,9 @@
 #include <mtl/operation/conj.hpp>
 #include <mtl/operation/scale.hpp>
 #include <mtl/operation/negate.hpp>
+#include <mtl/operation/sqrt.hpp>
 #include <complex>
+#include <cmath>
 
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
@@ -197,6 +199,54 @@ TEST_CASE("scaled returns copy", "[operation][scale]") {
     REQUIRE(r(2) == 9.0);
     // original unchanged
     REQUIRE(v(0) == 1.0);
+}
+
+// ── sqrt on vectors ─────────────────────────────────────────────────────
+
+TEST_CASE("sqrt of vector", "[operation][sqrt]") {
+    dense_vector<double> v = {4.0, 9.0, 16.0};
+    auto r = mtl::sqrt(v);
+    REQUIRE_THAT(r(0), WithinAbs(2.0, 1e-10));
+    REQUIRE_THAT(r(1), WithinAbs(3.0, 1e-10));
+    REQUIRE_THAT(r(2), WithinAbs(4.0, 1e-10));
+}
+
+TEST_CASE("sqrt of vector with non-perfect squares", "[operation][sqrt]") {
+    dense_vector<double> v = {2.0, 3.0};
+    auto r = mtl::sqrt(v);
+    REQUIRE_THAT(r(0), WithinAbs(std::sqrt(2.0), 1e-10));
+    REQUIRE_THAT(r(1), WithinAbs(std::sqrt(3.0), 1e-10));
+}
+
+// ── Mixed-type vector operations ────────────────────────────────────────
+
+TEST_CASE("int + double vector addition", "[vec][operators][mixed]") {
+    dense_vector<int> a = {1, 2, 3};
+    dense_vector<double> b = {0.5, 1.5, 2.5};
+    auto c = a + b;
+    STATIC_REQUIRE(std::is_same_v<typename decltype(c)::value_type, double>);
+    REQUIRE(c(0) == 1.5);
+    REQUIRE(c(1) == 3.5);
+    REQUIRE(c(2) == 5.5);
+}
+
+TEST_CASE("int - double vector subtraction", "[vec][operators][mixed]") {
+    dense_vector<int> a = {10, 20, 30};
+    dense_vector<double> b = {0.5, 1.5, 2.5};
+    auto c = a - b;
+    STATIC_REQUIRE(std::is_same_v<typename decltype(c)::value_type, double>);
+    REQUIRE(c(0) == 9.5);
+    REQUIRE(c(1) == 18.5);
+    REQUIRE(c(2) == 27.5);
+}
+
+TEST_CASE("int scalar * double vector", "[vec][operators][mixed]") {
+    dense_vector<double> v = {1.5, 2.5, 3.5};
+    auto r = 2 * v;
+    STATIC_REQUIRE(std::is_same_v<typename decltype(r)::value_type, double>);
+    REQUIRE(r(0) == 3.0);
+    REQUIRE(r(1) == 5.0);
+    REQUIRE(r(2) == 7.0);
 }
 
 // ── Chained expression: y = A*x + b pattern ────────────────────────────
