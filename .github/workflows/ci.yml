@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux x86_64 ──────────────────────────────────────────────
+          - os: ubuntu-24.04
+            compiler: gcc
+            cc: gcc-13
+            cxx: g++-13
+            name: Linux x64 (GCC 13)
+
+          - os: ubuntu-24.04
+            compiler: clang
+            cc: clang-18
+            cxx: clang++-18
+            name: Linux x64 (Clang 18)
+
+          # ── Linux ARM64 ───────────────────────────────────────────────
+          - os: ubuntu-24.04-arm
+            compiler: gcc
+            cc: gcc-13
+            cxx: g++-13
+            name: Linux ARM64 (GCC 13)
+
+          - os: ubuntu-24.04-arm
+            compiler: clang
+            cc: clang-18
+            cxx: clang++-18
+            name: Linux ARM64 (Clang 18)
+
+          # ── macOS x86_64 ──────────────────────────────────────────────
+          - os: macos-13
+            compiler: apple-clang
+            cc: clang
+            cxx: clang++
+            name: macOS x64 (Apple Clang)
+
+          # ── macOS ARM64 (Apple Silicon) ───────────────────────────────
+          - os: macos-14
+            compiler: apple-clang
+            cc: clang
+            cxx: clang++
+            name: macOS ARM64 (Apple Clang)
+
+          # ── Windows x86_64 ────────────────────────────────────────────
+          - os: windows-2022
+            compiler: msvc
+            name: Windows x64 (MSVC 2022)
+
+          - os: windows-2022
+            compiler: clang-cl
+            name: Windows x64 (Clang-CL)
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (Unix, GCC/Clang)
+        if: runner.os != 'Windows'
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows, MSVC)
+        if: matrix.compiler == 'msvc'
+        run: >
+          cmake -B build
+          -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_CXX_STANDARD=20
+
+      - name: Configure (Windows, Clang-CL)
+        if: matrix.compiler == 'clang-cl'
+        run: >
+          cmake -B build
+          -G "Visual Studio 17 2022" -A x64
+          -T ClangCL
+          -DCMAKE_CXX_STANDARD=20
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build --config Release --output-on-failure
