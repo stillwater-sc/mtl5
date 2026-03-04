@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 using namespace mtl;
 
@@ -154,7 +155,7 @@ int main() {
     std::cout << "=== Matrix Market I/O Round-Trip ===\n\n";
 
     // Write sparse (CRS → coordinate .mtx)
-    std::string sparse_file = "/tmp/mtl5_laplacian_sparse.mtx";
+    std::string sparse_file = (std::filesystem::temp_directory_path() / "mtl5_laplacian_sparse.mtx").string();
     io::mm_write_sparse(sparse_file, crs, "2D Laplacian 6x6 grid");
     std::cout << "Written: " << sparse_file << " (coordinate format)\n";
 
@@ -177,7 +178,7 @@ int main() {
         for (std::size_t j = 0; j < 4; ++j)
             small(i, j) = crs(i, j);
 
-    std::string dense_file = "/tmp/mtl5_laplacian_dense.mtx";
+    std::string dense_file = (std::filesystem::temp_directory_path() / "mtl5_laplacian_dense.mtx").string();
     io::mm_write(dense_file, small, "Top-left 4x4 block");
     std::cout << "Written: " << dense_file << " (array format)\n";
 

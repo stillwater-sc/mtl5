@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 using namespace mtl;
 
@@ -197,7 +198,7 @@ int main() {
         for (std::size_t j = 0; j < 4; ++j)
             W(i, j) = H(i, j);
 
-    std::string fname = "/tmp/mtl5_hermitian_block.mtx";
+    std::string fname = (std::filesystem::temp_directory_path() / "mtl5_hermitian_block.mtx").string();
     io::mm_write(fname, W, "4x4 block from hermitian view");
     std::cout << "Written " << fname << "\n";
 
