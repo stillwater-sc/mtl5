@@ -31,3 +31,4 @@ mtl5_add_test(test_scalar_functors functor/test_scalar_functors.cpp)
 
 # ITL tests
 mtl5_add_test(test_cg itl/test_cg.cpp)
+mtl5_add_test(test_bicgstab itl/test_bicgstab.cpp)

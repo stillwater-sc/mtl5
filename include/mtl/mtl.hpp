@@ -88,6 +88,11 @@
 #include <mtl/operation/min.hpp>
 #include <mtl/operation/trans.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/operation/diagonal.hpp>
+#include <mtl/operation/resource.hpp>
 
 // Operators
 #include <mtl/operation/operators.hpp>
+
+// ITL — Iterative Template Library
+#include <mtl/itl/itl.hpp>
