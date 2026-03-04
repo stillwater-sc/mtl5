@@ -107,6 +107,18 @@ When porting an MTL4 file to MTL5:
 6. Move namespace from `boost::numeric::mtl` to `mtl::`
 7. Move ITL from `itl::` to `mtl::itl::`
 
+### Cross-Platform Development
+
+This library targets Linux (x64/ARM64), macOS (ARM64), and Windows (MSVC/Clang-CL). All code MUST be portable:
+
+- **File paths**: NEVER use hardcoded paths like `/tmp/`, `/home/`, or `C:\`. Use `std::filesystem::temp_directory_path()` for temp files, `std::filesystem::path` for path construction
+- **Path separators**: Use `std::filesystem::path` and `/` operator, never hardcode `/` or `\\`
+- **POSIX-only APIs**: Avoid `unistd.h`, `sys/`, `dlfcn.h` etc. without `#ifdef` guards. Prefer C++ standard library equivalents
+- **Math constants**: NEVER use `M_PI`, `M_E`, etc. (POSIX extensions, not defined by MSVC). Use C++20 `std::numbers::pi`, `std::numbers::e` from `<numbers>`
+- **Compiler differences**: Test with GCC, Clang, Apple Clang, and MSVC. Avoid compiler-specific extensions without `#ifdef` guards
+- **Line endings**: Use `.gitattributes` to handle CRLF/LF. Don't assume `\n` in file parsing
+- **Integer types**: Use `std::size_t` for sizes, not platform-specific types
+
 ### Adding a New File
 
 - **Operation**: create header in `include/mtl/operation/`, include from `mtl.hpp` when ready
