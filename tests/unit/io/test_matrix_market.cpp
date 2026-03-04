@@ -7,13 +7,16 @@
 #include <mtl/io/matrix_market.hpp>
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
 using namespace mtl;
 
 static std::string temp_file(const std::string& name) {
-    return "/tmp/mtl5_test_" + name + ".mtx";
+    auto dir = std::filesystem::temp_directory_path();
+    return (dir / ("mtl5_test_" + name + ".mtx")).string();
 }
 
 TEST_CASE("Matrix Market: write and read dense", "[io][matrix_market]") {
