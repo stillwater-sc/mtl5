@@ -50,6 +50,9 @@
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
+#include <mtl/mat/identity2D.hpp>
+#include <mtl/mat/coordinate2D.hpp>
+#include <mtl/mat/ell_matrix.hpp>
 
 // Scalar functors
 #include <mtl/functor/scalar/plus.hpp>
@@ -69,6 +72,9 @@
 
 // Views
 #include <mtl/mat/view/transposed_view.hpp>
+#include <mtl/mat/view/banded_view.hpp>
+#include <mtl/mat/view/hermitian_view.hpp>
+#include <mtl/mat/view/map_view.hpp>
 
 // Operations
 #include <mtl/operation/set_to_zero.hpp>
@@ -111,6 +117,9 @@
 
 // Operators
 #include <mtl/operation/operators.hpp>
+
+// I/O
+#include <mtl/io/matrix_market.hpp>
 
 // ITL — Iterative Template Library
 #include <mtl/itl/itl.hpp>

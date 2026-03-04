@@ -17,6 +17,9 @@ mtl5_add_test(test_contiguous_memory_block detail/test_contiguous_memory_block.c
 # Matrix tests
 mtl5_add_test(test_dense2D mat/test_dense2D.cpp)
 mtl5_add_test(test_compressed2D mat/test_compressed2D.cpp)
+mtl5_add_test(test_coordinate2D mat/test_coordinate2D.cpp)
+mtl5_add_test(test_ell_matrix mat/test_ell_matrix.cpp)
+mtl5_add_test(test_matrix_views mat/test_matrix_views.cpp)
 
 # Vector tests
 mtl5_add_test(test_dense_vector vec/test_dense_vector.cpp)
@@ -47,3 +50,6 @@ mtl5_add_test(test_ilu_ic itl/test_ilu_ic.cpp)
 mtl5_add_test(test_tfqmr itl/test_tfqmr.cpp)
 mtl5_add_test(test_qmr itl/test_qmr.cpp)
 mtl5_add_test(test_idr_s itl/test_idr_s.cpp)
+
+# I/O tests
+mtl5_add_test(test_matrix_market io/test_matrix_market.cpp)
