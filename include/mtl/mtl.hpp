@@ -93,6 +93,16 @@
 #include <mtl/operation/diagonal.hpp>
 #include <mtl/operation/resource.hpp>
 #include <mtl/operation/givens.hpp>
+#include <mtl/operation/trace.hpp>
+#include <mtl/operation/random.hpp>
+#include <mtl/operation/lower_trisolve.hpp>
+#include <mtl/operation/upper_trisolve.hpp>
+#include <mtl/operation/lu.hpp>
+#include <mtl/operation/householder.hpp>
+#include <mtl/operation/qr.hpp>
+#include <mtl/operation/lq.hpp>
+#include <mtl/operation/cholesky.hpp>
+#include <mtl/operation/inv.hpp>
 
 // Operators
 #include <mtl/operation/operators.hpp>
