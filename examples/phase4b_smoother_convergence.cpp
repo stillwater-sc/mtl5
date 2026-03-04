@@ -13,6 +13,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <numbers>
 #include <vector>
 
 using namespace mtl;
@@ -92,7 +93,7 @@ int main() {
     std::cout << "\n--- SOR (Successive Over-Relaxation) ---\n";
     std::cout << "x_new = omega * GS_update + (1-omega) * x_old\n";
     std::cout << "omega = 1.0 is Gauss-Seidel. Optimal omega for 1D Poisson:\n";
-    double omega_opt = 2.0 / (1.0 + std::sin(M_PI * h));
+    double omega_opt = 2.0 / (1.0 + std::sin(std::numbers::pi * h));
     std::cout << "  omega_opt = 2/(1 + sin(pi*h)) = " << std::fixed
               << std::setprecision(4) << omega_opt << "\n\n";
 

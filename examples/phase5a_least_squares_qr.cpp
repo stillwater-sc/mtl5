@@ -13,6 +13,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <numbers>
 
 using namespace mtl;
 
@@ -23,7 +24,7 @@ int main() {
 
     // ── Generate noisy data ──────────────────────────────────────────────
     const std::size_t m = 20;  // data points
-    const double pi = M_PI;
+    const double pi = std::numbers::pi;
 
     // Data: y_i = sin(x_i) + noise (using deterministic "noise")
     std::cout << "Data: " << m << " points from y = sin(x) on [0, pi]\n\n";

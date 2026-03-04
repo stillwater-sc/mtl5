@@ -14,6 +14,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <numbers>
 
 using namespace mtl;
 
@@ -27,7 +28,7 @@ int main() {
     const std::size_t n = 10;  // 10x10 interior grid
     const std::size_t N = n * n;
     const double h = 1.0 / (n + 1);
-    const double pi = M_PI;
+    const double pi = std::numbers::pi;
 
     std::cout << "Grid: " << n << "x" << n << " interior points = " << N << " unknowns\n";
     std::cout << "Grid spacing h = " << h << "\n\n";

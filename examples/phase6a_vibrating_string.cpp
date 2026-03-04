@@ -15,6 +15,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <numbers>
 #include <complex>
 #include <algorithm>
 
@@ -25,7 +26,7 @@ int main() {
     std::cout << " Phase 6A: Vibrating String — Eigenvalues + Kronecker\n";
     std::cout << "=============================================================\n\n";
 
-    const double pi = M_PI;
+    const double pi = std::numbers::pi;
 
     // ══════════════════════════════════════════════════════════════════════
     // Part 1: 1D Laplacian Eigenvalues
