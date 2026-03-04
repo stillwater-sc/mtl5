@@ -1,7 +1,10 @@
 #pragma once
 // MTL5 — Matrix concepts (replaces MTL4 concept/matrix.hpp)
 #include <mtl/concepts/collection.hpp>
+#include <mtl/traits/category.hpp>
+#include <mtl/tag/sparsity.hpp>
 #include <cstddef>
+#include <type_traits>
 
 namespace mtl {
 
@@ -13,12 +16,12 @@ concept Matrix = Collection<T> && requires(const T& m, std::size_t r, std::size_
     { m(r, c) }      -> std::convertible_to<typename T::value_type>;
 };
 
-/// A dense matrix with contiguous or strided storage
+/// A dense matrix: category tag is tag::dense
 template <typename T>
-concept DenseMatrix = Matrix<T>;
+concept DenseMatrix = Matrix<T> && std::is_same_v<traits::category_t<T>, tag::dense>;
 
-/// A sparse matrix
+/// A sparse matrix: category tag is tag::sparse
 template <typename T>
-concept SparseMatrix = Matrix<T>;
+concept SparseMatrix = Matrix<T> && std::is_same_v<traits::category_t<T>, tag::sparse>;
 
 } // namespace mtl

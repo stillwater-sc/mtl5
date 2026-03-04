@@ -5,6 +5,8 @@
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/compressed2D.hpp>
+#include <mtl/mat/view/transposed_view.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
 
@@ -112,6 +114,51 @@ auto operator*(const M1& A, const M2& B) {
         }
     }
     return C;
+}
+
+// ── Sparse (CRS) matvec: compressed2D * dense_vector ────────────────────
+// Concrete template types to win overload resolution over generic Matrix * Vector.
+
+template <typename V, typename P, typename VV, typename VP>
+auto operator*(const compressed2D<V, P>& A,
+               const vec::dense_vector<VV, VP>& x) {
+    assert(A.num_cols() == x.size());
+    using result_t = std::common_type_t<V, VV>;
+    using size_type = typename compressed2D<V, P>::size_type;
+    vec::dense_vector<result_t> y(A.num_rows(), math::zero<result_t>());
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    for (size_type r = 0; r < A.num_rows(); ++r) {
+        auto acc = math::zero<result_t>();
+        for (size_type k = starts[r]; k < starts[r + 1]; ++k) {
+            acc += static_cast<result_t>(data[k]) * static_cast<result_t>(x(indices[k]));
+        }
+        y(r) = acc;
+    }
+    return y;
+}
+
+// ── Transposed sparse matvec: transposed_view<compressed2D> * dense_vector ──
+// Scatter pattern: y(col) += data[k] * x(row)
+
+template <typename V, typename P, typename VV, typename VP>
+auto operator*(const view::transposed_view<compressed2D<V, P>>& At,
+               const vec::dense_vector<VV, VP>& x) {
+    const auto& A = At.base();  // underlying CRS matrix
+    assert(A.num_rows() == x.size());
+    using result_t = std::common_type_t<V, VV>;
+    using size_type = typename compressed2D<V, P>::size_type;
+    vec::dense_vector<result_t> y(A.num_cols(), math::zero<result_t>());
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    for (size_type r = 0; r < A.num_rows(); ++r) {
+        for (size_type k = starts[r]; k < starts[r + 1]; ++k) {
+            y(indices[k]) += static_cast<result_t>(data[k]) * static_cast<result_t>(x(r));
+        }
+    }
+    return y;
 }
 
 } // namespace mtl::mat

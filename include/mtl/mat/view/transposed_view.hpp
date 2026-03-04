@@ -27,6 +27,9 @@ public:
     size_type num_cols() const { return ref_.num_rows(); }
     size_type size()     const { return ref_.size(); }
 
+    /// Access underlying matrix (needed for O(nnz) transposed sparse matvec)
+    const Matrix& base() const { return ref_; }
+
 private:
     const Matrix& ref_;
 };
@@ -37,9 +40,10 @@ private:
 
 namespace mtl::traits {
 
+/// transposed_view inherits the category of the underlying matrix
 template <typename Matrix>
 struct category<mat::view::transposed_view<Matrix>> {
-    using type = tag::dense;
+    using type = category_t<Matrix>;
 };
 
 } // namespace mtl::traits

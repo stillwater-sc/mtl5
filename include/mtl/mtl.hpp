@@ -48,6 +48,8 @@
 #include <mtl/detail/contiguous_memory_block.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/compressed2D.hpp>
+#include <mtl/mat/inserter.hpp>
 
 // Scalar functors
 #include <mtl/functor/scalar/plus.hpp>
@@ -90,6 +92,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/diagonal.hpp>
 #include <mtl/operation/resource.hpp>
+#include <mtl/operation/givens.hpp>
 
 // Operators
 #include <mtl/operation/operators.hpp>
