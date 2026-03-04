@@ -1,0 +1,66 @@
+● Phase 5 summary 
+
+  Continuing with the Phase 5 QR/LQ bug fix. Let me read both files and apply the corrections.
+
+● Root cause of both bugs:
+
+  1. qr_extract_Q: Uses apply_householder_right (Q = Q * H_j) but needs apply_householder_left (Q = H_j * Q) to build Q = H_0 * H_1 * ... * H_{k-1} from
+  right to left.
+  2. lq_extract_Q: Uses reverse iteration with left application, producing Q = H_0 * ... * H_{k-1}, but LQ needs Q = H_{k-1} * ... * H_0, which requires
+  forward iteration with left application.
+
+  Summary of fixes:
+  - qr_extract_Q: Changed apply_householder_right(Q, v, tau(j), 0, j) → apply_householder_left(Q, v, tau(j), j, 0) to correctly build Q = H_0 * H_1 * ... *
+  H_{k-1}
+  - lq_extract_Q: Changed reverse iteration to forward iteration to correctly build Q = H_{k-1} * ... * H_0
+
+  Phase 5 delivered:
+  - 12 operation headers: trace, random, lower/upper trisolve, LU, householder, QR, LQ, cholesky, inv, ILU(0), IC(0)
+  - 5 test files with 21 total passing tests (up from 16 in Phase 4)
+
+
+● Phase 6 summary — 8 headers implemented, 6 test files created, 27/27 tests pass:
+
+  ┌────────────────────────────────────┬──────────────────────────────────────────────────────────────┐
+  │                File                │                           Content                            │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ operation/kron.hpp                 │ Kronecker product                                            │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ operation/hessenberg.hpp           │ Hessenberg reduction via Householder (new file)              │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ operation/eigenvalue_symmetric.hpp │ Symmetric eigenvalue via tridiagonal QR with Wilkinson shift │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ operation/eigenvalue.hpp           │ General eigenvalue via Hessenberg + shifted QR               │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ operation/svd.hpp                  │ SVD via iterative QR (Golub-Van Loan style)                  │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ itl/krylov/tfqmr.hpp               │ Transpose-Free QMR solver                                    │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ itl/krylov/qmr.hpp                 │ QMR solver (Lanczos biorthogonalization)                     │
+  ├────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ itl/krylov/idr_s.hpp               │ IDR(s) solver with configurable shadow space                 │
+  └────────────────────────────────────┴──────────────────────────────────────────────────────────────┘
+
+
+● All 31/31 tests pass. Phase 7 is complete.
+
+● Phase 7 complete — 7 stubs filled, 4 test files, 31/31 tests pass.
+
+  ┌─────────────────────────────┬────────────────────────────────────────────────────────────┐
+  │            File             │                          Content                           │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ mat/identity2D.hpp          │ Implicit identity matrix (no storage)                      │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ mat/coordinate2D.hpp        │ COO sparse format with sort() and compress() to CRS        │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ mat/ell_matrix.hpp          │ ELLPACK sparse format with CRS constructor                 │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ mat/view/banded_view.hpp    │ Band-restricted read-only view                             │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ mat/view/hermitian_view.hpp │ Conjugate-transpose symmetric view                         │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ mat/view/map_view.hpp       │ Index remapping view                                       │
+  ├─────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ io/matrix_market.hpp        │ Matrix Market .mtx read/write (dense + sparse + symmetric) │
+  └─────────────────────────────┴────────────────────────────────────────────────────────────┘
+
