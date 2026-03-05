@@ -4,6 +4,7 @@
 #include <mtl/recursion/predefined_masks.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 using namespace mtl;
@@ -230,22 +231,22 @@ TEST_CASE("for_each applies function to base cases",
 
 TEST_CASE("predefined masks are valid", "[recursion][masks]") {
     // Morton Z mask should have alternating bits
-    REQUIRE(morton_z_mask == 0x5555'5555'5555'5555UL);
+    REQUIRE(morton_z_mask == UINT64_C(0x5555555555555555));
     REQUIRE(morton_mask == ~morton_z_mask);
 
     // Morton + complement should cover all bits
-    REQUIRE((morton_z_mask | morton_mask) == ~0UL);
-    REQUIRE((morton_z_mask & morton_mask) == 0UL);
+    REQUIRE((morton_z_mask | morton_mask) == ~std::uint64_t{0});
+    REQUIRE((morton_z_mask & morton_mask) == std::uint64_t{0});
 
     // Doppled masks: row + col should cover all bits
-    REQUIRE((doppled_2_row_mask | doppled_2_col_mask) == ~0UL);
-    REQUIRE((doppled_4_row_mask | doppled_4_col_mask) == ~0UL);
-    REQUIRE((doppled_16_row_mask | doppled_16_col_mask) == ~0UL);
+    REQUIRE((doppled_2_row_mask | doppled_2_col_mask) == ~std::uint64_t{0});
+    REQUIRE((doppled_4_row_mask | doppled_4_col_mask) == ~std::uint64_t{0});
+    REQUIRE((doppled_16_row_mask | doppled_16_col_mask) == ~std::uint64_t{0});
 }
 
 TEST_CASE("lsb_mask helper", "[recursion][masks]") {
-    REQUIRE(lsb_mask(0) == 0UL);
-    REQUIRE(lsb_mask(1) == 1UL);
-    REQUIRE(lsb_mask(4) == 0xFUL);
-    REQUIRE(lsb_mask(8) == 0xFFUL);
+    REQUIRE(lsb_mask(0) == std::uint64_t{0});
+    REQUIRE(lsb_mask(1) == std::uint64_t{1});
+    REQUIRE(lsb_mask(4) == std::uint64_t{0xF});
+    REQUIRE(lsb_mask(8) == std::uint64_t{0xFF});
 }
