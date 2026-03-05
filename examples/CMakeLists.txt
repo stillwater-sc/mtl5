@@ -35,3 +35,10 @@ target_link_libraries(phase7a_sparse_formats PRIVATE MTL5::mtl5)
 
 add_executable(phase7b_structured_views phase7b_structured_views.cpp)
 target_link_libraries(phase7b_structured_views PRIVATE MTL5::mtl5)
+
+# Phase 8 examples
+add_executable(phase8a_expression_benchmark phase8a_expression_benchmark.cpp)
+target_link_libraries(phase8a_expression_benchmark PRIVATE MTL5::mtl5)
+
+add_executable(phase8b_expression_concepts phase8b_expression_concepts.cpp)
+target_link_libraries(phase8b_expression_concepts PRIVATE MTL5::mtl5)
