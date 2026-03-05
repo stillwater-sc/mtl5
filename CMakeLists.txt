@@ -10,6 +10,8 @@ project(MTL5
 option(MTL5_BUILD_TESTS    "Build the test suite"       ON)
 option(MTL5_BUILD_EXAMPLES "Build the examples"         ON)
 option(MTL5_ENABLE_OPENMP  "Enable OpenMP parallelism"  OFF)
+option(MTL5_ENABLE_BLAS    "Enable BLAS acceleration"   OFF)
+option(MTL5_ENABLE_LAPACK  "Enable LAPACK acceleration" OFF)
 
 # ── Global settings ─────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 20)
@@ -39,6 +41,18 @@ target_compile_features(mtl5 INTERFACE cxx_std_20)
 if(MTL5_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED)
     target_link_libraries(mtl5 INTERFACE OpenMP::OpenMP_CXX)
+endif()
+
+if(MTL5_ENABLE_BLAS)
+    find_package(BLAS REQUIRED)
+    target_compile_definitions(mtl5 INTERFACE MTL5_HAS_BLAS)
+    target_link_libraries(mtl5 INTERFACE ${BLAS_LIBRARIES})
+endif()
+
+if(MTL5_ENABLE_LAPACK)
+    find_package(LAPACK REQUIRED)
+    target_compile_definitions(mtl5 INTERFACE MTL5_HAS_LAPACK)
+    target_link_libraries(mtl5 INTERFACE ${LAPACK_LIBRARIES})
 endif()
 
 # ── Subdirectories ───────────────────────────────────────────────────────

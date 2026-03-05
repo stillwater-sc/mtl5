@@ -23,6 +23,10 @@ mtl5_add_test(test_matrix_views mat/test_matrix_views.cpp)
 
 # Vector tests
 mtl5_add_test(test_dense_vector vec/test_dense_vector.cpp)
+mtl5_add_test(test_sparse_vector vec/test_sparse_vector.cpp)
+
+# Recursion tests
+mtl5_add_test(test_recursion recursion/test_recursion.cpp)
 
 # Operation tests
 mtl5_add_test(test_dot operation/test_dot.cpp)

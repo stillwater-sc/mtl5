@@ -42,3 +42,10 @@ target_link_libraries(phase8a_expression_benchmark PRIVATE MTL5::mtl5)
 
 add_executable(phase8b_expression_concepts phase8b_expression_concepts.cpp)
 target_link_libraries(phase8b_expression_concepts PRIVATE MTL5::mtl5)
+
+# Phase 9 examples
+add_executable(phase9a_sparse_vector phase9a_sparse_vector.cpp)
+target_link_libraries(phase9a_sparse_vector PRIVATE MTL5::mtl5)
+
+add_executable(phase9b_recursive_traversal phase9b_recursive_traversal.cpp)
+target_link_libraries(phase9b_recursive_traversal PRIVATE MTL5::mtl5)

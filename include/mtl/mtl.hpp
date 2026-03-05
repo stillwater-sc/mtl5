@@ -48,6 +48,8 @@
 // Core data types
 #include <mtl/detail/contiguous_memory_block.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/vec/sparse_vector.hpp>
+#include <mtl/vec/inserter.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -115,6 +117,15 @@
 #include <mtl/operation/eigenvalue.hpp>
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/kron.hpp>
+
+// Recursion
+#include <mtl/recursion/base_case_test.hpp>
+#include <mtl/recursion/matrix_recursator.hpp>
+#include <mtl/recursion/predefined_masks.hpp>
+
+// External interfaces (conditional on CMake options)
+#include <mtl/interface/blas.hpp>
+#include <mtl/interface/lapack.hpp>
 
 // Expression templates
 #include <mtl/mat/expr/mat_expr.hpp>
