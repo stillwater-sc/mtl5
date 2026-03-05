@@ -55,8 +55,8 @@ namespace math {
     template <typename T> struct mult;
     template <typename Op, typename T> struct identity_t;
 
-    template <typename T> constexpr T zero();
-    template <typename T> constexpr T one();
+    template <typename T> inline T zero();
+    template <typename T> inline T one();
 } // namespace math
 
 // ── ITL ─────────────────────────────────────────────────────────────────
