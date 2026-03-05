@@ -47,5 +47,8 @@ target_link_libraries(phase8b_expression_concepts PRIVATE MTL5::mtl5)
 add_executable(phase9a_sparse_vector phase9a_sparse_vector.cpp)
 target_link_libraries(phase9a_sparse_vector PRIVATE MTL5::mtl5)
 
-add_executable(phase9b_recursive_traversal phase9b_recursive_traversal.cpp)
-target_link_libraries(phase9b_recursive_traversal PRIVATE MTL5::mtl5)
+add_executable(phase9b_recursive_gemm phase9b_recursive_traversal.cpp)
+target_link_libraries(phase9b_recursive_gemm PRIVATE MTL5::mtl5)
+
+add_executable(phase9c_blas_dispatch phase9c_blas_dispatch.cpp)
+target_link_libraries(phase9c_blas_dispatch PRIVATE MTL5::mtl5)
