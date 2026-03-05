@@ -1,85 +1,85 @@
 #pragma once
-// MTL5 — Operator overloads for matrix types
+// MTL5 — Operator overloads for matrix types (expression template returns)
 #include <type_traits>
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
+#include <mtl/traits/is_expression.hpp>
+#include <mtl/detail/expr_storage.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/view/transposed_view.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/functor/scalar/plus.hpp>
+#include <mtl/functor/scalar/minus.hpp>
+#include <mtl/functor/scalar/times.hpp>
+#include <mtl/functor/scalar/divide.hpp>
+#include <mtl/mat/expr/mat_mat_op_expr.hpp>
+#include <mtl/mat/expr/mat_scal_op_expr.hpp>
+#include <mtl/mat/expr/mat_negate_expr.hpp>
+#include <mtl/mat/expr/mat_mat_times_expr.hpp>
 
 namespace mtl::mat {
 
-// ── Binary arithmetic ───────────────────────────────────────────────────
+// ── Binary arithmetic (lazy) ───────────────────────────────────────────
+// Forwarding references: lvalue operands stored by const ref, rvalue by value.
 
-template <Matrix M1, Matrix M2>
-auto operator+(const M1& a, const M2& b) {
-    assert(a.num_rows() == b.num_rows() && a.num_cols() == b.num_cols());
-    using result_t = std::common_type_t<typename M1::value_type, typename M2::value_type>;
-    dense2D<result_t> r(a.num_rows(), a.num_cols());
-    for (typename M1::size_type i = 0; i < a.num_rows(); ++i)
-        for (typename M1::size_type j = 0; j < a.num_cols(); ++j)
-            r(i, j) = a(i, j) + b(i, j);
-    return r;
+template <typename M1, typename M2>
+    requires (Matrix<std::remove_cvref_t<M1>> && Matrix<std::remove_cvref_t<M2>>)
+auto operator+(M1&& a, M2&& b) {
+    using S1 = detail::expr_store_t<M1>;
+    using S2 = detail::expr_store_t<M2>;
+    return expr::mat_mat_op_expr<S1, S2, functor::scalar::plus>(
+        std::forward<M1>(a), std::forward<M2>(b));
 }
 
-template <Matrix M1, Matrix M2>
-auto operator-(const M1& a, const M2& b) {
-    assert(a.num_rows() == b.num_rows() && a.num_cols() == b.num_cols());
-    using result_t = std::common_type_t<typename M1::value_type, typename M2::value_type>;
-    dense2D<result_t> r(a.num_rows(), a.num_cols());
-    for (typename M1::size_type i = 0; i < a.num_rows(); ++i)
-        for (typename M1::size_type j = 0; j < a.num_cols(); ++j)
-            r(i, j) = a(i, j) - b(i, j);
-    return r;
+template <typename M1, typename M2>
+    requires (Matrix<std::remove_cvref_t<M1>> && Matrix<std::remove_cvref_t<M2>>)
+auto operator-(M1&& a, M2&& b) {
+    using S1 = detail::expr_store_t<M1>;
+    using S2 = detail::expr_store_t<M2>;
+    return expr::mat_mat_op_expr<S1, S2, functor::scalar::minus>(
+        std::forward<M1>(a), std::forward<M2>(b));
 }
 
-// ── Unary negation ──────────────────────────────────────────────────────
+// ── Unary negation (lazy) ──────────────────────────────────────────────
 
-template <Matrix M>
-auto operator-(const M& m) {
-    using T = typename M::value_type;
-    dense2D<T> r(m.num_rows(), m.num_cols());
-    for (typename M::size_type i = 0; i < m.num_rows(); ++i)
-        for (typename M::size_type j = 0; j < m.num_cols(); ++j)
-            r(i, j) = -m(i, j);
-    return r;
+template <typename M>
+    requires Matrix<std::remove_cvref_t<M>>
+auto operator-(M&& m) {
+    using SM = detail::expr_store_t<M>;
+    return expr::mat_negate_expr<SM>(std::forward<M>(m));
 }
 
-// ── Scalar-matrix multiply ──────────────────────────────────────────────
-// Use std::is_arithmetic_v to avoid recursive concept evaluation with Scalar.
+// ── Scalar-matrix multiply (lazy) ──────────────────────────────────────
 
-template <typename S, Matrix M>
-    requires std::is_arithmetic_v<S>
-auto operator*(const S& alpha, const M& m) {
-    using result_t = std::common_type_t<S, typename M::value_type>;
-    dense2D<result_t> r(m.num_rows(), m.num_cols());
-    for (typename M::size_type i = 0; i < m.num_rows(); ++i)
-        for (typename M::size_type j = 0; j < m.num_cols(); ++j)
-            r(i, j) = alpha * m(i, j);
-    return r;
+template <typename S, typename M>
+    requires (std::is_arithmetic_v<S> && Matrix<std::remove_cvref_t<M>>)
+auto operator*(const S& alpha, M&& m) {
+    using SM = detail::expr_store_t<M>;
+    return expr::mat_scal_op_expr<S, SM, functor::scalar::times>(
+        alpha, std::forward<M>(m));
 }
 
-template <Matrix M, typename S>
-    requires std::is_arithmetic_v<S>
-auto operator*(const M& m, const S& alpha) {
-    return alpha * m;
+template <typename M, typename S>
+    requires (Matrix<std::remove_cvref_t<M>> && std::is_arithmetic_v<S>)
+auto operator*(M&& m, const S& alpha) {
+    using SM = detail::expr_store_t<M>;
+    return expr::mat_scal_op_expr<S, SM, functor::scalar::times>(
+        alpha, std::forward<M>(m));
 }
 
-template <Matrix M, typename S>
-    requires std::is_arithmetic_v<S>
-auto operator/(const M& m, const S& alpha) {
-    using result_t = std::common_type_t<typename M::value_type, S>;
-    dense2D<result_t> r(m.num_rows(), m.num_cols());
-    for (typename M::size_type i = 0; i < m.num_rows(); ++i)
-        for (typename M::size_type j = 0; j < m.num_cols(); ++j)
-            r(i, j) = m(i, j) / alpha;
-    return r;
+template <typename M, typename S>
+    requires (Matrix<std::remove_cvref_t<M>> && std::is_arithmetic_v<S>)
+auto operator/(M&& m, const S& alpha) {
+    using SM = detail::expr_store_t<M>;
+    return expr::mat_rscal_op_expr<SM, S, functor::scalar::divide>(
+        std::forward<M>(m), alpha);
 }
 
-// ── Matrix-vector multiply ──────────────────────────────────────────────
+// ── Matrix-vector multiply (stays eager) ───────────────────────────────
+// No expression template: immediately evaluates to dense_vector.
 
 template <Matrix M, Vector V>
     requires (!Matrix<V>)
@@ -97,7 +97,10 @@ auto operator*(const M& A, const V& x) {
     return y;
 }
 
-// ── Matrix-matrix multiply ──────────────────────────────────────────────
+// ── Matrix-matrix multiply (eager) ─────────────────────────────────────
+// Stays eager to avoid aliasing issues (e.g., auto C = A*B; then modify A)
+// and O(n^3)-per-element lazy recomputation. For lazy matmul, use
+// mat_mat_times_expr directly.
 
 template <Matrix M1, Matrix M2>
 auto operator*(const M1& A, const M2& B) {
@@ -116,8 +119,7 @@ auto operator*(const M1& A, const M2& B) {
     return C;
 }
 
-// ── Sparse (CRS) matvec: compressed2D * dense_vector ────────────────────
-// Concrete template types to win overload resolution over generic Matrix * Vector.
+// ── Sparse (CRS) matvec: compressed2D * dense_vector (stays eager) ─────
 
 template <typename V, typename P, typename VV, typename VP>
 auto operator*(const compressed2D<V, P>& A,
@@ -139,13 +141,12 @@ auto operator*(const compressed2D<V, P>& A,
     return y;
 }
 
-// ── Transposed sparse matvec: transposed_view<compressed2D> * dense_vector ──
-// Scatter pattern: y(col) += data[k] * x(row)
+// ── Transposed sparse matvec (stays eager) ─────────────────────────────
 
 template <typename V, typename P, typename VV, typename VP>
 auto operator*(const view::transposed_view<compressed2D<V, P>>& At,
                const vec::dense_vector<VV, VP>& x) {
-    const auto& A = At.base();  // underlying CRS matrix
+    const auto& A = At.base();
     assert(A.num_rows() == x.size());
     using result_t = std::common_type_t<V, VV>;
     using size_type = typename compressed2D<V, P>::size_type;

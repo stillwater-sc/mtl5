@@ -1,7 +1,7 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/matrix/dmat_dmat_plus_expr.hpp
-// Dense matrix expression template
-// Key changes from MTL4:
-//   - Replace tag dispatch with concepts for dense constraint
-namespace mtl::mat::expr {
-} // namespace mtl::mat::expr
+// MTL5 — Dense matrix expression umbrella
+// In MTL4 this was a CRTP base for dense matrix expressions with tag dispatch.
+// In MTL5, the DenseMatrix concept (category_t<T> == tag::dense) replaces
+// the tag dispatch. All expression types are tagged as dense via trait
+// specializations in their respective headers.
+#include <mtl/mat/expr/mat_expr.hpp>

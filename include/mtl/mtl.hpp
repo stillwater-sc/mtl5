@@ -30,6 +30,7 @@
 #include <mtl/traits/ashape.hpp>
 #include <mtl/traits/transposed_orientation.hpp>
 #include <mtl/traits/flatcat.hpp>
+#include <mtl/traits/is_expression.hpp>
 
 // Math
 #include <mtl/math/operations.hpp>
@@ -115,8 +116,18 @@
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/kron.hpp>
 
+// Expression templates
+#include <mtl/mat/expr/mat_expr.hpp>
+#include <mtl/mat/expr/dmat_expr.hpp>
+#include <mtl/mat/expr/smat_expr.hpp>
+#include <mtl/vec/expr/vec_expr.hpp>
+
 // Operators
 #include <mtl/operation/operators.hpp>
+
+// Lazy evaluation and fusion
+#include <mtl/operation/lazy.hpp>
+#include <mtl/operation/fuse.hpp>
 
 // I/O
 #include <mtl/io/matrix_market.hpp>

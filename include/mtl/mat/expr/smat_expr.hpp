@@ -1,7 +1,7 @@
 #pragma once
-// MTL5 stub — port from MTL4: boost/numeric/mtl/matrix/smat_smat_plus_expr.hpp
-// Sparse matrix expression template
-// Key changes from MTL4:
-//   - Replace tag dispatch with concepts for sparse constraint
-namespace mtl::mat::expr {
-} // namespace mtl::mat::expr
+// MTL5 — Sparse matrix expression umbrella
+// In MTL4 this was a CRTP base for sparse matrix expressions with tag dispatch.
+// In MTL5, the SparseMatrix concept (category_t<T> == tag::sparse) replaces
+// the tag dispatch. Sparse expression types would specialize the category
+// trait to tag::sparse.
+#include <mtl/mat/expr/mat_expr.hpp>

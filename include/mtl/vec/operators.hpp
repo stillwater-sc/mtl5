@@ -1,72 +1,75 @@
 #pragma once
-// MTL5 — Operator overloads for vector types
+// MTL5 — Operator overloads for vector types (expression template returns)
 #include <type_traits>
 #include <cassert>
 #include <mtl/concepts/vector.hpp>
+#include <mtl/traits/is_expression.hpp>
+#include <mtl/detail/expr_storage.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/functor/scalar/plus.hpp>
+#include <mtl/functor/scalar/minus.hpp>
+#include <mtl/functor/scalar/times.hpp>
+#include <mtl/functor/scalar/divide.hpp>
+#include <mtl/vec/expr/vec_vec_op_expr.hpp>
+#include <mtl/vec/expr/vec_scal_op_expr.hpp>
+#include <mtl/vec/expr/vec_negate_expr.hpp>
 
 namespace mtl::vec {
 
-// ── Binary arithmetic ───────────────────────────────────────────────────
+// ── Binary arithmetic (lazy) ───────────────────────────────────────────
+// Forwarding references: lvalue operands stored by const ref, rvalue by value.
 
-template <Vector V1, Vector V2>
-auto operator+(const V1& a, const V2& b) {
-    assert(a.size() == b.size());
-    using result_t = std::common_type_t<typename V1::value_type, typename V2::value_type>;
-    dense_vector<result_t> r(a.size());
-    for (typename V1::size_type i = 0; i < a.size(); ++i)
-        r(i) = a(i) + b(i);
-    return r;
+template <typename V1, typename V2>
+    requires (Vector<std::remove_cvref_t<V1>> && Vector<std::remove_cvref_t<V2>>)
+auto operator+(V1&& a, V2&& b) {
+    using S1 = detail::expr_store_t<V1>;
+    using S2 = detail::expr_store_t<V2>;
+    return expr::vec_vec_op_expr<S1, S2, functor::scalar::plus>(
+        std::forward<V1>(a), std::forward<V2>(b));
 }
 
-template <Vector V1, Vector V2>
-auto operator-(const V1& a, const V2& b) {
-    assert(a.size() == b.size());
-    using result_t = std::common_type_t<typename V1::value_type, typename V2::value_type>;
-    dense_vector<result_t> r(a.size());
-    for (typename V1::size_type i = 0; i < a.size(); ++i)
-        r(i) = a(i) - b(i);
-    return r;
+template <typename V1, typename V2>
+    requires (Vector<std::remove_cvref_t<V1>> && Vector<std::remove_cvref_t<V2>>)
+auto operator-(V1&& a, V2&& b) {
+    using S1 = detail::expr_store_t<V1>;
+    using S2 = detail::expr_store_t<V2>;
+    return expr::vec_vec_op_expr<S1, S2, functor::scalar::minus>(
+        std::forward<V1>(a), std::forward<V2>(b));
 }
 
-// ── Unary negation ──────────────────────────────────────────────────────
+// ── Unary negation (lazy) ──────────────────────────────────────────────
 
-template <Vector V>
-auto operator-(const V& v) {
-    using T = typename V::value_type;
-    dense_vector<T> r(v.size());
-    for (typename V::size_type i = 0; i < v.size(); ++i)
-        r(i) = -v(i);
-    return r;
+template <typename V>
+    requires Vector<std::remove_cvref_t<V>>
+auto operator-(V&& v) {
+    using SV = detail::expr_store_t<V>;
+    return expr::vec_negate_expr<SV>(std::forward<V>(v));
 }
 
-// ── Scalar-vector multiply ──────────────────────────────────────────────
-// Use std::is_arithmetic_v to avoid recursive concept evaluation with Scalar.
+// ── Scalar-vector multiply (lazy) ──────────────────────────────────────
 
-template <typename S, Vector V>
-    requires std::is_arithmetic_v<S>
-auto operator*(const S& alpha, const V& v) {
-    using result_t = std::common_type_t<S, typename V::value_type>;
-    dense_vector<result_t> r(v.size());
-    for (typename V::size_type i = 0; i < v.size(); ++i)
-        r(i) = alpha * v(i);
-    return r;
+template <typename S, typename V>
+    requires (std::is_arithmetic_v<S> && Vector<std::remove_cvref_t<V>>)
+auto operator*(const S& alpha, V&& v) {
+    using SV = detail::expr_store_t<V>;
+    return expr::vec_scal_op_expr<S, SV, functor::scalar::times>(
+        alpha, std::forward<V>(v));
 }
 
-template <Vector V, typename S>
-    requires std::is_arithmetic_v<S>
-auto operator*(const V& v, const S& alpha) {
-    return alpha * v;
+template <typename V, typename S>
+    requires (Vector<std::remove_cvref_t<V>> && std::is_arithmetic_v<S>)
+auto operator*(V&& v, const S& alpha) {
+    using SV = detail::expr_store_t<V>;
+    return expr::vec_scal_op_expr<S, SV, functor::scalar::times>(
+        alpha, std::forward<V>(v));
 }
 
-template <Vector V, typename S>
-    requires std::is_arithmetic_v<S>
-auto operator/(const V& v, const S& alpha) {
-    using result_t = std::common_type_t<typename V::value_type, S>;
-    dense_vector<result_t> r(v.size());
-    for (typename V::size_type i = 0; i < v.size(); ++i)
-        r(i) = v(i) / alpha;
-    return r;
+template <typename V, typename S>
+    requires (Vector<std::remove_cvref_t<V>> && std::is_arithmetic_v<S>)
+auto operator/(V&& v, const S& alpha) {
+    using SV = detail::expr_store_t<V>;
+    return expr::vec_rscal_op_expr<SV, S, functor::scalar::divide>(
+        std::forward<V>(v), alpha);
 }
 
 } // namespace mtl::vec

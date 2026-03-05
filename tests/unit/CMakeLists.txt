@@ -36,6 +36,7 @@ mtl5_add_test(test_cholesky operation/test_cholesky.cpp)
 mtl5_add_test(test_eigenvalue operation/test_eigenvalue.cpp)
 mtl5_add_test(test_svd operation/test_svd.cpp)
 mtl5_add_test(test_kron operation/test_kron.cpp)
+mtl5_add_test(test_expression_templates operation/test_expression_templates.cpp)
 
 # Functor tests
 mtl5_add_test(test_scalar_functors functor/test_scalar_functors.cpp)

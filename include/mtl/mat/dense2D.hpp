@@ -16,6 +16,8 @@
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/concepts/matrix.hpp>
+#include <mtl/traits/is_expression.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
 #include <mtl/detail/index.hpp>
 #include <mtl/mat/dimension.hpp>
@@ -138,6 +140,53 @@ public:
             if constexpr (!is_fixed) other.dims_.set_dimensions(0, 0);
             other.ldim_ = 0;
         }
+        return *this;
+    }
+
+    // ── Expression template construction / assignment ───────────────────
+    template <typename Expr>
+        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense2D(const Expr& expr)
+        : dense2D(static_cast<size_type>(expr.num_rows()),
+                   static_cast<size_type>(expr.num_cols()))
+    {
+        for (size_type r = 0; r < num_rows(); ++r)
+            for (size_type c = 0; c < num_cols(); ++c)
+                (*this)(r, c) = static_cast<Value>(expr(r, c));
+    }
+
+    template <typename Expr>
+        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense2D& operator=(const Expr& expr) {
+        change_dim(static_cast<size_type>(expr.num_rows()),
+                   static_cast<size_type>(expr.num_cols()));
+        for (size_type r = 0; r < num_rows(); ++r)
+            for (size_type c = 0; c < num_cols(); ++c)
+                (*this)(r, c) = static_cast<Value>(expr(r, c));
+        return *this;
+    }
+
+    template <typename Expr>
+        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense2D& operator+=(const Expr& expr) {
+        assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
+        for (size_type r = 0; r < num_rows(); ++r)
+            for (size_type c = 0; c < num_cols(); ++c)
+                (*this)(r, c) += static_cast<Value>(expr(r, c));
+        return *this;
+    }
+
+    template <typename Expr>
+        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense2D& operator-=(const Expr& expr) {
+        assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
+        for (size_type r = 0; r < num_rows(); ++r)
+            for (size_type c = 0; c < num_cols(); ++c)
+                (*this)(r, c) -= static_cast<Value>(expr(r, c));
         return *this;
     }
 

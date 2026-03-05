@@ -17,6 +17,8 @@
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/concepts/vector.hpp>
+#include <mtl/traits/is_expression.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
 #include <mtl/vec/dimension.hpp>
 #include <mtl/vec/parameter.hpp>
@@ -96,6 +98,45 @@ public:
             dim_ = other.dim_;
             if constexpr (!dim_type::is_fixed) other.dim_.set_size(0);
         }
+        return *this;
+    }
+
+    // ── Expression template construction / assignment ───────────────────
+    template <typename Expr>
+        requires (Vector<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense_vector(const Expr& expr) : dense_vector(static_cast<size_type>(expr.size())) {
+        for (size_type i = 0; i < size(); ++i)
+            (*this)(i) = static_cast<Value>(expr(i));
+    }
+
+    template <typename Expr>
+        requires (Vector<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense_vector& operator=(const Expr& expr) {
+        change_dim(static_cast<size_type>(expr.size()));
+        for (size_type i = 0; i < size(); ++i)
+            (*this)(i) = static_cast<Value>(expr(i));
+        return *this;
+    }
+
+    template <typename Expr>
+        requires (Vector<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense_vector& operator+=(const Expr& expr) {
+        assert(size() == expr.size());
+        for (size_type i = 0; i < size(); ++i)
+            (*this)(i) += static_cast<Value>(expr(i));
+        return *this;
+    }
+
+    template <typename Expr>
+        requires (Vector<Expr> && traits::is_expression_v<Expr>
+                  && std::convertible_to<typename Expr::value_type, Value>)
+    dense_vector& operator-=(const Expr& expr) {
+        assert(size() == expr.size());
+        for (size_type i = 0; i < size(); ++i)
+            (*this)(i) -= static_cast<Value>(expr(i));
         return *this;
     }
 
