@@ -64,3 +64,65 @@
   │ io/matrix_market.hpp        │ Matrix Market .mtx read/write (dense + sparse + symmetric) │
   └─────────────────────────────┴────────────────────────────────────────────────────────────┘
 
+● 32/32 tests passing — all 31 existing tests plus the new expression template test.
+
+  Let me update the memory file to record the Phase 8 completion.
+
+● Recalled 1 memory, wrote 1 memory (ctrl+o to expand)
+
+● Phase 8 is complete. Here's the summary:
+
+  Phase 8: Expression Templates — Complete
+
+  32/32 tests passing (31 existing + 1 new)
+
+  What was implemented:
+
+  ┌────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────┐
+  │                                    File                                    │                                  Action                                  │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ traits/is_expression.hpp                                                   │ Created — trait to distinguish expressions from concrete types           │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ detail/expr_storage.hpp                                                    │ Created — forwarding-ref conditional storage helper                      │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mat/expr/mat_mat_op_expr.hpp                                               │ Created — binary element-wise matrix expressions                         │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mat/expr/mat_scal_op_expr.hpp                                              │ Created — scalar-matrix expressions                                      │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mat/expr/mat_negate_expr.hpp                                               │ Created — unary negation expressions                                     │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mat/expr/mat_mat_times_expr.hpp                                            │ Replaced stub — lazy matmul (available but not used by default operator) │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ vec/expr/vec_vec_op_expr.hpp                                               │ Created — binary element-wise vector expressions                         │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ vec/expr/vec_scal_op_expr.hpp                                              │ Created — scalar-vector expressions                                      │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ vec/expr/vec_negate_expr.hpp                                               │ Created — unary negation expressions                                     │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mat/operators.hpp                                                          │ Rewritten — returns expression types with forwarding refs                │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ vec/operators.hpp                                                          │ Rewritten — returns expression types with forwarding refs                │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mat/dense2D.hpp                                                            │ Modified — expression constructor, operator=, +=, -=                     │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ vec/dense_vector.hpp                                                       │ Modified — expression constructor, operator=, +=, -=                     │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ operation/lazy.hpp                                                         │ Replaced stub — evaluate() materializes expressions                      │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ operation/fuse.hpp                                                         │ Replaced stub — fused_assign(), fused_plus_assign()                      │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mat/expr/mat_expr.hpp, dmat_expr.hpp, smat_expr.hpp, vec/expr/vec_expr.hpp │ Replaced stubs with documentation + includes                             │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ mtl.hpp                                                                    │ Updated — includes new headers                                           │
+  ├────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ tests/unit/operation/test_expression_templates.cpp                         │ Created — 30 test cases                                                  │
+  └────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────┘
+
+  Key design decisions:
+
+  - Forwarding-ref conditional storage: lvalue operands stored by const T&, rvalue operands stored by value T — prevents dangling references when capturing
+  expressions with auto
+  - Matrix-matrix multiply stays eager: returns concrete dense2D to avoid aliasing bugs (e.g., auto C = A*B; A = C; pattern in SVD/QR) and O(n^3)-per-element
+   recomputation
+  - C++20 concepts replace CRTP: expression types simply satisfy Matrix/Vector concepts — no inheritance hierarchy needed
+
