@@ -17,38 +17,38 @@ struct identity_t;
 
 template <typename T>
 struct identity_t<add<T>, T> {
-    T operator()() const { return T{0}; }
+    constexpr T operator()() const { return T{0}; }
 };
 
 // ── Multiplicative identity (one) ───────────────────────────────────────
 
 template <typename T>
 struct identity_t<mult<T>, T> {
-    T operator()() const { return T{1}; }
+    constexpr T operator()() const { return T{1}; }
 };
 
 // ── Max identity (lowest value) ─────────────────────────────────────────
 
 template <typename T>
 struct identity_t<max_op<T>, T> {
-    T operator()() const { return std::numeric_limits<T>::lowest(); }
+    constexpr T operator()() const { return std::numeric_limits<T>::lowest(); }
 };
 
 // ── Min identity (max value) ────────────────────────────────────────────
 
 template <typename T>
 struct identity_t<min_op<T>, T> {
-    T operator()() const { return std::numeric_limits<T>::max(); }
+    constexpr T operator()() const { return std::numeric_limits<T>::max(); }
 };
 
 // ── Convenience functions ───────────────────────────────────────────────
 
 /// Returns the additive identity (zero) for type T
 template <typename T>
-inline T zero() { return identity_t<add<T>, T>{}(); }
+constexpr T zero() { return identity_t<add<T>, T>{}(); }
 
 /// Returns the multiplicative identity (one) for type T
 template <typename T>
-inline T one() { return identity_t<mult<T>, T>{}(); }
+constexpr T one() { return identity_t<mult<T>, T>{}(); }
 
 } // namespace mtl::math
