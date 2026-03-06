@@ -34,8 +34,6 @@ configure_file(
     @ONLY
 )
 
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-
 # ── Header-only INTERFACE library ────────────────────────────────────────
 add_library(mtl5 INTERFACE)
 add_library(MTL5::mtl5 ALIAS mtl5)

@@ -56,6 +56,8 @@
 #include <mtl/mat/identity2D.hpp>
 #include <mtl/mat/coordinate2D.hpp>
 #include <mtl/mat/ell_matrix.hpp>
+#include <mtl/mat/permutation_matrix.hpp>
+#include <mtl/mat/block_diagonal2D.hpp>
 
 // Scalar functors
 #include <mtl/functor/scalar/plus.hpp>
@@ -78,6 +80,10 @@
 #include <mtl/mat/view/banded_view.hpp>
 #include <mtl/mat/view/hermitian_view.hpp>
 #include <mtl/mat/view/map_view.hpp>
+#include <mtl/mat/view/upper_view.hpp>
+#include <mtl/mat/view/lower_view.hpp>
+#include <mtl/mat/view/strict_upper_view.hpp>
+#include <mtl/mat/view/strict_lower_view.hpp>
 
 // Operations
 #include <mtl/operation/set_to_zero.hpp>
