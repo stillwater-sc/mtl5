@@ -126,3 +126,46 @@
    recomputation
   - C++20 concepts replace CRTP: expression types simply satisfy Matrix/Vector concepts — no inheritance hierarchy needed
 
+
+● Phase 9 is complete. Here's a summary of everything implemented:
+
+  Phase 9: Remaining Stubs — Complete
+
+  All 34/34 tests pass, both examples run correctly.
+
+  Files Created/Modified
+
+  ┌─────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────┐
+  │                    File                     │                                       Action                                       │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/vec/sparse_vector.hpp           │ Implemented — dual sorted arrays, O(log n) lookup, insert, exists, crop, iterators │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/vec/inserter.hpp                │ Implemented — proxy-based inserter reusing update_store/update_plus                │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/recursion/base_case_test.hpp    │ Implemented — min_dim_test, max_dim_test, max_dim_test_static                      │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/recursion/matrix_recursator.hpp │ Implemented — quad-tree subdivision with for_each traversal                        │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/recursion/predefined_masks.hpp  │ Implemented — Morton Z-order, doppled, and shark-tooth constexpr masks             │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/interface/blas.hpp              │ Implemented — Level 1/2/3 BLAS extern C + C++ wrappers, #ifdef MTL5_HAS_BLAS       │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/interface/lapack.hpp            │ Implemented — Cholesky, LU, QR, SVD, symmetric eigenvalue, #ifdef MTL5_HAS_LAPACK  │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ include/mtl/mtl.hpp                         │ Modified — added all new includes                                                  │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ CMakeLists.txt                              │ Modified — added MTL5_ENABLE_BLAS and MTL5_ENABLE_LAPACK options                   │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ tests/unit/CMakeLists.txt                   │ Modified — added 2 new test targets                                                │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ tests/unit/vec/test_sparse_vector.cpp       │ Created — 14 test cases                                                            │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ tests/unit/recursion/test_recursion.cpp     │ Created — 13 test cases                                                            │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ examples/phase9a_sparse_vector.cpp          │ Created — pedagogical example                                                      │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ examples/phase9b_recursive_traversal.cpp    │ Created — pedagogical example                                                      │
+  ├─────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ examples/CMakeLists.txt                     │ Modified — added 2 new example targets                                             │
+  └─────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────┘
+
