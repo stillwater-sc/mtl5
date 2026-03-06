@@ -1,60 +1,32 @@
-# Helper function to add a Catch2 test
-function(mtl5_add_test TEST_NAME TEST_SOURCE)
-    add_executable(${TEST_NAME} ${TEST_SOURCE})
-    target_link_libraries(${TEST_NAME} PRIVATE MTL5::mtl5 Catch2::Catch2WithMain)
-    add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
-endfunction()
+# Auto-discover test sources and create Catch2 test targets per category.
+# Each .cpp file becomes target "${prefix}_<filename_stem>" and a CTest entry.
 
-# Concept tests
-mtl5_add_test(test_concepts concepts/test_concepts.cpp)
+file(GLOB CONCEPT_SRC "concepts/*.cpp")
+compile_all("true" "concept" "Tests/concepts" "MTL5::mtl5;Catch2::Catch2WithMain" ${CONCEPT_SRC})
 
-# Math tests
-mtl5_add_test(test_zero_one math/test_zero_one.cpp)
+file(GLOB MATH_SRC "math/*.cpp")
+compile_all("true" "math" "Tests/math" "MTL5::mtl5;Catch2::Catch2WithMain" ${MATH_SRC})
 
-# Detail tests
-mtl5_add_test(test_contiguous_memory_block detail/test_contiguous_memory_block.cpp)
+file(GLOB DETAIL_SRC "detail/*.cpp")
+compile_all("true" "detail" "Tests/detail" "MTL5::mtl5;Catch2::Catch2WithMain" ${DETAIL_SRC})
 
-# Matrix tests
-mtl5_add_test(test_dense2D mat/test_dense2D.cpp)
-mtl5_add_test(test_compressed2D mat/test_compressed2D.cpp)
-mtl5_add_test(test_coordinate2D mat/test_coordinate2D.cpp)
-mtl5_add_test(test_ell_matrix mat/test_ell_matrix.cpp)
-mtl5_add_test(test_matrix_views mat/test_matrix_views.cpp)
+file(GLOB MAT_SRC "mat/*.cpp")
+compile_all("true" "mat" "Tests/mat" "MTL5::mtl5;Catch2::Catch2WithMain" ${MAT_SRC})
 
-# Vector tests
-mtl5_add_test(test_dense_vector vec/test_dense_vector.cpp)
-mtl5_add_test(test_sparse_vector vec/test_sparse_vector.cpp)
+file(GLOB VEC_SRC "vec/*.cpp")
+compile_all("true" "vec" "Tests/vec" "MTL5::mtl5;Catch2::Catch2WithMain" ${VEC_SRC})
 
-# Recursion tests
-mtl5_add_test(test_recursion recursion/test_recursion.cpp)
+file(GLOB OP_SRC "operation/*.cpp")
+compile_all("true" "op" "Tests/operation" "MTL5::mtl5;Catch2::Catch2WithMain" ${OP_SRC})
 
-# Operation tests
-mtl5_add_test(test_dot operation/test_dot.cpp)
-mtl5_add_test(test_norms operation/test_norms.cpp)
-mtl5_add_test(test_vector_ops operation/test_vector_ops.cpp)
-mtl5_add_test(test_matrix_ops operation/test_matrix_ops.cpp)
-mtl5_add_test(test_trisolve operation/test_trisolve.cpp)
-mtl5_add_test(test_lu operation/test_lu.cpp)
-mtl5_add_test(test_qr operation/test_qr.cpp)
-mtl5_add_test(test_cholesky operation/test_cholesky.cpp)
-mtl5_add_test(test_eigenvalue operation/test_eigenvalue.cpp)
-mtl5_add_test(test_svd operation/test_svd.cpp)
-mtl5_add_test(test_kron operation/test_kron.cpp)
-mtl5_add_test(test_expression_templates operation/test_expression_templates.cpp)
+file(GLOB FUNCTOR_SRC "functor/*.cpp")
+compile_all("true" "functor" "Tests/functor" "MTL5::mtl5;Catch2::Catch2WithMain" ${FUNCTOR_SRC})
 
-# Functor tests
-mtl5_add_test(test_scalar_functors functor/test_scalar_functors.cpp)
+file(GLOB ITL_SRC "itl/*.cpp")
+compile_all("true" "itl" "Tests/itl" "MTL5::mtl5;Catch2::Catch2WithMain" ${ITL_SRC})
 
-# ITL tests
-mtl5_add_test(test_cg itl/test_cg.cpp)
-mtl5_add_test(test_bicgstab itl/test_bicgstab.cpp)
-mtl5_add_test(test_bicg itl/test_bicg.cpp)
-mtl5_add_test(test_gmres itl/test_gmres.cpp)
-mtl5_add_test(test_smoothers itl/test_smoothers.cpp)
-mtl5_add_test(test_ilu_ic itl/test_ilu_ic.cpp)
-mtl5_add_test(test_tfqmr itl/test_tfqmr.cpp)
-mtl5_add_test(test_qmr itl/test_qmr.cpp)
-mtl5_add_test(test_idr_s itl/test_idr_s.cpp)
+file(GLOB IO_SRC "io/*.cpp")
+compile_all("true" "io" "Tests/io" "MTL5::mtl5;Catch2::Catch2WithMain" ${IO_SRC})
 
-# I/O tests
-mtl5_add_test(test_matrix_market io/test_matrix_market.cpp)
+file(GLOB RECURSION_SRC "recursion/*.cpp")
+compile_all("true" "recursion" "Tests/recursion" "MTL5::mtl5;Catch2::Catch2WithMain" ${RECURSION_SRC})

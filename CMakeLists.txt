@@ -6,12 +6,20 @@ project(MTL5
     DESCRIPTION "Matrix Template Library 5 — C++20 header-only linear algebra"
 )
 
+# ── CMake infrastructure ────────────────────────────────────────────────
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake")
+include(banners)
+include(compiler_helpers)
+print_header()
+
 # ── Options ──────────────────────────────────────────────────────────────
 option(MTL5_BUILD_TESTS    "Build the test suite"       ON)
 option(MTL5_BUILD_EXAMPLES "Build the examples"         ON)
 option(MTL5_ENABLE_OPENMP  "Enable OpenMP parallelism"  OFF)
 option(MTL5_ENABLE_BLAS    "Enable BLAS acceleration"   OFF)
 option(MTL5_ENABLE_LAPACK  "Enable LAPACK acceleration" OFF)
+option(MTL5_CMAKE_TRACE    "Trace CMake target creation" OFF)
 
 # ── Global settings ─────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 20)
@@ -106,3 +114,7 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/MTL5ConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/MTL5
 )
+
+# ── Configuration summary ───────────────────────────────────────────────
+include(summary)
+mtl5_print_configuration_summary()

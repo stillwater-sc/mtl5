@@ -1,0 +1,101 @@
+################################################################################################
+# summary.cmake
+#
+# MTL5 configuration summary functions.
+# Ported from Universal's summary.cmake, adapted for MTL5.
+
+################################################################################################
+# Status report helper — automatically aligns right column and selects text based on condition.
+function(mtl5_status text)
+    set(status_cond)
+    set(status_then)
+    set(status_else)
+
+    set(status_current_name "cond")
+    foreach(arg ${ARGN})
+        if(arg STREQUAL "THEN")
+            set(status_current_name "then")
+        elseif(arg STREQUAL "ELSE")
+            set(status_current_name "else")
+        else()
+            list(APPEND status_${status_current_name} ${arg})
+        endif()
+    endforeach()
+
+    if(DEFINED status_cond)
+        set(status_placeholder_length 38)
+        string(RANDOM LENGTH ${status_placeholder_length} ALPHABET " " status_placeholder)
+        string(LENGTH "${text}" status_text_length)
+        if(status_text_length LESS status_placeholder_length)
+            string(SUBSTRING "${text}${status_placeholder}" 0 ${status_placeholder_length} status_text)
+        elseif(DEFINED status_then OR DEFINED status_else)
+            message(STATUS "${text}")
+            set(status_text "${status_placeholder}")
+        else()
+            set(status_text "${text}")
+        endif()
+
+        if(DEFINED status_then OR DEFINED status_else)
+            if(${status_cond})
+                string(REPLACE ";" " " status_then "${status_then}")
+                string(REGEX REPLACE "^[ \t]+" "" status_then "${status_then}")
+                message(STATUS "${status_text} ${status_then}")
+            else()
+                string(REPLACE ";" " " status_else "${status_else}")
+                string(REGEX REPLACE "^[ \t]+" "" status_else "${status_else}")
+                message(STATUS "${status_text} ${status_else}")
+            endif()
+        else()
+            string(REPLACE ";" " " status_cond "${status_cond}")
+            string(REGEX REPLACE "^[ \t]+" "" status_cond "${status_cond}")
+            message(STATUS "${status_text} ${status_cond}")
+        endif()
+    else()
+        message(STATUS "${text}")
+    endif()
+endfunction()
+
+################################################################################################
+# Function merging lists of compiler flags to single string.
+function(mtl5_merge_flag_lists out_var)
+    set(__result "")
+    foreach(__list ${ARGN})
+        foreach(__flag ${${__list}})
+            string(STRIP ${__flag} __flag)
+            set(__result "${__result} ${__flag}")
+        endforeach()
+    endforeach()
+    string(STRIP ${__result} __result)
+    set(${out_var} ${__result} PARENT_SCOPE)
+endfunction()
+
+####
+# Prints MTL5 configuration summary
+function(mtl5_print_configuration_summary)
+
+    mtl5_merge_flag_lists(__cxx_flags_rel CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS)
+    mtl5_merge_flag_lists(__cxx_flags_deb CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS)
+
+    mtl5_status("")
+    mtl5_status("******************* MTL5 Configuration Summary *******************")
+    mtl5_status("General:")
+    mtl5_status("  Version                          :   ${PROJECT_VERSION}")
+    mtl5_status("  System                           :   ${CMAKE_SYSTEM_NAME}")
+    mtl5_status("  C++ standard                     :   C++${CMAKE_CXX_STANDARD}")
+    mtl5_status("  C++ compiler                     :   ${CMAKE_CXX_COMPILER}")
+    mtl5_status("  Release CXX flags                :   ${__cxx_flags_rel}")
+    mtl5_status("  Debug CXX flags                  :   ${__cxx_flags_deb}")
+    mtl5_status("  Build type                       :   ${CMAKE_BUILD_TYPE}")
+    mtl5_status("")
+    mtl5_status("Build options:")
+    mtl5_status("  MTL5_BUILD_TESTS                 :   ${MTL5_BUILD_TESTS}")
+    mtl5_status("  MTL5_BUILD_EXAMPLES              :   ${MTL5_BUILD_EXAMPLES}")
+    mtl5_status("  MTL5_ENABLE_OPENMP               :   ${MTL5_ENABLE_OPENMP}")
+    mtl5_status("  MTL5_ENABLE_BLAS                 :   ${MTL5_ENABLE_BLAS}")
+    mtl5_status("  MTL5_ENABLE_LAPACK               :   ${MTL5_ENABLE_LAPACK}")
+    mtl5_status("  MTL5_CMAKE_TRACE                 :   ${MTL5_CMAKE_TRACE}")
+    mtl5_status("")
+    mtl5_status("Install:")
+    mtl5_status("  Install path                     :   ${CMAKE_INSTALL_PREFIX}")
+    mtl5_status("")
+endfunction()
