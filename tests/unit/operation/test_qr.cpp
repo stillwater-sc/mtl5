@@ -13,7 +13,7 @@ using namespace mtl;
 
 TEST_CASE("QR factorization: Q*R reproduces A", "[operation][qr]") {
     mat::dense2D<double> A(3, 3);
-    A(0,0) = 12; A(0,1) = -51; A(0,2) = 4;
+    A(0,0) = 12; A(0,1) = -51; A(0,2) =   4;
     A(1,0) =  6; A(1,1) = 167; A(1,2) = -68;
     A(2,0) = -4; A(2,1) =  24; A(2,2) = -41;
 
@@ -39,8 +39,8 @@ TEST_CASE("QR factorization: Q*R reproduces A", "[operation][qr]") {
 
 TEST_CASE("QR factorization: Q is orthogonal", "[operation][qr]") {
     mat::dense2D<double> A(3, 3);
-    A(0,0) = 1; A(0,1) = 2; A(0,2) = 3;
-    A(1,0) = 4; A(1,1) = 5; A(1,2) = 6;
+    A(0,0) = 1; A(0,1) = 2; A(0,2) =  3;
+    A(1,0) = 4; A(1,1) = 5; A(1,2) =  6;
     A(2,0) = 7; A(2,1) = 8; A(2,2) = 10;
 
     vec::dense_vector<double> tau(3);
@@ -58,8 +58,8 @@ TEST_CASE("QR factorization: Q is orthogonal", "[operation][qr]") {
 
 TEST_CASE("QR solve: least-squares for square system", "[operation][qr]") {
     mat::dense2D<double> A(3, 3);
-    A(0,0) = 1; A(0,1) = 2; A(0,2) = 3;
-    A(1,0) = 4; A(1,1) = 5; A(1,2) = 6;
+    A(0,0) = 1; A(0,1) = 2; A(0,2) =  3;
+    A(1,0) = 4; A(1,1) = 5; A(1,2) =  6;
     A(2,0) = 7; A(2,1) = 8; A(2,2) = 10;
 
     // Save original
@@ -83,7 +83,7 @@ TEST_CASE("QR solve: least-squares for square system", "[operation][qr]") {
 
 TEST_CASE("LQ factorization: L*Q reproduces A", "[operation][lq]") {
     mat::dense2D<double> A(3, 3);
-    A(0,0) = 12; A(0,1) = -51; A(0,2) = 4;
+    A(0,0) = 12; A(0,1) = -51; A(0,2) =   4;
     A(1,0) =  6; A(1,1) = 167; A(1,2) = -68;
     A(2,0) = -4; A(2,1) =  24; A(2,2) = -41;
 
