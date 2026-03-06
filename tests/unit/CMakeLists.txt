@@ -30,3 +30,6 @@ compile_all("true" "io" "Tests/io" "MTL5::mtl5;Catch2::Catch2WithMain" ${IO_SRC}
 
 file(GLOB RECURSION_SRC "recursion/*.cpp")
 compile_all("true" "recursion" "Tests/recursion" "MTL5::mtl5;Catch2::Catch2WithMain" ${RECURSION_SRC})
+
+file(GLOB GENERATOR_SRC "generators/*.cpp")
+compile_all("true" "generators" "Tests/generators" "MTL5::mtl5;Catch2::Catch2WithMain" ${GENERATOR_SRC})

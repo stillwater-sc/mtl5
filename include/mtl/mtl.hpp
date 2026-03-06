@@ -149,5 +149,8 @@
 // I/O
 #include <mtl/io/matrix_market.hpp>
 
+// Generators — Test matrix generation facility
+#include <mtl/generators/generators.hpp>
+
 // ITL — Iterative Template Library
 #include <mtl/itl/itl.hpp>

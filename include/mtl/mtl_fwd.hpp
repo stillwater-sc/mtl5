@@ -59,6 +59,15 @@ namespace math {
     template <typename T> constexpr T one();
 } // namespace math
 
+// ── Generators ──────────────────────────────────────────────────────────
+namespace generators {
+    template <typename Value> class hilbert;
+    template <typename Value> class lehmer;
+    template <typename Value> class lotkin;
+    template <typename Value> class ones;
+    template <typename Value> class minij;
+} // namespace generators
+
 // ── ITL ─────────────────────────────────────────────────────────────────
 namespace itl {
     template <typename Real> class basic_iteration;
