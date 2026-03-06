@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 project(MTL5
-    VERSION 0.1.0
+    VERSION 5.1.0
     LANGUAGES CXX
     DESCRIPTION "Matrix Template Library 5 — C++20 header-only linear algebra"
 )
@@ -33,6 +33,8 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/include/mtl/version.hpp"
     @ONLY
 )
+
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 # ── Header-only INTERFACE library ────────────────────────────────────────
 add_library(mtl5 INTERFACE)
