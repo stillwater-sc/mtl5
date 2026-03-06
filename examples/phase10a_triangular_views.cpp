@@ -1,4 +1,4 @@
-// phase10a_triangular_views.cpp — Triangular Views and the LU Decomposition
+// phase10a_triangular_views.cpp - Triangular Views and the LU Decomposition
 //
 // This example demonstrates:
 //   1. upper(), lower(), strict_upper(), strict_lower() views
@@ -61,19 +61,19 @@ int main() {
 
     // upper(A): elements on and above the diagonal
     auto U = upper(A);
-    print_matrix("upper(A) — includes diagonal", U, n, n);
+    print_matrix("upper(A) - includes diagonal", U, n, n);
 
     // lower(A): elements on and below the diagonal
     auto L = lower(A);
-    print_matrix("lower(A) — includes diagonal", L, n, n);
+    print_matrix("lower(A) - includes diagonal", L, n, n);
 
     // strict_upper(A): elements strictly above the diagonal
     auto SU = strict_upper(A);
-    print_matrix("strict_upper(A) — excludes diagonal", SU, n, n);
+    print_matrix("strict_upper(A) - excludes diagonal", SU, n, n);
 
     // strict_lower(A): elements strictly below the diagonal
     auto SL = strict_lower(A);
-    print_matrix("strict_lower(A) — excludes diagonal", SL, n, n);
+    print_matrix("strict_lower(A) - excludes diagonal", SL, n, n);
 
     // ══════════════════════════════════════════════════════════════════════
     // Part 2: Decomposition Identity
@@ -104,15 +104,19 @@ int main() {
 
     // triu(A, 0) = upper(A)
     auto T0 = triu(A, 0);
-    print_matrix("triu(A, 0) — same as upper(A)", T0, n, n);
+    print_matrix("triu(A, 0) - same as upper(A)", T0, n, n);
 
-    // triu(A, 2) = only 2nd superdiagonal and above
+	// triu(A, 1) = 1st superdiagonal and above
+	auto T1 = triu(A, 1);
+	print_matrix("triu(A, 1) - 1st superdiagonal and above - same as strict_upper(A)", T1, n, n);
+
+    // triu(A, 2) = 2nd superdiagonal and above
     auto T2 = triu(A, 2);
-    print_matrix("triu(A, 2) — 2nd superdiagonal and above", T2, n, n);
+    print_matrix("triu(A, 2) - 2nd superdiagonal and above", T2, n, n);
 
     // tril(A, -1) = strict lower
     auto TL1 = tril(A, -1);
-    print_matrix("tril(A, -1) — same as strict_lower(A)", TL1, n, n);
+    print_matrix("tril(A, -1) - same as strict_lower(A)", TL1, n, n);
 
     // ══════════════════════════════════════════════════════════════════════
     // Part 4: Triangular Views with LU Factorization
@@ -148,14 +152,14 @@ int main() {
     auto LU_upper = upper(LU);
     print_matrix("upper(LU) = U", LU_upper, n, n);
 
-    // Extract L (strict lower triangle — diagonal of L is implicitly 1)
+    // Extract L (strict lower triangle - diagonal of L is implicitly 1)
     auto LU_lower = strict_lower(LU);
     std::cout << "strict_lower(LU) = L (without unit diagonal):\n";
     print_matrix("strict_lower(LU)", LU_lower, n, n);
-    std::cout << "  (The actual L has 1s on the diagonal — unit lower triangular)\n\n";
+    std::cout << "  (The actual L has 1s on the diagonal - unit lower triangular)\n\n";
 
     // ── Solve using the factorization ───────────────────────────────────
-    std::cout << "--- Solving B*x = b using packed LU ---\n";
+    std::cout << "- Solving B*x = b using packed LU -\n";
     vec::dense_vector<double> x(n);
     lu_solve(LU, pivot, x, b);
     print_vector("x_computed", x);
@@ -178,7 +182,7 @@ int main() {
     L_full(2, 0) = 1.0; L_full(2, 1) = 5.0; L_full(2, 2) = 6.0;
 
     // Even though L_full is already lower triangular, the view enforces
-    // the contract at the type level — upper entries are guaranteed zero.
+    // the contract at the type level - upper entries are guaranteed zero.
     auto L_view = lower(L_full);
 
     vec::dense_vector<double> b3 = {2.0, 11.0, 29.0};
@@ -196,8 +200,8 @@ int main() {
     std::cout << "  1. Views are ZERO-COST: no data copied, just filtered access\n";
     std::cout << "  2. upper(A) + strict_lower(A) = A  (decomposition identity)\n";
     std::cout << "  3. triu(A,k) / tril(A,k) generalize with diagonal offset k\n";
-    std::cout << "  4. LU stores L\\U packed — views extract each part cleanly\n";
-    std::cout << "  5. Views satisfy the Matrix concept — pass them to any solver\n";
+    std::cout << "  4. LU stores L\\U packed - views extract each part cleanly\n";
+    std::cout << "  5. Views satisfy the Matrix concept - pass them to any solver\n";
 
     return EXIT_SUCCESS;
 }

@@ -1,4 +1,4 @@
-// phase8b_expression_concepts.cpp — Expression Template Mechanics
+// phase8b_expression_concepts.cpp - Expression Template Mechanics
 //
 // This example demonstrates:
 //   1. Lazy capture: expressions hold references, not computed values
@@ -13,7 +13,7 @@
 //
 // Expression templates defer computation until assignment, building
 // a compile-time tree that the compiler can optimize into a single
-// fused loop — no temporary allocations.
+// fused loop - no temporary allocations.
 
 #include <mtl/mtl.hpp>
 #include <iostream>
@@ -46,7 +46,7 @@ void print_vector(const std::string& name, auto const& v, std::size_t n) {
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 8B: Expression Template Mechanics — A Guided Tour\n";
+    std::cout << " Phase 8B: Expression Template Mechanics - A Guided Tour\n";
     std::cout << "=============================================================\n\n";
 
     const std::size_t n = 3;
@@ -67,7 +67,7 @@ int main() {
     std::cout << "\n";
 
     // ══════════════════════════════════════════════════════════════════════
-    // Part 1: Lazy Capture — Expressions Hold References
+    // Part 1: Lazy Capture - Expressions Hold References
     // ══════════════════════════════════════════════════════════════════════
     std::cout << "=== Part 1: Lazy Capture ===\n";
     std::cout << "auto expr = A + B;  // no computation yet!\n";
@@ -182,7 +182,7 @@ int main() {
     // ══════════════════════════════════════════════════════════════════════
     std::cout << "=== Part 5: Fused Plus-Assign ===\n";
     std::cout << "fused_plus_assign(C_acc, 2.0*A + B) adds the expression\n";
-    std::cout << "result to C_acc in a single pass — no temporary.\n\n";
+    std::cout << "result to C_acc in a single pass - no temporary.\n\n";
 
     mat::dense2D<double> C_acc(n, n);
     for (std::size_t i = 0; i < n; ++i)
@@ -253,10 +253,10 @@ int main() {
     std::cout << "Correctness: " << (vec_ok ? "PASS" : "FAIL") << "\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
-    // Part 8: Mixed Eager/Lazy — Matrix-Vector Multiply + Vector Add
+    // Part 8: Mixed Eager/Lazy - Matrix-Vector Multiply + Vector Add
     // ══════════════════════════════════════════════════════════════════════
     std::cout << "=== Part 8: Mixed Eager/Lazy ===\n";
-    std::cout << "Matrix-vector multiply (A*x) is EAGER — it returns a\n";
+    std::cout << "Matrix-vector multiply (A*x) is EAGER - it returns a\n";
     std::cout << "concrete dense_vector immediately. But the subsequent\n";
     std::cout << "vector addition is lazy. So in y = A*x + b, the matvec\n";
     std::cout << "is computed first, then the add is fused into assignment.\n\n";
@@ -291,7 +291,7 @@ int main() {
               << std::boolalpha << traits::is_expression_v<decltype(matvec_plus_b)> << " (lazy add)\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
-    // Part 9: Unary Operations — Negation and Scalar Division
+    // Part 9: Unary Operations - Negation and Scalar Division
     // ══════════════════════════════════════════════════════════════════════
     std::cout << "=== Part 9: Unary Operations ===\n\n";
 
@@ -336,7 +336,7 @@ int main() {
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. Expression templates defer computation until assignment.\n";
     std::cout << "   auto expr = A + B creates a lightweight proxy, not a matrix.\n";
-    std::cout << "2. Expressions store references to lvalue operands — modifying\n";
+    std::cout << "2. Expressions store references to lvalue operands - modifying\n";
     std::cout << "   the source changes the expression result (lazy semantics).\n";
     std::cout << "3. Nested expressions compose into trees that the compiler\n";
     std::cout << "   can optimize into a single fused loop.\n";
@@ -347,7 +347,7 @@ int main() {
     std::cout << "   (avoiding O(n^3)-per-element recomputation and aliasing).\n";
     std::cout << "   Element-wise ops (+, -, scalar*, /) are LAZY.\n";
     std::cout << "7. is_expression_v<T> distinguishes expressions from concrete\n";
-    std::cout << "   types at compile time — useful for overload resolution.\n";
+    std::cout << "   types at compile time - useful for overload resolution.\n";
 
     return EXIT_SUCCESS;
 }

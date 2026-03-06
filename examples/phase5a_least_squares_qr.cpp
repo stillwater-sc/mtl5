@@ -1,4 +1,4 @@
-// phase5a_least_squares_qr.cpp — Least Squares Curve Fitting
+// phase5a_least_squares_qr.cpp - Least Squares Curve Fitting
 //
 // This example demonstrates:
 //   1. Polynomial curve fitting as a least-squares problem
@@ -19,7 +19,7 @@ using namespace mtl;
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 5A: Least Squares Curve Fitting — QR vs Normal Eqns\n";
+    std::cout << " Phase 5A: Least Squares Curve Fitting - QR vs Normal Eqns\n";
     std::cout << "=============================================================\n\n";
 
     // ── Generate noisy data ──────────────────────────────────────────────

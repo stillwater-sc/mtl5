@@ -183,9 +183,9 @@ int main() {
 
     std::cout << "  For a matrix with block structure:\n";
     std::cout << "\n";
-    std::cout << "      [A11  A12]          [A11   0 ]^{-1}\n";
-    std::cout << "  A = [        ],   M^{-1}=[        ]\n";
-    std::cout << "      [A21  A22]          [ 0   A22]\n";
+    std::cout << "      [A11  A12]             [A11   0 ]^{-1}\n";
+    std::cout << "  A = [        ],   M^{-1} = [        ]\n";
+    std::cout << "      [A21  A22]             [ 0   A22]\n";
     std::cout << "\n";
     std::cout << "  The block diagonal preconditioner inverts each block\n";
     std::cout << "  independently. Cost: sum of O(block_size^3) instead of O(n^3).\n\n";

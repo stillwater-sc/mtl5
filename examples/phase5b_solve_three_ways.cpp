@@ -1,4 +1,4 @@
-// phase5b_solve_three_ways.cpp — Solving Ax = b: LU vs Cholesky vs QR
+// phase5b_solve_three_ways.cpp - Solving Ax = b: LU vs Cholesky vs QR
 //
 // This example demonstrates:
 //   1. When to use each direct factorization method
@@ -38,7 +38,7 @@ double residual_norm(const mat::dense2D<double>& A,
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 5B: Solving Ax=b — LU vs Cholesky vs QR\n";
+    std::cout << " Phase 5B: Solving Ax=b - LU vs Cholesky vs QR\n";
     std::cout << "=============================================================\n\n";
 
     const std::size_t n = 4;
@@ -159,7 +159,7 @@ int main() {
 
     auto b_indef = A_indef * x_true;
 
-    std::cout << "Perturbed matrix (A(0,0)=0.1, A(1,1)=0.1 — symmetric indefinite):\n";
+    std::cout << "Perturbed matrix (A(0,0)=0.1, A(1,1)=0.1 - symmetric indefinite):\n";
     std::cout << "  Diagonal now too small relative to off-diagonal entries.\n\n";
 
     // LU: works
@@ -190,7 +190,7 @@ int main() {
         int info = cholesky_factor(A_copy);
         std::cout << "  cholesky_factor return code: " << info;
         if (info != 0)
-            std::cout << " (failed at step " << info << " — matrix is not SPD)";
+            std::cout << " (failed at step " << info << " - matrix is not SPD)";
         std::cout << "\n\n";
     }
 

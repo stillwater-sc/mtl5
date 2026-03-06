@@ -1,4 +1,4 @@
-// phase3b_convection_diffusion.cpp — When CG Fails: Non-Symmetric Systems
+// phase3b_convection_diffusion.cpp - When CG Fails: Non-Symmetric Systems
 //
 // This example demonstrates:
 //   1. How convection creates a non-symmetric matrix
@@ -34,7 +34,7 @@ mat::dense2D<double> build_conv_diff(std::size_t n, double epsilon) {
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 3B: Convection-Diffusion — CG vs BiCGSTAB\n";
+    std::cout << " Phase 3B: Convection-Diffusion - CG vs BiCGSTAB\n";
     std::cout << "=============================================================\n\n";
 
     const std::size_t n = 30;
@@ -48,7 +48,7 @@ int main() {
         double eps = 1.0;
         std::cout << "=== Regime 1: Diffusion-dominated (epsilon = " << eps << ") ===\n";
         std::cout << "When epsilon is large, the diffusion term -eps*u'' dominates.\n";
-        std::cout << "The matrix is 'nearly symmetric' — CG may still work.\n\n";
+        std::cout << "The matrix is 'nearly symmetric' - CG may still work.\n\n";
 
         auto A = build_conv_diff(n, eps);
 
@@ -79,7 +79,7 @@ int main() {
         double eps = 0.01;
         std::cout << "=== Regime 2: Convection-dominated (epsilon = " << eps << ") ===\n";
         std::cout << "When epsilon is small, the convection term u' dominates.\n";
-        std::cout << "The matrix is strongly non-symmetric — CG should fail.\n\n";
+        std::cout << "The matrix is strongly non-symmetric - CG should fail.\n\n";
 
         auto A = build_conv_diff(n, eps);
 
@@ -95,7 +95,7 @@ int main() {
         int info_cg = itl::cg(A, x_cg, b, I, iter_cg);
         std::cout << "CG:       " << iter_cg.iterations() << " iterations, "
                   << "error code = " << info_cg;
-        if (info_cg != 0) std::cout << " (FAILED — expected for non-SPD)";
+        if (info_cg != 0) std::cout << " (FAILED - expected for non-SPD)";
         std::cout << "\n";
 
         // BiCGSTAB with diagonal preconditioner
@@ -123,7 +123,7 @@ int main() {
     auto A = build_conv_diff(n, eps);
     itl::pc::identity<mat::dense2D<double>> I(A);
 
-    // 1. basic_iteration — silent
+    // 1. basic_iteration - silent
     {
         vec::dense_vector<double> x(n, 0.0);
         itl::basic_iteration<double> iter(b, 200, 1.0e-8);
@@ -132,7 +132,7 @@ int main() {
                   << iter.iterations() << " iterations\n";
     }
 
-    // 2. cyclic_iteration — prints every N steps
+    // 2. cyclic_iteration - prints every N steps
     {
         std::cout << "\ncyclic_iteration (every 5 steps):\n";
         vec::dense_vector<double> x(n, 0.0);
@@ -141,7 +141,7 @@ int main() {
         std::cout << "\n";
     }
 
-    // 3. noisy_iteration — prints every step
+    // 3. noisy_iteration - prints every step
     {
         std::cout << "noisy_iteration (every step):\n";
         vec::dense_vector<double> x(n, 0.0);

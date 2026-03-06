@@ -1,4 +1,4 @@
-// phase9a_sparse_vector.cpp — Sparse Vector Operations
+// phase9a_sparse_vector.cpp - Sparse Vector Operations
 //
 // This example demonstrates:
 //   1. Construction and population of sparse vectors
@@ -42,7 +42,7 @@ int main() {
     std::cout << "Created sparse vector of dimension " << sv.size()
               << " with " << sv.nnz() << " stored entries.\n\n";
 
-    // Insert elements (in any order — sorted internally)
+    // Insert elements (in any order - sorted internally)
     sv.insert(7, 3.14);
     sv.insert(2, 1.41);
     sv.insert(5, 2.72);
@@ -56,7 +56,7 @@ int main() {
 
     // Read access: present vs absent
     std::cout << "\n  sv(2) = " << sv(2) << "  (present)\n";
-    std::cout << "  sv(3) = " << sv(3) << "  (absent — returns 0)\n";
+    std::cout << "  sv(3) = " << sv(3) << "  (absent - returns 0)\n";
     std::cout << "  sv(7) = " << sv(7) << "  (present)\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
@@ -133,7 +133,7 @@ int main() {
     }
 
     noisy.crop(0.01);
-    std::cout << "\nAfter crop(threshold=0.01) — nnz=" << noisy.nnz() << ":\n";
+    std::cout << "\nAfter crop(threshold=0.01) - nnz=" << noisy.nnz() << ":\n";
     for (auto [idx, val] : noisy) {
         std::cout << "  [" << std::setw(2) << idx << "] = "
                   << std::setw(10) << val << "\n";

@@ -1,4 +1,4 @@
-// phase8a_expression_benchmark.cpp — Cache-Efficient Expression Templates
+// phase8a_expression_benchmark.cpp - Cache-Efficient Expression Templates
 //
 // This example demonstrates:
 //   1. How expression templates fuse element-wise operations into a single pass
@@ -8,7 +8,7 @@
 // Key insight: C = 2.0*A + 3.0*B requires 3 N×N matrices (A, B, C).
 // With expression templates (lazy), only these 3 matrices must be in cache
 // during the single fused pass. With eager evaluation, 2 extra temporaries
-// are created (one for 2.0*A, one for 3.0*B), totaling 5 matrices — which
+// are created (one for 2.0*A, one for 3.0*B), totaling 5 matrices - which
 // can exceed L3 cache capacity and cause a performance cliff.
 
 #include <mtl/mtl.hpp>
@@ -28,7 +28,7 @@ void do_not_optimize(const T& val) {
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 8A: Expression Template Benchmark — Cache Efficiency\n";
+    std::cout << " Phase 8A: Expression Template Benchmark - Cache Efficiency\n";
     std::cout << "=============================================================\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
@@ -169,7 +169,7 @@ int main() {
     std::cout << "3. The advantage is most pronounced at the L3 cache boundary:\n";
     std::cout << "   when 3 matrices fit but 5 do not, lazy evaluation avoids\n";
     std::cout << "   spilling to main memory.\n";
-    std::cout << "4. evaluate() forces materialization — useful when you need a\n";
+    std::cout << "4. evaluate() forces materialization - useful when you need a\n";
     std::cout << "   concrete matrix, but it defeats the fusion optimization.\n";
     std::cout << "5. For element-wise ops, always prefer the natural syntax:\n";
     std::cout << "       C = 2.0 * A + 3.0 * B;   // fused, cache-friendly\n";

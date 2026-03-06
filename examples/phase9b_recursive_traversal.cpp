@@ -1,4 +1,4 @@
-// phase9b_recursive_traversal.cpp — Block-Recursive GEMM
+// phase9b_recursive_traversal.cpp - Block-Recursive GEMM
 //
 // This example demonstrates:
 //   1. Why naive ijk-loop GEMM thrashes cache for large matrices
@@ -7,7 +7,7 @@
 //   4. Connection to real-world tiling in DL compilers (XLA, TVM, Triton)
 //
 // Key insight: Matrix multiplication C += A * B with the naive ijk loop has
-// poor temporal locality — each row of B is streamed through cache N times,
+// poor temporal locality - each row of B is streamed through cache N times,
 // one per row of A. Block-recursive GEMM subdivides A, B, C into quadrants
 // and multiplies the sub-blocks, keeping the working set small enough to
 // fit in cache. This is the fundamental strategy behind tiled GEMM in every
@@ -125,7 +125,7 @@ void blocked_gemm(mat::dense2D<double>& C,
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 9B: Block-Recursive GEMM — Cache-Oblivious Tiling\n";
+    std::cout << " Phase 9B: Block-Recursive GEMM - Cache-Oblivious Tiling\n";
     std::cout << "=============================================================\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
@@ -325,8 +325,8 @@ int main() {
     std::cout << "Our cache-OBLIVIOUS recursion is the theoretical ideal:\n";
     std::cout << "no tuning parameters needed. Production libraries use\n";
     std::cout << "cache-AWARE tiling (fixed block sizes) for predictability,\n";
-    std::cout << "but the underlying principle — divide until blocks fit in\n";
-    std::cout << "fast memory — is identical.\n";
+    std::cout << "but the underlying principle - divide until blocks fit in\n";
+    std::cout << "fast memory - is identical.\n";
 
     return EXIT_SUCCESS;
 }

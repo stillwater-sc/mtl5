@@ -1,4 +1,4 @@
-// phase7b_structured_views.cpp — Structured Matrix Views
+// phase7b_structured_views.cpp - Structured Matrix Views
 //
 // This example demonstrates:
 //   1. Hermitian view: store upper triangle, mirror with conjugation
@@ -9,7 +9,7 @@
 //   6. Matrix Market I/O round-trip
 //
 // Views are lightweight wrappers that reinterpret existing storage
-// without copying data — zero-cost abstractions.
+// without copying data - zero-cost abstractions.
 
 #include <mtl/mtl.hpp>
 #include <iostream>
@@ -35,7 +35,7 @@ void print_matrix(const std::string& name, auto const& M,
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 7B: Structured Matrix Views — Zero-Copy Abstractions\n";
+    std::cout << " Phase 7B: Structured Matrix Views - Zero-Copy Abstractions\n";
     std::cout << "=============================================================\n\n";
 
     const std::size_t n = 6;
@@ -47,7 +47,7 @@ int main() {
     std::cout << "Store only the upper triangle; the view mirrors it below.\n";
     std::cout << "For real matrices: H(i,j) = H(j,i). No extra storage.\n\n";
 
-    // Build SPD matrix — store only upper triangle
+    // Build SPD matrix - store only upper triangle
     mat::dense2D<double> A_upper(n, n);
     for (std::size_t i = 0; i < n; ++i) {
         A_upper(i, i) = 4.0 + i;  // positive diagonal

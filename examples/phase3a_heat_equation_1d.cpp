@@ -1,4 +1,4 @@
-// phase3a_heat_equation_1d.cpp — Solving the 1D Steady-State Heat Equation
+// phase3a_heat_equation_1d.cpp - Solving the 1D Steady-State Heat Equation
 //
 // This example demonstrates:
 //   1. How finite differences convert a PDE into a linear system Ax = b
@@ -20,13 +20,13 @@ using namespace mtl;
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 3A: 1D Heat Equation — CG with Preconditioning\n";
+    std::cout << " Phase 3A: 1D Heat Equation - CG with Preconditioning\n";
     std::cout << "=============================================================\n\n";
 
     // ── Problem Setup ─────────────────────────────────────────────────────
     // Discretize [0,1] with n interior points. Grid spacing h = 1/(n+1).
     // Variable conductivity k(x) = 1 + 99*x ranges from 1 to 100.
-    // The resulting matrix is SPD with non-uniform diagonal — ideal for
+    // The resulting matrix is SPD with non-uniform diagonal - ideal for
     // demonstrating the benefit of Jacobi preconditioning.
 
     const std::size_t n = 100;
@@ -53,7 +53,7 @@ int main() {
     std::cout << "Diagonal range: A(0,0)=" << std::fixed << std::setprecision(1) << A(0,0)
               << " ... A(" << n-1 << "," << n-1 << ")=" << A(n-1,n-1) << "\n";
     std::cout << "(Ratio ~" << std::setprecision(0) << A(n-1,n-1)/A(0,0)
-              << "x — highly non-uniform diagonal)\n\n";
+              << "x - highly non-uniform diagonal)\n\n";
 
     // Build RHS: f(x) = 1 (constant forcing)
     vec::dense_vector<double> b(n, 1.0);
@@ -114,7 +114,7 @@ int main() {
     std::cout << "2. Jacobi preconditioning helps when diagonal entries vary.\n";
     std::cout << "   It scales each row by 1/A(i,i), reducing the effective\n";
     std::cout << "   condition number and iteration count.\n";
-    std::cout << "3. Both methods give the same solution — preconditioning\n";
+    std::cout << "3. Both methods give the same solution - preconditioning\n";
     std::cout << "   only changes the convergence speed, not the answer.\n";
     std::cout << "4. For production use, sparse storage (compressed2D) would\n";
     std::cout << "   reduce memory from O(n^2) to O(n) for this tridiagonal system.\n";

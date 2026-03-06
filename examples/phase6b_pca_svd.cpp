@@ -1,4 +1,4 @@
-// phase6b_pca_svd.cpp — PCA via SVD: Data Dimensionality Reduction
+// phase6b_pca_svd.cpp - PCA via SVD: Data Dimensionality Reduction
 //
 // This example demonstrates:
 //   1. Principal Component Analysis (PCA) as an SVD problem
@@ -19,7 +19,7 @@ using namespace mtl;
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 6B: PCA via SVD — Data Dimensionality Reduction\n";
+    std::cout << " Phase 6B: PCA via SVD - Data Dimensionality Reduction\n";
     std::cout << "=============================================================\n\n";
 
     // ── Generate synthetic data ──────────────────────────────────────────
@@ -217,7 +217,7 @@ int main() {
     std::cout << "   The k-th principal component captures the k-th most\n";
     std::cout << "   variance in the data.\n";
     std::cout << "2. SVD is the numerically stable way to compute PCA.\n";
-    std::cout << "   Forming X^T*X squares the condition number — avoid it.\n";
+    std::cout << "   Forming X^T*X squares the condition number - avoid it.\n";
     std::cout << "3. Singular values relate to covariance eigenvalues:\n";
     std::cout << "   variance_k = sigma_k^2 / (n-1)\n";
     std::cout << "4. Truncating to k components gives the best rank-k\n";

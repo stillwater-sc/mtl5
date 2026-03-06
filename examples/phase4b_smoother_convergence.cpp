@@ -1,4 +1,4 @@
-// phase4b_smoother_convergence.cpp — Stationary Iterative Methods
+// phase4b_smoother_convergence.cpp - Stationary Iterative Methods
 //
 // This example demonstrates:
 //   1. Jacobi, Gauss-Seidel, and SOR as standalone solvers
@@ -20,7 +20,7 @@ using namespace mtl;
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 4B: Smoother Convergence — Jacobi / GS / SOR\n";
+    std::cout << " Phase 4B: Smoother Convergence - Jacobi / GS / SOR\n";
     std::cout << "=============================================================\n\n";
 
     // ── Build 1D Poisson system (sparse) ─────────────────────────────────

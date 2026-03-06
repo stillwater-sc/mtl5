@@ -1,4 +1,4 @@
-// phase4a_laplacian_2d.cpp — 2D Laplacian: Sparse Assembly + GMRES
+// phase4a_laplacian_2d.cpp - 2D Laplacian: Sparse Assembly + GMRES
 //
 // This example demonstrates:
 //   1. How to assemble a sparse matrix with the compressed2D inserter
@@ -20,7 +20,7 @@ using namespace mtl;
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 4A: 2D Laplacian — Sparse Assembly + GMRES\n";
+    std::cout << " Phase 4A: 2D Laplacian - Sparse Assembly + GMRES\n";
     std::cout << "=============================================================\n\n";
 
     // ── Grid Setup ───────────────────────────────────────────────────────
@@ -76,14 +76,14 @@ int main() {
               << 100.0 * A.nnz() / (N * N) << "%)\n\n";
 
     // ── Build RHS ─────────────────────────────────────────────────────────
-    // f(x,y) = 1 (constant forcing — excites all eigenmodes for nontrivial convergence)
+    // f(x,y) = 1 (constant forcing - excites all eigenmodes for nontrivial convergence)
     vec::dense_vector<double> b(N, 1.0);
 
     // Preconditioner: identity (no preconditioning) to show raw solver behavior
     itl::pc::identity<mat::compressed2D<double>> no_pc(A);
 
     // ── Solve with GMRES (restart=5) ─────────────────────────────────────
-    std::cout << "--- Solve 1: GMRES(5) — very small Krylov subspace ---\n";
+    std::cout << "--- Solve 1: GMRES(5) - very small Krylov subspace ---\n";
     std::cout << "Restart limits memory to 5 vectors but needs many restarts.\n\n";
 
     vec::dense_vector<double> x1(N, 0.0);
@@ -92,7 +92,7 @@ int main() {
     std::cout << "\n";
 
     // ── Solve with GMRES (restart=20) ────────────────────────────────────
-    std::cout << "--- Solve 2: GMRES(20) — larger Krylov subspace ---\n";
+    std::cout << "--- Solve 2: GMRES(20) - larger Krylov subspace ---\n";
     std::cout << "More memory per cycle but typically fewer total iterations.\n\n";
 
     vec::dense_vector<double> x2(N, 0.0);
@@ -101,7 +101,7 @@ int main() {
     std::cout << "\n";
 
     // ── Solve with CG (for comparison) ───────────────────────────────────
-    std::cout << "--- Solve 3: CG — valid since 2D Laplacian is SPD ---\n";
+    std::cout << "--- Solve 3: CG - valid since 2D Laplacian is SPD ---\n";
     std::cout << "CG is optimal for SPD systems: guaranteed convergence in N steps.\n\n";
 
     vec::dense_vector<double> x3(N, 0.0);

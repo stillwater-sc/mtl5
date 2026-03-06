@@ -1,4 +1,4 @@
-// phase9c_blas_dispatch.cpp — BLAS/LAPACK Dispatch Architecture
+// phase9c_blas_dispatch.cpp - BLAS/LAPACK Dispatch Architecture
 //
 // This example demonstrates:
 //   1. How MTL5 optionally dispatches to hardware BLAS/LAPACK
@@ -126,16 +126,16 @@ int main() {
     std::cout << "MTL5 uses the same compile-time dispatch strategy as every\n";
     std::cout << "major numerical framework:\n\n";
 
-    std::cout << "  +------------------+------------------+------------------+\n";
-    std::cout << "  | Framework        | Guard Macro      | BLAS Backend     |\n";
-    std::cout << "  +------------------+------------------+------------------+\n";
-    std::cout << "  | MTL5             | MTL5_HAS_BLAS    | OpenBLAS/MKL     |\n";
-    std::cout << "  | NumPy/SciPy      | auto-detected    | OpenBLAS/MKL     |\n";
-    std::cout << "  | PyTorch (CPU)    | USE_BLAS=1       | MKL/OpenBLAS     |\n";
-    std::cout << "  | PyTorch (GPU)    | USE_CUDA=1       | cuBLAS           |\n";
-    std::cout << "  | TensorFlow       | auto-detected    | Eigen/MKL/cuBLAS |\n";
-    std::cout << "  | JAX              | jaxlib backend    | MKL/cuBLAS/rocBLAS|\n";
-    std::cout << "  +------------------+------------------+------------------+\n\n";
+    std::cout << "  +------------------+------------------+--------------------+\n";
+    std::cout << "  | Framework        | Guard Macro      | BLAS Backend       |\n";
+    std::cout << "  +------------------+------------------+--------------------+\n";
+    std::cout << "  | MTL5             | MTL5_HAS_BLAS    | OpenBLAS/MKL       |\n";
+    std::cout << "  | NumPy/SciPy      | auto-detected    | OpenBLAS/MKL       |\n";
+    std::cout << "  | PyTorch (CPU)    | USE_BLAS=1       | MKL/OpenBLAS       |\n";
+    std::cout << "  | PyTorch (GPU)    | USE_CUDA=1       | cuBLAS             |\n";
+    std::cout << "  | TensorFlow       | auto-detected    | Eigen/MKL/cuBLAS   |\n";
+    std::cout << "  | JAX              | jaxlib backend   | MKL/cuBLAS/rocBLAS |\n";
+    std::cout << "  +------------------+------------------+--------------------+\n\n";
 
     std::cout << "The pattern in code:\n\n";
     std::cout << "  // In mtl/interface/blas.hpp:\n";
@@ -256,7 +256,7 @@ int main() {
     std::cout << "\n";
 
 #ifndef MTL5_HAS_BLAS
-    std::cout << "  (BLAS not enabled — showing manual C++ GFLOP/s only)\n";
+    std::cout << "  (BLAS not enabled - showing manual C++ GFLOP/s only)\n";
     std::cout << "  Typical BLAS speedup: 10-50x over naive C++ loops\n";
     std::cout << "  MKL on modern x86: ~50-200 GFLOP/s for large DGEMM\n\n";
 #endif
@@ -278,9 +278,9 @@ int main() {
     std::cout << "  +--------------------+------------+---------------------------+\n\n";
 
 #ifdef MTL5_HAS_LAPACK
-    std::cout << "  LAPACK is enabled — factorizations dispatch to vendor routines.\n\n";
+    std::cout << "  LAPACK is enabled - factorizations dispatch to vendor routines.\n\n";
 #else
-    std::cout << "  LAPACK is disabled — MTL5 uses its own C++ implementations.\n";
+    std::cout << "  LAPACK is disabled - MTL5 uses its own C++ implementations.\n";
     std::cout << "  These are correct but not SIMD-optimized like MKL/OpenBLAS.\n\n";
 #endif
 
@@ -311,7 +311,7 @@ int main() {
     std::cout << "This two-tier design means:\n";
     std::cout << "  - MTL5 works out of the box on any C++20 compiler\n";
     std::cout << "  - Flip one CMake flag to get 10-50x speedup on hot paths\n";
-    std::cout << "  - No code changes needed — dispatch is compile-time\n";
+    std::cout << "  - No code changes needed - dispatch is compile-time\n";
     std::cout << "  - Same binary can be profiled to identify BLAS bottlenecks\n";
 
     return EXIT_SUCCESS;

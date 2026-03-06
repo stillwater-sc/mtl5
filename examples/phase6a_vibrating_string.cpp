@@ -1,4 +1,4 @@
-// phase6a_vibrating_string.cpp — Vibrating String Eigenvalue Problem
+// phase6a_vibrating_string.cpp - Vibrating String Eigenvalue Problem
 //
 // This example demonstrates:
 //   1. Eigenvalues of the 1D Laplacian = vibration frequencies
@@ -23,7 +23,7 @@ using namespace mtl;
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 6A: Vibrating String — Eigenvalues + Kronecker\n";
+    std::cout << " Phase 6A: Vibrating String - Eigenvalues + Kronecker\n";
     std::cout << "=============================================================\n\n";
 
     const double pi = std::numbers::pi;
@@ -37,7 +37,7 @@ int main() {
     std::cout << "Building " << n << "x" << n << " tridiagonal 1D Laplacian:\n";
     std::cout << "T(i,i) = 2, T(i,i+/-1) = -1\n\n";
 
-    // Build 1D Laplacian (no h^2 scaling — pure combinatorial Laplacian)
+    // Build 1D Laplacian (no h^2 scaling - pure combinatorial Laplacian)
     mat::dense2D<double> T(n, n);
     for (std::size_t i = 0; i < n; ++i) {
         T(i, i) = 2.0;

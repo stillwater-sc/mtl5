@@ -1,4 +1,4 @@
-// phase7a_sparse_formats.cpp — Sparse Format Shootout: COO vs CRS vs ELL
+// phase7a_sparse_formats.cpp - Sparse Format Shootout: COO vs CRS vs ELL
 //
 // This example demonstrates:
 //   1. Three sparse matrix formats and their storage tradeoffs
@@ -21,7 +21,7 @@ using namespace mtl;
 
 int main() {
     std::cout << "=============================================================\n";
-    std::cout << " Phase 7A: Sparse Format Shootout — COO vs CRS vs ELL\n";
+    std::cout << " Phase 7A: Sparse Format Shootout - COO vs CRS vs ELL\n";
     std::cout << "=============================================================\n\n";
 
     const std::size_t grid = 6;   // 6x6 interior grid
@@ -31,7 +31,7 @@ int main() {
               << " grid = " << N << " unknowns\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
-    // Format 1: COO (Coordinate) — best for unstructured assembly
+    // Format 1: COO (Coordinate) - best for unstructured assembly
     // ══════════════════════════════════════════════════════════════════════
     std::cout << "=== Format 1: COO (Coordinate / Triplet) ===\n";
     std::cout << "Storage: 3 arrays (row, col, val) x nnz entries.\n";
@@ -61,7 +61,7 @@ int main() {
     std::cout << "After compress(): CRS with " << crs_from_coo.nnz() << " nnz\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
-    // Format 2: CRS (Compressed Row Storage) — best for computation
+    // Format 2: CRS (Compressed Row Storage) - best for computation
     // ══════════════════════════════════════════════════════════════════════
     std::cout << "=== Format 2: CRS (Compressed Row Storage) ===\n";
     std::cout << "Storage: data[nnz] + col_idx[nnz] + row_ptr[nrows+1].\n";
@@ -88,7 +88,7 @@ int main() {
               << 2 * crs.nnz() + N + 1 << " values\n\n";
 
     // ══════════════════════════════════════════════════════════════════════
-    // Format 3: ELL (ELLPACK) — best for GPU / uniform sparsity
+    // Format 3: ELL (ELLPACK) - best for GPU / uniform sparsity
     // ══════════════════════════════════════════════════════════════════════
     std::cout << "=== Format 3: ELL (ELLPACK) ===\n";
     std::cout << "Storage: indices[nrows*width] + data[nrows*width].\n";
