@@ -1,0 +1,18 @@
+#pragma once
+// MTL5 — Scalar base-2 exponential functor
+#include <cmath>
+
+namespace mtl::functor::scalar {
+
+template <typename T>
+struct exp2 {
+    using result_type = T;
+
+    static result_type apply(const T& v) {
+        using std::exp2;
+        return exp2(v);
+    }
+    result_type operator()(const T& v) const { return apply(v); }
+};
+
+} // namespace mtl::functor::scalar

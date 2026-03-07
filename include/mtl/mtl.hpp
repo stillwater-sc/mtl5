@@ -72,6 +72,33 @@
 #include <mtl/functor/scalar/abs.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/functor/scalar/sqrt.hpp>
+#include <mtl/functor/scalar/exp.hpp>
+#include <mtl/functor/scalar/log.hpp>
+#include <mtl/functor/scalar/exp2.hpp>
+#include <mtl/functor/scalar/log2.hpp>
+#include <mtl/functor/scalar/log10.hpp>
+#include <mtl/functor/scalar/cbrt.hpp>
+#include <mtl/functor/scalar/pow.hpp>
+#include <mtl/functor/scalar/sin.hpp>
+#include <mtl/functor/scalar/cos.hpp>
+#include <mtl/functor/scalar/tan.hpp>
+#include <mtl/functor/scalar/asin.hpp>
+#include <mtl/functor/scalar/acos.hpp>
+#include <mtl/functor/scalar/atan.hpp>
+#include <mtl/functor/scalar/sinh.hpp>
+#include <mtl/functor/scalar/cosh.hpp>
+#include <mtl/functor/scalar/tanh.hpp>
+#include <mtl/functor/scalar/asinh.hpp>
+#include <mtl/functor/scalar/acosh.hpp>
+#include <mtl/functor/scalar/atanh.hpp>
+#include <mtl/functor/scalar/ceil.hpp>
+#include <mtl/functor/scalar/floor.hpp>
+#include <mtl/functor/scalar/round.hpp>
+#include <mtl/functor/scalar/signum.hpp>
+#include <mtl/functor/scalar/erf.hpp>
+#include <mtl/functor/scalar/erfc.hpp>
+#include <mtl/functor/scalar/real.hpp>
+#include <mtl/functor/scalar/imag.hpp>
 
 // Typed functors
 #include <mtl/functor/typed/scale.hpp>
@@ -127,6 +154,7 @@
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/kron.hpp>
 #include <mtl/operation/reorder.hpp>
+#include <mtl/operation/transcendental.hpp>
 
 // Recursion
 #include <mtl/recursion/base_case_test.hpp>
