@@ -21,6 +21,7 @@
 
 // Tier 2: Sparse factory generators (return compressed2D<T>)
 #include <mtl/generators/laplacian.hpp>
+#include <mtl/generators/poisson.hpp>
 
 // Tier 3: Spectral-control generators (prescribed singular values / eigenvalues)
 #include <mtl/generators/randorth.hpp>
