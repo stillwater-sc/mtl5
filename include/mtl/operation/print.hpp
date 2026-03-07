@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Pretty-print vectors and matrices to ostream
+// MTL5 -- Pretty-print vectors and matrices to ostream
 #include <ostream>
 #include <iomanip>
 #include <string>

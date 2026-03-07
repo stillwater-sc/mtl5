@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar signum (sign function) functor
+// MTL5 -- Scalar signum (sign function) functor
 
 namespace mtl::functor::scalar {
 

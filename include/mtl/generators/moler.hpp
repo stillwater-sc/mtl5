@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Moler matrix generator (factory, returns dense2D)
+// MTL5 -- Moler matrix generator (factory, returns dense2D)
 // SPD matrix M = L*L^T where L is unit lower triangular with alpha below diagonal.
 #include <algorithm>
 #include <cstddef>

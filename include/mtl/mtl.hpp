@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Kitchen-sink umbrella include
+// MTL5 -- Kitchen-sink umbrella include
 // Pulls in types, operations, and ITL
 
 // Version and configuration
@@ -183,8 +183,8 @@
 #include <mtl/io/read_el.hpp>
 #include <mtl/io/write_el.hpp>
 
-// Generators — Test matrix generation facility
+// Generators -- Test matrix generation facility
 #include <mtl/generators/generators.hpp>
 
-// ITL — Iterative Template Library
+// ITL -- Iterative Template Library
 #include <mtl/itl/itl.hpp>

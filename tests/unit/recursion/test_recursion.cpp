@@ -10,7 +10,7 @@
 using namespace mtl;
 using namespace mtl::recursion;
 
-// ── Utility functions ──────────────────────────────────────────────────
+// -- Utility functions --------------------------------------------------
 
 TEST_CASE("is_power_of_2", "[recursion][utility]") {
     REQUIRE(is_power_of_2(1));
@@ -48,7 +48,7 @@ TEST_CASE("outer_bound returns smallest power of 2 >= n", "[recursion][utility]"
     REQUIRE(outer_bound(100) == 128);
 }
 
-// ── Recursator on small dense2D ────────────────────────────────────────
+// -- Recursator on small dense2D ----------------------------------------
 
 TEST_CASE("recursator wraps entire matrix", "[recursion][recursator]") {
     mat::dense2D<double> A(8, 8);
@@ -67,7 +67,7 @@ TEST_CASE("recursator wraps entire matrix", "[recursion][recursator]") {
     REQUIRE(rec(7, 7) == A(7, 7));
 }
 
-TEST_CASE("recursator quadrant dimensions — power of 2",
+TEST_CASE("recursator quadrant dimensions -- power of 2",
           "[recursion][recursator]") {
     mat::dense2D<double> A(8, 8);
     recursator<mat::dense2D<double>> rec(A);
@@ -88,7 +88,7 @@ TEST_CASE("recursator quadrant dimensions — power of 2",
     REQUIRE(se.num_cols() == 4);
 }
 
-TEST_CASE("recursator quadrant dimensions — non-power of 2",
+TEST_CASE("recursator quadrant dimensions -- non-power of 2",
           "[recursion][recursator]") {
     mat::dense2D<double> A(6, 10);
     recursator<mat::dense2D<double>> rec(A);
@@ -98,11 +98,11 @@ TEST_CASE("recursator quadrant dimensions — non-power of 2",
     auto sw = rec.south_west();
     auto se = rec.south_east();
 
-    // 6 rows: first_part(6)=4, split=4 since 4!=6 → NW/NE get 4 rows, SW/SE get 2
+    // 6 rows: first_part(6)=4, split=4 since 4!=6 -> NW/NE get 4 rows, SW/SE get 2
     REQUIRE(nw.num_rows() == 4);
     REQUIRE(sw.num_rows() == 2);
 
-    // 10 cols: first_part(10)=8, split=8 since 8!=10 → NW/SW get 8 cols, NE/SE get 2
+    // 10 cols: first_part(10)=8, split=8 since 8!=10 -> NW/SW get 8 cols, NE/SE get 2
     REQUIRE(nw.num_cols() == 8);
     REQUIRE(ne.num_cols() == 2);
 
@@ -141,7 +141,7 @@ TEST_CASE("recursator element access through quadrants",
     REQUIRE(se(1, 1) == A(3, 3));
 }
 
-// ── Base case tests ────────────────────────────────────────────────────
+// -- Base case tests ----------------------------------------------------
 
 TEST_CASE("min_dim_test", "[recursion][base_case]") {
     mat::dense2D<double> A(8, 8);
@@ -176,7 +176,7 @@ TEST_CASE("max_dim_test_static", "[recursion][base_case]") {
     REQUIRE_FALSE(test2(rec));
 }
 
-// ── for_each recursive traversal ───────────────────────────────────────
+// -- for_each recursive traversal ---------------------------------------
 
 TEST_CASE("for_each visits all base cases", "[recursion][for_each]") {
     mat::dense2D<double> A(8, 8);
@@ -227,7 +227,7 @@ TEST_CASE("for_each applies function to base cases",
             REQUIRE(A(i, j) == 1.0);
 }
 
-// ── Predefined masks ──────────────────────────────────────────────────
+// -- Predefined masks --------------------------------------------------
 
 TEST_CASE("predefined masks are valid", "[recursion][masks]") {
     // Morton Z mask should have alternating bits

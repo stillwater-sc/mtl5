@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Symmetric eigenvalue solver via implicit QR on tridiagonal form
+// MTL5 -- Symmetric eigenvalue solver via implicit QR on tridiagonal form
 // Tridiagonalize via Householder, then apply Wilkinson-shifted QR iterations.
 #include <cmath>
 #include <algorithm>

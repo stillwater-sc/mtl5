@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Householder reflections for QR factorization
+// MTL5 -- Householder reflections for QR factorization
 // Computes v, beta such that (I - beta*v*v^T)*x = ||x||*e_1
 #include <cmath>
 #include <cassert>

@@ -22,7 +22,7 @@ TEST_CASE("shifted_inserter with row offset", "[mat][shifted_inserter]") {
     mat::compressed2D<double> A(4, 3);
     {
         mat::shifted_inserter<mat::inserter<mat::compressed2D<double>>> ins(A, 3, 2, 0);
-        // Inserting at logical row 0 → actual row 2
+        // Inserting at logical row 0 -> actual row 2
         ins[0][0] << 5.0;
         ins[0][1] << 6.0;
         ins[1][2] << 7.0;

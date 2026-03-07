@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — COO (coordinate) sparse matrix format
+// MTL5 -- COO (coordinate) sparse matrix format
 // Stores triplets (row, col, value). Supports sort() and compress() to CRS.
 #include <algorithm>
 #include <cassert>
@@ -33,7 +33,7 @@ public:
     coordinate2D(size_type nrows, size_type ncols)
         : nrows_(nrows), ncols_(ncols) {}
 
-    // ── Insertion ────────────────────────────────────────────────────────
+    // -- Insertion --------------------------------------------------------
 
     /// Insert a single entry (accumulates with existing entries on compress)
     void insert(size_type r, size_type c, Value v) {
@@ -45,7 +45,7 @@ public:
     /// Reserve space for nnz entries
     void reserve(size_type nnz) { entries_.reserve(nnz); }
 
-    // ── Element access (linear scan, mainly for testing) ─────────────────
+    // -- Element access (linear scan, mainly for testing) -----------------
 
     value_type operator()(size_type r, size_type c) const {
         Value sum = math::zero<Value>();
@@ -54,14 +54,14 @@ public:
         return sum;
     }
 
-    // ── Size / shape ────────────────────────────────────────────────────
+    // -- Size / shape ----------------------------------------------------
 
     size_type num_rows() const { return nrows_; }
     size_type num_cols() const { return ncols_; }
     size_type size()     const { return nrows_ * ncols_; }
     size_type nnz()      const { return entries_.size(); }
 
-    // ── Sorting ──────────────────────────────────────────────────────────
+    // -- Sorting ----------------------------------------------------------
 
     /// Sort entries by (row, col) in-place.
     void sort() {
@@ -76,7 +76,7 @@ public:
 
     bool is_sorted() const { return sorted_; }
 
-    // ── Compression to CRS ───────────────────────────────────────────────
+    // -- Compression to CRS -----------------------------------------------
 
     /// Convert to compressed2D, accumulating duplicate entries.
     compressed2D<Value, Parameters> compress() const {
@@ -120,7 +120,7 @@ public:
             starts.data(), indices.data(), data.data());
     }
 
-    // ── Raw access ───────────────────────────────────────────────────────
+    // -- Raw access -------------------------------------------------------
 
     const std::vector<triplet_type>& entries() const { return entries_; }
 

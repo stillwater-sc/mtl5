@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scale collection by a scalar factor
+// MTL5 -- Scale collection by a scalar factor
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/collection.hpp>
 

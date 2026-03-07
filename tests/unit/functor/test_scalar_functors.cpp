@@ -16,7 +16,7 @@
 
 using Catch::Matchers::WithinAbs;
 
-// ── Scalar functors ─────────────────────────────────────────────────────
+// -- Scalar functors -----------------------------------------------------
 
 TEST_CASE("scalar::plus", "[functor][scalar]") {
     mtl::functor::scalar::plus<double> f;
@@ -82,7 +82,7 @@ TEST_CASE("scalar::sqrt", "[functor][scalar]") {
     REQUIRE_THAT(f(2.0), WithinAbs(std::sqrt(2.0), 1e-10));
 }
 
-// ── Mixed-type scalar functors ──────────────────────────────────────────
+// -- Mixed-type scalar functors ------------------------------------------
 
 TEST_CASE("scalar::plus with mixed types", "[functor][scalar]") {
     mtl::functor::scalar::plus<int, double> f;
@@ -91,7 +91,7 @@ TEST_CASE("scalar::plus with mixed types", "[functor][scalar]") {
     REQUIRE(r == 5.5);
 }
 
-// ── Typed functors ──────────────────────────────────────────────────────
+// -- Typed functors ------------------------------------------------------
 
 TEST_CASE("typed::scale (alpha * x)", "[functor][typed]") {
     mtl::functor::typed::scale<double> f(3.0);

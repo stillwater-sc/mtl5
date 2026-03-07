@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise cube root
+// MTL5 -- Element-wise cube root
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

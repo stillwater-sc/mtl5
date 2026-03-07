@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Noisy iteration controller: prints residual at every iteration
+// MTL5 -- Noisy iteration controller: prints residual at every iteration
 #include <iostream>
 #include <mtl/itl/iteration/cyclic_iteration.hpp>
 

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Minimum element in a collection
+// MTL5 -- Minimum element in a collection
 #include <limits>
 #include <mtl/concepts/collection.hpp>
 

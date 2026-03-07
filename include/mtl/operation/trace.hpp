@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix trace: sum of diagonal elements
+// MTL5 -- Matrix trace: sum of diagonal elements
 #include <algorithm>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Clement matrix generator (factory, returns dense2D)
+// MTL5 -- Clement matrix generator (factory, returns dense2D)
 // Tridiagonal matrix with known integer eigenvalues (for even n).
 #include <cmath>
 #include <cstddef>

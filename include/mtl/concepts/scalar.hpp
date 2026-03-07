@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar concepts replacing MTL4 pseudo-concepts + boost::enable_if
+// MTL5 -- Scalar concepts replacing MTL4 pseudo-concepts + boost::enable_if
 #include <concepts>
 #include <type_traits>
 #include <complex>

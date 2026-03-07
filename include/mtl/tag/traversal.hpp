@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Traversal tags (replaces MTL4 glas_tag + tag:: traversal tags)
+// MTL5 -- Traversal tags (replaces MTL4 glas_tag + tag:: traversal tags)
 namespace mtl::tag {
 
 struct nz {};     // non-zero elements only

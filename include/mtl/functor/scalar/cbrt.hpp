@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar cube root functor
+// MTL5 -- Scalar cube root functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix expression umbrella
+// MTL5 -- Matrix expression umbrella
 // In MTL4 this was a CRTP base class for all matrix expressions.
 // In MTL5, C++20 concepts (Matrix, DenseMatrix, SparseMatrix) replace the
 // CRTP hierarchy. Expression types simply satisfy the Matrix concept by

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Pascal matrix generator (factory, returns dense2D)
+// MTL5 -- Pascal matrix generator (factory, returns dense2D)
 // Symmetric matrix of binomial coefficients. det(P) = 1.
 #include <cstddef>
 #include <mtl/mat/dense2D.hpp>

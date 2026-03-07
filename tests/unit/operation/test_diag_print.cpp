@@ -14,7 +14,7 @@
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
 
-// ── diag() tests ──────────────────────────────────────────────────────────
+// -- diag() tests ----------------------------------------------------------
 
 TEST_CASE("diag: creates diagonal matrix from vector", "[operation][diag]") {
     vec::dense_vector<double> v({3.0, 5.0, 7.0});
@@ -46,7 +46,7 @@ TEST_CASE("diag/diagonal roundtrip", "[operation][diag]") {
     REQUIRE_THAT(D(2, 2), WithinAbs(6.0, 1e-15));
 }
 
-// ── print() tests ─────────────────────────────────────────────────────────
+// -- print() tests ---------------------------------------------------------
 
 TEST_CASE("print vector with precision", "[operation][print]") {
     vec::dense_vector<double> v({1.23456789, 2.34567890});
@@ -71,7 +71,7 @@ TEST_CASE("print matrix with precision", "[operation][print]") {
     REQUIRE(out.find("1.111111") == std::string::npos);
 }
 
-// ── print_sparse() tests ─────────────────────────────────────────────────
+// -- print_sparse() tests -------------------------------------------------
 
 TEST_CASE("print_sparse outputs triplet format", "[operation][print]") {
     mat::compressed2D<double> A(3, 3);
@@ -91,7 +91,7 @@ TEST_CASE("print_sparse outputs triplet format", "[operation][print]") {
     REQUIRE(out.find("(2, 1) = 3") != std::string::npos);
 }
 
-// ── print_matlab() tests ─────────────────────────────────────────────────
+// -- print_matlab() tests -------------------------------------------------
 
 TEST_CASE("print_matlab produces MATLAB format", "[operation][print]") {
     mat::dense2D<double> A({{1.0, 2.0}, {3.0, 4.0}});

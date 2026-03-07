@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Fill collection with a constant value
+// MTL5 -- Fill collection with a constant value
 #include <algorithm>
 #include <mtl/concepts/collection.hpp>
 

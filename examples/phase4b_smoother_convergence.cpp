@@ -23,7 +23,7 @@ int main() {
     std::cout << " Phase 4B: Smoother Convergence - Jacobi / GS / SOR\n";
     std::cout << "=============================================================\n\n";
 
-    // ── Build 1D Poisson system (sparse) ─────────────────────────────────
+    // -- Build 1D Poisson system (sparse) ---------------------------------
     const std::size_t n = 50;
     const double h = 1.0 / (n + 1);
 
@@ -53,7 +53,7 @@ int main() {
     const int max_sweeps = 100;
     const int print_interval = 10;
 
-    // ── Jacobi ───────────────────────────────────────────────────────────
+    // -- Jacobi -----------------------------------------------------------
     std::cout << "--- Jacobi Method ---\n";
     std::cout << "Updates all x_i simultaneously using old values.\n";
     std::cout << "Each sweep requires one matrix-vector-like pass.\n\n";
@@ -71,7 +71,7 @@ int main() {
         if (sweep < max_sweeps) jac(x_jac, b);
     }
 
-    // ── Gauss-Seidel ─────────────────────────────────────────────────────
+    // -- Gauss-Seidel -----------------------------------------------------
     std::cout << "\n--- Gauss-Seidel Method ---\n";
     std::cout << "Updates x_i in-place, immediately using newest values.\n";
     std::cout << "Converges ~2x faster than Jacobi for 1D Poisson.\n\n";
@@ -89,7 +89,7 @@ int main() {
         if (sweep < max_sweeps) gs(x_gs, b);
     }
 
-    // ── SOR with multiple omega values ───────────────────────────────────
+    // -- SOR with multiple omega values -----------------------------------
     std::cout << "\n--- SOR (Successive Over-Relaxation) ---\n";
     std::cout << "x_new = omega * GS_update + (1-omega) * x_old\n";
     std::cout << "omega = 1.0 is Gauss-Seidel. Optimal omega for 1D Poisson:\n";
@@ -125,7 +125,7 @@ int main() {
         std::cout << "\n";
     }
 
-    // ── Final Summary ────────────────────────────────────────────────────
+    // -- Final Summary ----------------------------------------------------
     std::cout << "\n--- Convergence after " << max_sweeps << " sweeps ---\n";
     std::cout << std::setw(20) << "Method" << std::setw(16) << "Rel Residual" << "\n";
     std::cout << std::string(36, '-') << "\n";
@@ -137,7 +137,7 @@ int main() {
         std::cout << std::setw(14) << ("SOR(w=" + omega_names[w] + ")")
                   << std::scientific << std::setw(16) << hist_sor[w].back() << "\n";
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "\n=== Key Takeaways ===\n";
     std::cout << "1. Jacobi is the slowest: spectral radius rho(M_J) close to 1.\n";
     std::cout << "2. Gauss-Seidel ~ 2x faster: rho(M_GS) = rho(M_J)^2.\n";

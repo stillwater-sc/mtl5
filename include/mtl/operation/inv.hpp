@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix inverse via LU factorization
+// MTL5 -- Matrix inverse via LU factorization
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/mat/dense2D.hpp>

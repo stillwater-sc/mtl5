@@ -11,8 +11,8 @@
 //   (b) Vendor-optimized BLAS/LAPACK routines for hot paths (optional)
 //
 // MTL5 uses compile-time guards:
-//   - MTL5_HAS_BLAS   → enables hardware BLAS dispatch
-//   - MTL5_HAS_LAPACK → enables hardware LAPACK dispatch
+//   - MTL5_HAS_BLAS   -> enables hardware BLAS dispatch
+//   - MTL5_HAS_LAPACK -> enables hardware LAPACK dispatch
 //
 // This mirrors exactly how PyTorch, TensorFlow, and NumPy work:
 //   - PyTorch: links against MKL/OpenBLAS/cuBLAS at build time
@@ -39,7 +39,7 @@ void do_not_optimize(const T& val) {
     (void)sink;
 }
 
-// ── Manual GEMM (always available) ─────────────────────────────────────
+// -- Manual GEMM (always available) -------------------------------------
 
 /// Textbook C = alpha * A * B + beta * C, row-major.
 /// This is what MTL5 uses when no BLAS is available.
@@ -66,7 +66,7 @@ void manual_gemm(double alpha,
         }
 }
 
-// ── BLAS GEMM (conditionally available) ────────────────────────────────
+// -- BLAS GEMM (conditionally available) --------------------------------
 
 #ifdef MTL5_HAS_BLAS
 
@@ -98,9 +98,9 @@ int main() {
     std::cout << " Phase 9C: BLAS/LAPACK Dispatch Architecture\n";
     std::cout << "=============================================================\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 1. Compile-Time Detection
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 1. Build Configuration ===\n\n";
 
 #ifdef MTL5_HAS_BLAS
@@ -118,9 +118,9 @@ int main() {
 #endif
     std::cout << "\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 2. The Dispatch Pattern
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 2. The Dispatch Pattern ===\n\n";
 
     std::cout << "MTL5 uses the same compile-time dispatch strategy as every\n";
@@ -157,9 +157,9 @@ int main() {
     std::cout << "  - Pass-by-pointer: Fortran ABI requires pointer args\n";
     std::cout << "  - C++ wrappers: type-safe overloads for float/double\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 3. Performance Comparison
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 3. Performance: Manual C++ vs BLAS ===\n\n";
 
     std::vector<std::size_t> sizes = {64, 128, 256, 512};
@@ -261,9 +261,9 @@ int main() {
     std::cout << "  MKL on modern x86: ~50-200 GFLOP/s for large DGEMM\n\n";
 #endif
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 4. LAPACK Integration
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 4. LAPACK Integration ===\n\n";
 
     std::cout << "MTL5 wraps the core LAPACK routines:\n\n";
@@ -284,9 +284,9 @@ int main() {
     std::cout << "  These are correct but not SIMD-optimized like MKL/OpenBLAS.\n\n";
 #endif
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 5. Architecture: How It All Fits Together
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 5. The Full Picture ===\n\n";
 
     std::cout << "  User code:     C = A * B;   // or lu(A), qr(A), svd(A)\n";

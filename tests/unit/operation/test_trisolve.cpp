@@ -75,7 +75,7 @@ TEST_CASE("Trace of a matrix", "[operation][trace]") {
     REQUIRE_THAT(trace(A), Catch::Matchers::WithinAbs(15.0, 1e-12));
 }
 
-// ── Generator-based trisolve tests ────────────────────────────────────
+// -- Generator-based trisolve tests ------------------------------------
 
 TEST_CASE("Upper trisolve on Kahan matrix", "[operation][trisolve][generator]") {
     // Kahan matrix is upper triangular and ill-conditioned
@@ -98,7 +98,7 @@ TEST_CASE("Upper trisolve on Kahan matrix", "[operation][trisolve][generator]") 
 }
 
 TEST_CASE("Lower trisolve from Cholesky of Moler matrix", "[operation][trisolve][generator]") {
-    // Moler matrix is SPD — Cholesky gives L, then solve Lx = b
+    // Moler matrix is SPD -- Cholesky gives L, then solve Lx = b
     constexpr std::size_t n = 5;
     auto M = generators::moler<double>(n);
 

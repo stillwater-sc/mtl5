@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix parameter bundle (replaces MTL4 matrix::parameters)
+// MTL5 -- Matrix parameter bundle (replaces MTL4 matrix::parameters)
 // Collects orientation, index style, dimensions, storage, and size_type
 #include <cstddef>
 #include <mtl/tag/orientation.hpp>

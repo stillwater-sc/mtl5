@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Cholesky factorization for symmetric positive definite matrices
+// MTL5 -- Cholesky factorization for symmetric positive definite matrices
 // A = L*L^T. In-place: lower triangle of A is overwritten with L.
 #include <cassert>
 #include <cmath>

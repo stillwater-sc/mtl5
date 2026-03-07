@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — BiCGSTAB (Bi-Conjugate Gradient Stabilized) solver
+// MTL5 -- BiCGSTAB (Bi-Conjugate Gradient Stabilized) solver
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>

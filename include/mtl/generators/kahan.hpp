@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Kahan matrix generator (factory, returns dense2D)
+// MTL5 -- Kahan matrix generator (factory, returns dense2D)
 // Upper triangular, ill-conditioned. Tests QR factorization.
 #include <cmath>
 #include <cstddef>

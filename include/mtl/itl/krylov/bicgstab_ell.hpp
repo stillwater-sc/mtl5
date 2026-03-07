@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — BiCGSTAB(ell) solver: BiCGSTAB with higher-order stabilization
+// MTL5 -- BiCGSTAB(ell) solver: BiCGSTAB with higher-order stabilization
 // Ported from MTL4 (Jan Bos / Peter Gottschling). Uses single right PC.
 #include <cstddef>
 #include <vector>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Non-owning strided vector reference
+// MTL5 -- Non-owning strided vector reference
 // Primary use: extract columns from row-major dense2D without copy.
 // Simplified from MTL4's 275-line CRTP version: no ownership, no clone, no CRTP.
 #include <cassert>
@@ -24,7 +24,7 @@ public:
     using pointer         = Value*;
     using const_pointer   = const Value*;
 
-    // ── Strided iterator ────────────────────────────────────────────────
+    // -- Strided iterator ------------------------------------------------
     template <typename Ptr>
     class strided_iterator {
     public:
@@ -71,13 +71,13 @@ public:
     using iterator       = strided_iterator<pointer>;
     using const_iterator = strided_iterator<const_pointer>;
 
-    // ── Constructors ────────────────────────────────────────────────────
+    // -- Constructors ----------------------------------------------------
 
     /// Construct from raw pointer, length, and stride.
     strided_vector_ref(pointer data, size_type length, size_type stride)
         : data_(data), size_(length), stride_(stride) {}
 
-    // ── Element access ──────────────────────────────────────────────────
+    // -- Element access --------------------------------------------------
 
     reference operator()(size_type i) {
         assert(i < size_);
@@ -92,13 +92,13 @@ public:
     reference operator[](size_type i) { return operator()(i); }
     const_reference operator[](size_type i) const { return operator()(i); }
 
-    // ── Size / shape ────────────────────────────────────────────────────
+    // -- Size / shape ----------------------------------------------------
 
     size_type size() const { return size_; }
     size_type stride() const { return stride_; }
     pointer   data() const { return data_; }
 
-    // ── Iterators ───────────────────────────────────────────────────────
+    // -- Iterators -------------------------------------------------------
 
     iterator begin() { return {data_, static_cast<std::ptrdiff_t>(stride_)}; }
     iterator end()   { return {data_ + size_ * stride_, static_cast<std::ptrdiff_t>(stride_)}; }
@@ -112,7 +112,7 @@ private:
     size_type stride_;
 };
 
-// ── Free functions ──────────────────────────────────────────────────────
+// -- Free functions ------------------------------------------------------
 
 /// Extract a sub-vector [start, finish) from a strided_vector_ref.
 template <typename Value>
@@ -133,7 +133,7 @@ strided_vector_ref<const Value> sub_vector(const strided_vector_ref<Value>& v,
 
 } // namespace mtl::vec
 
-// ── Trait specializations ───────────────────────────────────────────────
+// -- Trait specializations -----------------------------------------------
 
 namespace mtl::traits {
 template <typename Value>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Free function: collection size
+// MTL5 -- Free function: collection size
 #include <mtl/concepts/collection.hpp>
 
 namespace mtl {

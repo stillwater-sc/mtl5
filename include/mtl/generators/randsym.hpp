@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Random symmetric matrix with prescribed eigenvalues (factory, returns dense2D)
+// MTL5 -- Random symmetric matrix with prescribed eigenvalues (factory, returns dense2D)
 // Constructs A = Q * Lambda * Q^T where Q is a random orthogonal matrix.
 // Result is symmetric by construction.
 #include <cassert>

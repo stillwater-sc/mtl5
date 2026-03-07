@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Magnitude trait + concept (replaces MTL4 Magnitude pseudo-concept)
+// MTL5 -- Magnitude trait + concept (replaces MTL4 Magnitude pseudo-concept)
 #include <type_traits>
 #include <complex>
 #include <cmath>

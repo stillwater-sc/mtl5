@@ -125,10 +125,10 @@ TEST_CASE("General eigenvalue: complex conjugate pair", "[operation][eigenvalue]
     REQUIRE_THAT(imag_parts[1], Catch::Matchers::WithinAbs(1.0, 1e-8));
 }
 
-// ── Generator-based eigenvalue tests ─────────────────────────────────
+// -- Generator-based eigenvalue tests ---------------------------------
 
 TEST_CASE("Symmetric eigenvalues of Wilkinson W7", "[operation][eigenvalue][generator]") {
-    // Wilkinson has nearly-equal eigenvalue pairs — stress test
+    // Wilkinson has nearly-equal eigenvalue pairs -- stress test
     constexpr std::size_t n = 7;
     auto W = generators::wilkinson<double>(n);
 
@@ -142,7 +142,7 @@ TEST_CASE("Symmetric eigenvalues of Wilkinson W7", "[operation][eigenvalue][gene
         eig_sum += eigs(i);
     REQUIRE_THAT(eig_sum, Catch::Matchers::WithinAbs(12.0, 1e-8));
 
-    // Eigenvalues are returned sorted — verify monotone
+    // Eigenvalues are returned sorted -- verify monotone
     for (std::size_t i = 0; i + 1 < n; ++i)
         REQUIRE(eigs(i) <= eigs(i + 1) + 1e-12);
 }
@@ -168,7 +168,7 @@ TEST_CASE("Symmetric eigenvalues of randsym: ground truth", "[operation][eigenva
 }
 
 TEST_CASE("Symmetric eigenvalues of Clement matrix", "[operation][eigenvalue][generator]") {
-    // Clement n=6: eigenvalues are ±5, ±3, ±1
+    // Clement n=6: eigenvalues are +/-5, +/-3, +/-1
     constexpr std::size_t n = 6;
     auto C = generators::clement<double>(n);
 
@@ -186,7 +186,7 @@ TEST_CASE("Symmetric eigenvalues of Clement matrix", "[operation][eigenvalue][ge
 }
 
 TEST_CASE("Symmetric eigenvalues of Lehmer matrix", "[operation][eigenvalue][generator]") {
-    // Lehmer is SPD — all eigenvalues positive, trace = n
+    // Lehmer is SPD -- all eigenvalues positive, trace = n
     constexpr std::size_t n = 5;
     generators::lehmer<double> L_gen(n);
     mat::dense2D<double> A(n, n);
@@ -251,7 +251,7 @@ TEST_CASE("General eigenvalues of Forsythe matrix", "[operation][eigenvalue][gen
     // All eigenvalues should be centered near lambda=3
     for (std::size_t i = 0; i < n; ++i) {
         double dist_from_lambda = std::abs(eigs(i) - std::complex<double>(3.0, 0.0));
-        // Should be approximately alpha^{1/n} = 0.5^{1/5} ≈ 0.87
+        // Should be approximately alpha^{1/n} = 0.5^{1/5} ~= 0.87
         REQUIRE(dist_from_lambda < 1.0);
     }
 }

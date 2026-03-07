@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Preconditioner concept for ITL
+// MTL5 -- Preconditioner concept for ITL
 #include <concepts>
 
 namespace mtl {

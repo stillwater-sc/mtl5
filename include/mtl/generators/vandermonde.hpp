@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Vandermonde matrix generator (factory, returns dense2D)
+// MTL5 -- Vandermonde matrix generator (factory, returns dense2D)
 // V(i,j) = x_i^j. Ill-conditioned for non-Chebyshev nodes.
 #include <cstddef>
 #include <vector>

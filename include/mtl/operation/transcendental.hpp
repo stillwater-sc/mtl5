@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Umbrella include for all transcendental/element-wise math operations
+// MTL5 -- Umbrella include for all transcendental/element-wise math operations
 
 // Exponential/Logarithmic
 #include <mtl/operation/exp.hpp>

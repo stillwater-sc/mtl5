@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar power functor (binary: base^exponent)
+// MTL5 -- Scalar power functor (binary: base^exponent)
 #include <cmath>
 
 namespace mtl::functor::scalar {

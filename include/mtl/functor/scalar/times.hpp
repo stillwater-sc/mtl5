@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar multiplication functor
+// MTL5 -- Scalar multiplication functor
 #include <type_traits>
 
 namespace mtl::functor::scalar {

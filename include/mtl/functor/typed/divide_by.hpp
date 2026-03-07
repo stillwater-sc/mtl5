@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Division functor: x / alpha
+// MTL5 -- Division functor: x / alpha
 #include <type_traits>
 #include <mtl/concepts/scalar.hpp>
 

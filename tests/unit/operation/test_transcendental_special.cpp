@@ -16,7 +16,7 @@
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
 
-// ── ceil ────────────────────────────────────────────────────────────────
+// -- ceil ----------------------------------------------------------------
 
 TEST_CASE("ceil of vector", "[operation][transcendental][ceil]") {
     dense_vector<double> v = {1.2, 2.7, -1.2, -2.7, 3.0};
@@ -36,7 +36,7 @@ TEST_CASE("ceil of matrix", "[operation][transcendental][ceil]") {
     REQUIRE(r(0,1) == -1.0);
 }
 
-// ── floor ───────────────────────────────────────────────────────────────
+// -- floor ---------------------------------------------------------------
 
 TEST_CASE("floor of vector", "[operation][transcendental][floor]") {
     dense_vector<double> v = {1.2, 2.7, -1.2, -2.7, 3.0};
@@ -48,7 +48,7 @@ TEST_CASE("floor of vector", "[operation][transcendental][floor]") {
     REQUIRE(r(4) == 3.0);
 }
 
-// ── round ───────────────────────────────────────────────────────────────
+// -- round ---------------------------------------------------------------
 
 TEST_CASE("round of vector", "[operation][transcendental][round]") {
     dense_vector<double> v = {1.4, 1.5, 2.5, -1.4, -1.5};
@@ -68,7 +68,7 @@ TEST_CASE("round of matrix", "[operation][transcendental][round]") {
     REQUIRE(r(0,1) == -3.0);
 }
 
-// ── signum ──────────────────────────────────────────────────────────────
+// -- signum --------------------------------------------------------------
 
 TEST_CASE("signum of vector", "[operation][transcendental][signum]") {
     dense_vector<double> v = {-5.0, -0.1, 0.0, 0.1, 5.0};
@@ -99,7 +99,7 @@ TEST_CASE("signum of integer vector", "[operation][transcendental][signum]") {
     REQUIRE(r(2) == 1);
 }
 
-// ── erf / erfc ──────────────────────────────────────────────────────────
+// -- erf / erfc ----------------------------------------------------------
 
 TEST_CASE("erf of vector", "[operation][transcendental][erf]") {
     dense_vector<double> v = {0.0, 1.0, -1.0};
@@ -134,7 +134,7 @@ TEST_CASE("erf of matrix", "[operation][transcendental][erf]") {
     REQUIRE_THAT(r(0,1), WithinAbs(std::erf(1.0), 1e-10));
 }
 
-// ── real / imag for real vectors ────────────────────────────────────────
+// -- real / imag for real vectors ----------------------------------------
 
 TEST_CASE("real of real vector", "[operation][transcendental][real]") {
     dense_vector<double> v = {1.0, 2.0, 3.0};
@@ -152,7 +152,7 @@ TEST_CASE("imag of real vector is zero", "[operation][transcendental][imag]") {
     REQUIRE(r(2) == 0.0);
 }
 
-// ── real / imag for complex vectors ─────────────────────────────────────
+// -- real / imag for complex vectors -------------------------------------
 
 TEST_CASE("real of complex vector", "[operation][transcendental][real]") {
     using cd = std::complex<double>;
@@ -172,7 +172,7 @@ TEST_CASE("imag of complex vector", "[operation][transcendental][imag]") {
     REQUIRE(r(2) == 5.0);
 }
 
-// ── real / imag for complex matrices ────────────────────────────────────
+// -- real / imag for complex matrices ------------------------------------
 
 TEST_CASE("real of complex matrix", "[operation][transcendental][real]") {
     using cd = std::complex<double>;

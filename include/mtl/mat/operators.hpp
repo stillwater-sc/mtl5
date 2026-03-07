@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Operator overloads for matrix types (expression template returns)
+// MTL5 -- Operator overloads for matrix types (expression template returns)
 #include <type_traits>
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
@@ -22,7 +22,7 @@
 
 namespace mtl::mat {
 
-// ── Binary arithmetic (lazy) ───────────────────────────────────────────
+// -- Binary arithmetic (lazy) -------------------------------------------
 // Forwarding references: lvalue operands stored by const ref, rvalue by value.
 
 template <typename M1, typename M2>
@@ -43,7 +43,7 @@ auto operator-(M1&& a, M2&& b) {
         std::forward<M1>(a), std::forward<M2>(b));
 }
 
-// ── Unary negation (lazy) ──────────────────────────────────────────────
+// -- Unary negation (lazy) ----------------------------------------------
 
 template <typename M>
     requires Matrix<std::remove_cvref_t<M>>
@@ -52,7 +52,7 @@ auto operator-(M&& m) {
     return expr::mat_negate_expr<SM>(std::forward<M>(m));
 }
 
-// ── Scalar-matrix multiply (lazy) ──────────────────────────────────────
+// -- Scalar-matrix multiply (lazy) --------------------------------------
 
 template <typename S, typename M>
     requires (std::is_arithmetic_v<S> && Matrix<std::remove_cvref_t<M>>)
@@ -78,7 +78,7 @@ auto operator/(M&& m, const S& alpha) {
         std::forward<M>(m), alpha);
 }
 
-// ── Matrix-vector multiply (stays eager) ───────────────────────────────
+// -- Matrix-vector multiply (stays eager) -------------------------------
 // No expression template: immediately evaluates to dense_vector.
 
 template <Matrix M, Vector V>
@@ -97,7 +97,7 @@ auto operator*(const M& A, const V& x) {
     return y;
 }
 
-// ── Matrix-matrix multiply (eager) ─────────────────────────────────────
+// -- Matrix-matrix multiply (eager) -------------------------------------
 // Stays eager to avoid aliasing issues (e.g., auto C = A*B; then modify A)
 // and O(n^3)-per-element lazy recomputation. For lazy matmul, use
 // mat_mat_times_expr directly.
@@ -119,7 +119,7 @@ auto operator*(const M1& A, const M2& B) {
     return C;
 }
 
-// ── Sparse (CRS) matvec: compressed2D * dense_vector (stays eager) ─────
+// -- Sparse (CRS) matvec: compressed2D * dense_vector (stays eager) -----
 
 template <typename V, typename P, typename VV, typename VP>
 auto operator*(const compressed2D<V, P>& A,
@@ -141,7 +141,7 @@ auto operator*(const compressed2D<V, P>& A,
     return y;
 }
 
-// ── Transposed sparse matvec (stays eager) ─────────────────────────────
+// -- Transposed sparse matvec (stays eager) -----------------------------
 
 template <typename V, typename P, typename VV, typename VP>
 auto operator*(const view::transposed_view<compressed2D<V, P>>& At,

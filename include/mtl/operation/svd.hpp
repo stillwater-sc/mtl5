@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Singular Value Decomposition via one-sided Jacobi / iterative QR
+// MTL5 -- Singular Value Decomposition via one-sided Jacobi / iterative QR
 // Decomposes A = U * S * V^T where S is diagonal (singular values).
 #include <cmath>
 #include <algorithm>

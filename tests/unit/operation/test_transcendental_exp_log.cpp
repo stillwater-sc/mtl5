@@ -16,7 +16,7 @@ using namespace mtl;
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 
-// ── exp ─────────────────────────────────────────────────────────────────
+// -- exp -----------------------------------------------------------------
 
 TEST_CASE("exp of vector", "[operation][transcendental][exp]") {
     dense_vector<double> v = {0.0, 1.0, 2.0};
@@ -37,7 +37,7 @@ TEST_CASE("exp of matrix", "[operation][transcendental][exp]") {
     REQUIRE_THAT(r(1,1), WithinAbs(std::exp(2.0), 1e-10));
 }
 
-// ── log ─────────────────────────────────────────────────────────────────
+// -- log -----------------------------------------------------------------
 
 TEST_CASE("log of vector", "[operation][transcendental][log]") {
     dense_vector<double> v = {1.0, std::numbers::e, std::exp(2.0)};
@@ -55,7 +55,7 @@ TEST_CASE("log of matrix", "[operation][transcendental][log]") {
     REQUIRE_THAT(r(0,1), WithinAbs(std::log(10.0), 1e-10));
 }
 
-// ── exp2 / log2 ─────────────────────────────────────────────────────────
+// -- exp2 / log2 ---------------------------------------------------------
 
 TEST_CASE("exp2 of vector", "[operation][transcendental][exp2]") {
     dense_vector<double> v = {0.0, 1.0, 3.0, 10.0};
@@ -75,7 +75,7 @@ TEST_CASE("log2 of vector", "[operation][transcendental][log2]") {
     REQUIRE_THAT(r(3), WithinAbs(10.0, 1e-10));
 }
 
-// ── log10 ───────────────────────────────────────────────────────────────
+// -- log10 ---------------------------------------------------------------
 
 TEST_CASE("log10 of vector", "[operation][transcendental][log10]") {
     dense_vector<double> v = {1.0, 10.0, 100.0, 1000.0};
@@ -97,7 +97,7 @@ TEST_CASE("log10 of matrix", "[operation][transcendental][log10]") {
     REQUIRE_THAT(r(1,1), WithinAbs(3.0, 1e-10));
 }
 
-// ── cbrt ────────────────────────────────────────────────────────────────
+// -- cbrt ----------------------------------------------------------------
 
 TEST_CASE("cbrt of vector", "[operation][transcendental][cbrt]") {
     dense_vector<double> v = {0.0, 1.0, 8.0, 27.0, -8.0};
@@ -109,7 +109,7 @@ TEST_CASE("cbrt of vector", "[operation][transcendental][cbrt]") {
     REQUIRE_THAT(r(4), WithinAbs(-2.0, 1e-10));
 }
 
-// ── pow ─────────────────────────────────────────────────────────────────
+// -- pow -----------------------------------------------------------------
 
 TEST_CASE("pow of vector with scalar exponent", "[operation][transcendental][pow]") {
     dense_vector<double> v = {1.0, 2.0, 3.0, 4.0};
@@ -139,7 +139,7 @@ TEST_CASE("pow with fractional exponent", "[operation][transcendental][pow]") {
     REQUIRE_THAT(r(2), WithinAbs(4.0, 1e-10));
 }
 
-// ── Round-trip: log(exp(x)) == x ────────────────────────────────────────
+// -- Round-trip: log(exp(x)) == x ----------------------------------------
 
 TEST_CASE("exp-log round trip", "[operation][transcendental][identity]") {
     dense_vector<double> v = {-2.0, -1.0, 0.0, 0.5, 1.0, 3.0};

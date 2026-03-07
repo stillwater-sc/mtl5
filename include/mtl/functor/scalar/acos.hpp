@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar arc cosine functor
+// MTL5 -- Scalar arc cosine functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

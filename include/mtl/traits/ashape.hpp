@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Algebraic shape classification (replaces MTL4 ashape.hpp)
+// MTL5 -- Algebraic shape classification (replaces MTL4 ashape.hpp)
 // Used as secondary dispatch axis alongside category tags
 
 namespace mtl::ashape {

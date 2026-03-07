@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar real part extraction functor
+// MTL5 -- Scalar real part extraction functor
 #include <complex>
 #include <type_traits>
 #include <mtl/concepts/scalar.hpp>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Hilbert matrix generator (implicit, no storage)
+// MTL5 -- Hilbert matrix generator (implicit, no storage)
 // H(i,j) = 1/(i+j+1). Notoriously ill-conditioned SPD matrix.
 #include <cstddef>
 #include <mtl/math/identity.hpp>

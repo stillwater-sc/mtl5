@@ -13,7 +13,7 @@
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
 
-// ── Static assertions: expression types satisfy concepts ────────────────
+// -- Static assertions: expression types satisfy concepts ----------------
 
 TEST_CASE("expression types satisfy Matrix concept", "[expr][concepts]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -63,7 +63,7 @@ TEST_CASE("concrete types are not expressions", "[expr][concepts]") {
     STATIC_REQUIRE_FALSE(traits::is_expression_v<dense_vector<double>>);
 }
 
-// ── Lazy evaluation: expressions reflect source changes ─────────────────
+// -- Lazy evaluation: expressions reflect source changes -----------------
 
 TEST_CASE("lazy evaluation reflects source changes", "[expr][lazy]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -88,7 +88,7 @@ TEST_CASE("lazy vector evaluation reflects source changes", "[expr][lazy]") {
     REQUIRE(expr(0) == 110.0);
 }
 
-// ── Nested expressions ──────────────────────────────────────────────────
+// -- Nested expressions --------------------------------------------------
 
 TEST_CASE("nested matrix expressions: (A + B) - C", "[expr][nested]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -123,7 +123,7 @@ TEST_CASE("nested vector expressions: 2*u + v", "[expr][nested]") {
     REQUIRE(result(2) == 36.0);
 }
 
-// ── Assignment triggers evaluation ──────────────────────────────────────
+// -- Assignment triggers evaluation --------------------------------------
 
 TEST_CASE("assignment to dense2D triggers evaluation", "[expr][assign]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -150,7 +150,7 @@ TEST_CASE("assignment to dense_vector triggers evaluation", "[expr][assign]") {
     REQUIRE(w(2) == 9.0);
 }
 
-// ── Compound assignment from expressions ────────────────────────────────
+// -- Compound assignment from expressions --------------------------------
 
 TEST_CASE("matrix += expression", "[expr][compound]") {
     dense2D<double> c = {{1.0, 2.0}, {3.0, 4.0}};
@@ -196,7 +196,7 @@ TEST_CASE("vector -= expression", "[expr][compound]") {
     REQUIRE(w(2) == 291.0);
 }
 
-// ── Matrix multiply (eager) ─────────────────────────────────────────────
+// -- Matrix multiply (eager) ---------------------------------------------
 
 TEST_CASE("matrix multiply expression", "[expr][matmul]") {
     dense2D<double> A = {{1.0, 2.0}, {3.0, 4.0}};
@@ -222,7 +222,7 @@ TEST_CASE("non-square matrix multiply expression", "[expr][matmul]") {
     REQUIRE(C(1, 1) == 11.0);
 }
 
-// ── Vector expressions ──────────────────────────────────────────────────
+// -- Vector expressions --------------------------------------------------
 
 TEST_CASE("vector expression: 2*u + v", "[expr][vec]") {
     dense_vector<double> u = {1.0, 2.0, 3.0};
@@ -250,7 +250,7 @@ TEST_CASE("vector division expression", "[expr][vec]") {
     REQUIRE(w(2) == 4.0);
 }
 
-// ── Backward compatibility: auto c = a + b; c(0,0) works ───────────────
+// -- Backward compatibility: auto c = a + b; c(0,0) works ---------------
 
 TEST_CASE("auto captures expression with read-only access", "[expr][compat]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -273,7 +273,7 @@ TEST_CASE("auto captures vector expression with read-only access", "[expr][compa
     REQUIRE(w(2) == 9.0);
 }
 
-// ── evaluate() materializes to concrete type ────────────────────────────
+// -- evaluate() materializes to concrete type ----------------------------
 
 TEST_CASE("evaluate materializes matrix expression", "[expr][evaluate]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -307,7 +307,7 @@ TEST_CASE("evaluate passes through concrete types", "[expr][evaluate]") {
     REQUIRE(&ref == &a);  // no copy, returns reference
 }
 
-// ── y = A*x + b pattern (eager matvec + lazy vec add) ───────────────────
+// -- y = A*x + b pattern (eager matvec + lazy vec add) -------------------
 
 TEST_CASE("y = A*x + b pattern", "[expr][pattern]") {
     dense2D<double> A = {{1.0, 0.0}, {0.0, 1.0}};
@@ -330,7 +330,7 @@ TEST_CASE("y = A*x + b with non-identity matrix", "[expr][pattern]") {
     REQUIRE(y(1) == 27.0);   // 1*1+3*2 + 20
 }
 
-// ── fused_assign and fused_plus_assign ──────────────────────────────────
+// -- fused_assign and fused_plus_assign ----------------------------------
 
 TEST_CASE("fused_assign evaluates expression into target", "[expr][fuse]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -352,7 +352,7 @@ TEST_CASE("fused_plus_assign adds expression to target", "[expr][fuse]") {
     REQUIRE(c(1, 1) == 52.0);
 }
 
-// ── Operator= from expression ───────────────────────────────────────────
+// -- Operator= from expression -------------------------------------------
 
 TEST_CASE("operator= from matrix expression", "[expr][assign]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -377,7 +377,7 @@ TEST_CASE("operator= from vector expression", "[expr][assign]") {
     REQUIRE(w(2) == 9.0);
 }
 
-// ── Expression with scalar on right ─────────────────────────────────────
+// -- Expression with scalar on right -------------------------------------
 
 TEST_CASE("matrix * scalar on right returns expression", "[expr][scal]") {
     dense2D<double> m = {{1.0, 2.0}, {3.0, 4.0}};

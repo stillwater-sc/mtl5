@@ -68,32 +68,32 @@ int main() {
 
   What actually IS a field?
 
-  - Rational numbers (sw::universal::rational, GMP rationals) — exact arithmetic, true field
-  - Finite fields like GF(2), GF(p) — used in coding theory, cryptography
+  - Rational numbers (sw::universal::rational, GMP rationals) -- exact arithmetic, true field
+  - Finite fields like GF(2), GF(p) -- used in coding theory, cryptography
   - Exact real arithmetic libraries (symbolic computation)
 
   What double actually is
 
   double is an approximation of an ordered field. In numerical linear algebra, we use it as if it were a field and
-  accept the rounding errors. MTL4 did the same — it's a pragmatic engineering concept, not a mathematical proof.
+  accept the rounding errors. MTL4 did the same -- it's a pragmatic engineering concept, not a mathematical proof.
 
   What the concepts actually test
 
-  - Scalar — has +, -, *, unary -, and T{0}. This is really "arithmetic type" or "ring-like"
-  - Field — Scalar + has /. This is really "arithmetic type with division" — a division ring at best
-  - OrderedField — Field + std::totally_ordered. This is really "comparable arithmetic type with division"
+  - Scalar -- has +, -, *, unary -, and T{0}. This is really "arithmetic type" or "ring-like"
+  - Field -- Scalar + has /. This is really "arithmetic type with division" -- a division ring at best
+  - OrderedField -- Field + std::totally_ordered. This is really "comparable arithmetic type with division"
 
   So what's wrong?
 
   The names oversell the mathematical guarantees. The concepts only check syntactic requirements (does a / b compile?)
-  not semantic axioms (is division exact? is addition associative?). This is fine — C++20 concepts are inherently
+  not semantic axioms (is division exact? is addition associative?). This is fine -- C++20 concepts are inherently
   syntactic. But the names Field and OrderedField imply mathematical properties that double doesn't satisfy.
 
   Options:
-  1. Accept the naming convention — MTL4 and most linear algebra libraries do this. It's understood that "Field" means
+  1. Accept the naming convention -- MTL4 and most linear algebra libraries do this. It's understood that "Field" means
   "type with division" in the C++ template library context
-  2. Rename to be more honest — DivisionType, OrderedDivisionType, or ArithmeticWithDivision
-  3. Document the gap — keep the names but document that they're syntactic concepts, not mathematical field axioms
+  2. Rename to be more honest -- DivisionType, OrderedDivisionType, or ArithmeticWithDivision
+  3. Document the gap -- keep the names but document that they're syntactic concepts, not mathematical field axioms
 
   Most numerical libraries (Eigen, Blaze, MTL4) take option 1. The naming convention is understood by the community,
   even if mathematically imprecise.

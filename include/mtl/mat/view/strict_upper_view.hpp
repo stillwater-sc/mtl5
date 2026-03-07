@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Read-only strict upper triangular view (excludes diagonal)
+// MTL5 -- Read-only strict upper triangular view (excludes diagonal)
 // strict_upper_view(A): A_view(r,c) = A(r,c) if r < c, else 0
 // Also provides MATLAB-compatible triu(A, k) with diagonal offset.
 #include <cstddef>

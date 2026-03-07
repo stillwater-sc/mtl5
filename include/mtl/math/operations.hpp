@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Operation tags for algebraic identities
+// MTL5 -- Operation tags for algebraic identities
 // Replaces boost/numeric/linear_algebra/operators.hpp
 #include <algorithm>
 #include <functional>

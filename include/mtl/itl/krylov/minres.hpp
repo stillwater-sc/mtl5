@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — MINRES (Minimum Residual) solver for symmetric indefinite systems
+// MTL5 -- MINRES (Minimum Residual) solver for symmetric indefinite systems
 // Lanczos-based 3-term recurrence with Givens rotations.
 // Guarantees monotonically decreasing residual norm for symmetric A.
 // Reference: Paige & Saunders (1975), Saad Algorithm 6.13.

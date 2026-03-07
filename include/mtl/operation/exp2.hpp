@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise base-2 exponential
+// MTL5 -- Element-wise base-2 exponential
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

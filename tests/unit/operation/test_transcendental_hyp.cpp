@@ -13,7 +13,7 @@
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
 
-// ── sinh ────────────────────────────────────────────────────────────────
+// -- sinh ----------------------------------------------------------------
 
 TEST_CASE("sinh of vector", "[operation][transcendental][sinh]") {
     dense_vector<double> v = {0.0, 1.0, -1.0};
@@ -31,7 +31,7 @@ TEST_CASE("sinh of matrix", "[operation][transcendental][sinh]") {
     REQUIRE_THAT(r(0,1), WithinAbs(std::sinh(1.0), 1e-10));
 }
 
-// ── cosh ────────────────────────────────────────────────────────────────
+// -- cosh ----------------------------------------------------------------
 
 TEST_CASE("cosh of vector", "[operation][transcendental][cosh]") {
     dense_vector<double> v = {0.0, 1.0, -1.0};
@@ -41,7 +41,7 @@ TEST_CASE("cosh of vector", "[operation][transcendental][cosh]") {
     REQUIRE_THAT(r(2), WithinAbs(std::cosh(-1.0), 1e-10));
 }
 
-// ── tanh ────────────────────────────────────────────────────────────────
+// -- tanh ----------------------------------------------------------------
 
 TEST_CASE("tanh of vector", "[operation][transcendental][tanh]") {
     dense_vector<double> v = {0.0, 1.0, -1.0};
@@ -62,7 +62,7 @@ TEST_CASE("tanh of matrix", "[operation][transcendental][tanh]") {
     REQUIRE_THAT(r(1,1), WithinAbs(std::tanh(1.0), 1e-10));
 }
 
-// ── asinh ───────────────────────────────────────────────────────────────
+// -- asinh ---------------------------------------------------------------
 
 TEST_CASE("asinh of vector", "[operation][transcendental][asinh]") {
     dense_vector<double> v = {0.0, std::sinh(1.0), std::sinh(2.0)};
@@ -72,7 +72,7 @@ TEST_CASE("asinh of vector", "[operation][transcendental][asinh]") {
     REQUIRE_THAT(r(2), WithinAbs(2.0, 1e-10));
 }
 
-// ── acosh ───────────────────────────────────────────────────────────────
+// -- acosh ---------------------------------------------------------------
 
 TEST_CASE("acosh of vector", "[operation][transcendental][acosh]") {
     dense_vector<double> v = {1.0, std::cosh(1.0), std::cosh(2.0)};
@@ -82,7 +82,7 @@ TEST_CASE("acosh of vector", "[operation][transcendental][acosh]") {
     REQUIRE_THAT(r(2), WithinAbs(2.0, 1e-10));
 }
 
-// ── atanh ───────────────────────────────────────────────────────────────
+// -- atanh ---------------------------------------------------------------
 
 TEST_CASE("atanh of vector", "[operation][transcendental][atanh]") {
     dense_vector<double> v = {0.0, std::tanh(0.5), std::tanh(1.0)};
@@ -92,7 +92,7 @@ TEST_CASE("atanh of vector", "[operation][transcendental][atanh]") {
     REQUIRE_THAT(r(2), WithinAbs(1.0, 1e-10));
 }
 
-// ── Hyperbolic identity: cosh²(x) - sinh²(x) = 1 ───────────────────────
+// -- Hyperbolic identity: cosh^2(x) - sinh^2(x) = 1 -----------------------
 
 TEST_CASE("cosh^2 - sinh^2 = 1 identity", "[operation][transcendental][identity]") {
     dense_vector<double> v = {-2.0, -1.0, 0.0, 0.5, 1.0, 2.0};
@@ -103,7 +103,7 @@ TEST_CASE("cosh^2 - sinh^2 = 1 identity", "[operation][transcendental][identity]
     }
 }
 
-// ── asinh-sinh round trip ───────────────────────────────────────────────
+// -- asinh-sinh round trip -----------------------------------------------
 
 TEST_CASE("asinh(sinh(x)) round trip", "[operation][transcendental][identity]") {
     dense_vector<double> v = {-2.0, -1.0, 0.0, 1.0, 2.0};

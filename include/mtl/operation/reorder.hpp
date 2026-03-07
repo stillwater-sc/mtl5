@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Permutation-based matrix reordering
+// MTL5 -- Permutation-based matrix reordering
 // Pure functions that return new matrices. No in-place mutation.
 #include <cassert>
 #include <cstddef>
@@ -53,7 +53,7 @@ dense2D<Value, Params> reorder(const dense2D<Value, Params>& A,
     return B;
 }
 
-/// P * A: permutation_matrix times dense2D → reorder_rows
+/// P * A: permutation_matrix times dense2D -> reorder_rows
 template <typename PV, typename MV, typename MP>
 dense2D<std::common_type_t<PV, MV>, MP>
 operator*(const permutation_matrix<PV>& P, const dense2D<MV, MP>& A) {

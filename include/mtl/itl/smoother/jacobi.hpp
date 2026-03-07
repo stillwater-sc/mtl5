@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Jacobi smoother
+// MTL5 -- Jacobi smoother
 // Allocates x_new, computes all updates, then copies back (true Jacobi).
 #include <cassert>
 #include <cstddef>

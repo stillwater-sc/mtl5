@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Optional BLAS interface for hardware-accelerated operations
+// MTL5 -- Optional BLAS interface for hardware-accelerated operations
 // Port from MTL4: boost/numeric/mtl/interface/blas.hpp
 // Guarded by MTL5_HAS_BLAS (set by CMake when MTL5_ENABLE_BLAS=ON)
 
@@ -7,10 +7,10 @@
 
 #include <cstddef>
 
-// ── Fortran BLAS declarations ──────────────────────────────────────────
+// -- Fortran BLAS declarations ------------------------------------------
 extern "C" {
 
-// Level 1 — vector operations
+// Level 1 -- vector operations
 float  sdot_(const int* n, const float* x, const int* incx,
              const float* y, const int* incy);
 double ddot_(const int* n, const double* x, const int* incx,
@@ -38,7 +38,7 @@ double dasum_(const int* n, const double* x, const int* incx);
 int isamax_(const int* n, const float* x, const int* incx);
 int idamax_(const int* n, const double* x, const int* incx);
 
-// Level 2 — matrix-vector operations
+// Level 2 -- matrix-vector operations
 void sgemv_(const char* trans, const int* m, const int* n,
             const float* alpha, const float* A, const int* lda,
             const float* x, const int* incx,
@@ -55,7 +55,7 @@ void dtrsv_(const char* uplo, const char* trans, const char* diag,
             const int* n, const double* A, const int* lda,
             double* x, const int* incx);
 
-// Level 3 — matrix-matrix operations
+// Level 3 -- matrix-matrix operations
 void sgemm_(const char* transa, const char* transb,
             const int* m, const int* n, const int* k,
             const float* alpha, const float* A, const int* lda,
@@ -69,11 +69,11 @@ void dgemm_(const char* transa, const char* transb,
 
 } // extern "C"
 
-// ── C++ wrapper functions ──────────────────────────────────────────────
+// -- C++ wrapper functions ----------------------------------------------
 
 namespace mtl::interface::blas {
 
-// ── Level 1 ────────────────────────────────────────────────────────────
+// -- Level 1 ------------------------------------------------------------
 
 inline float dot(int n, const float* x, int incx, const float* y, int incy) {
     return sdot_(&n, x, &incx, y, &incy);
@@ -110,7 +110,7 @@ inline double nrm2(int n, const double* x, int incx) {
     return dnrm2_(&n, x, &incx);
 }
 
-// ── Level 2 ────────────────────────────────────────────────────────────
+// -- Level 2 ------------------------------------------------------------
 
 inline void gemv(char trans, int m, int n, float alpha,
                  const float* A, int lda, const float* x, int incx,
@@ -132,7 +132,7 @@ inline void trsv(char uplo, char trans, char diag, int n,
     dtrsv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
 }
 
-// ── Level 3 ────────────────────────────────────────────────────────────
+// -- Level 3 ------------------------------------------------------------
 
 inline void gemm(char transa, char transb, int m, int n, int k,
                  float alpha, const float* A, int lda,

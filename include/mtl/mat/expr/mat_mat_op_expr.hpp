@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Binary element-wise matrix expression template
+// MTL5 -- Binary element-wise matrix expression template
 #include <cassert>
 #include <cstddef>
 #include <type_traits>
@@ -44,7 +44,7 @@ private:
 
 } // namespace mtl::mat::expr
 
-// ── Trait specializations ──────────────────────────────────────────────
+// -- Trait specializations ----------------------------------------------
 
 namespace mtl::traits {
 

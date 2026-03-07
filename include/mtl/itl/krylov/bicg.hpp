@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — BiConjugate Gradient (BiCG) solver for non-symmetric systems
+// MTL5 -- BiConjugate Gradient (BiCG) solver for non-symmetric systems
 // Maintains shadow residuals and uses trans(A) for the adjoint multiply.
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>

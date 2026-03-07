@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Implicit identity matrix (no storage)
+// MTL5 -- Implicit identity matrix (no storage)
 // Returns 1 on diagonal, 0 elsewhere. Satisfies Matrix concept.
 #include <cstddef>
 #include <mtl/math/identity.hpp>

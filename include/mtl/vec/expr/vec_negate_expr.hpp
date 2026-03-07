@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Unary negation expression for vectors
+// MTL5 -- Unary negation expression for vectors
 #include <cstddef>
 #include <type_traits>
 #include <mtl/traits/is_expression.hpp>
@@ -36,7 +36,7 @@ private:
 
 } // namespace mtl::vec::expr
 
-// ── Trait specializations ──────────────────────────────────────────────
+// -- Trait specializations ----------------------------------------------
 
 namespace mtl::traits {
 

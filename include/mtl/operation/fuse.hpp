@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Fused evaluation: evaluate expressions directly into pre-allocated targets
+// MTL5 -- Fused evaluation: evaluate expressions directly into pre-allocated targets
 #include <cassert>
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/concepts/matrix.hpp>

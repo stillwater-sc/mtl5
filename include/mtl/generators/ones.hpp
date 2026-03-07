@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Ones matrix generator (implicit, no storage)
+// MTL5 -- Ones matrix generator (implicit, no storage)
 // O(i,j) = 1 for all i,j. Rank-1 matrix.
 #include <cstddef>
 #include <mtl/math/identity.hpp>

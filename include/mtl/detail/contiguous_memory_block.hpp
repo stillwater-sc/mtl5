@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Contiguous memory block (replaces MTL4 contiguous_memory_block)
+// MTL5 -- Contiguous memory block (replaces MTL4 contiguous_memory_block)
 // Unified stack/heap memory block using std::conditional_t and if constexpr
 #include <algorithm>
 #include <cassert>
@@ -61,7 +61,7 @@ public:
     using value_type = Value;
     using size_type  = std::size_t;
 
-    // ── Default constructor ──────────────────────────────────────────────
+    // -- Default constructor ----------------------------------------------
     contiguous_memory_block() {
         if constexpr (on_stack) {
             std::fill_n(store_.data_, StaticSize, Value{});
@@ -69,7 +69,7 @@ public:
         // heap: members zero-initialized via heap_data defaults
     }
 
-    // ── Size constructor (heap only) ────────────────────────────────────
+    // -- Size constructor (heap only) ------------------------------------
     explicit contiguous_memory_block(std::size_t n) {
         if constexpr (on_stack) {
             assert(n == StaticSize && "Stack block size must match StaticSize");
@@ -79,7 +79,7 @@ public:
         }
     }
 
-    // ── External / view constructor (heap only) ─────────────────────────
+    // -- External / view constructor (heap only) -------------------------
     contiguous_memory_block(Value* ptr, std::size_t n, bool is_view) {
         static_assert(!on_stack, "External/view construction requires heap storage");
         if constexpr (!on_stack) {
@@ -89,7 +89,7 @@ public:
         }
     }
 
-    // ── Copy constructor ────────────────────────────────────────────────
+    // -- Copy constructor ------------------------------------------------
     contiguous_memory_block(const contiguous_memory_block& other) {
         if constexpr (on_stack) {
             std::copy_n(other.store_.data_, StaticSize, store_.data_);
@@ -101,7 +101,7 @@ public:
         }
     }
 
-    // ── Move constructor ────────────────────────────────────────────────
+    // -- Move constructor ------------------------------------------------
     contiguous_memory_block(contiguous_memory_block&& other) noexcept {
         if constexpr (on_stack) {
             std::copy_n(other.store_.data_, StaticSize, store_.data_);
@@ -115,7 +115,7 @@ public:
         }
     }
 
-    // ── Copy assignment ─────────────────────────────────────────────────
+    // -- Copy assignment -------------------------------------------------
     contiguous_memory_block& operator=(const contiguous_memory_block& other) {
         if (this == &other) return *this;
         if constexpr (on_stack) {
@@ -132,7 +132,7 @@ public:
         return *this;
     }
 
-    // ── Move assignment ─────────────────────────────────────────────────
+    // -- Move assignment -------------------------------------------------
     contiguous_memory_block& operator=(contiguous_memory_block&& other) noexcept {
         if (this == &other) return *this;
         if constexpr (on_stack) {
@@ -149,14 +149,14 @@ public:
         return *this;
     }
 
-    // ── Destructor ──────────────────────────────────────────────────────
+    // -- Destructor ------------------------------------------------------
     ~contiguous_memory_block() {
         if constexpr (!on_stack) {
             deallocate();
         }
     }
 
-    // ── Access ──────────────────────────────────────────────────────────
+    // -- Access ----------------------------------------------------------
 
     Value*       data()       { if constexpr (on_stack) return store_.data_; else return store_.data_; }
     const Value* data() const { if constexpr (on_stack) return store_.data_; else return store_.data_; }
@@ -176,13 +176,13 @@ public:
     Value*       end()         { return data() + size(); }
     const Value* end()   const { return data() + size(); }
 
-    // ── Ownership query (heap only) ────────────────────────────────────
+    // -- Ownership query (heap only) ------------------------------------
     memory_category category() const {
         if constexpr (on_stack) return memory_category::own;
         else return store_.category_;
     }
 
-    // ── Reallocation (heap only) ───────────────────────────────────────
+    // -- Reallocation (heap only) ---------------------------------------
     void realloc(std::size_t n) {
         if constexpr (on_stack) {
             assert(n == StaticSize && "Cannot realloc stack block to different size");
@@ -193,7 +193,7 @@ public:
         }
     }
 
-    // ── Swap ───────────────────────────────────────────────────────────
+    // -- Swap -----------------------------------------------------------
     void swap(contiguous_memory_block& other) noexcept {
         if constexpr (on_stack) {
             for (std::size_t i = 0; i < StaticSize; ++i) {

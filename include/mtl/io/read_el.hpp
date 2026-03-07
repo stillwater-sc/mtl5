@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Read dense/sparse matrices from CSV/whitespace-delimited files
+// MTL5 -- Read dense/sparse matrices from CSV/whitespace-delimited files
 #include <fstream>
 #include <sstream>
 #include <string>

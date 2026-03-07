@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise complex conjugation
+// MTL5 -- Element-wise complex conjugation
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/scalar.hpp>

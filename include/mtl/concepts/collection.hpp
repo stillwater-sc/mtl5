@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Collection concepts (replaces MTL4 concept/collection.hpp)
+// MTL5 -- Collection concepts (replaces MTL4 concept/collection.hpp)
 #include <cstddef>
 #include <concepts>
 

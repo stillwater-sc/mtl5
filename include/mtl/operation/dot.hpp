@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Dot product (inner product) of two vectors
+// MTL5 -- Dot product (inner product) of two vectors
 #include <cassert>
 #include <complex>
 #include <type_traits>
@@ -22,7 +22,7 @@ auto dot(const V1& v1, const V2& v2) {
     return acc;
 }
 
-/// Real dot product: sum(v1[i] * v2[i]) — no conjugation
+/// Real dot product: sum(v1[i] * v2[i]) -- no conjugation
 template <Vector V1, Vector V2>
 auto dot_real(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — ILUT (Incomplete LU with Threshold) preconditioner for compressed2D
+// MTL5 -- ILUT (Incomplete LU with Threshold) preconditioner for compressed2D
 // Saad's ILUT: allows fill-in up to p entries per row, drops entries below tau*||row||.
 #include <algorithm>
 #include <cassert>

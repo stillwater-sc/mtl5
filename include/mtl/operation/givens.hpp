@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Givens rotation utilities for GMRES Hessenberg QR factorization
+// MTL5 -- Givens rotation utilities for GMRES Hessenberg QR factorization
 #include <cmath>
 
 namespace mtl {

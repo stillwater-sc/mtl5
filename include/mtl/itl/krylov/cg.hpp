@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Conjugate Gradient solver for symmetric positive definite systems
+// MTL5 -- Conjugate Gradient solver for symmetric positive definite systems
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>

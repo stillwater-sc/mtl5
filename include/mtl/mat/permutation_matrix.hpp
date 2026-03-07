@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Implicit permutation matrix (stores only the permutation vector)
+// MTL5 -- Implicit permutation matrix (stores only the permutation vector)
 // P(r,c) = 1 if perm[r] == c, else 0. No matrix storage.
 // Efficient P*x and P*A via direct index remapping.
 #include <cstddef>
@@ -15,7 +15,7 @@
 
 namespace mtl::mat {
 
-/// Implicit permutation matrix — stores only perm vector, O(n) storage.
+/// Implicit permutation matrix -- stores only perm vector, O(n) storage.
 /// Row i maps to column perm[i]:  P(i, j) = (perm[i] == j) ? 1 : 0
 template <typename Value = double>
 class permutation_matrix {
@@ -63,7 +63,7 @@ private:
     std::vector<size_type> perm_;
 };
 
-// ── Efficient permutation-vector multiply ──────────────────────────────
+// -- Efficient permutation-vector multiply ------------------------------
 // P * x: y[i] = x[perm[i]]  (O(n), not the generic O(n^2) matvec)
 
 template <typename Value, typename VV, typename VP>

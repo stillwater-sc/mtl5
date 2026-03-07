@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Left-scale functor: alpha * x
+// MTL5 -- Left-scale functor: alpha * x
 #include <type_traits>
 #include <mtl/concepts/scalar.hpp>
 

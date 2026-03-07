@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise base-10 logarithm
+// MTL5 -- Element-wise base-10 logarithm
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

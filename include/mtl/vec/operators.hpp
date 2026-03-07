@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Operator overloads for vector types (expression template returns)
+// MTL5 -- Operator overloads for vector types (expression template returns)
 #include <type_traits>
 #include <cassert>
 #include <mtl/concepts/vector.hpp>
@@ -16,7 +16,7 @@
 
 namespace mtl::vec {
 
-// ── Binary arithmetic (lazy) ───────────────────────────────────────────
+// -- Binary arithmetic (lazy) -------------------------------------------
 // Forwarding references: lvalue operands stored by const ref, rvalue by value.
 
 template <typename V1, typename V2>
@@ -37,7 +37,7 @@ auto operator-(V1&& a, V2&& b) {
         std::forward<V1>(a), std::forward<V2>(b));
 }
 
-// ── Unary negation (lazy) ──────────────────────────────────────────────
+// -- Unary negation (lazy) ----------------------------------------------
 
 template <typename V>
     requires Vector<std::remove_cvref_t<V>>
@@ -46,7 +46,7 @@ auto operator-(V&& v) {
     return expr::vec_negate_expr<SV>(std::forward<V>(v));
 }
 
-// ── Scalar-vector multiply (lazy) ──────────────────────────────────────
+// -- Scalar-vector multiply (lazy) --------------------------------------
 
 template <typename S, typename V>
     requires (std::is_arithmetic_v<S> && Vector<std::remove_cvref_t<V>>)

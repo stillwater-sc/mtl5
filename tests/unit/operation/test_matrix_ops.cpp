@@ -14,7 +14,7 @@
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
 
-// ── Matrix arithmetic ───────────────────────────────────────────────────
+// -- Matrix arithmetic ---------------------------------------------------
 
 TEST_CASE("matrix addition", "[mat][operators]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -63,7 +63,7 @@ TEST_CASE("matrix / scalar", "[mat][operators]") {
     REQUIRE(r(1, 1) == 5.0);
 }
 
-// ── Compound assignment ─────────────────────────────────────────────────
+// -- Compound assignment -------------------------------------------------
 
 TEST_CASE("matrix +=", "[mat][compound]") {
     dense2D<double> a = {{1.0, 2.0}, {3.0, 4.0}};
@@ -95,7 +95,7 @@ TEST_CASE("matrix /=", "[mat][compound]") {
     REQUIRE(m(1, 1) == 4.0);
 }
 
-// ── Matrix-vector multiply ──────────────────────────────────────────────
+// -- Matrix-vector multiply ----------------------------------------------
 
 TEST_CASE("matrix * vector operator", "[mat][operators][matvec]") {
     dense2D<double> A = {{1.0, 2.0}, {3.0, 4.0}};
@@ -113,7 +113,7 @@ TEST_CASE("identity matrix * vector", "[mat][operators][matvec]") {
     REQUIRE(y(1) == 7.0);
 }
 
-// ── Matrix-matrix multiply ──────────────────────────────────────────────
+// -- Matrix-matrix multiply ----------------------------------------------
 
 TEST_CASE("matrix * matrix operator", "[mat][operators][matmat]") {
     dense2D<double> A = {{1.0, 2.0}, {3.0, 4.0}};
@@ -127,7 +127,7 @@ TEST_CASE("matrix * matrix operator", "[mat][operators][matmat]") {
     REQUIRE(C(1, 1) == 50.0);
 }
 
-// ── mult() into pre-allocated ───────────────────────────────────────────
+// -- mult() into pre-allocated -------------------------------------------
 
 TEST_CASE("mult(A, x, y) mat*vec", "[operation][mult]") {
     dense2D<double> A = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
@@ -149,7 +149,7 @@ TEST_CASE("mult(A, B, C) mat*mat", "[operation][mult]") {
     REQUIRE(C(1, 1) == 50.0);
 }
 
-// ── Transposed view ─────────────────────────────────────────────────────
+// -- Transposed view -----------------------------------------------------
 
 TEST_CASE("trans() swaps dimensions", "[operation][trans]") {
     dense2D<double> m = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
@@ -174,7 +174,7 @@ TEST_CASE("trans() reflects changes in original", "[operation][trans]") {
     REQUIRE(t(1, 0) == 99.0);
 }
 
-// ── matrix * scalar (rhs) ───────────────────────────────────────────────
+// -- matrix * scalar (rhs) -----------------------------------------------
 
 TEST_CASE("matrix * scalar (rhs)", "[mat][operators]") {
     dense2D<double> m = {{1.0, 2.0}, {3.0, 4.0}};
@@ -185,7 +185,7 @@ TEST_CASE("matrix * scalar (rhs)", "[mat][operators]") {
     REQUIRE(r(1, 1) == 12.0);
 }
 
-// ── abs on matrices ─────────────────────────────────────────────────────
+// -- abs on matrices -----------------------------------------------------
 
 TEST_CASE("abs of matrix", "[operation][abs][mat]") {
     dense2D<double> m = {{-1.0, 2.0}, {3.0, -4.0}};
@@ -204,7 +204,7 @@ TEST_CASE("abs of complex matrix", "[operation][abs][mat]") {
     REQUIRE_THAT(r(0, 0), WithinAbs(5.0, 1e-10));
 }
 
-// ── scale / scaled on matrices ──────────────────────────────────────────
+// -- scale / scaled on matrices ------------------------------------------
 
 TEST_CASE("scale matrix in-place", "[operation][scale][mat]") {
     dense2D<double> m = {{1.0, 2.0}, {3.0, 4.0}};
@@ -224,7 +224,7 @@ TEST_CASE("scaled matrix returns copy", "[operation][scale][mat]") {
     REQUIRE(m(0, 0) == 1.0);
 }
 
-// ── Non-square matrix multiply with operator* ───────────────────────────
+// -- Non-square matrix multiply with operator* ---------------------------
 
 TEST_CASE("non-square mat*vec via operator*", "[mat][operators][matvec]") {
     // 2x3 matrix * 3-vector -> 2-vector
@@ -265,7 +265,7 @@ TEST_CASE("non-square mat*mat produces non-square result", "[mat][operators][mat
     REQUIRE(C(2, 3) == 6.0);
 }
 
-// ── Mixed-type matrix operations ────────────────────────────────────────
+// -- Mixed-type matrix operations ----------------------------------------
 
 TEST_CASE("int + double matrix addition", "[mat][operators][mixed]") {
     dense2D<int> a = {{1, 2}, {3, 4}};
@@ -312,7 +312,7 @@ TEST_CASE("int mat * double mat", "[mat][operators][mixed][matmat]") {
     REQUIRE(C(0, 1) == 8.5);
 }
 
-// ── Empty matrix edge cases ─────────────────────────────────────────────
+// -- Empty matrix edge cases ---------------------------------------------
 
 TEST_CASE("empty matrix operations", "[mat][operators][edge]") {
     dense2D<double> a(0, 0);
@@ -335,7 +335,7 @@ TEST_CASE("empty matrix scale", "[operation][scale][edge]") {
     REQUIRE(m.size() == 0);
 }
 
-// ── Combined: y = A*x + b ──────────────────────────────────────────────
+// -- Combined: y = A*x + b ----------------------------------------------
 
 TEST_CASE("y = A*x + b pattern", "[mat][operators]") {
     dense2D<double> A = {{1.0, 0.0}, {0.0, 1.0}};

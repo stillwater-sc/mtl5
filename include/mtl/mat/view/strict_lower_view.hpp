@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Read-only strict lower triangular view (excludes diagonal)
+// MTL5 -- Read-only strict lower triangular view (excludes diagonal)
 // strict_lower_view(A): A_view(r,c) = A(r,c) if r > c, else 0
 // Also provides MATLAB-compatible tril(A, k) with diagonal offset.
 #include <cstddef>

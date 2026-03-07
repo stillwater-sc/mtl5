@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise tangent
+// MTL5 -- Element-wise tangent
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

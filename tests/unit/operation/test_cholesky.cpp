@@ -76,7 +76,7 @@ TEST_CASE("Cholesky detects non-SPD matrix", "[operation][cholesky]") {
     REQUIRE(info != 0);
 }
 
-// ── Generator-based Cholesky tests ────────────────────────────────────
+// -- Generator-based Cholesky tests ------------------------------------
 
 TEST_CASE("Cholesky on randspd with known eigenvalues", "[operation][cholesky][generator]") {
     constexpr std::size_t n = 5;

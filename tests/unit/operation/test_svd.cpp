@@ -94,7 +94,7 @@ TEST_CASE("SVD: tuple return form", "[operation][svd]") {
             REQUIRE_THAT(A_approx(i, j), Catch::Matchers::WithinAbs(A(i, j), 1e-8));
 }
 
-// ── Generator-based SVD tests ────────────────────────────────────────
+// -- Generator-based SVD tests ----------------------------------------
 
 TEST_CASE("SVD recovers prescribed singular values", "[operation][svd][generator]") {
     // Ground truth test: prescribed singular values must be recovered
@@ -119,7 +119,7 @@ TEST_CASE("SVD recovers prescribed singular values", "[operation][svd][generator
 }
 
 TEST_CASE("SVD condition number from randsvd", "[operation][svd][generator]") {
-    // Verify sigma_max / sigma_min ≈ kappa
+    // Verify sigma_max / sigma_min ~= kappa
     constexpr std::size_t n = 5;
     constexpr double kappa = 50.0;
     auto A = generators::randsvd<double>(n, kappa, 3);
@@ -174,7 +174,7 @@ TEST_CASE("SVD of rank-1 ones matrix", "[operation][svd][generator]") {
 }
 
 TEST_CASE("SVD orthogonality on Moler matrix", "[operation][svd][generator]") {
-    // Moler is SPD with eigenvalues clustered near 0 — stresses SVD
+    // Moler is SPD with eigenvalues clustered near 0 -- stresses SVD
     constexpr std::size_t n = 3;
     auto A = generators::moler<double>(n);
 

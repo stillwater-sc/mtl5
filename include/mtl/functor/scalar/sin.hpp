@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar sine functor
+// MTL5 -- Scalar sine functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

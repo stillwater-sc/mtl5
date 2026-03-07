@@ -1,4 +1,4 @@
-// phase13a_krylov_comparison.cpp — Krylov Solver Comparison
+// phase13a_krylov_comparison.cpp -- Krylov Solver Comparison
 //
 // This example compares the new Phase 13 Krylov solvers on sparse systems:
 //
@@ -62,7 +62,7 @@ int main() {
     std::cout << std::scientific << std::setprecision(4);
     const std::size_t n = 50;
 
-    // ── 1. Non-symmetric system: CGS and BiCGSTAB variants ──────────────
+    // -- 1. Non-symmetric system: CGS and BiCGSTAB variants --------------
     std::cout << "=== Krylov Solver Comparison ===\n\n";
     std::cout << "--- Non-symmetric system (convection-diffusion, n=" << n << ") ---\n";
 
@@ -136,7 +136,7 @@ int main() {
                   << std::setw(16) << r.rel_resid << "\n";
     }
 
-    // ── 2. Symmetric indefinite system: MINRES ──────────────────────────
+    // -- 2. Symmetric indefinite system: MINRES --------------------------
     std::cout << "\n--- Symmetric indefinite system (n=" << n << ") ---\n";
 
     auto A_si = make_symmetric_indefinite(n);

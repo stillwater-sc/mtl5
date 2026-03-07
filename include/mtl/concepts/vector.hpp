@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Vector concepts (replaces MTL4 concept/vector.hpp)
+// MTL5 -- Vector concepts (replaces MTL4 concept/vector.hpp)
 #include <mtl/concepts/collection.hpp>
 #include <cstddef>
 

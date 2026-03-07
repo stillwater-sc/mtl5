@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Prolongation operator for multigrid (coarse → fine transfer)
+// MTL5 -- Prolongation operator for multigrid (coarse -> fine transfer)
 // Linear interpolation for 1D geometric multigrid.
 // P = 2 * R^T is the standard relationship.
 #include <cstddef>
@@ -9,7 +9,7 @@
 
 namespace mtl::itl::mg {
 
-/// Builds a 1D linear interpolation prolongation matrix (coarse → fine).
+/// Builds a 1D linear interpolation prolongation matrix (coarse -> fine).
 /// Maps a vector of size n_coarse to size n_fine = 2 * n_coarse + 1.
 /// Coarse points are copied; fine points are averaged from neighbors.
 inline mat::compressed2D<double> make_prolongation_1d(std::size_t n_coarse) {

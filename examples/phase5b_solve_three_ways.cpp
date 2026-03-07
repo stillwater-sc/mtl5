@@ -43,9 +43,9 @@ int main() {
 
     const std::size_t n = 4;
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: SPD System
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: SPD (Symmetric Positive Definite) System ===\n\n";
 
     // Build a well-conditioned SPD matrix (Hilbert-like but better conditioned)
@@ -73,7 +73,7 @@ int main() {
     print_vector("b", b_spd);
     std::cout << "\n";
 
-    // ── Method 1: LU factorization ──────────────────────────────────────
+    // -- Method 1: LU factorization --------------------------------------
     {
         std::cout << "--- LU factorization (most general) ---\n";
         mat::dense2D<double> A_copy(n, n);
@@ -92,7 +92,7 @@ int main() {
                   << residual_norm(A_spd, x, b_spd) << "\n\n";
     }
 
-    // ── Method 2: Cholesky factorization ────────────────────────────────
+    // -- Method 2: Cholesky factorization --------------------------------
     {
         std::cout << "--- Cholesky factorization (SPD only, 2x faster) ---\n";
         mat::dense2D<double> A_copy(n, n);
@@ -110,7 +110,7 @@ int main() {
                   << residual_norm(A_spd, x, b_spd) << "\n\n";
     }
 
-    // ── Method 3: QR factorization ──────────────────────────────────────
+    // -- Method 3: QR factorization --------------------------------------
     {
         std::cout << "--- QR factorization (most stable) ---\n";
         mat::dense2D<double> A_copy(n, n);
@@ -129,7 +129,7 @@ int main() {
                   << residual_norm(A_spd, x, b_spd) << "\n\n";
     }
 
-    // ── Method 4: inv(A) * b (never do this!) ───────────────────────────
+    // -- Method 4: inv(A) * b (never do this!) ---------------------------
     {
         std::cout << "--- inv(A) * b (DO NOT do this in practice) ---\n";
         std::cout << "  Computing the full inverse is O(n^3) and numerically\n";
@@ -143,9 +143,9 @@ int main() {
                   << residual_norm(A_spd, x, b_spd) << "\n\n";
     }
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: Non-SPD System
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: Non-SPD System (Cholesky should fail) ===\n\n";
 
     // Make a symmetric INDEFINITE matrix (has negative eigenvalues)
@@ -211,9 +211,9 @@ int main() {
                   << residual_norm(A_indef, x, b_indef) << "\n\n";
     }
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: Preconditioner Preview (ILU(0) and IC(0) on sparse SPD)
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 3: Preconditioner Preview (Sparse SPD) ===\n\n";
 
     const std::size_t ns = 20;
@@ -257,7 +257,7 @@ int main() {
         std::cout << "  Diagonal + CG:     " << iter.iterations() << " iterations\n\n";
     }
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "=== Decision Tree for Choosing a Factorization ===\n";
     std::cout << "                  Is A symmetric?\n";
     std::cout << "                  /           \\\n";

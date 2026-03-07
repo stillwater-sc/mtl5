@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Transposed orientation metafunction
+// MTL5 -- Transposed orientation metafunction
 #include <mtl/tag/orientation.hpp>
 
 namespace mtl::traits {

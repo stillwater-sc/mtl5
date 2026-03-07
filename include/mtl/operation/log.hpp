@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise natural logarithm
+// MTL5 -- Element-wise natural logarithm
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

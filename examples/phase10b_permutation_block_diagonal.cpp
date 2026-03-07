@@ -1,4 +1,4 @@
-// phase10b_permutation_block_diagonal.cpp — Permutation Matrices & Block Diagonal
+// phase10b_permutation_block_diagonal.cpp -- Permutation Matrices & Block Diagonal
 //
 // This example demonstrates:
 //   1. Permutation matrix construction and efficient O(n) matvec
@@ -8,7 +8,7 @@
 //   5. Block diagonal as a preconditioner concept
 //
 // Key insight: permutation_matrix and block_diagonal2D store NO matrix
-// entries — they use implicit structure for O(n) operations instead of
+// entries -- they use implicit structure for O(n) operations instead of
 // the O(n^2) generic matvec.
 
 #include <mtl/mtl.hpp>
@@ -58,9 +58,9 @@ int main() {
     std::cout << " Phase 10B: Permutation Matrices & Block Diagonal\n";
     std::cout << "=============================================================\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: Permutation Matrix Basics
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: Permutation Matrix Basics ===\n\n";
 
     // A permutation matrix stores only a vector perm[] where
@@ -81,9 +81,9 @@ int main() {
     print_vector("P * x  ", y);
     std::cout << "  y[i] = x[perm[i]], so y = [x[2], x[0], x[3], x[1]]\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: Inverse Permutation
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: Inverse Permutation (P^{-1} = P^T) ===\n\n";
 
     auto Pinv = P.inverse();
@@ -99,9 +99,9 @@ int main() {
         err += std::abs(x(i) - roundtrip(i));
     std::cout << "  Round-trip error: " << std::scientific << err << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: Row Swapping for LU Pivoting
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 3: Building Permutation via Row Swaps ===\n\n";
 
     std::cout << "  LU with partial pivoting builds P from successive row swaps.\n";
@@ -124,9 +124,9 @@ int main() {
     print_vector("P_lu * v", Pv);
     std::cout << "\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 4: Block Diagonal Matrix
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 4: Block Diagonal Matrix ===\n\n";
 
     std::cout << "  A block diagonal matrix stores independent diagonal blocks.\n";
@@ -176,9 +176,9 @@ int main() {
     std::cout << "  Block 1 applied to [1, 0]: [0.8*1 + (-0.6)*0, 0.6*1 + 0.8*0] = [0.8, 0.6]\n";
     std::cout << "  Block 2 applied to [1, 1, 1]: [2-1, -1+2-1, -1+2] = [1, 0, 1]\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 5: Block Diagonal as Preconditioner Concept
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 5: Block Diagonal Preconditioning Concept ===\n\n";
 
     std::cout << "  For a matrix with block structure:\n";
@@ -237,14 +237,14 @@ int main() {
         resid += (check(i) - rhs(i)) * (check(i) - rhs(i));
     std::cout << "  ||b - BD*x|| = " << std::scientific << std::sqrt(resid) << "\n\n";
 
-    // ── Takeaways ────────────────────────────────────────────────────────
+    // -- Takeaways --------------------------------------------------------
     std::cout << "=== Takeaways ===\n\n";
     std::cout << "  1. permutation_matrix: O(n) storage, O(n) matvec (index remap)\n";
     std::cout << "  2. P.inverse() = P^T (orthogonal), P^{-1}*P*x = x always\n";
     std::cout << "  3. swap_rows() builds pivots incrementally (LU partial pivoting)\n";
     std::cout << "  4. block_diagonal2D: stores blocks, off-diag is implicitly zero\n";
     std::cout << "  5. Block diagonal solves decouple into independent small solves\n";
-    std::cout << "  6. Both types satisfy the Matrix concept — usable everywhere\n";
+    std::cout << "  6. Both types satisfy the Matrix concept -- usable everywhere\n";
 
     return EXIT_SUCCESS;
 }

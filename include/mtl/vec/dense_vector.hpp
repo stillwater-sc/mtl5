@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Dense vector (replaces MTL4 dense_vector)
+// MTL5 -- Dense vector (replaces MTL4 dense_vector)
 // Composition-based design with contiguous_memory_block, C++20 concepts
 #include <algorithm>
 #include <cassert>
@@ -29,7 +29,7 @@ namespace mtl::vec {
 template <typename Value, typename Parameters = parameters<>>
 class dense_vector {
 public:
-    // ── Parameter extraction ────────────────────────────────────────────
+    // -- Parameter extraction --------------------------------------------
     using param_type   = Parameters;
     using orientation  = typename Parameters::orientation;
     using dim_type     = typename Parameters::dimensions_type;
@@ -40,17 +40,17 @@ public:
     using actual_storage = typename Parameters::storage;
     using memory_type = detail::contiguous_memory_block<Value, actual_storage, static_size>;
 
-    // ── Standard type aliases ───────────────────────────────────────────
+    // -- Standard type aliases -------------------------------------------
     using value_type      = Value;
     using reference       = Value&;
     using const_reference = const Value&;
     using pointer         = Value*;
     using const_pointer   = const Value*;
 
-    // ── Default constructor ─────────────────────────────────────────────
+    // -- Default constructor ---------------------------------------------
     dense_vector() : mem_{}, dim_{} {}
 
-    // ── Size constructor (dynamic only) ─────────────────────────────────
+    // -- Size constructor (dynamic only) ---------------------------------
     explicit dense_vector(size_type n) : mem_(n), dim_{} {
         if constexpr (!dim_type::is_fixed) {
             dim_.set_size(n);
@@ -59,29 +59,29 @@ public:
         }
     }
 
-    // ── Size + fill value constructor ───────────────────────────────────
+    // -- Size + fill value constructor -----------------------------------
     dense_vector(size_type n, const Value& val) : dense_vector(n) {
         std::fill_n(mem_.data(), size(), val);
     }
 
-    // ── External pointer constructor ────────────────────────────────────
+    // -- External pointer constructor ------------------------------------
     dense_vector(size_type n, Value* ptr) : mem_(ptr, n, false), dim_{} {
         if constexpr (!dim_type::is_fixed) {
             dim_.set_size(n);
         }
     }
 
-    // ── Initializer list constructor ────────────────────────────────────
+    // -- Initializer list constructor ------------------------------------
     dense_vector(std::initializer_list<Value> il) : dense_vector(il.size()) {
         std::copy(il.begin(), il.end(), mem_.data());
     }
 
-    // ── Construct from std::vector ──────────────────────────────────────
+    // -- Construct from std::vector --------------------------------------
     explicit dense_vector(const std::vector<Value>& v) : dense_vector(v.size()) {
         std::copy(v.begin(), v.end(), mem_.data());
     }
 
-    // ── Copy / Move ─────────────────────────────────────────────────────
+    // -- Copy / Move -----------------------------------------------------
     dense_vector(const dense_vector&) = default;
     dense_vector& operator=(const dense_vector&) = default;
     ~dense_vector() = default;
@@ -101,7 +101,7 @@ public:
         return *this;
     }
 
-    // ── Expression template construction / assignment ───────────────────
+    // -- Expression template construction / assignment -------------------
     template <typename Expr>
         requires (Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
@@ -140,7 +140,7 @@ public:
         return *this;
     }
 
-    // ── Element access ──────────────────────────────────────────────────
+    // -- Element access --------------------------------------------------
     reference operator()(size_type i) {
         if constexpr (bounds_checking) {
             if (i >= size()) throw std::out_of_range("dense_vector: index out of range");
@@ -158,7 +158,7 @@ public:
     reference operator[](size_type i) { return operator()(i); }
     const_reference operator[](size_type i) const { return operator()(i); }
 
-    // ── Size / shape ────────────────────────────────────────────────────
+    // -- Size / shape ----------------------------------------------------
     size_type size() const {
         if constexpr (dim_type::is_fixed) return static_size;
         else return dim_.size();
@@ -180,7 +180,7 @@ public:
     /// Stride is always 1 for dense vectors
     static constexpr size_type stride() { return 1; }
 
-    // ── Data access ─────────────────────────────────────────────────────
+    // -- Data access -----------------------------------------------------
     pointer       data()       { return mem_.data(); }
     const_pointer data() const { return mem_.data(); }
 
@@ -189,7 +189,7 @@ public:
     pointer       end()         { return data() + size(); }
     const_pointer end()   const { return data() + size(); }
 
-    // ── Dimension modification ──────────────────────────────────────────
+    // -- Dimension modification ------------------------------------------
     void change_dim(size_type n) {
         if constexpr (dim_type::is_fixed) {
             assert(n == static_size && "Cannot change fixed dimension");
@@ -210,7 +210,7 @@ public:
         }
     }
 
-    // ── Compound assignment operators ───────────────────────────────────
+    // -- Compound assignment operators -----------------------------------
     dense_vector& operator+=(const dense_vector& other) {
         assert(size() == other.size());
         for (size_type i = 0; i < size(); ++i) mem_[i] += other.mem_[i];
@@ -235,7 +235,7 @@ public:
         return *this;
     }
 
-    // ── Swap ────────────────────────────────────────────────────────────
+    // -- Swap ------------------------------------------------------------
     void swap(dense_vector& other) noexcept {
         mem_.swap(other.mem_);
         if constexpr (!dim_type::is_fixed) {
@@ -251,7 +251,7 @@ private:
     [[no_unique_address]] dim_type dim_;
 };
 
-// ── Free functions in mtl::vec ──────────────────────────────────────────
+// -- Free functions in mtl::vec ------------------------------------------
 
 template <typename Value, typename Parameters>
 auto size(const dense_vector<Value, Parameters>& v) { return v.size(); }
@@ -269,7 +269,7 @@ void fill(dense_vector<Value, Parameters>& v, const Value& val) {
 
 } // namespace mtl::vec
 
-// ── Traits specializations ─────────────────────────────────────────────
+// -- Traits specializations ---------------------------------------------
 
 namespace mtl::traits {
 
@@ -293,5 +293,5 @@ struct ashape<vec::dense_vector<Value, Parameters>> {
 
 } // namespace mtl::ashape
 
-// ── Convenience alias ──────────────────────────────────────────────────
+// -- Convenience alias --------------------------------------------------
 namespace mtl { using vec::dense_vector; }

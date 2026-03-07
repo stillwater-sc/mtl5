@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Block diagonal preconditioner
+// MTL5 -- Block diagonal preconditioner
 // Partitions matrix into diagonal blocks, computes LU of each, applies block solves.
 #include <algorithm>
 #include <cassert>

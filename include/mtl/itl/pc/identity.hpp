@@ -1,12 +1,12 @@
 #pragma once
-// MTL5 — Identity preconditioner (no-op): solve(x, b) copies b to x
+// MTL5 -- Identity preconditioner (no-op): solve(x, b) copies b to x
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 
 namespace mtl::itl::pc {
 
-/// Identity preconditioner — solve(x, b) simply copies b into x.
+/// Identity preconditioner -- solve(x, b) simply copies b into x.
 /// Satisfies the Preconditioner concept. Stores nothing.
 template <typename Matrix>
 class identity {

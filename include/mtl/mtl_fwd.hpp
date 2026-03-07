@@ -1,11 +1,11 @@
 #pragma once
-// MTL5 — Forward declarations for all key types
+// MTL5 -- Forward declarations for all key types
 
 #include <cstddef>
 
 namespace mtl {
 
-// ── Tags ────────────────────────────────────────────────────────────────
+// -- Tags ----------------------------------------------------------------
 namespace tag {
     struct row_major;
     struct col_major;
@@ -20,7 +20,7 @@ namespace detail {
     struct f_index;
 } // namespace detail
 
-// ── Matrix types ────────────────────────────────────────────────────────
+// -- Matrix types --------------------------------------------------------
 namespace mat {
     template <typename Orientation, typename Index, typename Dimensions,
               typename Storage, typename SizeType>
@@ -36,7 +36,7 @@ namespace mat {
     template <typename Value>                      class identity2D;
 } // namespace mat
 
-// ── Vector types ────────────────────────────────────────────────────────
+// -- Vector types --------------------------------------------------------
 namespace vec {
     template <typename Orientation, typename Dimensions,
               typename Storage, typename SizeType>
@@ -50,7 +50,7 @@ namespace vec {
     template <typename Value>                      class strided_vector_ref;
 } // namespace vec
 
-// ── Math ────────────────────────────────────────────────────────────────
+// -- Math ----------------------------------------------------------------
 namespace math {
     template <typename T> struct add;
     template <typename T> struct mult;
@@ -60,7 +60,7 @@ namespace math {
     template <typename T> constexpr T one();
 } // namespace math
 
-// ── Generators ──────────────────────────────────────────────────────────
+// -- Generators ----------------------------------------------------------
 namespace generators {
     template <typename Value> class hilbert;
     template <typename Value> class lehmer;
@@ -69,7 +69,7 @@ namespace generators {
     template <typename Value> class minij;
 } // namespace generators
 
-// ── ITL ─────────────────────────────────────────────────────────────────
+// -- ITL -----------------------------------------------------------------
 namespace itl {
     template <typename Real> class basic_iteration;
     template <typename Real> class cyclic_iteration;

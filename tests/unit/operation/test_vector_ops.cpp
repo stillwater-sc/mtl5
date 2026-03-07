@@ -17,7 +17,7 @@
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
 
-// ── Vector + - operators ────────────────────────────────────────────────
+// -- Vector + - operators ------------------------------------------------
 
 TEST_CASE("vector addition", "[vec][operators]") {
     dense_vector<double> a = {1.0, 2.0, 3.0};
@@ -45,7 +45,7 @@ TEST_CASE("vector unary negation", "[vec][operators]") {
     REQUIRE(b(2) == -3.0);
 }
 
-// ── Scalar-vector multiply / divide ─────────────────────────────────────
+// -- Scalar-vector multiply / divide -------------------------------------
 
 TEST_CASE("scalar * vector", "[vec][operators]") {
     dense_vector<double> v = {1.0, 2.0, 3.0};
@@ -71,7 +71,7 @@ TEST_CASE("vector / scalar", "[vec][operators]") {
     REQUIRE(r(2) == 4.0);
 }
 
-// ── Compound assignment ─────────────────────────────────────────────────
+// -- Compound assignment -------------------------------------------------
 
 TEST_CASE("vector +=", "[vec][compound]") {
     dense_vector<double> a = {1.0, 2.0, 3.0};
@@ -107,7 +107,7 @@ TEST_CASE("vector /=", "[vec][compound]") {
     REQUIRE(a(2) == 3.0);
 }
 
-// ── Reductions ──────────────────────────────────────────────────────────
+// -- Reductions ----------------------------------------------------------
 
 TEST_CASE("sum of vector", "[operation][sum]") {
     dense_vector<double> v = {1.0, 2.0, 3.0, 4.0};
@@ -154,7 +154,7 @@ TEST_CASE("min with negative values", "[operation][min]") {
     REQUIRE(min(v) == -20);
 }
 
-// ── Element-wise operations ─────────────────────────────────────────────
+// -- Element-wise operations ---------------------------------------------
 
 TEST_CASE("abs of vector", "[operation][abs]") {
     dense_vector<double> v = {-1.0, 2.0, -3.0};
@@ -206,7 +206,7 @@ TEST_CASE("scaled returns copy", "[operation][scale]") {
     REQUIRE(v(0) == 1.0);
 }
 
-// ── sqrt on vectors ─────────────────────────────────────────────────────
+// -- sqrt on vectors -----------------------------------------------------
 
 TEST_CASE("sqrt of vector", "[operation][sqrt]") {
     dense_vector<double> v = {4.0, 9.0, 16.0};
@@ -223,7 +223,7 @@ TEST_CASE("sqrt of vector with non-perfect squares", "[operation][sqrt]") {
     REQUIRE_THAT(r(1), WithinAbs(std::sqrt(3.0), 1e-10));
 }
 
-// ── Mixed-type vector operations ────────────────────────────────────────
+// -- Mixed-type vector operations ----------------------------------------
 
 TEST_CASE("int + double vector addition", "[vec][operators][mixed]") {
     dense_vector<int> a = {1, 2, 3};
@@ -254,7 +254,7 @@ TEST_CASE("int scalar * double vector", "[vec][operators][mixed]") {
     REQUIRE(r(2) == 7.0);
 }
 
-// ── Chained expression: y = A*x + b pattern ────────────────────────────
+// -- Chained expression: y = A*x + b pattern ----------------------------
 
 TEST_CASE("y = alpha*x + b pattern", "[vec][operators]") {
     dense_vector<double> x = {1.0, 2.0, 3.0};

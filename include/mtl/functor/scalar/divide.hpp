@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar division functor
+// MTL5 -- Scalar division functor
 #include <type_traits>
 
 namespace mtl::functor::scalar {

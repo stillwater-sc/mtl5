@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Min(i,j) matrix generator (implicit, no storage)
+// MTL5 -- Min(i,j) matrix generator (implicit, no storage)
 // M(i,j) = min(i+1,j+1). SPD with known inverse.
 #include <algorithm>
 #include <cstddef>

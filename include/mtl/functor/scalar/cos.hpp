@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar cosine functor
+// MTL5 -- Scalar cosine functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

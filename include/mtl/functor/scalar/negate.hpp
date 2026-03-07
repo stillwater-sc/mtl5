@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar negation functor
+// MTL5 -- Scalar negation functor
 
 namespace mtl::functor::scalar {
 

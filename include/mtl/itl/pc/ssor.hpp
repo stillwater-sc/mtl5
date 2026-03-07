@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — SSOR (Symmetric Successive Over-Relaxation) preconditioner
+// MTL5 -- SSOR (Symmetric Successive Over-Relaxation) preconditioner
 // Forward SOR sweep followed by backward SOR sweep.
 #include <cassert>
 #include <cstddef>

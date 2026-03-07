@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Sum of all elements in a collection
+// MTL5 -- Sum of all elements in a collection
 #include <mtl/concepts/collection.hpp>
 #include <mtl/math/identity.hpp>
 

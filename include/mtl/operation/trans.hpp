@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Return transposed view of a matrix
+// MTL5 -- Return transposed view of a matrix
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/mat/view/transposed_view.hpp>
 

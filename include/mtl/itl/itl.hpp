@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — ITL (Iterative Template Library) umbrella include
+// MTL5 -- ITL (Iterative Template Library) umbrella include
 // Replaces the standalone itl:: namespace with mtl::itl::
 
 // Iteration control

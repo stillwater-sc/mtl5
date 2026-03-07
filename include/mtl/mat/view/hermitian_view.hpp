@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Hermitian view: reads upper triangle and mirrors with conjugation.
+// MTL5 -- Hermitian view: reads upper triangle and mirrors with conjugation.
 // For real matrices, behaves as a symmetric view.
 #include <cstddef>
 #include <mtl/functor/scalar/conj.hpp>

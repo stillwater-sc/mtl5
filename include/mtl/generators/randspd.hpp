@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Random SPD matrix with prescribed positive eigenvalues (factory, returns dense2D)
+// MTL5 -- Random SPD matrix with prescribed positive eigenvalues (factory, returns dense2D)
 // Constructs A = Q * Lambda * Q^T where Q is random orthogonal and all eigenvalues > 0.
 // Result is symmetric positive definite by construction.
 #include <cassert>

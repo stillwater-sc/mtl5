@@ -43,7 +43,7 @@ int main() {
     // Build RHS: simple constant forcing f=1
     vec::dense_vector<double> b(n, 1.0);
 
-    // ── Regime 1: Diffusion-dominated (epsilon = 1.0) ────────────────────
+    // -- Regime 1: Diffusion-dominated (epsilon = 1.0) --------------------
     {
         double eps = 1.0;
         std::cout << "=== Regime 1: Diffusion-dominated (epsilon = " << eps << ") ===\n";
@@ -74,7 +74,7 @@ int main() {
                   << "error code = " << info_bi << "\n\n";
     }
 
-    // ── Regime 2: Convection-dominated (epsilon = 0.01) ──────────────────
+    // -- Regime 2: Convection-dominated (epsilon = 0.01) ------------------
     {
         double eps = 0.01;
         std::cout << "=== Regime 2: Convection-dominated (epsilon = " << eps << ") ===\n";
@@ -115,7 +115,7 @@ int main() {
         std::cout << "BiCGSTAB residual ||b - Ax||_2 = " << std::scientific << res_norm << "\n\n";
     }
 
-    // ── Iteration Controllers Demo ───────────────────────────────────────
+    // -- Iteration Controllers Demo ---------------------------------------
     std::cout << "=== Iteration Controller Comparison ===\n";
     std::cout << "MTL5 provides three controllers with different verbosity:\n\n";
 
@@ -150,7 +150,7 @@ int main() {
         std::cout << "\n";
     }
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. CG requires the matrix to be SPD (Symmetric Positive Definite).\n";
     std::cout << "   On non-symmetric systems it may diverge or give wrong answers.\n";

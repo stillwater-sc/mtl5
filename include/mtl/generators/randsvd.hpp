@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Random matrix with prescribed singular values (factory, returns dense2D)
+// MTL5 -- Random matrix with prescribed singular values (factory, returns dense2D)
 // Constructs A = U * Sigma * V^T where U, V are random orthogonal matrices.
 // Most powerful test matrix generator: verify SVD results against known ground truth.
 #include <cassert>

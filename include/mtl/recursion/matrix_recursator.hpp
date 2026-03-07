@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Block-recursive matrix traversal (recursator)
+// MTL5 -- Block-recursive matrix traversal (recursator)
 // Port from MTL4: boost/numeric/mtl/recursion/matrix_recursator.hpp
 // Key changes: value semantics (no shared_ptr), C++20, constexpr utilities
 
@@ -9,7 +9,7 @@
 
 namespace mtl::recursion {
 
-// ── Utility functions ──────────────────────────────────────────────────
+// -- Utility functions --------------------------------------------------
 
 /// True if n is a power of 2
 constexpr bool is_power_of_2(std::size_t n) {
@@ -29,10 +29,10 @@ constexpr std::size_t outer_bound(std::size_t n) {
     return std::bit_ceil(n);
 }
 
-// ── Recursator ─────────────────────────────────────────────────────────
+// -- Recursator ---------------------------------------------------------
 
 /// Wraps a matrix and provides quad-tree subdivision for block-recursive
-/// algorithms. Lightweight value type — copy freely.
+/// algorithms. Lightweight value type -- copy freely.
 template <typename Matrix>
 class recursator {
 public:
@@ -45,7 +45,7 @@ public:
           row_offset_(0), col_offset_(0),
           nrows_(m.num_rows()), ncols_(m.num_cols()) {}
 
-    // ── Quadrant subdivision ───────────────────────────────────────────
+    // -- Quadrant subdivision -------------------------------------------
 
     /// North-west quadrant (top-left)
     recursator north_west() const {
@@ -78,7 +78,7 @@ public:
                           nrows_ - rs, ncols_ - cs);
     }
 
-    // ── Access ─────────────────────────────────────────────────────────
+    // -- Access ---------------------------------------------------------
 
     /// Access element (r, c) relative to this sub-region
     decltype(auto) operator()(size_type r, size_type c) const {
@@ -93,7 +93,7 @@ public:
     Matrix& get_matrix() { return *mat_; }
     const Matrix& get_matrix() const { return *mat_; }
 
-    // ── Dimensions ─────────────────────────────────────────────────────
+    // -- Dimensions -----------------------------------------------------
 
     size_type num_rows() const { return nrows_; }
     size_type num_cols() const { return ncols_; }
@@ -131,7 +131,7 @@ private:
     size_type ncols_;
 };
 
-// ── Recursive traversal ────────────────────────────────────────────────
+// -- Recursive traversal ------------------------------------------------
 
 /// Recursively apply function to all base-case sub-regions of the recursator.
 template <typename Matrix, typename Function, typename BaseCaseTest>

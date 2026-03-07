@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Base case tests for recursive algorithms
+// MTL5 -- Base case tests for recursive algorithms
 // Port from MTL4: boost/numeric/mtl/recursion/base_case_test.hpp
 // Key changes: constexpr functors, no Boost dependencies
 

@@ -1,8 +1,8 @@
 #pragma once
-// MTL5 — Expression template storage helper
+// MTL5 -- Expression template storage helper
 // Determines whether to store an operand by value or by const reference.
-// - lvalue operand (T deduced as X&) → store as const X& (no copy)
-// - rvalue operand (T deduced as X)  → store as X (moved from rvalue)
+// - lvalue operand (T deduced as X&) -> store as const X& (no copy)
+// - rvalue operand (T deduced as X)  -> store as X (moved from rvalue)
 #include <type_traits>
 
 namespace mtl::detail {

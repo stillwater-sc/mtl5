@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Free function: number of columns
+// MTL5 -- Free function: number of columns
 #include <mtl/concepts/matrix.hpp>
 
 namespace mtl {

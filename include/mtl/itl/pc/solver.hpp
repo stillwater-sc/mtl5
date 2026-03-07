@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Thin free-function wrappers for preconditioner solve
+// MTL5 -- Thin free-function wrappers for preconditioner solve
 #include <mtl/concepts/vector.hpp>
 
 namespace mtl::itl::pc {

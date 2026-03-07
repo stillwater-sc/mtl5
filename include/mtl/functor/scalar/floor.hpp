@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar floor functor
+// MTL5 -- Scalar floor functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix concepts (replaces MTL4 concept/matrix.hpp)
+// MTL5 -- Matrix concepts (replaces MTL4 concept/matrix.hpp)
 #include <mtl/concepts/collection.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/tag/sparsity.hpp>

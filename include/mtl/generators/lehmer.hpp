@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Lehmer matrix generator (implicit, no storage)
+// MTL5 -- Lehmer matrix generator (implicit, no storage)
 // L(i,j) = (min(i,j)+1)/(max(i,j)+1). SPD with positive eigenvalues.
 #include <algorithm>
 #include <cstddef>

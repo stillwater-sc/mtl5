@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Multigrid V-cycle / W-cycle driver
+// MTL5 -- Multigrid V-cycle / W-cycle driver
 // Template parameters: Smoother, CoarseSolver types.
 // Uses restriction/prolongation matrices for inter-grid transfer.
 #include <cassert>
@@ -68,7 +68,7 @@ public:
     void vcycle(vector_type& x, const vector_type& b, int level = 0) {
         size_type l = static_cast<size_type>(level);
 
-        // Base case: coarsest level — solve directly
+        // Base case: coarsest level -- solve directly
         if (l == n_levels_ - 1) {
             coarse_solve_(x, b);
             return;

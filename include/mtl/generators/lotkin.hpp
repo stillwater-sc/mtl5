@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Lotkin matrix generator (implicit, no storage)
+// MTL5 -- Lotkin matrix generator (implicit, no storage)
 // Hilbert matrix with first row replaced by all 1s. Ill-conditioned, asymmetric.
 #include <cstddef>
 #include <mtl/math/identity.hpp>

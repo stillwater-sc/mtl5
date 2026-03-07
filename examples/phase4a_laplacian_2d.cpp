@@ -23,8 +23,8 @@ int main() {
     std::cout << " Phase 4A: 2D Laplacian - Sparse Assembly + GMRES\n";
     std::cout << "=============================================================\n\n";
 
-    // ── Grid Setup ───────────────────────────────────────────────────────
-    // n×n interior grid on [0,1]^2, total N = n^2 unknowns
+    // -- Grid Setup -------------------------------------------------------
+    // nxn interior grid on [0,1]^2, total N = n^2 unknowns
     const std::size_t n = 10;  // 10x10 interior grid
     const std::size_t N = n * n;
     const double h = 1.0 / (n + 1);
@@ -33,7 +33,7 @@ int main() {
     std::cout << "Grid: " << n << "x" << n << " interior points = " << N << " unknowns\n";
     std::cout << "Grid spacing h = " << h << "\n\n";
 
-    // ── Sparse Assembly with Inserter ────────────────────────────────────
+    // -- Sparse Assembly with Inserter ------------------------------------
     std::cout << "--- Assembling 2D Laplacian with 5-point stencil ---\n";
     std::cout << "Stencil:    -1\n";
     std::cout << "         -1  4  -1    (scaled by 1/h^2)\n";
@@ -75,14 +75,14 @@ int main() {
               << " (density = " << std::fixed << std::setprecision(2)
               << 100.0 * A.nnz() / (N * N) << "%)\n\n";
 
-    // ── Build RHS ─────────────────────────────────────────────────────────
+    // -- Build RHS ---------------------------------------------------------
     // f(x,y) = 1 (constant forcing - excites all eigenmodes for nontrivial convergence)
     vec::dense_vector<double> b(N, 1.0);
 
     // Preconditioner: identity (no preconditioning) to show raw solver behavior
     itl::pc::identity<mat::compressed2D<double>> no_pc(A);
 
-    // ── Solve with GMRES (restart=5) ─────────────────────────────────────
+    // -- Solve with GMRES (restart=5) -------------------------------------
     std::cout << "--- Solve 1: GMRES(5) - very small Krylov subspace ---\n";
     std::cout << "Restart limits memory to 5 vectors but needs many restarts.\n\n";
 
@@ -91,7 +91,7 @@ int main() {
     int info1 = itl::gmres(A, x1, b, no_pc, iter1, 5);
     std::cout << "\n";
 
-    // ── Solve with GMRES (restart=20) ────────────────────────────────────
+    // -- Solve with GMRES (restart=20) ------------------------------------
     std::cout << "--- Solve 2: GMRES(20) - larger Krylov subspace ---\n";
     std::cout << "More memory per cycle but typically fewer total iterations.\n\n";
 
@@ -100,7 +100,7 @@ int main() {
     int info2 = itl::gmres(A, x2, b, no_pc, iter2, 20);
     std::cout << "\n";
 
-    // ── Solve with CG (for comparison) ───────────────────────────────────
+    // -- Solve with CG (for comparison) -----------------------------------
     std::cout << "--- Solve 3: CG - valid since 2D Laplacian is SPD ---\n";
     std::cout << "CG is optimal for SPD systems: guaranteed convergence in N steps.\n\n";
 
@@ -109,7 +109,7 @@ int main() {
     int info3 = itl::cg(A, x3, b, no_pc, iter3);
     std::cout << "\n";
 
-    // ── Summary table ────────────────────────────────────────────────────
+    // -- Summary table ----------------------------------------------------
     std::cout << "--- Results Summary ---\n";
     std::cout << std::setw(15) << "Solver"
               << std::setw(12) << "Iterations"
@@ -125,7 +125,7 @@ int main() {
               << std::setw(12) << iter3.iterations()
               << std::setw(10) << (info3 == 0 ? "OK" : "FAIL") << "\n\n";
 
-    // ── Verify solutions agree ─────────────────────────────────────────
+    // -- Verify solutions agree -----------------------------------------
     double max_diff = 0.0;
     for (std::size_t i = 0; i < N; ++i)
         max_diff = std::max(max_diff, std::abs(x1(i) - x3(i)));
@@ -133,7 +133,7 @@ int main() {
               << std::scientific << max_diff << "\n";
     std::cout << "(All solvers converge to the same answer.)\n\n";
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. The inserter pattern: create inserter in a scope, fill with\n";
     std::cout << "   ins[row][col] << value, then destructor finalizes CRS arrays.\n";

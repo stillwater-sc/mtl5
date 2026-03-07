@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise absolute value
+// MTL5 -- Element-wise absolute value
 #include <cmath>
 #include <cstdlib>
 #include <mtl/concepts/vector.hpp>
@@ -10,7 +10,7 @@
 
 namespace mtl {
 
-/// Element-wise abs for vectors → dense_vector<magnitude_t<T>>
+/// Element-wise abs for vectors -> dense_vector<magnitude_t<T>>
 template <Vector V>
 auto abs(const V& v) {
     using mag_t = magnitude_t<typename V::value_type>;
@@ -22,7 +22,7 @@ auto abs(const V& v) {
     return result;
 }
 
-/// Element-wise abs for matrices → dense2D<magnitude_t<T>>
+/// Element-wise abs for matrices -> dense2D<magnitude_t<T>>
 template <Matrix M>
 auto abs(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;

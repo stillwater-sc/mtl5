@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — IC(0) incomplete Cholesky factorization preconditioner for compressed2D
+// MTL5 -- IC(0) incomplete Cholesky factorization preconditioner for compressed2D
 // Preserves the sparsity pattern of A (no fill-in). A must be SPD.
 // Constructor performs factorization; solve does L/L^T trisolves.
 #include <cassert>

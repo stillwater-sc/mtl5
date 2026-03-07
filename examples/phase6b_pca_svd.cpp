@@ -22,8 +22,8 @@ int main() {
     std::cout << " Phase 6B: PCA via SVD - Data Dimensionality Reduction\n";
     std::cout << "=============================================================\n\n";
 
-    // ── Generate synthetic data ──────────────────────────────────────────
-    // 8 samples, 3 features. Feature 3 ≈ Feature 1 + noise (correlated).
+    // -- Generate synthetic data ------------------------------------------
+    // 8 samples, 3 features. Feature 3 ~= Feature 1 + noise (correlated).
     const std::size_t m = 8;  // samples
     const std::size_t p = 3;  // features
 
@@ -56,7 +56,7 @@ int main() {
         std::cout << "]\n";
     }
 
-    // ── Step 1: Center the data ──────────────────────────────────────────
+    // -- Step 1: Center the data ------------------------------------------
     std::cout << "\n--- Step 1: Center the data (subtract column means) ---\n";
 
     vec::dense_vector<double> col_means(p, 0.0);
@@ -78,7 +78,7 @@ int main() {
         for (std::size_t j = 0; j < p; ++j)
             Xc(i, j) = X(i, j) - col_means(j);
 
-    // ── Step 2: SVD of centered data ─────────────────────────────────────
+    // -- Step 2: SVD of centered data -------------------------------------
     std::cout << "\n--- Step 2: SVD of centered data ---\n";
     std::cout << "X_centered = U * S * V^T\n\n";
 
@@ -113,7 +113,7 @@ int main() {
         std::cout << "]\n";
     }
 
-    // ── Step 3: Compare with covariance eigendecomposition ───────────────
+    // -- Step 3: Compare with covariance eigendecomposition ---------------
     std::cout << "\n--- Step 3: Verify against covariance eigendecomposition ---\n";
     std::cout << "Covariance C = X^T * X / (n-1)\n";
     std::cout << "Eigenvalues of C should equal sigma_i^2 / (n-1)\n\n";
@@ -145,7 +145,7 @@ int main() {
                   << std::scientific << std::setw(14) << err << "\n";
     }
 
-    // ── Step 4: Dimensionality reduction ─────────────────────────────────
+    // -- Step 4: Dimensionality reduction ---------------------------------
     std::cout << "\n--- Step 4: Reduce from 3D to 2D ---\n";
     std::cout << "Project onto first 2 principal components.\n\n";
 
@@ -164,7 +164,7 @@ int main() {
                   << ", " << X_reduced(i, 1) << ")\n";
     }
 
-    // ── Step 5: Reconstruct and measure error ────────────────────────────
+    // -- Step 5: Reconstruct and measure error ----------------------------
     std::cout << "\n--- Step 5: Reconstruct from 2 components ---\n";
 
     // Reconstruct: X_approx = X_reduced * V2^T + means
@@ -211,7 +211,7 @@ int main() {
         std::cout << ")\n";
     }
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "\n=== Key Takeaways ===\n";
     std::cout << "1. PCA finds orthogonal directions of maximum variance.\n";
     std::cout << "   The k-th principal component captures the k-th most\n";

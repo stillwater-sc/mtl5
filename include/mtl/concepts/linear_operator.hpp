@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — LinearOperator concept for ITL (replaces duck-typing in MTL4 ITL)
+// MTL5 -- LinearOperator concept for ITL (replaces duck-typing in MTL4 ITL)
 #include <concepts>
 
 namespace mtl {

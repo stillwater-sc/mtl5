@@ -1,4 +1,4 @@
-// phase13b_multigrid_poisson.cpp — Multigrid for 1D Poisson
+// phase13b_multigrid_poisson.cpp -- Multigrid for 1D Poisson
 //
 // This example demonstrates multigrid methods for solving -u'' = f on [0,1]:
 //
@@ -9,7 +9,7 @@
 //
 // The 1D Poisson equation with Dirichlet BCs is a classic benchmark
 // for multigrid. Multigrid achieves O(n) solution cost, independent
-// of problem size — far superior to unpreconditioned Krylov methods.
+// of problem size -- far superior to unpreconditioned Krylov methods.
 
 #include <mtl/mtl.hpp>
 #include <iostream>
@@ -37,7 +37,7 @@ int main() {
     std::cout << std::scientific << std::setprecision(6);
     std::cout << "=== Multigrid for 1D Poisson Equation ===\n\n";
 
-    // ── 1. Build 3-level hierarchy: 63 → 31 → 15 ─────────────────────
+    // -- 1. Build 3-level hierarchy: 63 -> 31 -> 15 ---------------------
     // Sizes follow the pattern n = 2^k - 1 for geometric coarsening
     const std::size_t n0 = 63;  // finest
     const std::size_t n1 = 31;
@@ -76,7 +76,7 @@ int main() {
     // RHS: constant forcing f(x) = 1
     vec::dense_vector<double> b(n0, 1.0);
 
-    // ── 2. V-cycle as stand-alone solver ────────────────────────────────
+    // -- 2. V-cycle as stand-alone solver --------------------------------
     std::cout << "--- V-cycle as stand-alone solver ---\n";
     std::cout << std::setw(8) << "Cycle" << std::setw(16) << "||r|| / ||b||\n";
     std::cout << std::string(24, '-') << "\n";
@@ -98,7 +98,7 @@ int main() {
         if (rel_resid < 1e-10) break;
     }
 
-    // ── 3. CG without preconditioning ───────────────────────────────────
+    // -- 3. CG without preconditioning -----------------------------------
     std::cout << "\n--- CG without preconditioning ---\n";
     {
         vec::dense_vector<double> x(n0, 0.0);
@@ -114,7 +114,7 @@ int main() {
         std::cout << "Relative residual: " << mtl::two_norm(r) / norm_b << "\n";
     }
 
-    // ── 4. MG-preconditioned CG ─────────────────────────────────────────
+    // -- 4. MG-preconditioned CG -----------------------------------------
     std::cout << "\n--- CG with multigrid preconditioner ---\n";
     {
         vec::dense_vector<double> x(n0, 0.0);

@@ -81,7 +81,7 @@ TEST_CASE("Matrix inverse via LU", "[operation][inv]") {
         }
 }
 
-// ── Generator-based LU tests ─────────────────────────────────────────
+// -- Generator-based LU tests -----------------------------------------
 
 TEST_CASE("LU solve on 8x8 Frank matrix", "[operation][lu][generator]") {
     constexpr std::size_t n = 8;

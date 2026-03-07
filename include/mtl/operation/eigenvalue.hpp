@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — General eigenvalue computation via QR algorithm on Hessenberg form
+// MTL5 -- General eigenvalue computation via QR algorithm on Hessenberg form
 // Reduce to upper Hessenberg, then apply implicit QR with single/double shifts.
 #include <cmath>
 #include <complex>
@@ -109,13 +109,13 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 
         value_type shift;
         if (disc >= value_type(0)) {
-            // Real eigenvalues — pick shift closest to H(nn-1,nn-1)
+            // Real eigenvalues -- pick shift closest to H(nn-1,nn-1)
             value_type sq = sqrt(disc);
             value_type e1 = (tr + sq) / value_type(2);
             value_type e2 = (tr - sq) / value_type(2);
             shift = (abs(e1 - d) < abs(e2 - d)) ? e1 : e2;
         } else {
-            // Complex eigenvalues — use d as shift
+            // Complex eigenvalues -- use d as shift
             shift = d;
         }
 

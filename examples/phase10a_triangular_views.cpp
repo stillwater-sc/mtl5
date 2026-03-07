@@ -46,9 +46,9 @@ int main() {
     std::cout << " Phase 10A: Triangular Views\n";
     std::cout << "=============================================================\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: The Four Triangular Views
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: The Four Triangular Views ===\n\n";
 
     const std::size_t n = 4;
@@ -75,9 +75,9 @@ int main() {
     auto SL = strict_lower(A);
     print_matrix("strict_lower(A) - excludes diagonal", SL, n, n);
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: Decomposition Identity
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: A = lower(A) + strict_upper(A) ===\n\n";
 
     std::cout << "  Verifying element-wise: L(i,j) + SU(i,j) == A(i,j)\n";
@@ -94,9 +94,9 @@ int main() {
             max_err = std::max(max_err, std::abs(U(i, j) + SL(i, j) - A(i, j)));
     std::cout << "  Max error: " << std::scientific << max_err << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: MATLAB-Compatible triu/tril with Offsets
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 3: triu(A, k) and tril(A, k) ===\n\n";
 
     std::cout << "  triu(A, k) keeps elements on diagonal k and above.\n";
@@ -118,9 +118,9 @@ int main() {
     auto TL1 = tril(A, -1);
     print_matrix("tril(A, -1) - same as strict_lower(A)", TL1, n, n);
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 4: Triangular Views with LU Factorization
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 4: Extracting L and U from Packed LU ===\n\n";
 
     // Build a well-conditioned SPD matrix for LU
@@ -158,7 +158,7 @@ int main() {
     print_matrix("strict_lower(LU)", LU_lower, n, n);
     std::cout << "  (The actual L has 1s on the diagonal - unit lower triangular)\n\n";
 
-    // ── Solve using the factorization ───────────────────────────────────
+    // -- Solve using the factorization -----------------------------------
     std::cout << "- Solving B*x = b using packed LU -\n";
     vec::dense_vector<double> x(n);
     lu_solve(LU, pivot, x, b);
@@ -170,9 +170,9 @@ int main() {
         norm_err += (x(i) - x_true(i)) * (x(i) - x_true(i));
     std::cout << "  ||x - x_true|| = " << std::scientific << std::sqrt(norm_err) << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 5: Direct Trisolve with Views
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 5: Trisolve with Triangular Views ===\n\n";
 
     // Build a known lower triangular system: L*x = b
@@ -195,7 +195,7 @@ int main() {
     print_vector("x (forward substitution)", x3);
     std::cout << "  Expected: x = [1, 2, 3]\n\n";
 
-    // ── Takeaways ────────────────────────────────────────────────────────
+    // -- Takeaways --------------------------------------------------------
     std::cout << "=== Takeaways ===\n\n";
     std::cout << "  1. Views are ZERO-COST: no data copied, just filtered access\n";
     std::cout << "  2. upper(A) + strict_lower(A) = A  (decomposition identity)\n";

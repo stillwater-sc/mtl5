@@ -10,7 +10,7 @@
 #include <mtl/concepts/linear_operator.hpp>
 #include <mtl/concepts/preconditioner.hpp>
 
-// ── Scalar concept tests ────────────────────────────────────────────────
+// -- Scalar concept tests ------------------------------------------------
 
 TEST_CASE("Scalar concept satisfied by arithmetic types", "[concepts][scalar]") {
     STATIC_REQUIRE(mtl::Scalar<int>);
@@ -38,7 +38,7 @@ TEST_CASE("OrderedField concept satisfied by real floating-point", "[concepts][s
     STATIC_REQUIRE_FALSE(mtl::OrderedField<std::complex<double>>);
 }
 
-// ── is_complex trait tests ──────────────────────────────────────────────
+// -- is_complex trait tests ----------------------------------------------
 
 TEST_CASE("is_complex trait", "[concepts][scalar]") {
     STATIC_REQUIRE_FALSE(mtl::is_complex_v<double>);
@@ -47,7 +47,7 @@ TEST_CASE("is_complex trait", "[concepts][scalar]") {
     STATIC_REQUIRE(mtl::is_complex_v<std::complex<float>>);
 }
 
-// ── Magnitude trait tests ───────────────────────────────────────────────
+// -- Magnitude trait tests -----------------------------------------------
 
 TEST_CASE("magnitude_t is identity for real types", "[concepts][magnitude]") {
     STATIC_REQUIRE(std::is_same_v<mtl::magnitude_t<double>, double>);
@@ -60,15 +60,15 @@ TEST_CASE("magnitude_t extracts real part for complex", "[concepts][magnitude]")
     STATIC_REQUIRE(std::is_same_v<mtl::magnitude_t<std::complex<float>>, float>);
 }
 
-// ── Collection concept smoke test ───────────────────────────────────────
+// -- Collection concept smoke test ---------------------------------------
 
 TEST_CASE("std::vector does not satisfy Collection (no size_type alias)", "[concepts][collection]") {
     // std::vector has value_type and size_type, but the Collection concept
-    // is designed for MTL types — std::vector actually does satisfy it
+    // is designed for MTL types -- std::vector actually does satisfy it
     STATIC_REQUIRE(mtl::Collection<std::vector<double>>);
 }
 
-// ── Negative tests ──────────────────────────────────────────────────────
+// -- Negative tests ------------------------------------------------------
 
 TEST_CASE("Non-scalar types do not satisfy Scalar", "[concepts][scalar]") {
     STATIC_REQUIRE_FALSE(mtl::Scalar<std::vector<double>>);

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Write dense/sparse matrices to CSV/whitespace-delimited files
+// MTL5 -- Write dense/sparse matrices to CSV/whitespace-delimited files
 #include <fstream>
 #include <string>
 #include <stdexcept>

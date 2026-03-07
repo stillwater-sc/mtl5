@@ -8,7 +8,7 @@
 
 using namespace mtl;
 
-// ── Dimension tests (preserved from skeleton) ───────────────────────────
+// -- Dimension tests (preserved from skeleton) ---------------------------
 
 TEST_CASE("Fixed matrix dimensions", "[mat][dimension]") {
     mtl::mat::fixed::dimensions<3, 4> d;
@@ -37,7 +37,7 @@ TEST_CASE("Matrix parameter bundle compiles", "[mat][parameter]") {
     STATIC_REQUIRE_FALSE(default_params::is_fixed);
 }
 
-// ── Concept satisfaction ────────────────────────────────────────────────
+// -- Concept satisfaction ------------------------------------------------
 
 TEST_CASE("dense2D satisfies Collection concept", "[mat][concept]") {
     STATIC_REQUIRE(Collection<dense2D<double>>);
@@ -50,7 +50,7 @@ TEST_CASE("dense2D satisfies Matrix concept", "[mat][concept]") {
     STATIC_REQUIRE(Matrix<dense2D<float>>);
 }
 
-// ── Constructor tests ───────────────────────────────────────────────────
+// -- Constructor tests ---------------------------------------------------
 
 TEST_CASE("Default construction creates empty matrix", "[mat][ctor]") {
     dense2D<double> m;
@@ -99,7 +99,7 @@ TEST_CASE("External pointer construction", "[mat][ctor]") {
     REQUIRE(data[0] == 99.0);
 }
 
-// ── Copy / Move ─────────────────────────────────────────────────────────
+// -- Copy / Move ---------------------------------------------------------
 
 TEST_CASE("Copy construction", "[mat][copy]") {
     dense2D<int> a = {{1, 2}, {3, 4}};
@@ -121,7 +121,7 @@ TEST_CASE("Move construction", "[mat][move]") {
     REQUIRE(b(1, 1) == 40);
 }
 
-// ── Row-major element access ────────────────────────────────────────────
+// -- Row-major element access --------------------------------------------
 
 TEST_CASE("Row-major layout", "[mat][access][row_major]") {
     // Default is row_major
@@ -141,7 +141,7 @@ TEST_CASE("Row-major layout", "[mat][access][row_major]") {
     REQUIRE(m.data()[5] == 6);  // (1,2)
 }
 
-// ── Column-major element access ─────────────────────────────────────────
+// -- Column-major element access -----------------------------------------
 
 TEST_CASE("Column-major layout", "[mat][access][col_major]") {
     using col_params = mtl::mat::parameters<mtl::tag::col_major>;
@@ -161,7 +161,7 @@ TEST_CASE("Column-major layout", "[mat][access][col_major]") {
     REQUIRE(m.data()[5] == 6);  // (1,2)
 }
 
-// ── ldim correctness ────────────────────────────────────────────────────
+// -- ldim correctness ----------------------------------------------------
 
 TEST_CASE("ldim for row-major is num_cols", "[mat][ldim]") {
     dense2D<double> m(3, 5);
@@ -174,7 +174,7 @@ TEST_CASE("ldim for col-major is num_rows", "[mat][ldim]") {
     REQUIRE(m.get_ldim() == 3);
 }
 
-// ── Bounds checking ─────────────────────────────────────────────────────
+// -- Bounds checking -----------------------------------------------------
 
 TEST_CASE("Bounds checking in debug builds", "[mat][access]") {
     if constexpr (mtl::bounds_checking) {
@@ -184,7 +184,7 @@ TEST_CASE("Bounds checking in debug builds", "[mat][access]") {
     }
 }
 
-// ── change_dim ──────────────────────────────────────────────────────────
+// -- change_dim ----------------------------------------------------------
 
 TEST_CASE("change_dim resizes dynamic matrix", "[mat][resize]") {
     dense2D<double> m(3, 4);
@@ -196,7 +196,7 @@ TEST_CASE("change_dim resizes dynamic matrix", "[mat][resize]") {
     REQUIRE(m.size() == 30);
 }
 
-// ── Fixed-size on stack ────────────────────────────────────────────────
+// -- Fixed-size on stack ------------------------------------------------
 
 TEST_CASE("Fixed-size matrix on stack", "[mat][fixed][stack]") {
     using fixed_params = mtl::mat::parameters<
@@ -232,7 +232,7 @@ TEST_CASE("Fixed-size matrix copy", "[mat][fixed][stack]") {
     REQUIRE(b.data() != a.data());
 }
 
-// ── f_index support ─────────────────────────────────────────────────────
+// -- f_index support -----------------------------------------------------
 
 TEST_CASE("Fortran-style 1-based indexing", "[mat][f_index]") {
     using f_params = mtl::mat::parameters<
@@ -256,7 +256,7 @@ TEST_CASE("Fortran-style 1-based indexing", "[mat][f_index]") {
     REQUIRE(m.data()[0] == 10);
 }
 
-// ── Data pointer ────────────────────────────────────────────────────────
+// -- Data pointer --------------------------------------------------------
 
 TEST_CASE("data() provides direct access", "[mat][data]") {
     dense2D<int> m = {{1, 2}, {3, 4}};
@@ -266,7 +266,7 @@ TEST_CASE("data() provides direct access", "[mat][data]") {
     REQUIRE(p[3] == 4);  // row-major: (1,1)
 }
 
-// ── Swap ────────────────────────────────────────────────────────────────
+// -- Swap ----------------------------------------------------------------
 
 TEST_CASE("Swap dynamic matrices", "[mat][swap]") {
     dense2D<int> a = {{1, 2}, {3, 4}};
@@ -281,7 +281,7 @@ TEST_CASE("Swap dynamic matrices", "[mat][swap]") {
     REQUIRE(b(0, 0) == 1);
 }
 
-// ── Traits ──────────────────────────────────────────────────────────────
+// -- Traits --------------------------------------------------------------
 
 TEST_CASE("dense2D category is dense", "[mat][traits]") {
     STATIC_REQUIRE(std::is_same_v<
@@ -297,7 +297,7 @@ TEST_CASE("dense2D ashape is mat", "[mat][traits]") {
     >);
 }
 
-// ── Iteration ───────────────────────────────────────────────────────────
+// -- Iteration -----------------------------------------------------------
 
 TEST_CASE("begin/end iteration over all elements", "[mat][iter]") {
     dense2D<int> m = {{1, 2}, {3, 4}};
@@ -307,7 +307,7 @@ TEST_CASE("begin/end iteration over all elements", "[mat][iter]") {
     REQUIRE(sum == 10);
 }
 
-// ── Free functions ──────────────────────────────────────────────────────
+// -- Free functions ------------------------------------------------------
 
 TEST_CASE("Free function num_rows/num_cols/size", "[mat][free]") {
     dense2D<double> m(3, 5);

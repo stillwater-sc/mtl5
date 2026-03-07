@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix-matrix multiplication expression template
+// MTL5 -- Matrix-matrix multiplication expression template
 // Stores operands (by value or reference); operator()(r,c) computes inner product.
 // For performance-critical code, prefer mult(A, B, C) into pre-allocated target.
 #include <cassert>
@@ -49,7 +49,7 @@ private:
 
 } // namespace mtl::mat::expr
 
-// ── Trait specializations ──────────────────────────────────────────────
+// -- Trait specializations ----------------------------------------------
 
 namespace mtl::traits {
 

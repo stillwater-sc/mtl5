@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Cyclic iteration controller with periodic residual printing
+// MTL5 -- Cyclic iteration controller with periodic residual printing
 #include <iostream>
 #include <mtl/itl/iteration/basic_iteration.hpp>
 

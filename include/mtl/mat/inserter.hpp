@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — RAII sparse matrix inserter with updater functors
+// MTL5 -- RAII sparse matrix inserter with updater functors
 // Slot-based insertion with overflow to std::map, finalized in destructor.
 #include <algorithm>
 #include <cassert>
@@ -11,7 +11,7 @@
 
 namespace mtl::mat {
 
-// ── Updater functors ────────────────────────────────────────────────────
+// -- Updater functors ----------------------------------------------------
 
 /// Overwrite: a = b (default updater)
 template <typename T>
@@ -25,7 +25,7 @@ struct update_plus {
     void operator()(T& a, const T& b) const { a += b; }
 };
 
-// ── Inserter ────────────────────────────────────────────────────────────
+// -- Inserter ------------------------------------------------------------
 
 /// RAII inserter for compressed2D. Allocates flat working arrays with
 /// `slot_size` slots per row. Overflow entries go into a std::map.
@@ -36,7 +36,7 @@ class compressed2D_inserter {
     using matrix_type = compressed2D<Value, Parameters>;
     using size_type   = typename matrix_type::size_type;
 
-    // ── Proxy chain: inserter[row][col] << value ────────────────────────
+    // -- Proxy chain: inserter[row][col] << value ------------------------
 
     struct col_proxy {
         compressed2D_inserter& ins_;
@@ -175,5 +175,5 @@ using inserter = compressed2D_inserter<
 
 } // namespace mtl::mat
 
-// ── Convenience alias ──────────────────────────────────────────────────
+// -- Convenience alias --------------------------------------------------
 namespace mtl { using mat::inserter; }

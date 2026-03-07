@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — LQ factorization via Householder reflections on rows
+// MTL5 -- LQ factorization via Householder reflections on rows
 // A = L*Q. A is overwritten with L (lower triangular) on+below diagonal,
 // Householder vectors stored above diagonal. tau stores the beta scalars.
 #include <algorithm>

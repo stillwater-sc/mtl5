@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar subtraction functor
+// MTL5 -- Scalar subtraction functor
 #include <type_traits>
 
 namespace mtl::functor::scalar {

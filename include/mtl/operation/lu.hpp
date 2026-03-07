@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — LU factorization with partial pivoting
+// MTL5 -- LU factorization with partial pivoting
 // In-place: A is overwritten with L\U (unit lower, upper).
 // Pivot vector records row swaps.
 #include <algorithm>

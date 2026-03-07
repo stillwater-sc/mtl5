@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Companion matrix generator (factory, returns dense2D)
+// MTL5 -- Companion matrix generator (factory, returns dense2D)
 // Eigenvalues are roots of the given polynomial.
 #include <cstddef>
 #include <vector>

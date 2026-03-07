@@ -23,7 +23,7 @@ int main() {
     std::cout << " Phase 3A: 1D Heat Equation - CG with Preconditioning\n";
     std::cout << "=============================================================\n\n";
 
-    // ── Problem Setup ─────────────────────────────────────────────────────
+    // -- Problem Setup -----------------------------------------------------
     // Discretize [0,1] with n interior points. Grid spacing h = 1/(n+1).
     // Variable conductivity k(x) = 1 + 99*x ranges from 1 to 100.
     // The resulting matrix is SPD with non-uniform diagonal - ideal for
@@ -58,7 +58,7 @@ int main() {
     // Build RHS: f(x) = 1 (constant forcing)
     vec::dense_vector<double> b(n, 1.0);
 
-    // ── Solve 1: CG without preconditioning ──────────────────────────────
+    // -- Solve 1: CG without preconditioning ------------------------------
     std::cout << "--- Solve 1: CG with Identity Preconditioner (no PC) ---\n";
     std::cout << "Without preconditioning, CG sees the full condition number.\n\n";
 
@@ -68,7 +68,7 @@ int main() {
     int info1 = itl::cg(A, x1, b, no_pc, iter1);
     std::cout << "\n";
 
-    // ── Solve 2: CG with Jacobi (diagonal) preconditioning ──────────────
+    // -- Solve 2: CG with Jacobi (diagonal) preconditioning --------------
     std::cout << "--- Solve 2: CG with Diagonal (Jacobi) Preconditioner ---\n";
     std::cout << "Jacobi PC: M = diag(A). Scales each equation by 1/A(i,i),\n";
     std::cout << "equalizing the diagonal and reducing the condition number.\n\n";
@@ -79,7 +79,7 @@ int main() {
     int info2 = itl::cg(A, x2, b, jac_pc, iter2);
     std::cout << "\n";
 
-    // ── Summary ──────────────────────────────────────────────────────────
+    // -- Summary ----------------------------------------------------------
     std::cout << "--- Summary ---\n";
     std::cout << "  No PC:   " << iter1.iterations() << " iterations (code " << info1 << ")\n";
     std::cout << "  Jacobi:  " << iter2.iterations() << " iterations (code " << info2 << ")\n";
@@ -87,7 +87,7 @@ int main() {
     std::cout << "  Speedup: " << std::fixed << std::setprecision(1)
               << speedup << "x fewer iterations with Jacobi PC\n\n";
 
-    // ── Verify solution ──────────────────────────────────────────────────
+    // -- Verify solution --------------------------------------------------
     std::cout << "--- Solution Profile ---\n";
     std::cout << std::setw(8) << "x"
               << std::setw(16) << "u(x)" << "\n";
@@ -106,7 +106,7 @@ int main() {
     std::cout << "\nMax difference between solutions: " << std::scientific << max_diff << "\n";
     std::cout << "(Both methods converge to the same answer.)\n\n";
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. CG works because the variable-coefficient Laplacian is SPD.\n";
     std::cout << "   - Symmetric: k(x) > 0 ensures symmetry of the stencil.\n";

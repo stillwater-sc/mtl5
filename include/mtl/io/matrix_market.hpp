@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix Market (.mtx) file format reader/writer
+// MTL5 -- Matrix Market (.mtx) file format reader/writer
 // Supports: real coordinate general, real coordinate symmetric,
 //           real array general (dense).
 #include <fstream>

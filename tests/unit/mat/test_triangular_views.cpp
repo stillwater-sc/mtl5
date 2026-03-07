@@ -18,7 +18,7 @@ static mat::dense2D<double> make_4x4() {
     return A;
 }
 
-// ── upper_view tests ────────────────────────────────────────────────────
+// -- upper_view tests ----------------------------------------------------
 
 TEST_CASE("upper_view: includes diagonal", "[mat][view][upper]") {
     auto A = make_4x4();
@@ -45,7 +45,7 @@ TEST_CASE("upper_view: includes diagonal", "[mat][view][upper]") {
     REQUIRE_THAT(U(3, 2), Catch::Matchers::WithinAbs(0.0, 1e-10));
 }
 
-// ── lower_view tests ────────────────────────────────────────────────────
+// -- lower_view tests ----------------------------------------------------
 
 TEST_CASE("lower_view: includes diagonal", "[mat][view][lower]") {
     auto A = make_4x4();
@@ -69,7 +69,7 @@ TEST_CASE("lower_view: includes diagonal", "[mat][view][lower]") {
     REQUIRE_THAT(L(2, 3), Catch::Matchers::WithinAbs(0.0, 1e-10));
 }
 
-// ── strict_upper_view tests ─────────────────────────────────────────────
+// -- strict_upper_view tests ---------------------------------------------
 
 TEST_CASE("strict_upper_view: excludes diagonal", "[mat][view][strict_upper]") {
     auto A = make_4x4();
@@ -89,7 +89,7 @@ TEST_CASE("strict_upper_view: excludes diagonal", "[mat][view][strict_upper]") {
     REQUIRE_THAT(SU(3, 0), Catch::Matchers::WithinAbs(0.0, 1e-10));
 }
 
-// ── strict_lower_view tests ─────────────────────────────────────────────
+// -- strict_lower_view tests ---------------------------------------------
 
 TEST_CASE("strict_lower_view: excludes diagonal", "[mat][view][strict_lower]") {
     auto A = make_4x4();
@@ -109,7 +109,7 @@ TEST_CASE("strict_lower_view: excludes diagonal", "[mat][view][strict_lower]") {
     REQUIRE_THAT(SL(0, 3), Catch::Matchers::WithinAbs(0.0, 1e-10));
 }
 
-// ── triu / tril MATLAB-compat tests ─────────────────────────────────────
+// -- triu / tril MATLAB-compat tests -------------------------------------
 
 TEST_CASE("triu(A, 0) equals upper", "[mat][view][triu]") {
     auto A = make_4x4();
@@ -168,7 +168,7 @@ TEST_CASE("triu(A,2) keeps only second superdiagonal and above", "[mat][view][tr
     REQUIRE_THAT(T(1, 2), Catch::Matchers::WithinAbs(0.0, 1e-10));     // c-r=1
 }
 
-// ── upper + lower decomposition ─────────────────────────────────────────
+// -- upper + lower decomposition -----------------------------------------
 
 TEST_CASE("upper + strict_lower = original matrix", "[mat][view][decomposition]") {
     auto A = make_4x4();

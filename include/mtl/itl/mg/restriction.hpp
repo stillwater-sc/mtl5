@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Restriction operator for multigrid (fine → coarse transfer)
+// MTL5 -- Restriction operator for multigrid (fine -> coarse transfer)
 // Full-weighting stencil [1/4, 1/2, 1/4] for 1D geometric multigrid.
 #include <cstddef>
 #include <mtl/vec/dense_vector.hpp>
@@ -8,7 +8,7 @@
 
 namespace mtl::itl::mg {
 
-/// Builds a 1D full-weighting restriction matrix (fine → coarse).
+/// Builds a 1D full-weighting restriction matrix (fine -> coarse).
 /// Maps a vector of size n_fine to size n_coarse = (n_fine - 1) / 2.
 /// Uses the standard [1/4, 1/2, 1/4] stencil.
 inline mat::compressed2D<double> make_restriction_1d(std::size_t n_fine) {

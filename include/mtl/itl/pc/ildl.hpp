@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — ILDL (Incomplete LDL^T) preconditioner for compressed2D
+// MTL5 -- ILDL (Incomplete LDL^T) preconditioner for compressed2D
 // For symmetric (possibly indefinite) matrices.
 // Preserves sparsity pattern of lower triangle.
 #include <cassert>
@@ -115,7 +115,7 @@ private:
             }
             d_[i] = diag_val - sum_sq;
 
-            // Update L(i,i) entry to 1 (unit diagonal) — but we don't store diagonal in L
+            // Update L(i,i) entry to 1 (unit diagonal) -- but we don't store diagonal in L
         }
 
         // Build CRS for strictly lower triangular L (exclude diagonal)

@@ -9,7 +9,7 @@
 
 using namespace mtl;
 
-// ── Concept satisfaction ────────────────────────────────────────────────
+// -- Concept satisfaction ------------------------------------------------
 
 TEST_CASE("sparse_vector satisfies Collection and Vector concepts",
           "[sparse_vector][concepts]") {
@@ -19,7 +19,7 @@ TEST_CASE("sparse_vector satisfies Collection and Vector concepts",
     STATIC_REQUIRE(Vector<vec::sparse_vector<int>>);
 }
 
-// ── Construction ────────────────────────────────────────────────────────
+// -- Construction --------------------------------------------------------
 
 TEST_CASE("sparse_vector default and sized construction",
           "[sparse_vector][construction]") {
@@ -34,7 +34,7 @@ TEST_CASE("sparse_vector default and sized construction",
     REQUIRE_FALSE(v.empty());
 }
 
-// ── Insert and sorted order ─────────────────────────────────────────────
+// -- Insert and sorted order ---------------------------------------------
 
 TEST_CASE("sparse_vector insert maintains sorted order",
           "[sparse_vector][insert]") {
@@ -63,7 +63,7 @@ TEST_CASE("sparse_vector insert maintains sorted order",
     REQUIRE(vals[3] == 9.0);
 }
 
-// ── operator() read access ──────────────────────────────────────────────
+// -- operator() read access ----------------------------------------------
 
 TEST_CASE("sparse_vector operator() read access", "[sparse_vector][access]") {
     vec::sparse_vector<double> v(10);
@@ -80,7 +80,7 @@ TEST_CASE("sparse_vector operator() read access", "[sparse_vector][access]") {
     REQUIRE(v(9) == 0.0);
 }
 
-// ── operator[] write access ─────────────────────────────────────────────
+// -- operator[] write access ---------------------------------------------
 
 TEST_CASE("sparse_vector operator[] write access", "[sparse_vector][access]") {
     vec::sparse_vector<double> v(10);
@@ -101,7 +101,7 @@ TEST_CASE("sparse_vector operator[] write access", "[sparse_vector][access]") {
     REQUIRE(v(7) == 2.72);
 }
 
-// ── exists() ────────────────────────────────────────────────────────────
+// -- exists() ------------------------------------------------------------
 
 TEST_CASE("sparse_vector exists()", "[sparse_vector][exists]") {
     vec::sparse_vector<double> v(10);
@@ -115,7 +115,7 @@ TEST_CASE("sparse_vector exists()", "[sparse_vector][exists]") {
     REQUIRE_FALSE(v.exists(9));
 }
 
-// ── clear() ─────────────────────────────────────────────────────────────
+// -- clear() -------------------------------------------------------------
 
 TEST_CASE("sparse_vector clear()", "[sparse_vector][clear]") {
     vec::sparse_vector<double> v(10);
@@ -129,7 +129,7 @@ TEST_CASE("sparse_vector clear()", "[sparse_vector][clear]") {
     REQUIRE_FALSE(v.exists(3));
 }
 
-// ── crop() ──────────────────────────────────────────────────────────────
+// -- crop() --------------------------------------------------------------
 
 TEST_CASE("sparse_vector crop()", "[sparse_vector][crop]") {
     vec::sparse_vector<double> v(10);
@@ -149,7 +149,7 @@ TEST_CASE("sparse_vector crop()", "[sparse_vector][crop]") {
     REQUIRE(v.exists(4));
 }
 
-// ── Iterator access ─────────────────────────────────────────────────────
+// -- Iterator access -----------------------------------------------------
 
 TEST_CASE("sparse_vector iterator", "[sparse_vector][iterator]") {
     vec::sparse_vector<double> v(10);
@@ -168,11 +168,11 @@ TEST_CASE("sparse_vector iterator", "[sparse_vector][iterator]") {
     REQUIRE(entries[2] == std::pair<std::size_t, double>{8, 80.0});
 }
 
-// ── Orientation-aware dimensions ────────────────────────────────────────
+// -- Orientation-aware dimensions ----------------------------------------
 
 TEST_CASE("sparse_vector orientation-aware dimensions",
           "[sparse_vector][orientation]") {
-    // Default: col_major → column vector
+    // Default: col_major -> column vector
     vec::sparse_vector<double> cv(5);
     REQUIRE(cv.num_rows() == 5);
     REQUIRE(cv.num_cols() == 1);
@@ -184,14 +184,14 @@ TEST_CASE("sparse_vector orientation-aware dimensions",
     REQUIRE(rv.num_cols() == 5);
 }
 
-// ── Traits ──────────────────────────────────────────────────────────────
+// -- Traits --------------------------------------------------------------
 
 TEST_CASE("sparse_vector traits", "[sparse_vector][traits]") {
     using sv = vec::sparse_vector<double>;
     STATIC_REQUIRE(std::is_same_v<traits::category<sv>::type, tag::sparse>);
 }
 
-// ── Insert overwrite ────────────────────────────────────────────────────
+// -- Insert overwrite ----------------------------------------------------
 
 TEST_CASE("sparse_vector insert overwrites existing",
           "[sparse_vector][insert]") {
@@ -204,7 +204,7 @@ TEST_CASE("sparse_vector insert overwrites existing",
     REQUIRE(v(5) == 2.0);
 }
 
-// ── Inserter pattern ────────────────────────────────────────────────────
+// -- Inserter pattern ----------------------------------------------------
 
 TEST_CASE("sparse_vector inserter with update_store",
           "[sparse_vector][inserter]") {

@@ -13,7 +13,7 @@ using namespace mtl;
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 
-// ── Vector norms ────────────────────────────────────────────────────────
+// -- Vector norms --------------------------------------------------------
 
 TEST_CASE("one_norm of vector", "[operation][norms]") {
     dense_vector<double> v = {1.0, -2.0, 3.0};
@@ -50,7 +50,7 @@ TEST_CASE("norms of complex vector", "[operation][norms]") {
     REQUIRE_THAT(infinity_norm(v), WithinAbs(5.0, 1e-10));
 }
 
-// ── Matrix norms ────────────────────────────────────────────────────────
+// -- Matrix norms --------------------------------------------------------
 
 TEST_CASE("frobenius_norm of matrix", "[operation][norms]") {
     dense2D<double> m = {{1.0, 2.0}, {3.0, 4.0}};
@@ -75,7 +75,7 @@ TEST_CASE("frobenius_norm of identity matrix", "[operation][norms]") {
     REQUIRE_THAT(frobenius_norm(m), WithinAbs(std::sqrt(2.0), 1e-10));
 }
 
-// ── Generator-based norm tests ────────────────────────────────────────
+// -- Generator-based norm tests ----------------------------------------
 
 TEST_CASE("frobenius_norm of orthogonal matrix equals sqrt(n)", "[operation][norms][generator]") {
     constexpr std::size_t n = 6;

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar base-2 logarithm functor
+// MTL5 -- Scalar base-2 logarithm functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

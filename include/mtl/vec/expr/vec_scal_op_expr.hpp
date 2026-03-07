@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar-vector expression templates
+// MTL5 -- Scalar-vector expression templates
 #include <cstddef>
 #include <type_traits>
 #include <mtl/traits/is_expression.hpp>
@@ -63,7 +63,7 @@ private:
 
 } // namespace mtl::vec::expr
 
-// ── Trait specializations ──────────────────────────────────────────────
+// -- Trait specializations ----------------------------------------------
 
 namespace mtl::traits {
 

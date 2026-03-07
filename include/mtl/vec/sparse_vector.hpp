@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Sparse vector using dual sorted arrays (indices + values)
+// MTL5 -- Sparse vector using dual sorted arrays (indices + values)
 // Port from MTL4: boost/numeric/mtl/vector/sparse_vector.hpp
 // Key changes: C++20, no Boost dependencies, std::lower_bound for O(log n) lookup
 
@@ -34,7 +34,7 @@ public:
     using reference       = Value&;
     using const_reference = const Value&;
 
-    // ── Iterator over (index, value) pairs ─────────────────────────────
+    // -- Iterator over (index, value) pairs -----------------------------
     class const_iterator {
     public:
         using difference_type   = std::ptrdiff_t;
@@ -61,12 +61,12 @@ public:
         size_type pos_;
     };
 
-    // ── Constructors ───────────────────────────────────────────────────
+    // -- Constructors ---------------------------------------------------
     sparse_vector() : dim_(0) {}
 
     explicit sparse_vector(size_type n) : dim_(n) {}
 
-    // ── Size / shape ───────────────────────────────────────────────────
+    // -- Size / shape ---------------------------------------------------
     size_type size() const { return dim_; }
     size_type nnz()  const { return static_cast<size_type>(indices_.size()); }
     bool      empty() const { return dim_ == 0; }
@@ -82,7 +82,7 @@ public:
         else return size();
     }
 
-    // ── Read access — returns zero if absent ───────────────────────────
+    // -- Read access -- returns zero if absent ---------------------------
     value_type operator()(size_type i) const {
         if constexpr (bounds_checking) {
             if (i >= dim_) throw std::out_of_range("sparse_vector: index out of range");
@@ -94,7 +94,7 @@ public:
         return value_type{};
     }
 
-    // ── Read/write access — inserts if absent ──────────────────────────
+    // -- Read/write access -- inserts if absent --------------------------
     reference operator[](size_type i) {
         if constexpr (bounds_checking) {
             if (i >= dim_) throw std::out_of_range("sparse_vector: index out of range");
@@ -109,13 +109,13 @@ public:
         return values_[pos];
     }
 
-    // ── Existence check ────────────────────────────────────────────────
+    // -- Existence check ------------------------------------------------
     bool exists(size_type i) const {
         auto it = std::lower_bound(indices_.begin(), indices_.end(), i);
         return it != indices_.end() && *it == i;
     }
 
-    // ── Insert maintaining sorted order ────────────────────────────────
+    // -- Insert maintaining sorted order --------------------------------
     void insert(size_type i, const Value& v) {
         assert(i < dim_);
         auto it = std::lower_bound(indices_.begin(), indices_.end(), i);
@@ -128,13 +128,13 @@ public:
         }
     }
 
-    // ── Clear all entries ──────────────────────────────────────────────
+    // -- Clear all entries ----------------------------------------------
     void clear() {
         indices_.clear();
         values_.clear();
     }
 
-    // ── Drop entries below threshold ───────────────────────────────────
+    // -- Drop entries below threshold -----------------------------------
     void crop(const Value& threshold) {
         std::vector<size_type> new_idx;
         std::vector<Value> new_val;
@@ -149,11 +149,11 @@ public:
         values_  = std::move(new_val);
     }
 
-    // ── Raw access to internal arrays ──────────────────────────────────
+    // -- Raw access to internal arrays ----------------------------------
     const std::vector<size_type>& indices() const { return indices_; }
     const std::vector<Value>&     values()  const { return values_; }
 
-    // ── Iterators over (index, value) pairs ────────────────────────────
+    // -- Iterators over (index, value) pairs ----------------------------
     const_iterator begin() const { return const_iterator(this, 0); }
     const_iterator end()   const { return const_iterator(this, nnz()); }
 
@@ -163,7 +163,7 @@ private:
     std::vector<Value>     values_;
 };
 
-// ── Free functions ──────────────────────────────────────────────────────
+// -- Free functions ------------------------------------------------------
 
 template <typename Value, typename Parameters>
 auto size(const sparse_vector<Value, Parameters>& v) { return v.size(); }
@@ -176,7 +176,7 @@ auto num_cols(const sparse_vector<Value, Parameters>& v) { return v.num_cols(); 
 
 } // namespace mtl::vec
 
-// ── Traits specializations ──────────────────────────────────────────────
+// -- Traits specializations ----------------------------------------------
 
 namespace mtl::traits {
 
@@ -200,5 +200,5 @@ struct ashape<vec::sparse_vector<Value, Parameters>> {
 
 } // namespace mtl::ashape
 
-// ── Convenience alias ───────────────────────────────────────────────────
+// -- Convenience alias ---------------------------------------------------
 namespace mtl { using vec::sparse_vector; }

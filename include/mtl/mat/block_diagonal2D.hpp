@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Block diagonal matrix: stores a sequence of dense2D blocks on the diagonal.
+// MTL5 -- Block diagonal matrix: stores a sequence of dense2D blocks on the diagonal.
 // Off-diagonal blocks are implicitly zero. Efficient matvec: apply each block independently.
 #include <cstddef>
 #include <vector>
@@ -14,7 +14,7 @@
 
 namespace mtl::mat {
 
-/// Block diagonal matrix — stores vector of dense2D blocks.
+/// Block diagonal matrix -- stores vector of dense2D blocks.
 /// Total dimension is sum of block dimensions.
 template <typename Value = double>
 class block_diagonal2D {
@@ -88,7 +88,7 @@ private:
     }
 };
 
-// ── Efficient block-diagonal matvec ────────────────────────────────────
+// -- Efficient block-diagonal matvec ------------------------------------
 // Apply each block independently: O(sum of block_rows * block_cols)
 
 template <typename Value, typename VV, typename VP>

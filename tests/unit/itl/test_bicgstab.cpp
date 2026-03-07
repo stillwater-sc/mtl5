@@ -30,7 +30,7 @@ TEST_CASE("BiCGSTAB converges on non-symmetric 3x3 with identity PC", "[itl][bic
 
     REQUIRE(err == 0);
 
-    // Verify A*x ≈ b
+    // Verify A*x ~= b
     auto Ax = A * x;
     for (std::size_t i = 0; i < 3; ++i) {
         REQUIRE_THAT(Ax(i), Catch::Matchers::WithinAbs(b(i), 1e-8));
@@ -60,7 +60,7 @@ TEST_CASE("BiCGSTAB converges with diagonal PC", "[itl][bicgstab]") {
 
     REQUIRE(err == 0);
 
-    // Verify A*x ≈ b
+    // Verify A*x ~= b
     auto Ax = A * x;
     for (std::size_t i = 0; i < n; ++i) {
         REQUIRE_THAT(Ax(i), Catch::Matchers::WithinAbs(b(i), 1e-8));

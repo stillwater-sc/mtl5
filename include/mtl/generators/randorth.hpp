@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Random orthogonal matrix generator (factory, returns dense2D)
+// MTL5 -- Random orthogonal matrix generator (factory, returns dense2D)
 // Building block for randsvd, randsym, randspd.
 // Constructs Q via QR factorization of a random matrix.
 #include <cstddef>

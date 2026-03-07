@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar complementary error function functor
+// MTL5 -- Scalar complementary error function functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

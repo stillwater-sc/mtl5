@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise sine
+// MTL5 -- Element-wise sine
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Dense 2D matrix (replaces MTL4 dense2D)
+// MTL5 -- Dense 2D matrix (replaces MTL4 dense2D)
 // Composition-based design with contiguous_memory_block, C++20 concepts
 #include <algorithm>
 #include <cassert>
@@ -29,7 +29,7 @@ namespace mtl::mat {
 template <typename Value, typename Parameters = parameters<>>
 class dense2D {
 public:
-    // ── Parameter extraction ────────────────────────────────────────────
+    // -- Parameter extraction --------------------------------------------
     using param_type   = Parameters;
     using orientation  = typename Parameters::orientation;
     using index_type   = typename Parameters::index_type;
@@ -46,14 +46,14 @@ public:
     using actual_storage = typename Parameters::storage;
     using memory_type = detail::contiguous_memory_block<Value, actual_storage, static_size>;
 
-    // ── Standard type aliases ───────────────────────────────────────────
+    // -- Standard type aliases -------------------------------------------
     using value_type      = Value;
     using reference       = Value&;
     using const_reference = const Value&;
     using pointer         = Value*;
     using const_pointer   = const Value*;
 
-    // ── Offset computation ──────────────────────────────────────────────
+    // -- Offset computation ----------------------------------------------
 private:
     static constexpr size_type compute_offset(size_type r, size_type c, size_type ldim) {
         if constexpr (std::is_same_v<orientation, tag::row_major>)
@@ -70,12 +70,12 @@ private:
     }
 
 public:
-    // ── Default constructor ─────────────────────────────────────────────
+    // -- Default constructor ---------------------------------------------
     dense2D() : mem_{}, dims_{}, ldim_{0} {
         if constexpr (is_fixed) set_ldim();
     }
 
-    // ── (rows, cols) constructor ────────────────────────────────────────
+    // -- (rows, cols) constructor ----------------------------------------
     dense2D(size_type rows, size_type cols)
         : mem_(rows * cols), dims_{}, ldim_{0}
     {
@@ -88,14 +88,14 @@ public:
         set_ldim();
     }
 
-    // ── Dimension object constructor ────────────────────────────────────
+    // -- Dimension object constructor ------------------------------------
     explicit dense2D(const dim_type& d) requires (!is_fixed)
         : mem_(d.num_rows() * d.num_cols()), dims_(d), ldim_{0}
     {
         set_ldim();
     }
 
-    // ── External pointer constructor ────────────────────────────────────
+    // -- External pointer constructor ------------------------------------
     dense2D(size_type rows, size_type cols, Value* ptr)
         : mem_(ptr, rows * cols, false), dims_{}, ldim_{0}
     {
@@ -105,7 +105,7 @@ public:
         set_ldim();
     }
 
-    // ── Initializer list of initializer lists ───────────────────────────
+    // -- Initializer list of initializer lists ---------------------------
     dense2D(std::initializer_list<std::initializer_list<Value>> il)
         : dense2D(il.size(), il.size() > 0 ? il.begin()->size() : 0)
     {
@@ -120,7 +120,7 @@ public:
         }
     }
 
-    // ── Copy / Move ─────────────────────────────────────────────────────
+    // -- Copy / Move -----------------------------------------------------
     dense2D(const dense2D&) = default;
     dense2D& operator=(const dense2D&) = default;
     ~dense2D() = default;
@@ -143,7 +143,7 @@ public:
         return *this;
     }
 
-    // ── Expression template construction / assignment ───────────────────
+    // -- Expression template construction / assignment -------------------
     template <typename Expr>
         requires (Matrix<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
@@ -190,7 +190,7 @@ public:
         return *this;
     }
 
-    // ── Element access ──────────────────────────────────────────────────
+    // -- Element access --------------------------------------------------
     reference operator()(size_type r, size_type c) {
         auto ri = index_type::to_internal(r);
         auto ci = index_type::to_internal(c);
@@ -211,7 +211,7 @@ public:
         return mem_[compute_offset(ri, ci, ldim_)];
     }
 
-    // ── Size / shape ────────────────────────────────────────────────────
+    // -- Size / shape ----------------------------------------------------
     size_type num_rows() const {
         if constexpr (is_fixed) return dim_type::rows;
         else return dims_.num_rows();
@@ -226,7 +226,7 @@ public:
 
     size_type get_ldim() const { return ldim_; }
 
-    // ── Data access ─────────────────────────────────────────────────────
+    // -- Data access -----------------------------------------------------
     pointer       data()       { return mem_.data(); }
     const_pointer data() const { return mem_.data(); }
 
@@ -235,7 +235,7 @@ public:
     pointer       end()         { return data() + size(); }
     const_pointer end()   const { return data() + size(); }
 
-    // ── Dimension modification ──────────────────────────────────────────
+    // -- Dimension modification ------------------------------------------
     void change_dim(size_type r, size_type c) {
         if constexpr (is_fixed) {
             assert(r == dim_type::rows && c == dim_type::cols
@@ -259,7 +259,7 @@ public:
         }
     }
 
-    // ── Compound assignment operators ───────────────────────────────────
+    // -- Compound assignment operators -----------------------------------
     dense2D& operator+=(const dense2D& other) {
         assert(num_rows() == other.num_rows() && num_cols() == other.num_cols());
         for (size_type i = 0; i < size(); ++i) mem_[i] += other.mem_[i];
@@ -284,7 +284,7 @@ public:
         return *this;
     }
 
-    // ── Swap ────────────────────────────────────────────────────────────
+    // -- Swap ------------------------------------------------------------
     void swap(dense2D& other) noexcept {
         mem_.swap(other.mem_);
         if constexpr (!is_fixed) {
@@ -302,7 +302,7 @@ private:
     size_type ldim_;
 };
 
-// ── Free functions in mtl::mat ──────────────────────────────────────────
+// -- Free functions in mtl::mat ------------------------------------------
 
 template <typename Value, typename Parameters>
 auto num_rows(const dense2D<Value, Parameters>& m) { return m.num_rows(); }
@@ -315,7 +315,7 @@ auto size(const dense2D<Value, Parameters>& m) { return m.size(); }
 
 } // namespace mtl::mat
 
-// ── Traits specializations ─────────────────────────────────────────────
+// -- Traits specializations ---------------------------------------------
 
 namespace mtl::traits {
 
@@ -335,5 +335,5 @@ struct ashape<::mtl::mat::dense2D<Value, Parameters>> {
 
 } // namespace mtl::ashape
 
-// ── Convenience alias ──────────────────────────────────────────────────
+// -- Convenience alias --------------------------------------------------
 namespace mtl { using mat::dense2D; }

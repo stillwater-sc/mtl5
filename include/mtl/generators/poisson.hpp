@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Poisson 2D Dirichlet matrix generator (factory, returns compressed2D)
+// MTL5 -- Poisson 2D Dirichlet matrix generator (factory, returns compressed2D)
 // Discretization of -nabla^2 u = f on unit square with Dirichlet BCs.
 // Differs from laplacian_2d by including h^2 scaling.
 #include <cstddef>

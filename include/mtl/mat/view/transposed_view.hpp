@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Lightweight non-owning transposed view of a matrix
+// MTL5 -- Lightweight non-owning transposed view of a matrix
 #include <cstddef>
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
@@ -36,7 +36,7 @@ private:
 
 } // namespace mtl::mat::view
 
-// ── Traits specializations ─────────────────────────────────────────────
+// -- Traits specializations ---------------------------------------------
 
 namespace mtl::traits {
 

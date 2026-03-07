@@ -1,4 +1,4 @@
-// phase11a_strided_views_unit_vectors.cpp — Strided Views & Unit Vectors
+// phase11a_strided_views_unit_vectors.cpp -- Strided Views & Unit Vectors
 //
 // This example demonstrates:
 //   1. Unit vector construction and their role as canonical basis vectors
@@ -7,7 +7,7 @@
 //   4. Building projection matrices from unit vectors
 //   5. Combining strided views with dot products for column norms
 //
-// Key insight: strided_vector_ref is a zero-copy view — it provides
+// Key insight: strided_vector_ref is a zero-copy view -- it provides
 // vector semantics over non-contiguous memory by skipping elements
 // with a fixed stride. This makes column extraction from row-major
 // matrices O(1) to construct and O(n) to traverse.
@@ -55,9 +55,9 @@ int main() {
     std::cout << " Phase 11A: Strided Views & Unit Vectors\n";
     std::cout << "=============================================================\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: Unit Vectors as Canonical Basis
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: Unit Vectors as Canonical Basis ===\n\n";
 
     std::cout << "  unit_vector(n, k) creates e_k: a vector of length n\n";
@@ -97,9 +97,9 @@ int main() {
     }
     std::cout << "\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: Strided Column Extraction
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: Strided Column Extraction (Zero-Copy) ===\n\n";
 
     std::cout << "  In row-major storage, column elements are separated\n";
@@ -130,9 +130,9 @@ int main() {
     col2(0) = old_val;  // restore
     std::cout << "  (restored)\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: Iterator-Based Column Processing
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 3: Column Norms via Strided Iteration ===\n\n";
 
     std::cout << "  strided_vector_ref supports range-based for loops.\n";
@@ -159,9 +159,9 @@ int main() {
     }
     std::cout << "\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 4: Sub-Vector Extraction
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 4: Sub-Vector Extraction ===\n\n";
 
     std::cout << "  sub_vector(v, start, finish) creates a narrower view\n";
@@ -182,9 +182,9 @@ int main() {
     print_strided("col(1)[1:4]   ", sub);
     std::cout << "  (rows 1-3 of column 1, same underlying memory)\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 5: Building a Projection Matrix
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 5: Projection from Unit Vectors ===\n\n";
 
     std::cout << "  The projection onto coordinate k is P_k = e_k * e_k^T.\n";
@@ -226,7 +226,7 @@ int main() {
         err += std::abs(v(i) - reconstructed(i));
     std::cout << "  Error: " << std::scientific << err << "\n\n";
 
-    // ── Takeaways ────────────────────────────────────────────────────────
+    // -- Takeaways --------------------------------------------------------
     std::cout << "=== Takeaways ===\n\n";
     std::cout << "  1. unit_vector(n, k) returns e_k: the k-th standard basis vector\n";
     std::cout << "  2. A * e_k extracts column k; e_k^T * A extracts row k\n";

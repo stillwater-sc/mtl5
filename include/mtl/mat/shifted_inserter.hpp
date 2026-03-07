@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Shifted inserter: wraps any inserter and shifts row/col indices.
+// MTL5 -- Shifted inserter: wraps any inserter and shifts row/col indices.
 // Use case: FEM assembly where local element matrices are inserted at
 // global offsets.
 #include <cstddef>
@@ -13,7 +13,7 @@ template <typename BaseInserter>
 class shifted_inserter {
     using size_type = std::size_t;
 
-    // ── Proxy chain: ins[row][col] << value ─────────────────────────────
+    // -- Proxy chain: ins[row][col] << value -----------------------------
     struct col_proxy {
         BaseInserter& base_;
         size_type row_;
@@ -52,7 +52,7 @@ public:
         return row_proxy{base_, row + row_offset_, col_offset_};
     }
 
-    // ── Offset control ──────────────────────────────────────────────────
+    // -- Offset control --------------------------------------------------
 
     void set_row_offset(size_type off) { row_offset_ = off; }
     void set_col_offset(size_type off) { col_offset_ = off; }

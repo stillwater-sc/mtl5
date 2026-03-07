@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar square root functor
+// MTL5 -- Scalar square root functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

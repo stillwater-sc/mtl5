@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Forsythe matrix generator (factory, returns dense2D)
+// MTL5 -- Forsythe matrix generator (factory, returns dense2D)
 // Perturbed Jordan block. Tests eigensolvers near defective matrices.
 #include <cstddef>
 #include <mtl/mat/dense2D.hpp>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Optional LAPACK interface for factorizations and eigensolvers
+// MTL5 -- Optional LAPACK interface for factorizations and eigensolvers
 // Port from MTL4: boost/numeric/mtl/interface/lapack.hpp
 // Guarded by MTL5_HAS_LAPACK (set by CMake when MTL5_ENABLE_LAPACK=ON)
 
@@ -7,7 +7,7 @@
 
 #include <cstddef>
 
-// ── Fortran LAPACK declarations ────────────────────────────────────────
+// -- Fortran LAPACK declarations ----------------------------------------
 extern "C" {
 
 // Cholesky factorization
@@ -46,11 +46,11 @@ void dsyev_(const char* jobz, const char* uplo, const int* n,
 
 } // extern "C"
 
-// ── C++ wrapper functions ──────────────────────────────────────────────
+// -- C++ wrapper functions ----------------------------------------------
 
 namespace mtl::interface::lapack {
 
-// ── Cholesky ───────────────────────────────────────────────────────────
+// -- Cholesky -----------------------------------------------------------
 
 inline int potrf(char uplo, int n, float* A, int lda) {
     int info = 0;
@@ -63,7 +63,7 @@ inline int potrf(char uplo, int n, double* A, int lda) {
     return info;
 }
 
-// ── LU ─────────────────────────────────────────────────────────────────
+// -- LU -----------------------------------------------------------------
 
 inline int getrf(int m, int n, float* A, int lda, int* ipiv) {
     int info = 0;
@@ -76,7 +76,7 @@ inline int getrf(int m, int n, double* A, int lda, int* ipiv) {
     return info;
 }
 
-// ── QR ─────────────────────────────────────────────────────────────────
+// -- QR -----------------------------------------------------------------
 
 inline int geqrf(int m, int n, float* A, int lda, float* tau,
                  float* work, int lwork) {
@@ -91,7 +91,7 @@ inline int geqrf(int m, int n, double* A, int lda, double* tau,
     return info;
 }
 
-// ── SVD ────────────────────────────────────────────────────────────────
+// -- SVD ----------------------------------------------------------------
 
 inline int gesdd(char jobz, int m, int n, float* A, int lda,
                  float* S, float* U, int ldu, float* VT, int ldvt,
@@ -110,7 +110,7 @@ inline int gesdd(char jobz, int m, int n, double* A, int lda,
     return info;
 }
 
-// ── Symmetric eigenvalue ───────────────────────────────────────────────
+// -- Symmetric eigenvalue -----------------------------------------------
 
 inline int syev(char jobz, char uplo, int n, float* A, int lda,
                 float* W, float* work, int lwork) {

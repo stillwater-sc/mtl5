@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Hessenberg reduction via Householder reflections
+// MTL5 -- Hessenberg reduction via Householder reflections
 // Reduces A to upper Hessenberg form H = Q^T * A * Q
 #include <algorithm>
 #include <mtl/concepts/matrix.hpp>

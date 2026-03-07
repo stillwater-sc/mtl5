@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — TFQMR (Transpose-Free Quasi-Minimal Residual) solver
+// MTL5 -- TFQMR (Transpose-Free Quasi-Minimal Residual) solver
 // Does not require trans(A). Based on Freund (1993).
 #include <cmath>
 #include <mtl/vec/dense_vector.hpp>

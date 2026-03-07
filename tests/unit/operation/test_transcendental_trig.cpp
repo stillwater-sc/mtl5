@@ -14,7 +14,7 @@
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
 
-// ── sin ─────────────────────────────────────────────────────────────────
+// -- sin -----------------------------------------------------------------
 
 TEST_CASE("sin of vector", "[operation][transcendental][sin]") {
     const double pi = std::numbers::pi;
@@ -35,7 +35,7 @@ TEST_CASE("sin of matrix", "[operation][transcendental][sin]") {
     REQUIRE_THAT(r(0,1), WithinAbs(1.0, 1e-10));
 }
 
-// ── cos ─────────────────────────────────────────────────────────────────
+// -- cos -----------------------------------------------------------------
 
 TEST_CASE("cos of vector", "[operation][transcendental][cos]") {
     const double pi = std::numbers::pi;
@@ -47,7 +47,7 @@ TEST_CASE("cos of vector", "[operation][transcendental][cos]") {
     REQUIRE_THAT(r(3), WithinAbs(-1.0, 1e-10));
 }
 
-// ── tan ─────────────────────────────────────────────────────────────────
+// -- tan -----------------------------------------------------------------
 
 TEST_CASE("tan of vector", "[operation][transcendental][tan]") {
     const double pi = std::numbers::pi;
@@ -57,7 +57,7 @@ TEST_CASE("tan of vector", "[operation][transcendental][tan]") {
     REQUIRE_THAT(r(1), WithinAbs(1.0, 1e-10));
 }
 
-// ── asin ────────────────────────────────────────────────────────────────
+// -- asin ----------------------------------------------------------------
 
 TEST_CASE("asin of vector", "[operation][transcendental][asin]") {
     const double pi = std::numbers::pi;
@@ -68,7 +68,7 @@ TEST_CASE("asin of vector", "[operation][transcendental][asin]") {
     REQUIRE_THAT(r(2), WithinAbs(pi / 2.0, 1e-10));
 }
 
-// ── acos ────────────────────────────────────────────────────────────────
+// -- acos ----------------------------------------------------------------
 
 TEST_CASE("acos of vector", "[operation][transcendental][acos]") {
     const double pi = std::numbers::pi;
@@ -79,7 +79,7 @@ TEST_CASE("acos of vector", "[operation][transcendental][acos]") {
     REQUIRE_THAT(r(2), WithinAbs(pi / 2.0, 1e-10));
 }
 
-// ── atan ────────────────────────────────────────────────────────────────
+// -- atan ----------------------------------------------------------------
 
 TEST_CASE("atan of vector", "[operation][transcendental][atan]") {
     const double pi = std::numbers::pi;
@@ -97,7 +97,7 @@ TEST_CASE("atan of matrix", "[operation][transcendental][atan]") {
     REQUIRE_THAT(r(0,1), WithinAbs(std::numbers::pi / 4.0, 1e-10));
 }
 
-// ── Pythagorean identity: sin²(x) + cos²(x) = 1 ────────────────────────
+// -- Pythagorean identity: sin^2(x) + cos^2(x) = 1 ------------------------
 
 TEST_CASE("sin^2 + cos^2 = 1 identity", "[operation][transcendental][identity]") {
     const double pi = std::numbers::pi;
@@ -109,7 +109,7 @@ TEST_CASE("sin^2 + cos^2 = 1 identity", "[operation][transcendental][identity]")
     }
 }
 
-// ── asin-sin round trip ─────────────────────────────────────────────────
+// -- asin-sin round trip -------------------------------------------------
 
 TEST_CASE("sin(asin(x)) round trip", "[operation][transcendental][identity]") {
     dense_vector<double> v = {-0.5, 0.0, 0.3, 0.7, 1.0};

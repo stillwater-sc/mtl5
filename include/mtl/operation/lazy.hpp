@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Lazy evaluation: materialize expressions into concrete types
+// MTL5 -- Lazy evaluation: materialize expressions into concrete types
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>

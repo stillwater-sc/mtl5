@@ -42,7 +42,7 @@ TEST_CASE("rosser trace equals sum of eigenvalues", "[generators][rosser]") {
 
     // Known eigenvalues sum: 0 + 1000 + 1000 + 1020 + 1020
     //   + (-10*sqrt(10405)) + (10*sqrt(10405)) + (510+100*sqrt(26))
-    //   = 3040 + 510 + 100*sqrt(26) ≈ 3040 + 510 + 509.902 ≈ 4059.902
+    //   = 3040 + 510 + 100*sqrt(26) ~= 3040 + 510 + 509.902 ~= 4059.902
     // But trace should equal sum of eigenvalues exactly.
     // trace = 611+899+899+611+411+411+99+99 = 4040
     double expected_trace = 4040.0;

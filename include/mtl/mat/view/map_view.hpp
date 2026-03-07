@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Map view: reindex matrix access via row and column permutation vectors.
+// MTL5 -- Map view: reindex matrix access via row and column permutation vectors.
 // map_view(A, row_map, col_map): A_view(i,j) = A(row_map[i], col_map[j])
 #include <cstddef>
 #include <vector>

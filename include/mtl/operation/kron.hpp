@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Kronecker product of two matrices
+// MTL5 -- Kronecker product of two matrices
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/mat/dense2D.hpp>
 

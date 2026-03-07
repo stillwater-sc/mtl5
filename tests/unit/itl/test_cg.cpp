@@ -16,7 +16,7 @@
 using namespace mtl;
 
 TEST_CASE("CG converges on 3x3 SPD system with identity PC", "[itl][cg]") {
-    // A = {{4,1,0},{1,3,1},{0,1,2}} — symmetric positive definite
+    // A = {{4,1,0},{1,3,1},{0,1,2}} -- symmetric positive definite
     mat::dense2D<double> A(3, 3);
     A(0,0) = 4; A(0,1) = 1; A(0,2) = 0;
     A(1,0) = 1; A(1,1) = 3; A(1,2) = 1;
@@ -34,9 +34,9 @@ TEST_CASE("CG converges on 3x3 SPD system with identity PC", "[itl][cg]") {
     int err = itl::cg(A, x, b, pc, iter);
 
     REQUIRE(err == 0);
-    REQUIRE(iter.iterations() <= 3); // CG converges in at most n steps for n×n
+    REQUIRE(iter.iterations() <= 3); // CG converges in at most n steps for nxn
 
-    // Verify A*x ≈ b
+    // Verify A*x ~= b
     auto r = A * x;
     for (std::size_t i = 0; i < 3; ++i) {
         REQUIRE_THAT(r(i), Catch::Matchers::WithinAbs(b(i), 1e-8));
@@ -68,7 +68,7 @@ TEST_CASE("CG converges with diagonal (Jacobi) PC on tridiagonal", "[itl][cg]") 
 
     REQUIRE(err == 0);
 
-    // Verify A*x ≈ b
+    // Verify A*x ~= b
     auto Ax = A * x;
     for (std::size_t i = 0; i < n; ++i) {
         REQUIRE_THAT(Ax(i), Catch::Matchers::WithinAbs(b(i), 1e-8));

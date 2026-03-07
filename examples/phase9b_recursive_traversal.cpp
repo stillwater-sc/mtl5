@@ -39,7 +39,7 @@ void do_not_optimize(const T& val) {
     (void)sink;
 }
 
-// ── Naive ijk GEMM ─────────────────────────────────────────────────────
+// -- Naive ijk GEMM -----------------------------------------------------
 
 /// C += A * B using the textbook triple-nested loop.
 /// Poor cache behavior: B columns are accessed with stride = num_cols.
@@ -55,7 +55,7 @@ void naive_gemm(mat::dense2D<double>& C,
                 C(i, j) += A(i, k) * B(k, j);
 }
 
-// ── Block-Recursive GEMM via recursator ────────────────────────────────
+// -- Block-Recursive GEMM via recursator --------------------------------
 
 /// Recursive GEMM: C += A * B
 /// Subdivides all three matrices into quadrants and recurses.
@@ -128,12 +128,12 @@ int main() {
     std::cout << " Phase 9B: Block-Recursive GEMM - Cache-Oblivious Tiling\n";
     std::cout << "=============================================================\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 1. The Problem: Why Naive GEMM Is Slow
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 1. The Problem: Cache Behavior of ijk GEMM ===\n\n";
 
-    std::cout << "For C += A * B with N×N matrices:\n\n";
+    std::cout << "For C += A * B with NxN matrices:\n\n";
     std::cout << "  Naive ijk loop:\n";
     std::cout << "    for i in [0,N):        // row of A, row of C\n";
     std::cout << "      for j in [0,N):      // col of B, col of C\n";
@@ -141,11 +141,11 @@ int main() {
     std::cout << "          C(i,j) += A(i,k) * B(k,j)\n\n";
 
     std::cout << "  Cache analysis (row-major storage):\n";
-    std::cout << "  - A(i,k): sequential in k → good spatial locality\n";
-    std::cout << "  - B(k,j): stride-N access in k → column traversal = BAD\n";
+    std::cout << "  - A(i,k): sequential in k -> good spatial locality\n";
+    std::cout << "  - B(k,j): stride-N access in k -> column traversal = BAD\n";
     std::cout << "  - Each element of B is loaded N times total\n";
     std::cout << "  - When N > sqrt(cache_size / sizeof(double)),\n";
-    std::cout << "    B's columns don't fit in cache → capacity misses\n\n";
+    std::cout << "    B's columns don't fit in cache -> capacity misses\n\n";
 
     std::cout << "  Block-recursive GEMM:\n";
     std::cout << "  - Recursively subdivide A, B, C into quadrants\n";
@@ -154,9 +154,9 @@ int main() {
     std::cout << "  - Cache-OBLIVIOUS: adapts to any cache hierarchy\n";
     std::cout << "  - Same strategy used by XLA, TVM, Triton, cuBLAS\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 2. Correctness Verification
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 2. Correctness: Naive vs Block-Recursive ===\n\n";
 
     const std::size_t Nv = 64;
@@ -183,9 +183,9 @@ int main() {
     std::cout << "  Max |naive - blocked|: " << std::scientific << max_err << "\n";
     std::cout << "  Match: " << (max_err < 1e-10 ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 3. Performance Benchmark
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== 3. Performance: Naive vs Block-Recursive ===\n\n";
 
     // Sizes chosen to show the crossover. For small N, recursion overhead
@@ -193,7 +193,7 @@ int main() {
     std::vector<std::size_t> sizes = {64, 128, 256, 512};
     const int warmup = 1;
     const int trials = 3;
-    const std::size_t block_size = 32;  // ~32×32 = 8KB per block, fits in L1
+    const std::size_t block_size = 32;  // ~32x32 = 8KB per block, fits in L1
 
     std::cout << "  Block size for recursive: " << block_size
               << "  (3 blocks = "
@@ -260,9 +260,9 @@ int main() {
                   << "\n";
     }
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 4. Block Decomposition Visualization
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "\n=== 4. Recursator Decomposition ===\n\n";
 
     std::cout << "  8x8 matrix decomposed with min_dim_test(2):\n\n";
@@ -294,9 +294,9 @@ int main() {
     }
     std::cout << "\n  " << block_id << " base-case blocks, each fitting in registers/L1\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // 5. Connection to DL Compilers
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "\n=== 5. From Recursators to DL Compilers ===\n\n";
 
     std::cout << "The block-recursive GEMM strategy is the foundation of every\n";
@@ -306,7 +306,7 @@ int main() {
     std::cout << "    - Thread blocks tile the output matrix into ~128x128 blocks\n";
     std::cout << "    - Each thread block loads A,B tiles into shared memory\n";
     std::cout << "    - Warp-level tiles (~64x64) use tensor cores\n";
-    std::cout << "    - 3-level tiling: grid → block → warp (like our recursion)\n\n";
+    std::cout << "    - 3-level tiling: grid -> block -> warp (like our recursion)\n\n";
 
     std::cout << "  XLA (TensorFlow/JAX compiler):\n";
     std::cout << "    - Emits tiled loops for matmul on CPU and GPU\n";

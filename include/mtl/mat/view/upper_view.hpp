@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Read-only upper triangular view (includes diagonal)
+// MTL5 -- Read-only upper triangular view (includes diagonal)
 // upper_view(A): A_view(r,c) = A(r,c) if r <= c, else 0
 #include <cstddef>
 #include <mtl/math/identity.hpp>

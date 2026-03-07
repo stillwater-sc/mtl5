@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — CGS (Conjugate Gradient Squared) solver
+// MTL5 -- CGS (Conjugate Gradient Squared) solver
 // Ported from MTL4. For non-symmetric systems.
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>

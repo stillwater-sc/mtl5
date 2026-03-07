@@ -22,7 +22,7 @@ int main() {
     std::cout << " Phase 5A: Least Squares Curve Fitting - QR vs Normal Eqns\n";
     std::cout << "=============================================================\n\n";
 
-    // ── Generate noisy data ──────────────────────────────────────────────
+    // -- Generate noisy data ----------------------------------------------
     const std::size_t m = 20;  // data points
     const double pi = std::numbers::pi;
 
@@ -37,7 +37,7 @@ int main() {
         y_data(i) = std::sin(x_data(i)) + noise;
     }
 
-    // ── Try polynomial fits at increasing degree ─────────────────────────
+    // -- Try polynomial fits at increasing degree -------------------------
     std::cout << "--- Fitting polynomials of degree p: y = c0 + c1*x + ... + cp*x^p ---\n\n";
 
     std::vector<std::size_t> degrees = {3, 5, 8, 12};
@@ -58,7 +58,7 @@ int main() {
             }
         }
 
-        // ── Method 1: Normal Equations (V^T * V * c = V^T * y) ──────────
+        // -- Method 1: Normal Equations (V^T * V * c = V^T * y) ----------
         // This squares the condition number: cond(V^T*V) = cond(V)^2
         auto VtV = trans(V) * V;   // ncols x ncols SPD
         auto Vty = trans(V) * y_data;  // ncols x 1
@@ -87,7 +87,7 @@ int main() {
                       << chol_info << ")\n";
         }
 
-        // ── Method 2: QR Factorization ──────────────────────────────────
+        // -- Method 2: QR Factorization ----------------------------------
         // Numerically stable: works directly with V, no squaring
         mat::dense2D<double> V_qr(m, ncols);
         for (std::size_t i = 0; i < m; ++i)
@@ -110,7 +110,7 @@ int main() {
         std::cout << "  QR factorization:       residual = "
                   << std::scientific << res_qr << "\n";
 
-        // ── Show condition number of V^T*V ──────────────────────────────
+        // -- Show condition number of V^T*V ------------------------------
         // Approximate via ratio of max/min eigenvalue
         auto VtV_fresh = trans(V) * V;
         mat::dense2D<double> VtV_eig(ncols, ncols);
@@ -136,7 +136,7 @@ int main() {
         std::cout << "]\n\n";
     }
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. The Vandermonde matrix V has condition number that grows\n";
     std::cout << "   exponentially with polynomial degree. The normal equations\n";

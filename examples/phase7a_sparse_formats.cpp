@@ -2,7 +2,7 @@
 //
 // This example demonstrates:
 //   1. Three sparse matrix formats and their storage tradeoffs
-//   2. COO assembly → sort → compress to CRS pipeline
+//   2. COO assembly -> sort -> compress to CRS pipeline
 //   3. CRS assembly via the inserter pattern
 //   4. ELL conversion from CRS for GPU-friendly layout
 //   5. Matrix Market round-trip I/O
@@ -30,9 +30,9 @@ int main() {
     std::cout << "Problem: 2D Laplacian on " << grid << "x" << grid
               << " grid = " << N << " unknowns\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Format 1: COO (Coordinate) - best for unstructured assembly
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Format 1: COO (Coordinate / Triplet) ===\n";
     std::cout << "Storage: 3 arrays (row, col, val) x nnz entries.\n";
     std::cout << "Best for: assembly phase, when structure is unknown.\n\n";
@@ -60,9 +60,9 @@ int main() {
     auto crs_from_coo = coo.compress();
     std::cout << "After compress(): CRS with " << crs_from_coo.nnz() << " nnz\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Format 2: CRS (Compressed Row Storage) - best for computation
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Format 2: CRS (Compressed Row Storage) ===\n";
     std::cout << "Storage: data[nnz] + col_idx[nnz] + row_ptr[nrows+1].\n";
     std::cout << "Best for: matrix-vector products, iterative solvers.\n\n";
@@ -87,9 +87,9 @@ int main() {
               << " (col_idx) + " << N + 1 << " (row_ptr) = "
               << 2 * crs.nnz() + N + 1 << " values\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Format 3: ELL (ELLPACK) - best for GPU / uniform sparsity
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Format 3: ELL (ELLPACK) ===\n";
     std::cout << "Storage: indices[nrows*width] + data[nrows*width].\n";
     std::cout << "Best for: GPU kernels, matrices with uniform row widths.\n\n";
@@ -102,7 +102,7 @@ int main() {
     std::cout << "  (includes " << N * ell.max_width() - crs.nnz()
               << " padding entries for short rows)\n\n";
 
-    // ── Verify all three formats agree ───────────────────────────────────
+    // -- Verify all three formats agree -----------------------------------
     std::cout << "=== Verification: All formats give identical results ===\n";
 
     bool all_match = true;
@@ -121,7 +121,7 @@ int main() {
     std::cout << (all_match ? "All entries match across COO, CRS, and ELL.\n\n"
                             : "ERROR: Format mismatch detected!\n\n");
 
-    // ── Storage comparison table ─────────────────────────────────────────
+    // -- Storage comparison table -----------------------------------------
     std::cout << "=== Storage Comparison ===\n";
     std::size_t nnz = crs.nnz();
     std::cout << std::setw(10) << "Format"
@@ -149,12 +149,12 @@ int main() {
               << std::setw(10) << ell_total
               << std::setw(11) << 100.0*ell_total/(N*N) << "%\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Matrix Market Round-Trip I/O
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Matrix Market I/O Round-Trip ===\n\n";
 
-    // Write sparse (CRS → coordinate .mtx)
+    // Write sparse (CRS -> coordinate .mtx)
     std::string sparse_file = (std::filesystem::temp_directory_path() / "mtl5_laplacian_sparse.mtx").string();
     io::mm_write_sparse(sparse_file, crs, "2D Laplacian 6x6 grid");
     std::cout << "Written: " << sparse_file << " (coordinate format)\n";
@@ -194,15 +194,15 @@ int main() {
     std::remove(sparse_file.c_str());
     std::remove(dense_file.c_str());
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. COO: simplest format, good for assembly. O(nnz) for insert,\n";
-    std::cout << "   but O(nnz) for element lookup. Sort + compress → CRS.\n";
+    std::cout << "   but O(nnz) for element lookup. Sort + compress -> CRS.\n";
     std::cout << "2. CRS: the workhorse format. O(log(nnz/row)) element access,\n";
     std::cout << "   O(nnz) SpMV, minimal storage overhead.\n";
     std::cout << "3. ELL: GPU-friendly due to coalesced memory access patterns.\n";
     std::cout << "   Wastes space when row lengths vary widely.\n";
-    std::cout << "4. Pipeline: COO (assembly) → CRS (compute) → ELL (GPU).\n";
+    std::cout << "4. Pipeline: COO (assembly) -> CRS (compute) -> ELL (GPU).\n";
     std::cout << "5. Matrix Market is the standard exchange format for sparse\n";
     std::cout << "   matrices (used by SuiteSparse, NIST, etc.).\n";
 

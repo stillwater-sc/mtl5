@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise imaginary part extraction
+// MTL5 -- Element-wise imaginary part extraction
 #include <complex>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
@@ -10,7 +10,7 @@
 
 namespace mtl {
 
-/// Element-wise imag for vectors → dense_vector<magnitude_t<T>>
+/// Element-wise imag for vectors -> dense_vector<magnitude_t<T>>
 template <Vector V>
 auto imag(const V& v) {
     using mag_t = magnitude_t<typename V::value_type>;
@@ -25,7 +25,7 @@ auto imag(const V& v) {
     return result;
 }
 
-/// Element-wise imag for matrices → dense2D<magnitude_t<T>>
+/// Element-wise imag for matrices -> dense2D<magnitude_t<T>>
 template <Matrix M>
 auto imag(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise inverse hyperbolic cosine
+// MTL5 -- Element-wise inverse hyperbolic cosine
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

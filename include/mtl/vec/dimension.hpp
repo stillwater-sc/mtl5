@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Vector dimension types (replaces MTL4 vector dimensions)
+// MTL5 -- Vector dimension types (replaces MTL4 vector dimensions)
 // fixed::dimension<N> for compile-time size, non_fixed::dimension for runtime
 #include <cstddef>
 

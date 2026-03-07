@@ -66,9 +66,9 @@ int main() {
     print_matrix("C", C, n, n);
     std::cout << "\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: Lazy Capture - Expressions Hold References
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: Lazy Capture ===\n";
     std::cout << "auto expr = A + B;  // no computation yet!\n";
     std::cout << "The expression stores references to A and B.\n";
@@ -93,9 +93,9 @@ int main() {
     A(0, 0) = old_val;  // restore
     std::cout << "\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: Type Inspection
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: Type Inspection ===\n";
     std::cout << "Expression types differ from concrete matrix types.\n";
     std::cout << "The is_expression_v trait distinguishes them.\n\n";
@@ -118,9 +118,9 @@ int main() {
     std::cout << "is_expression_v<decltype(-A)>:    "
               << std::boolalpha << traits::is_expression_v<decltype(expr_neg)> << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: Nested Expression Trees
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 3: Nested Expression Trees ===\n";
     std::cout << "Expressions compose: 2.0*A + B - C builds a tree:\n";
     std::cout << "          (-)\n";
@@ -145,9 +145,9 @@ int main() {
         }
     std::cout << "Correctness: " << (nested_ok ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 4: Three Ways to Materialize
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 4: Three Ways to Materialize ===\n\n";
 
     auto expr4 = 2.0 * A + B;
@@ -177,9 +177,9 @@ int main() {
         }
     std::cout << "\nAll three methods agree: " << (mat_ok ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 5: Fused Accumulation
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 5: Fused Plus-Assign ===\n";
     std::cout << "fused_plus_assign(C_acc, 2.0*A + B) adds the expression\n";
     std::cout << "result to C_acc in a single pass - no temporary.\n\n";
@@ -201,9 +201,9 @@ int main() {
         }
     std::cout << "Correctness: " << (fpa_ok ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 6: Compound Assignment Operators
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 6: Compound Assignment (+=, -=) ===\n";
     std::cout << "C += A + B  and  C -= A  also accept expressions.\n\n";
 
@@ -227,9 +227,9 @@ int main() {
         }
     std::cout << "D == A - B: " << (comp_ok ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 7: Vector Expressions
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 7: Vector Expressions ===\n";
     std::cout << "Vectors enjoy the same lazy expression machinery.\n\n";
 
@@ -252,9 +252,9 @@ int main() {
     }
     std::cout << "Correctness: " << (vec_ok ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 8: Mixed Eager/Lazy - Matrix-Vector Multiply + Vector Add
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 8: Mixed Eager/Lazy ===\n";
     std::cout << "Matrix-vector multiply (A*x) is EAGER - it returns a\n";
     std::cout << "concrete dense_vector immediately. But the subsequent\n";
@@ -290,9 +290,9 @@ int main() {
     std::cout << "is_expression_v<decltype(M*x + b)>: "
               << std::boolalpha << traits::is_expression_v<decltype(matvec_plus_b)> << " (lazy add)\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 9: Unary Operations - Negation and Scalar Division
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 9: Unary Operations ===\n\n";
 
     // Negation
@@ -330,9 +330,9 @@ int main() {
         }
     std::cout << "Correctness: " << (comb_ok ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Key Takeaways
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. Expression templates defer computation until assignment.\n";
     std::cout << "   auto expr = A + B creates a lightweight proxy, not a matrix.\n";

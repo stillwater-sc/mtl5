@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Vector parameter bundle
+// MTL5 -- Vector parameter bundle
 #include <cstddef>
 #include <type_traits>
 #include <mtl/tag/orientation.hpp>

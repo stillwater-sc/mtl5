@@ -40,9 +40,9 @@ int main() {
 
     const std::size_t n = 6;
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: Hermitian View
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: Hermitian View ===\n";
     std::cout << "Store only the upper triangle; the view mirrors it below.\n";
     std::cout << "For real matrices: H(i,j) = H(j,i). No extra storage.\n\n";
@@ -73,9 +73,9 @@ int main() {
                 is_sym = false;
     std::cout << "\nSymmetry check H(i,j) == H(j,i): " << (is_sym ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: Banded View
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: Banded View ===\n";
     std::cout << "Extract a band around the diagonal. Elements outside = 0.\n\n";
 
@@ -110,9 +110,9 @@ int main() {
         }
     std::cout << "\nOut-of-band elements zero: " << (band_ok ? "PASS" : "FAIL") << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: Map View
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 3: Map View (Index Remapping) ===\n";
     std::cout << "Reindex rows and columns without copying data.\n\n";
 
@@ -142,9 +142,9 @@ int main() {
     std::cout << "Row-reversed view (rows " << n-1 << "..0):\n";
     print_matrix("perm", perm, n, n);
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 4: Identity Matrix
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "\n=== Part 4: Identity Matrix (Zero Storage) ===\n\n";
 
     mat::identity2D<double> I(n);
@@ -161,9 +161,9 @@ int main() {
     std::cout << "\nIdentity check: " << (id_ok ? "PASS" : "FAIL")
               << " (0 bytes of storage!)\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 5: Solve with Hermitian View
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 5: CG on Hermitian View ===\n";
     std::cout << "The hermitian view satisfies the Matrix concept,\n";
     std::cout << "so it works directly with iterative solvers.\n\n";
@@ -187,9 +187,9 @@ int main() {
     }
     std::cout << "Residual ||b - Hx||_2 = " << std::scientific << std::sqrt(res) << "\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 6: Matrix Market I/O
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 6: Matrix Market I/O ===\n\n";
 
     // Write a small dense matrix
@@ -211,7 +211,7 @@ int main() {
     std::cout << "Round-trip check: " << (mm_ok ? "PASS" : "FAIL") << "\n\n";
     std::remove(fname.c_str());
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. Views are zero-copy wrappers that reinterpret existing data.\n";
     std::cout << "   No memory allocation, no data movement.\n";

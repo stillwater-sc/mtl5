@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Rosser matrix generator (factory, returns dense2D)
+// MTL5 -- Rosser matrix generator (factory, returns dense2D)
 // Classic 8x8 eigenvalue test matrix (Rosser, 1951).
 // Known eigenvalues: {0, 1020, 1020, 1000, 1000, 10*sqrt(10405),
 //                     -10*sqrt(10405), 510+100*sqrt(26)}
@@ -11,7 +11,7 @@ namespace mtl::generators {
 
 /// Rosser matrix: 8x8 symmetric matrix with known eigenvalues.
 /// Eigenvalues: {0, 1020, 1020, 1000, 1000, 10*sqrt(10405),
-///               -10*sqrt(10405), 510+100*sqrt(26)} ≈
+///               -10*sqrt(10405), 510+100*sqrt(26)} ~=
 ///              {-1020.0490, 0, 1000, 1000, 1020, 1020, 1020.0490, 1020.0490}
 template <typename T = double>
 auto rosser() {

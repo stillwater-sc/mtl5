@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Vector expression umbrella
+// MTL5 -- Vector expression umbrella
 // In MTL4 this was a CRTP base class for all vector expressions.
 // In MTL5, C++20 concepts (Vector, DenseVector) replace the CRTP hierarchy.
 // Expression types simply satisfy the Vector concept by providing

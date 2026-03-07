@@ -1,16 +1,16 @@
-// phase12b_activation_functions.cpp — Neural Network Activation Functions
+// phase12b_activation_functions.cpp -- Neural Network Activation Functions
 //
 // This example demonstrates building common neural network activation
 // functions from MTL5's transcendental building blocks:
 //
-//   1. Sigmoid:  σ(x) = 1 / (1 + exp(-x))
-//   2. Tanh:     tanh(x)  — already an MTL5 primitive
+//   1. Sigmoid:  sigma(x) = 1 / (1 + exp(-x))
+//   2. Tanh:     tanh(x)  -- already an MTL5 primitive
 //   3. ReLU:     max(0, x) via signum
-//   4. Softmax:  exp(x_i) / Σ exp(x_j)
+//   4. Softmax:  exp(x_i) / Sigma exp(x_j)
 //   5. GELU:     x * 0.5 * (1 + erf(x / sqrt(2)))
 //
 // Each activation is built entirely from element-wise operations on
-// vectors and matrices — the same building blocks used in real
+// vectors and matrices -- the same building blocks used in real
 // neural network frameworks.
 
 #include <mtl/mtl.hpp>
@@ -20,7 +20,7 @@
 
 using namespace mtl;
 
-// ── Sigmoid: σ(x) = 1 / (1 + exp(-x)) ──────────────────────────────────
+// -- Sigmoid: sigma(x) = 1 / (1 + exp(-x)) ----------------------------------
 template <Vector V>
 auto sigmoid(const V& x) {
     using T = typename V::value_type;
@@ -33,8 +33,8 @@ auto sigmoid(const V& x) {
     return result;
 }
 
-// ── ReLU: max(0, x) = x * (signum(x) + 1) / 2 ─────────────────────────
-// Using signum: when x>0 → (1+1)/2=1 → keep; x<0 → (-1+1)/2=0 → zero
+// -- ReLU: max(0, x) = x * (signum(x) + 1) / 2 -------------------------
+// Using signum: when x>0 -> (1+1)/2=1 -> keep; x<0 -> (-1+1)/2=0 -> zero
 template <Vector V>
 auto relu(const V& x) {
     using T = typename V::value_type;
@@ -46,7 +46,7 @@ auto relu(const V& x) {
     return result;
 }
 
-// ── Softmax: exp(x_i) / Σ exp(x_j) ─────────────────────────────────────
+// -- Softmax: exp(x_i) / Sigma exp(x_j) -------------------------------------
 template <Vector V>
 auto softmax(const V& x) {
     using T = typename V::value_type;
@@ -71,7 +71,7 @@ auto softmax(const V& x) {
     return result;
 }
 
-// ── GELU: x * 0.5 * (1 + erf(x / sqrt(2))) ─────────────────────────────
+// -- GELU: x * 0.5 * (1 + erf(x / sqrt(2))) -----------------------------
 template <Vector V>
 auto gelu(const V& x) {
     using T = typename V::value_type;
@@ -103,24 +103,24 @@ int main() {
     print_vec("Input x", x);
     std::cout << "\n";
 
-    // ── 1. Sigmoid ──────────────────────────────────────────────────────
+    // -- 1. Sigmoid ------------------------------------------------------
     auto sig = sigmoid(x);
     print_vec("Sigmoid", sig);
 
     // Verify sigmoid properties
     std::cout << "  Properties:\n";
-    std::cout << "    σ(0) = " << sig(4) << " (should be 0.5)\n";
-    std::cout << "    σ(-3) + σ(3) = " << sig(0) + sig(8) << " (should be 1.0)\n";
-    std::cout << "    Range: [" << sig(0) << ", " << sig(8) << "] ⊂ (0,1)\n\n";
+    std::cout << "    sigma(0) = " << sig(4) << " (should be 0.5)\n";
+    std::cout << "    sigma(-3) + sigma(3) = " << sig(0) + sig(8) << " (should be 1.0)\n";
+    std::cout << "    Range: [" << sig(0) << ", " << sig(8) << "] subset (0,1)\n\n";
 
-    // ── 2. Tanh ─────────────────────────────────────────────────────────
+    // -- 2. Tanh ---------------------------------------------------------
     auto th = mtl::tanh(x);
     print_vec("Tanh", th);
     std::cout << "  Properties:\n";
     std::cout << "    tanh(0) = " << th(4) << " (should be 0.0)\n";
     std::cout << "    Symmetric: tanh(-1) + tanh(1) = " << th(2) + th(6) << " (should be 0.0)\n\n";
 
-    // ── 3. ReLU ─────────────────────────────────────────────────────────
+    // -- 3. ReLU ---------------------------------------------------------
     auto re = relu(x);
     print_vec("ReLU", re);
     std::cout << "  Properties:\n";
@@ -128,7 +128,7 @@ int main() {
     std::cout << "    ReLU(0) = " << re(4) << " (should be 0.0)\n";
     std::cout << "    ReLU(3) = " << re(8) << " (should be 3.0)\n\n";
 
-    // ── 4. Softmax ──────────────────────────────────────────────────────
+    // -- 4. Softmax ------------------------------------------------------
     dense_vector<double> logits = {2.0, 1.0, 0.1};
     auto probs = softmax(logits);
     print_vec("Logits", logits);
@@ -137,7 +137,7 @@ int main() {
     for (std::size_t i = 0; i < probs.size(); ++i) prob_sum += probs(i);
     std::cout << "  Sum of probabilities: " << prob_sum << " (should be 1.0)\n\n";
 
-    // ── 5. GELU ─────────────────────────────────────────────────────────
+    // -- 5. GELU ---------------------------------------------------------
     auto ge = gelu(x);
     print_vec("GELU", ge);
     std::cout << "  Properties:\n";
@@ -147,8 +147,8 @@ int main() {
     std::cout << "    GELU is slightly negative for small negative x:\n";
     std::cout << "      GELU(-0.5) = " << ge(3) << "\n\n";
 
-    // ── 6. Matrix activation: sigmoid on a weight matrix ────────────────
-    std::cout << "── Matrix Activation ──\n";
+    // -- 6. Matrix activation: sigmoid on a weight matrix ----------------
+    std::cout << "-- Matrix Activation --\n";
     mat::dense2D<double> W(2, 3);
     W(0,0) = -1.0; W(0,1) = 0.0; W(0,2) = 1.0;
     W(1,0) = -2.0; W(1,1) = 0.5; W(1,2) = 2.0;

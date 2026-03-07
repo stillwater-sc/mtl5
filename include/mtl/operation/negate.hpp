@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise negation
+// MTL5 -- Element-wise negation
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>

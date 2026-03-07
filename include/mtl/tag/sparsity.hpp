@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Sparsity tags
+// MTL5 -- Sparsity tags
 namespace mtl::tag {
 
 struct dense {};

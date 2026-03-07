@@ -28,9 +28,9 @@ int main() {
 
     const double pi = std::numbers::pi;
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: 1D Laplacian Eigenvalues
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: 1D Laplacian Eigenvalues ===\n\n";
 
     const std::size_t n = 8;
@@ -68,9 +68,9 @@ int main() {
     std::cout << "\nPhysical interpretation: eigenvalue k corresponds to the k-th\n";
     std::cout << "harmonic of a vibrating string. Frequency ~ sqrt(lambda_k).\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: 2D Laplacian via Kronecker Product
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: 2D Laplacian via Kronecker Product ===\n\n";
 
     const std::size_t n2d = 4;  // small for manageable output
@@ -129,10 +129,10 @@ int main() {
                   << std::scientific << std::setw(14) << err << "\n";
     }
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: General Eigenvalues (Non-Symmetric Matrix)
-    // ══════════════════════════════════════════════════════════════════════
-    std::cout << "\n=== Part 3: Non-Symmetric Matrix → Complex Eigenvalues ===\n\n";
+    // ======================================================================
+    std::cout << "\n=== Part 3: Non-Symmetric Matrix -> Complex Eigenvalues ===\n\n";
 
     mat::dense2D<double> B(n2d, n2d);
     for (std::size_t i = 0; i < n2d; ++i)
@@ -155,9 +155,9 @@ int main() {
                   << std::setw(16) << eigs_gen(k).imag() << "\n";
     }
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 4: SVD and Eigenvalue Connection
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "\n=== Part 4: SVD Singular Values vs Eigenvalues ===\n\n";
 
     std::cout << "For symmetric A: singular values = |eigenvalues|\n\n";
@@ -187,7 +187,7 @@ int main() {
                   << std::scientific << std::setw(14) << err << "\n";
     }
 
-    // ── Commentary ───────────────────────────────────────────────────────
+    // -- Commentary -------------------------------------------------------
     std::cout << "\n=== Key Takeaways ===\n";
     std::cout << "1. The 1D Laplacian eigenvalues have closed-form expressions.\n";
     std::cout << "   They correspond to vibration modes of a discretized string.\n";

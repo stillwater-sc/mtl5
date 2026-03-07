@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Orientation tags (replaces MTL4 tag::row_major/col_major)
+// MTL5 -- Orientation tags (replaces MTL4 tag::row_major/col_major)
 namespace mtl::tag {
 
 struct row_major {};

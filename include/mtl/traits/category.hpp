@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Category trait (replaces MTL4 boost/numeric/mtl/utility/category.hpp)
+// MTL5 -- Category trait (replaces MTL4 boost/numeric/mtl/utility/category.hpp)
 // category<T> maps a collection type to its tag (e.g., tag::dense, tag::sparse)
 // Key changes from MTL4:
 //   - Replace boost::is_base_of with std::is_base_of_v

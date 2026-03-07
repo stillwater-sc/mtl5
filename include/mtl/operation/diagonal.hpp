@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Extract diagonal of a matrix into a dense_vector,
+// MTL5 -- Extract diagonal of a matrix into a dense_vector,
 //         and construct a diagonal sparse matrix from a vector.
 #include <algorithm>
 #include <mtl/concepts/matrix.hpp>

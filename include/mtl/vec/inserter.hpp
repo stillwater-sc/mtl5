@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Vector element inserter for sparse vector construction
+// MTL5 -- Vector element inserter for sparse vector construction
 // Port from MTL4: boost/numeric/mtl/vector/inserter.hpp
 // Reuses update_store/update_plus from mat/inserter.hpp
 
@@ -9,7 +9,7 @@
 
 namespace mtl::vec {
 
-/// Inserter for sparse_vector — provides proxy-based element insertion.
+/// Inserter for sparse_vector -- provides proxy-based element insertion.
 /// Unlike the matrix inserter, vector insertion is immediate (no deferred finalize).
 template <typename Value, typename Parameters = parameters<>,
           typename Updater = mat::update_store<Value>>
@@ -17,7 +17,7 @@ class sparse_vector_inserter {
     using vector_type = sparse_vector<Value, Parameters>;
     using size_type   = typename vector_type::size_type;
 
-    /// Proxy returned by operator[] — supports << for insertion
+    /// Proxy returned by operator[] -- supports << for insertion
     struct update_proxy {
         vector_type& vec_;
         size_type    idx_;

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Test matrix generation facility
+// MTL5 -- Test matrix generation facility
 // Umbrella header for all generators (implicit + factory)
 
 // Tier 1: Implicit generators (storage-free, on-the-fly computation)

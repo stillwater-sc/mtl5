@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Set all elements to zero using math::zero<T>()
+// MTL5 -- Set all elements to zero using math::zero<T>()
 #include <algorithm>
 #include <mtl/concepts/collection.hpp>
 #include <mtl/math/identity.hpp>

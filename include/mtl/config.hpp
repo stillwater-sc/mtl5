@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Compile-time configuration knobs
+// MTL5 -- Compile-time configuration knobs
 #include <cstddef>
 
 namespace mtl {

@@ -60,7 +60,7 @@ TEST_CASE("permutation_matrix: inverse", "[mat][permutation]") {
 }
 
 TEST_CASE("permutation_matrix: efficient P*x matvec", "[mat][permutation]") {
-    // perm = [2, 0, 1] → y[0]=x[2], y[1]=x[0], y[2]=x[1]
+    // perm = [2, 0, 1] -> y[0]=x[2], y[1]=x[0], y[2]=x[1]
     permutation_matrix<double> P(std::vector<std::size_t>{2, 0, 1});
 
     vec::dense_vector<double> x(3);

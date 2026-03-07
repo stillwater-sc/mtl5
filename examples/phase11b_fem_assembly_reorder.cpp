@@ -1,4 +1,4 @@
-// phase11b_fem_assembly_reorder.cpp — FEM Assembly & Matrix Reordering
+// phase11b_fem_assembly_reorder.cpp -- FEM Assembly & Matrix Reordering
 //
 // This example demonstrates:
 //   1. shifted_inserter for FEM-style assembly of local element matrices
@@ -8,7 +8,7 @@
 //   5. Row/column reorder for non-symmetric systems
 //
 // Key insight: shifted_inserter lets you write element assembly loops that
-// don't know their global position — offsets are set externally, enabling
+// don't know their global position -- offsets are set externally, enabling
 // clean separation between local element physics and global mesh topology.
 
 #include <mtl/mtl.hpp>
@@ -71,9 +71,9 @@ int main() {
     std::cout << " Phase 11B: FEM Assembly & Matrix Reordering\n";
     std::cout << "=============================================================\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 1: FEM Assembly with shifted_inserter
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 1: 1D FEM Assembly with shifted_inserter ===\n\n";
 
     std::cout << "  Consider a 1D mesh with 4 elements and 5 nodes:\n\n";
@@ -125,9 +125,9 @@ int main() {
     std::cout << "]\n";
     std::cout << "  Expected: [1, 2, 2, 2, 1]\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 2: 2D FEM with Non-Sequential Numbering
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 2: 2D Mesh Element Assembly ===\n\n";
 
     std::cout << "  Consider a small 2D mesh with 6 nodes and 2 triangular\n";
@@ -167,9 +167,9 @@ int main() {
     std::cout << "  accumulate contributions from both elements.\n";
     std::cout << "  Nodes 3, 4 are not part of any element => zero rows/cols.\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 3: Bandwidth and Reordering Motivation
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 3: Matrix Reordering for Bandwidth Reduction ===\n\n";
 
     std::cout << "  Poor node numbering leads to large bandwidth, which\n";
@@ -207,9 +207,9 @@ int main() {
     std::cout << "  The non-zeros are now closer to the diagonal.\n";
     std::cout << "  Less fill-in during Cholesky or LU factorization!\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 4: Trace Preservation (Eigenvalue Invariant)
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 4: Symmetric Reorder Preserves Trace ===\n\n";
 
     std::cout << "  The symmetric reorder B = PAP^T is a similarity transform.\n";
@@ -237,9 +237,9 @@ int main() {
     std::cout << "  ||PAP^T||_F = " << std::fixed << std::setprecision(4) << std::sqrt(frob_reord) << "\n";
     std::cout << "  Frobenius norm is also preserved (unitary similarity).\n\n";
 
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     // Part 5: Row/Column Reorder and P * A
-    // ══════════════════════════════════════════════════════════════════════
+    // ======================================================================
     std::cout << "=== Part 5: Row vs Column vs Symmetric Reorder ===\n\n";
 
     mat::dense2D<double> M = {
@@ -272,12 +272,12 @@ int main() {
             diff += std::abs(PM(i, j) - M_rows(i, j));
     std::cout << "  Total absolute difference: " << std::scientific << diff << "\n\n";
 
-    // ── Takeaways ────────────────────────────────────────────────────────
+    // -- Takeaways --------------------------------------------------------
     std::cout << "=== Takeaways ===\n\n";
     std::cout << "  1. shifted_inserter decouples local element indexing from global\n";
     std::cout << "  2. update_plus accumulates overlapping element contributions\n";
     std::cout << "  3. set_row_offset/set_col_offset can change between elements\n";
-    std::cout << "  4. reorder(A, perm) computes PAP^T — a similarity transform\n";
+    std::cout << "  4. reorder(A, perm) computes PAP^T -- a similarity transform\n";
     std::cout << "  5. Similarity preserves eigenvalues, trace, and Frobenius norm\n";
     std::cout << "  6. Good numbering reduces bandwidth => less fill-in => faster solves\n";
     std::cout << "  7. reorder_rows/reorder_cols handle non-symmetric cases\n";

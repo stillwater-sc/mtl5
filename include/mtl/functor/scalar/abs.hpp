@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar absolute value functor
+// MTL5 -- Scalar absolute value functor
 #include <cmath>
 #include <cstdlib>
 #include <complex>

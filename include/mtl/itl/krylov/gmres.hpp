@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — GMRES (Generalized Minimum Residual) solver with restart
+// MTL5 -- GMRES (Generalized Minimum Residual) solver with restart
 // Left-preconditioned, Modified Gram-Schmidt, Givens rotations for QR
 #include <cmath>
 #include <vector>
@@ -14,7 +14,7 @@ namespace mtl::itl {
 
 namespace detail {
 
-/// Single GMRES cycle (inner iteration) — up to kmax Arnoldi steps.
+/// Single GMRES cycle (inner iteration) -- up to kmax Arnoldi steps.
 /// Returns 0 on convergence, 1 if kmax exhausted (restart needed).
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>

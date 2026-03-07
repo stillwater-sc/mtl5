@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix multiplication: mat*vec and mat*mat into pre-allocated output
+// MTL5 -- Matrix multiplication: mat*vec and mat*mat into pre-allocated output
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar tangent functor
+// MTL5 -- Scalar tangent functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

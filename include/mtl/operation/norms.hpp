@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Vector/matrix norms: one_norm, two_norm, infinity_norm, frobenius_norm
+// MTL5 -- Vector/matrix norms: one_norm, two_norm, infinity_norm, frobenius_norm
 #include <algorithm>
 #include <cmath>
 #include <cassert>
@@ -10,7 +10,7 @@
 
 namespace mtl {
 
-// ── Vector norms ────────────────────────────────────────────────────────
+// -- Vector norms --------------------------------------------------------
 
 /// one_norm(v) = sum(|v[i]|)
 template <Vector V>
@@ -51,7 +51,7 @@ auto infinity_norm(const V& v) {
     return result;
 }
 
-// ── Matrix norms ────────────────────────────────────────────────────────
+// -- Matrix norms --------------------------------------------------------
 
 /// frobenius_norm(m) = sqrt(sum(|m[i,j]|^2))
 template <Matrix M>

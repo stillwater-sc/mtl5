@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Upper triangular solve (back substitution)
+// MTL5 -- Upper triangular solve (back substitution)
 // Solves U*x = b where U is upper triangular.
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>

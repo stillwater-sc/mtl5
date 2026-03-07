@@ -1,6 +1,6 @@
 #pragma once
-// MTL5 — Wilkinson W+ tridiagonal matrix generator (factory, returns dense2D)
-// Tests eigenvalue sensitivity — has nearly-equal eigenvalue pairs.
+// MTL5 -- Wilkinson W+ tridiagonal matrix generator (factory, returns dense2D)
+// Tests eigenvalue sensitivity -- has nearly-equal eigenvalue pairs.
 // Diagonal: [m, m-1, ..., 1, 0, 1, ..., m-1, m] where n = 2m+1
 // Sub/super-diagonal: all 1s
 #include <cassert>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Trait to distinguish expression templates from concrete types
+// MTL5 -- Trait to distinguish expression templates from concrete types
 #include <type_traits>
 
 namespace mtl::traits {

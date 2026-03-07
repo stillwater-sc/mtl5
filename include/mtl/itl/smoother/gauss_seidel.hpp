@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Gauss-Seidel smoother
+// MTL5 -- Gauss-Seidel smoother
 // Generic version uses A(i,j); compressed2D specialization uses raw CRS access.
 #include <cassert>
 #include <cstddef>

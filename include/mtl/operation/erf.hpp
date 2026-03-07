@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Element-wise error function
+// MTL5 -- Element-wise error function
 #include <cmath>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>

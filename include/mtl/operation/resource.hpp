@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Resource descriptor for workspace allocation
+// MTL5 -- Resource descriptor for workspace allocation
 #include <mtl/concepts/collection.hpp>
 
 namespace mtl {

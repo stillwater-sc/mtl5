@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar rounding functor
+// MTL5 -- Scalar rounding functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

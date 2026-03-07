@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — QR factorization via Householder reflections
+// MTL5 -- QR factorization via Householder reflections
 // A = Q*R. A is overwritten with R (upper triangular) on+above diagonal,
 // Householder vectors stored below diagonal. tau stores the beta scalars.
 #include <algorithm>

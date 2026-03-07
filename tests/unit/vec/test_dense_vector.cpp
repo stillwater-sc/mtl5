@@ -9,7 +9,7 @@
 
 using namespace mtl;
 
-// ── Dimension tests (preserved from skeleton) ───────────────────────────
+// -- Dimension tests (preserved from skeleton) ---------------------------
 
 TEST_CASE("Fixed vector dimension", "[vec][dimension]") {
     mtl::vec::fixed::dimension<5> d;
@@ -35,7 +35,7 @@ TEST_CASE("Vector parameter bundle compiles", "[vec][parameter]") {
     STATIC_REQUIRE_FALSE(default_params::is_fixed);
 }
 
-// ── Concept satisfaction ────────────────────────────────────────────────
+// -- Concept satisfaction ------------------------------------------------
 
 TEST_CASE("dense_vector satisfies Collection concept", "[vec][concept]") {
     STATIC_REQUIRE(Collection<dense_vector<double>>);
@@ -48,7 +48,7 @@ TEST_CASE("dense_vector satisfies Vector concept", "[vec][concept]") {
     STATIC_REQUIRE(Vector<dense_vector<float>>);
 }
 
-// ── Constructor tests ───────────────────────────────────────────────────
+// -- Constructor tests ---------------------------------------------------
 
 TEST_CASE("Default construction creates empty vector", "[vec][ctor]") {
     dense_vector<double> v;
@@ -104,7 +104,7 @@ TEST_CASE("External pointer construction", "[vec][ctor]") {
     REQUIRE(data[0] == 99.0);
 }
 
-// ── Copy / Move ─────────────────────────────────────────────────────────
+// -- Copy / Move ---------------------------------------------------------
 
 TEST_CASE("Copy construction", "[vec][copy]") {
     dense_vector<int> a = {1, 2, 3};
@@ -141,7 +141,7 @@ TEST_CASE("Move assignment", "[vec][move]") {
     REQUIRE(b.data() == ptr);
 }
 
-// ── Element access ──────────────────────────────────────────────────────
+// -- Element access ------------------------------------------------------
 
 TEST_CASE("operator() and operator[]", "[vec][access]") {
     dense_vector<int> v = {10, 20, 30};
@@ -160,7 +160,7 @@ TEST_CASE("Bounds checking in debug builds", "[vec][access]") {
     }
 }
 
-// ── Iteration ───────────────────────────────────────────────────────────
+// -- Iteration -----------------------------------------------------------
 
 TEST_CASE("begin/end iteration", "[vec][iter]") {
     dense_vector<int> v = {1, 2, 3, 4, 5};
@@ -177,7 +177,7 @@ TEST_CASE("Range-based for", "[vec][iter]") {
     REQUIRE(sum == 60);
 }
 
-// ── Fill / set_to_zero ──────────────────────────────────────────────────
+// -- Fill / set_to_zero --------------------------------------------------
 
 TEST_CASE("vec::fill", "[vec][fill]") {
     dense_vector<double> v(5);
@@ -187,7 +187,7 @@ TEST_CASE("vec::fill", "[vec][fill]") {
     }
 }
 
-// ── Orientation-aware num_rows/num_cols ─────────────────────────────────
+// -- Orientation-aware num_rows/num_cols ---------------------------------
 
 TEST_CASE("Column vector: num_rows=size, num_cols=1", "[vec][orientation]") {
     // Default is col_major
@@ -203,7 +203,7 @@ TEST_CASE("Row vector: num_rows=1, num_cols=size", "[vec][orientation]") {
     REQUIRE(v.num_cols() == 5);
 }
 
-// ── change_dim ──────────────────────────────────────────────────────────
+// -- change_dim ----------------------------------------------------------
 
 TEST_CASE("change_dim resizes dynamic vector", "[vec][resize]") {
     dense_vector<double> v(5, 1.0);
@@ -216,7 +216,7 @@ TEST_CASE("change_dim resizes dynamic vector", "[vec][resize]") {
     REQUIRE(v.size() == 3);
 }
 
-// ── Fixed-size on stack ────────────────────────────────────────────────
+// -- Fixed-size on stack ------------------------------------------------
 
 TEST_CASE("Fixed-size vector on stack", "[vec][fixed][stack]") {
     using fixed_params = mtl::vec::parameters<
@@ -248,7 +248,7 @@ TEST_CASE("Fixed-size vector on stack: copy", "[vec][fixed][stack]") {
     REQUIRE(b.data() != a.data());
 }
 
-// ── Swap ────────────────────────────────────────────────────────────────
+// -- Swap ----------------------------------------------------------------
 
 TEST_CASE("Swap dynamic vectors", "[vec][swap]") {
     dense_vector<int> a = {1, 2, 3};
@@ -261,7 +261,7 @@ TEST_CASE("Swap dynamic vectors", "[vec][swap]") {
     REQUIRE(b(0) == 1);
 }
 
-// ── Traits ──────────────────────────────────────────────────────────────
+// -- Traits --------------------------------------------------------------
 
 TEST_CASE("dense_vector category is dense", "[vec][traits]") {
     STATIC_REQUIRE(std::is_same_v<
@@ -285,13 +285,13 @@ TEST_CASE("dense_vector ashape is rvec for row_major", "[vec][traits]") {
     >);
 }
 
-// ── Stride ──────────────────────────────────────────────────────────────
+// -- Stride --------------------------------------------------------------
 
 TEST_CASE("stride is always 1", "[vec][stride]") {
     STATIC_REQUIRE(dense_vector<double>::stride() == 1);
 }
 
-// ── Free functions ──────────────────────────────────────────────────────
+// -- Free functions ------------------------------------------------------
 
 TEST_CASE("Free function size()", "[vec][free]") {
     dense_vector<int> v = {1, 2, 3, 4};

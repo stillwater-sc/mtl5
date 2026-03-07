@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — ELLPACK sparse matrix format
+// MTL5 -- ELLPACK sparse matrix format
 // Fixed-width per-row storage. Good for GPU and matrices with uniform row lengths.
 #include <algorithm>
 #include <cassert>
@@ -62,7 +62,7 @@ public:
         }
     }
 
-    // ── Element access ──────────────────────────────────────────────────
+    // -- Element access --------------------------------------------------
 
     value_type operator()(size_type r, size_type c) const {
         assert(r < nrows_ && c < ncols_);
@@ -74,14 +74,14 @@ public:
         return math::zero<Value>();
     }
 
-    // ── Size / shape ────────────────────────────────────────────────────
+    // -- Size / shape ----------------------------------------------------
 
     size_type num_rows()  const { return nrows_; }
     size_type num_cols()  const { return ncols_; }
     size_type size()      const { return nrows_ * ncols_; }
     size_type max_width() const { return width_; }
 
-    // ── Raw access ──────────────────────────────────────────────────────
+    // -- Raw access ------------------------------------------------------
 
     const std::vector<size_type>& ref_indices() const { return indices_; }
     const std::vector<Value>&     ref_data()    const { return data_; }

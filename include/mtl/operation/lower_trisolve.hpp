@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Lower triangular solve (forward substitution)
+// MTL5 -- Lower triangular solve (forward substitution)
 // Solves L*x = b where L is lower triangular.
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>

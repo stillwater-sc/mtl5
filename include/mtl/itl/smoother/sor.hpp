@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — SOR (Successive Over-Relaxation) smoother
+// MTL5 -- SOR (Successive Over-Relaxation) smoother
 // Relaxed Gauss-Seidel: x[i] = omega * GS_update + (1 - omega) * x[i]
 #include <cassert>
 #include <cstddef>

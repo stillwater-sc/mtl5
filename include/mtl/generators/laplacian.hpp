@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Laplacian matrix generators (factory, returns compressed2D)
+// MTL5 -- Laplacian matrix generators (factory, returns compressed2D)
 // 1D: tridiagonal [-1, 2, -1]. 2D: 5-point stencil.
 // Both are SPD sparse with known eigenvalues.
 #include <cstddef>

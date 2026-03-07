@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar assignment functor
+// MTL5 -- Scalar assignment functor
 #include <type_traits>
 
 namespace mtl::functor::scalar {

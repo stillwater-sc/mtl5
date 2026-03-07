@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — ILU(0) incomplete LU factorization preconditioner for compressed2D
+// MTL5 -- ILU(0) incomplete LU factorization preconditioner for compressed2D
 // Preserves the sparsity pattern of A (no fill-in).
 // Constructor performs factorization; solve/adjoint_solve do L/U trisolves.
 #include <cassert>

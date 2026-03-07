@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Read-only view restricting access to a band [lower, upper] around diagonal
+// MTL5 -- Read-only view restricting access to a band [lower, upper] around diagonal
 // banded_view(A, lower, upper): returns zero outside the band.
 #include <cstddef>
 #include <mtl/math/identity.hpp>

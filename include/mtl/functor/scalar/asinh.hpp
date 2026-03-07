@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar inverse hyperbolic sine functor
+// MTL5 -- Scalar inverse hyperbolic sine functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

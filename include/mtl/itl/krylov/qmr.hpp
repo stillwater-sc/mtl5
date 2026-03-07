@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — QMR (Quasi-Minimal Residual) solver
+// MTL5 -- QMR (Quasi-Minimal Residual) solver
 // Based on Barrett et al. "Templates for the Solution of Linear Systems" Algorithm 7.3.
 // Requires trans(A). M must provide solve() and adjoint_solve().
 #include <cmath>

@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Diagonal (Jacobi) preconditioner: stores inv(diag(A))
+// MTL5 -- Diagonal (Jacobi) preconditioner: stores inv(diag(A))
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
@@ -9,7 +9,7 @@
 
 namespace mtl::itl::pc {
 
-/// Jacobi preconditioner — stores the inverse diagonal of A.
+/// Jacobi preconditioner -- stores the inverse diagonal of A.
 /// solve(x, b): x(i) = inv_diag(i) * b(i)
 template <typename Matrix>
 class diagonal {

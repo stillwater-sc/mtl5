@@ -6,7 +6,7 @@
 
 using namespace mtl::detail;
 
-// ── Heap tests ──────────────────────────────────────────────────────────
+// -- Heap tests ----------------------------------------------------------
 
 TEST_CASE("Heap block default construction", "[detail][memory]") {
     contiguous_memory_block<double, mtl::tag::on_heap> block;
@@ -137,7 +137,7 @@ TEST_CASE("Heap block swap", "[detail][memory]") {
     REQUIRE(b[0] == 1);
 }
 
-// ── Stack tests ─────────────────────────────────────────────────────────
+// -- Stack tests ---------------------------------------------------------
 
 TEST_CASE("Stack block default construction", "[detail][memory][stack]") {
     contiguous_memory_block<double, mtl::tag::on_stack, 4> block;

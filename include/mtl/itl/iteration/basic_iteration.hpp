@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Basic iteration controller for Krylov solvers
+// MTL5 -- Basic iteration controller for Krylov solvers
 #include <cmath>
 #include <string>
 #include <stdexcept>
@@ -62,7 +62,7 @@ public:
 
     int error_code() const { return error_; }
 
-    // ── Getters ──────────────────────────────────────────────────────────
+    // -- Getters ----------------------------------------------------------
 
     int iterations() const { return i_; }
     Real resid() const { return resid_; }

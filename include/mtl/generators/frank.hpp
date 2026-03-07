@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Frank matrix generator (factory, returns dense2D)
+// MTL5 -- Frank matrix generator (factory, returns dense2D)
 // Upper Hessenberg matrix with known eigenvalues.
 #include <cstddef>
 #include <mtl/mat/dense2D.hpp>

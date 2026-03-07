@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Scalar ceiling functor
+// MTL5 -- Scalar ceiling functor
 #include <cmath>
 
 namespace mtl::functor::scalar {

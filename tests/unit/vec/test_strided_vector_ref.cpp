@@ -8,7 +8,7 @@ using namespace mtl;
 
 TEST_CASE("strided_vector_ref from raw pointer", "[vec][strided]") {
     double data[] = {10, 20, 30, 40, 50, 60};
-    // stride=2: elements at indices 0, 2, 4 → values 10, 30, 50
+    // stride=2: elements at indices 0, 2, 4 -> values 10, 30, 50
     vec::strided_vector_ref<double> v(data, 3, 2);
     REQUIRE(v.size() == 3);
     REQUIRE(v.stride() == 2);

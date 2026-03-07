@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 — Matrix dimension types (replaces MTL4 matrix::dimensions)
+// MTL5 -- Matrix dimension types (replaces MTL4 matrix::dimensions)
 // fixed::dimensions<R,C> for compile-time sizes, non_fixed::dimensions for runtime
 #include <cstddef>
 

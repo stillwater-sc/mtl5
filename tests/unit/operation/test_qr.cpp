@@ -113,10 +113,10 @@ TEST_CASE("LQ factorization: L*Q reproduces A", "[operation][lq]") {
             REQUIRE_THAT(LQ(i, j), Catch::Matchers::WithinAbs(Aorig(i, j), 1e-8));
 }
 
-// ── Generator-based QR tests ─────────────────────────────────────────
+// -- Generator-based QR tests -----------------------------------------
 
 TEST_CASE("QR on Kahan matrix", "[operation][qr][generator]") {
-    // Kahan is upper triangular + ill-conditioned — classic QR stress test
+    // Kahan is upper triangular + ill-conditioned -- classic QR stress test
     constexpr std::size_t n = 6;
     auto A = generators::kahan<double>(n);
 
@@ -188,7 +188,7 @@ TEST_CASE("QR on Frank (Hessenberg) matrix", "[operation][qr][generator]") {
 }
 
 TEST_CASE("QR reconstruction on Vandermonde", "[operation][qr][generator]") {
-    // Vandermonde is ill-conditioned — verify Q*R = A reconstruction
+    // Vandermonde is ill-conditioned -- verify Q*R = A reconstruction
     auto A = generators::vandermonde<double>({1.0, 2.0, 3.0, 4.0, 5.0});
     std::size_t n = 5;
 
