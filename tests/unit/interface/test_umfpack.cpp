@@ -19,10 +19,10 @@ TEST_CASE("umfpack_solve on small system", "[interface][umfpack]") {
     mat::compressed2D<double> A(2, 2);
     {
         mat::inserter<mat::compressed2D<double>> ins(A);
-        ins(0, 0) << 2.0;
-        ins(0, 1) << 1.0;
-        ins(1, 0) << 1.0;
-        ins(1, 1) << 3.0;
+        ins[0][0] << 2.0;
+        ins[0][1] << 1.0;
+        ins[1][0] << 1.0;
+        ins[1][1] << 3.0;
     }
 
     vec::dense_vector<double> b = {5.0, 10.0};
@@ -39,9 +39,9 @@ TEST_CASE("umfpack_solver RAII class", "[interface][umfpack]") {
     mat::compressed2D<double> A(3, 3);
     {
         mat::inserter<mat::compressed2D<double>> ins(A);
-        ins(0, 0) << 1.0;
-        ins(1, 1) << 1.0;
-        ins(2, 2) << 1.0;
+        ins[0][0] << 1.0;
+        ins[1][1] << 1.0;
+        ins[2][2] << 1.0;
     }
 
     vec::dense_vector<double> b = {7.0, 8.0, 9.0};
