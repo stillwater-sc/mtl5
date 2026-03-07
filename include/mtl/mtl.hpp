@@ -58,6 +58,9 @@
 #include <mtl/mat/ell_matrix.hpp>
 #include <mtl/mat/permutation_matrix.hpp>
 #include <mtl/mat/block_diagonal2D.hpp>
+#include <mtl/mat/shifted_inserter.hpp>
+#include <mtl/vec/unit_vector.hpp>
+#include <mtl/vec/strided_vector_ref.hpp>
 
 // Scalar functors
 #include <mtl/functor/scalar/plus.hpp>
@@ -123,6 +126,7 @@
 #include <mtl/operation/eigenvalue.hpp>
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/kron.hpp>
+#include <mtl/operation/reorder.hpp>
 
 // Recursion
 #include <mtl/recursion/base_case_test.hpp>
