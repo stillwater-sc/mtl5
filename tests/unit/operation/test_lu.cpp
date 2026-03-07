@@ -7,6 +7,10 @@
 #include <mtl/operation/inv.hpp>
 #include <mtl/operation/operators.hpp>
 #include <mtl/operation/norms.hpp>
+#include <mtl/generators/frank.hpp>
+#include <mtl/generators/moler.hpp>
+#include <mtl/generators/hilbert.hpp>
+#include <mtl/generators/pascal.hpp>
 
 using namespace mtl;
 
@@ -72,6 +76,102 @@ TEST_CASE("Matrix inverse via LU", "[operation][inv]") {
     auto I_approx = A * Ainv;
     for (std::size_t i = 0; i < 3; ++i)
         for (std::size_t j = 0; j < 3; ++j) {
+            double expected = (i == j) ? 1.0 : 0.0;
+            REQUIRE_THAT(I_approx(i, j), Catch::Matchers::WithinAbs(expected, 1e-10));
+        }
+}
+
+// ── Generator-based LU tests ─────────────────────────────────────────
+
+TEST_CASE("LU solve on 8x8 Frank matrix", "[operation][lu][generator]") {
+    constexpr std::size_t n = 8;
+    auto A = generators::frank<double>(n);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    // Known solution
+    vec::dense_vector<double> x_true(n);
+    for (std::size_t i = 0; i < n; ++i)
+        x_true(i) = static_cast<double>(i + 1);
+
+    auto b = Aorig * x_true;
+
+    vec::dense_vector<double> x(n);
+    int info = lu_apply(A, x, b);
+    REQUIRE(info == 0);
+
+    // Verify backward error
+    auto residual = Aorig * x - b;
+    double rel_residual = two_norm(residual) / two_norm(b);
+    REQUIRE(rel_residual < 1e-10);
+}
+
+TEST_CASE("LU solve on Moler matrix", "[operation][lu][generator]") {
+    constexpr std::size_t n = 6;
+    auto A = generators::moler<double>(n);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    vec::dense_vector<double> x_true(n);
+    for (std::size_t i = 0; i < n; ++i)
+        x_true(i) = static_cast<double>(i + 1);
+
+    auto b = Aorig * x_true;
+
+    vec::dense_vector<double> x(n);
+    int info = lu_apply(A, x, b);
+    REQUIRE(info == 0);
+
+    auto residual = Aorig * x - b;
+    double rel_residual = two_norm(residual) / two_norm(b);
+    REQUIRE(rel_residual < 1e-8);
+}
+
+TEST_CASE("LU on ill-conditioned Hilbert 6x6", "[operation][lu][generator]") {
+    constexpr std::size_t n = 6;
+    generators::hilbert<double> H_gen(n);
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = H_gen(i, j);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    vec::dense_vector<double> x_true(n);
+    for (std::size_t i = 0; i < n; ++i)
+        x_true(i) = 1.0;
+
+    auto b = Aorig * x_true;
+
+    vec::dense_vector<double> x(n);
+    int info = lu_apply(A, x, b);
+    REQUIRE(info == 0);
+
+    // Hilbert is ill-conditioned: check backward error, not forward error
+    auto residual = Aorig * x - b;
+    double rel_residual = two_norm(residual) / two_norm(b);
+    REQUIRE(rel_residual < 1e-4);
+}
+
+TEST_CASE("LU inverse of Pascal matrix", "[operation][lu][generator]") {
+    constexpr std::size_t n = 5;
+    auto A = generators::pascal<double>(n);
+
+    auto Ainv = inv(A);
+
+    // Pascal has det=1, well-conditioned: A * A^{-1} should be I
+    auto I_approx = A * Ainv;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
             double expected = (i == j) ? 1.0 : 0.0;
             REQUIRE_THAT(I_approx(i, j), Catch::Matchers::WithinAbs(expected, 1e-10));
         }

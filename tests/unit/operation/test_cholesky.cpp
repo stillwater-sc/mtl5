@@ -7,6 +7,10 @@
 #include <mtl/operation/operators.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/trans.hpp>
+#include <mtl/generators/randspd.hpp>
+#include <mtl/generators/pascal.hpp>
+#include <mtl/generators/moler.hpp>
+#include <mtl/generators/lehmer.hpp>
 
 using namespace mtl;
 
@@ -70,4 +74,103 @@ TEST_CASE("Cholesky detects non-SPD matrix", "[operation][cholesky]") {
 
     int info = cholesky_factor(A);
     REQUIRE(info != 0);
+}
+
+// ── Generator-based Cholesky tests ────────────────────────────────────
+
+TEST_CASE("Cholesky on randspd with known eigenvalues", "[operation][cholesky][generator]") {
+    constexpr std::size_t n = 5;
+    auto A = generators::randspd<double>(n, {8.0, 4.0, 2.0, 1.0, 0.5});
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    int info = cholesky_factor(A);
+    REQUIRE(info == 0);
+
+    // Extract L and verify L*L^T = A
+    mat::dense2D<double> L(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            L(i, j) = (j <= i) ? A(i, j) : 0.0;
+
+    auto LLt = L * trans(L);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            REQUIRE_THAT(LLt(i, j), Catch::Matchers::WithinAbs(Aorig(i, j), 1e-10));
+}
+
+TEST_CASE("Cholesky on Pascal matrix", "[operation][cholesky][generator]") {
+    constexpr std::size_t n = 6;
+    auto A = generators::pascal<double>(n);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    int info = cholesky_factor(A);
+    REQUIRE(info == 0);
+
+    mat::dense2D<double> L(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            L(i, j) = (j <= i) ? A(i, j) : 0.0;
+
+    auto LLt = L * trans(L);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            REQUIRE_THAT(LLt(i, j), Catch::Matchers::WithinAbs(Aorig(i, j), 1e-10));
+}
+
+TEST_CASE("Cholesky on Moler matrix", "[operation][cholesky][generator]") {
+    constexpr std::size_t n = 6;
+    auto A = generators::moler<double>(n);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    int info = cholesky_factor(A);
+    REQUIRE(info == 0);
+
+    mat::dense2D<double> L(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            L(i, j) = (j <= i) ? A(i, j) : 0.0;
+
+    auto LLt = L * trans(L);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            REQUIRE_THAT(LLt(i, j), Catch::Matchers::WithinAbs(Aorig(i, j), 1e-8));
+}
+
+TEST_CASE("Cholesky on Lehmer matrix", "[operation][cholesky][generator]") {
+    constexpr std::size_t n = 6;
+    generators::lehmer<double> L_gen(n);
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = L_gen(i, j);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    int info = cholesky_factor(A);
+    REQUIRE(info == 0);
+
+    mat::dense2D<double> L(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            L(i, j) = (j <= i) ? A(i, j) : 0.0;
+
+    auto LLt = L * trans(L);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            REQUIRE_THAT(LLt(i, j), Catch::Matchers::WithinAbs(Aorig(i, j), 1e-8));
 }

@@ -8,6 +8,14 @@
 #include <mtl/operation/operators.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/trans.hpp>
+#include <mtl/generators/kahan.hpp>
+#include <mtl/generators/randorth.hpp>
+#include <mtl/generators/frank.hpp>
+#include <mtl/generators/vandermonde.hpp>
+#include <mtl/generators/randsvd.hpp>
+
+#include <cmath>
+#include <vector>
 
 using namespace mtl;
 
@@ -103,4 +111,126 @@ TEST_CASE("LQ factorization: L*Q reproduces A", "[operation][lq]") {
     for (std::size_t i = 0; i < 3; ++i)
         for (std::size_t j = 0; j < 3; ++j)
             REQUIRE_THAT(LQ(i, j), Catch::Matchers::WithinAbs(Aorig(i, j), 1e-8));
+}
+
+// ── Generator-based QR tests ─────────────────────────────────────────
+
+TEST_CASE("QR on Kahan matrix", "[operation][qr][generator]") {
+    // Kahan is upper triangular + ill-conditioned — classic QR stress test
+    constexpr std::size_t n = 6;
+    auto A = generators::kahan<double>(n);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    vec::dense_vector<double> tau(n);
+    int info = qr_factor(A, tau);
+    REQUIRE(info == 0);
+
+    auto Q = qr_extract_Q(A, tau);
+    auto R = qr_extract_R(A);
+
+    // Verify Q*R = A (reconstruction)
+    auto QR = Q * R;
+    double residual = frobenius_norm(QR - Aorig);
+    REQUIRE(residual / frobenius_norm(Aorig) < 1e-8);
+}
+
+TEST_CASE("QR orthogonality with randorth", "[operation][qr][generator]") {
+    // QR of an already-orthogonal matrix: Q should be orthogonal
+    constexpr std::size_t n = 8;
+    auto Qorig = generators::randorth<double>(n);
+
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = Qorig(i, j);
+
+    vec::dense_vector<double> tau(n);
+    qr_factor(A, tau);
+    auto Q = qr_extract_Q(A, tau);
+
+    // Q^T * Q should be I
+    auto QtQ = trans(Q) * Q;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            double expected = (i == j) ? 1.0 : 0.0;
+            REQUIRE_THAT(QtQ(i, j), Catch::Matchers::WithinAbs(expected, 1e-10));
+        }
+}
+
+TEST_CASE("QR on Frank (Hessenberg) matrix", "[operation][qr][generator]") {
+    constexpr std::size_t n = 6;
+    auto A = generators::frank<double>(n);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    vec::dense_vector<double> tau(n);
+    qr_factor(A, tau);
+    auto Q = qr_extract_Q(A, tau);
+    auto R = qr_extract_R(A);
+
+    // Q*R = A
+    auto QR = Q * R;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            REQUIRE_THAT(QR(i, j), Catch::Matchers::WithinAbs(Aorig(i, j), 1e-8));
+
+    // R should be upper triangular
+    for (std::size_t i = 1; i < n; ++i)
+        for (std::size_t j = 0; j < i; ++j)
+            REQUIRE_THAT(R(i, j), Catch::Matchers::WithinAbs(0.0, 1e-10));
+}
+
+TEST_CASE("QR reconstruction on Vandermonde", "[operation][qr][generator]") {
+    // Vandermonde is ill-conditioned — verify Q*R = A reconstruction
+    auto A = generators::vandermonde<double>({1.0, 2.0, 3.0, 4.0, 5.0});
+    std::size_t n = 5;
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    vec::dense_vector<double> tau(n);
+    qr_factor(A, tau);
+    auto Q = qr_extract_Q(A, tau);
+    auto R = qr_extract_R(A);
+
+    auto QR = Q * R;
+    double rel_error = frobenius_norm(QR - Aorig) / frobenius_norm(Aorig);
+    REQUIRE(rel_error < 1e-8);
+}
+
+TEST_CASE("QR on randsvd with known condition number", "[operation][qr][generator]") {
+    constexpr std::size_t n = 6;
+    auto A = generators::randsvd<double>(n, 100.0, 3);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    vec::dense_vector<double> tau(n);
+    qr_factor(A, tau);
+    auto Q = qr_extract_Q(A, tau);
+    auto R = qr_extract_R(A);
+
+    // Reconstruction accuracy
+    auto QR = Q * R;
+    double rel_error = frobenius_norm(QR - Aorig) / frobenius_norm(Aorig);
+    REQUIRE(rel_error < 1e-8);
+
+    // Q must be orthogonal
+    auto QtQ = trans(Q) * Q;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            double expected = (i == j) ? 1.0 : 0.0;
+            REQUIRE_THAT(QtQ(i, j), Catch::Matchers::WithinAbs(expected, 1e-10));
+        }
 }
