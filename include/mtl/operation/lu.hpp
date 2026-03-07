@@ -2,9 +2,11 @@
 // MTL5 -- LU factorization with partial pivoting
 // In-place: A is overwritten with L\U (unit lower, upper).
 // Pivot vector records row swaps.
+// Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <stdexcept>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
@@ -12,6 +14,10 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/upper_trisolve.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
+#ifdef MTL5_HAS_LAPACK
+#include <mtl/interface/lapack.hpp>
+#endif
 
 namespace mtl {
 
@@ -26,6 +32,24 @@ int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
     const size_type n = A.num_rows();
     assert(A.num_cols() == n);
     pivot.resize(n);
+
+#ifdef MTL5_HAS_LAPACK
+    if constexpr (interface::BlasDenseMatrix<M>) {
+        // LAPACK getrf expects column-major. For column-major dense2D, dispatch directly.
+        // For row-major, factoring A_row is equivalent to factoring A_col^T = U^T * L^T,
+        // which gives an LU of the transpose. We dispatch only for column-major.
+        if constexpr (!interface::is_row_major_v<M>) {
+            int m_int = static_cast<int>(n);
+            std::vector<int> ipiv(n);
+            int info = interface::lapack::getrf(m_int, m_int,
+                           const_cast<value_type*>(A.data()), m_int, ipiv.data());
+            // Convert 1-based Fortran pivots to 0-based size_type pivots
+            for (size_type i = 0; i < n; ++i)
+                pivot[i] = static_cast<size_type>(ipiv[i] - 1);
+            return (info > 0) ? info : 0;
+        }
+    }
+#endif
 
     for (size_type k = 0; k < n; ++k) {
         // Find pivot: row with max |A(i,k)| for i >= k

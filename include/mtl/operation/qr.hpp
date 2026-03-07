@@ -2,14 +2,20 @@
 // MTL5 -- QR factorization via Householder reflections
 // A = Q*R. A is overwritten with R (upper triangular) on+above diagonal,
 // Householder vectors stored below diagonal. tau stores the beta scalars.
+// Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <algorithm>
 #include <cassert>
+#include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/householder.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
+#ifdef MTL5_HAS_LAPACK
+#include <mtl/interface/lapack.hpp>
+#endif
 
 namespace mtl {
 
@@ -24,6 +30,24 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     const size_type n = A.num_cols();
     const size_type k = std::min(m, n);
     tau.change_dim(k);
+
+#ifdef MTL5_HAS_LAPACK
+    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+        int m_int = static_cast<int>(m);
+        int n_int = static_cast<int>(n);
+        // Workspace query
+        value_type work_opt;
+        interface::lapack::geqrf(m_int, n_int,
+            const_cast<value_type*>(A.data()), m_int,
+            tau.data(), &work_opt, -1);
+        int lwork = static_cast<int>(work_opt);
+        std::vector<value_type> work(lwork);
+        int info = interface::lapack::geqrf(m_int, n_int,
+            const_cast<value_type*>(A.data()), m_int,
+            tau.data(), work.data(), lwork);
+        return info;
+    }
+#endif
 
     for (size_type j = 0; j < k; ++j) {
         // Extract column A(j:m-1, j)

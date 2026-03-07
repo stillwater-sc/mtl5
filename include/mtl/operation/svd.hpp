@@ -1,15 +1,21 @@
 #pragma once
 // MTL5 -- Singular Value Decomposition via one-sided Jacobi / iterative QR
 // Decomposes A = U * S * V^T where S is diagonal (singular values).
+// Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <cmath>
 #include <algorithm>
 #include <cassert>
+#include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/qr.hpp>
 #include <mtl/operation/trans.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
+#ifdef MTL5_HAS_LAPACK
+#include <mtl/interface/lapack.hpp>
+#endif
 
 namespace mtl {
 
@@ -30,6 +36,59 @@ void svd(const M& A,
     const size_type m = A.num_rows();
     const size_type n = A.num_cols();
     const size_type mn = std::min(m, n);
+
+#ifdef MTL5_HAS_LAPACK
+    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+        // LAPACK gesdd: A_copy is overwritten, returns U, S_vec, VT
+        U.change_dim(m, m);
+        S.change_dim(m, n);
+        V.change_dim(n, n);
+
+        // Work on a copy (LAPACK overwrites input)
+        std::vector<value_type> A_copy(m * n);
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                A_copy[j * m + i] = A(i, j);  // column-major copy
+
+        std::vector<value_type> S_vec(mn);
+        std::vector<value_type> U_data(m * m);
+        std::vector<value_type> VT_data(n * n);
+        std::vector<int> iwork(8 * mn);
+
+        // Workspace query
+        value_type work_opt;
+        interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
+            A_copy.data(), static_cast<int>(m), S_vec.data(),
+            U_data.data(), static_cast<int>(m),
+            VT_data.data(), static_cast<int>(n),
+            &work_opt, -1, iwork.data());
+        int lwork = static_cast<int>(work_opt);
+        std::vector<value_type> work(lwork);
+        interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
+            A_copy.data(), static_cast<int>(m), S_vec.data(),
+            U_data.data(), static_cast<int>(m),
+            VT_data.data(), static_cast<int>(n),
+            work.data(), lwork, iwork.data());
+
+        // Copy results: U from column-major U_data
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < m; ++j)
+                U(i, j) = U_data[j * m + i];
+
+        // S as diagonal m x n matrix
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                S(i, j) = (i == j && i < mn) ? S_vec[i] : math::zero<value_type>();
+
+        // V from VT (transpose): V(i,j) = VT(j,i) = VT_data[i * n + j]
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < n; ++j)
+                V(i, j) = VT_data[i * n + j];
+
+        return;
+    }
+#endif
+
     const size_type max_iter = 100 * std::max(m, n);
 
     // Initialize: U = I(m), V = I(n), W = A

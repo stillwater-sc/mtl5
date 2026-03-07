@@ -1,14 +1,20 @@
 #pragma once
 // MTL5 -- Symmetric eigenvalue solver via implicit QR on tridiagonal form
 // Tridiagonalize via Householder, then apply Wilkinson-shifted QR iterations.
+// Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <cmath>
 #include <algorithm>
 #include <cassert>
+#include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/hessenberg.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
+#ifdef MTL5_HAS_LAPACK
+#include <mtl/interface/lapack.hpp>
+#endif
 
 namespace mtl {
 
@@ -23,6 +29,33 @@ auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
     using std::sqrt;
     const size_type n = A.num_rows();
     assert(n == A.num_cols());
+
+#ifdef MTL5_HAS_LAPACK
+    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+        // LAPACK syev: eigenvalues only ('N'), lower triangle ('L')
+        // Work on a column-major copy
+        std::vector<value_type> A_copy(n * n);
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < n; ++j)
+                A_copy[j * n + i] = A(i, j);
+
+        std::vector<value_type> W(n);
+        // Workspace query
+        value_type work_opt;
+        interface::lapack::syev('N', 'L', static_cast<int>(n),
+            A_copy.data(), static_cast<int>(n), W.data(), &work_opt, -1);
+        int lwork = static_cast<int>(work_opt);
+        std::vector<value_type> work(lwork);
+        interface::lapack::syev('N', 'L', static_cast<int>(n),
+            A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork);
+
+        // LAPACK returns eigenvalues in ascending order
+        vec::dense_vector<value_type> result(n);
+        for (size_type i = 0; i < n; ++i)
+            result(i) = W[i];
+        return result;
+    }
+#endif
 
     if (max_iter == 0) max_iter = 30 * n;
 

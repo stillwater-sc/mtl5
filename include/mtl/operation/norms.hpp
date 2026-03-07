@@ -1,5 +1,6 @@
 #pragma once
 // MTL5 -- Vector/matrix norms: one_norm, two_norm, infinity_norm, frobenius_norm
+// Optional BLAS dispatch when MTL5_HAS_BLAS is defined and types qualify.
 #include <algorithm>
 #include <cmath>
 #include <cassert>
@@ -7,6 +8,10 @@
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
+#ifdef MTL5_HAS_BLAS
+#include <mtl/interface/blas.hpp>
+#endif
 
 namespace mtl {
 
@@ -27,6 +32,11 @@ auto one_norm(const V& v) {
 /// two_norm(v) = sqrt(sum(|v[i]|^2))
 template <Vector V>
 auto two_norm(const V& v) {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::BlasDenseVector<V>) {
+        return interface::blas::nrm2(static_cast<int>(v.size()), v.data(), 1);
+    }
+#endif
     using mag_t = magnitude_t<typename V::value_type>;
     auto acc = math::zero<mag_t>();
     for (typename V::size_type i = 0; i < v.size(); ++i) {

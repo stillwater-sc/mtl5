@@ -162,8 +162,10 @@
 #include <mtl/recursion/predefined_masks.hpp>
 
 // External interfaces (conditional on CMake options)
+#include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/interface/blas.hpp>
 #include <mtl/interface/lapack.hpp>
+#include <mtl/interface/umfpack.hpp>
 
 // Expression templates
 #include <mtl/mat/expr/mat_expr.hpp>

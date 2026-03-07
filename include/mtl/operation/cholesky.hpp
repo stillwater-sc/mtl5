@@ -1,12 +1,17 @@
 #pragma once
 // MTL5 -- Cholesky factorization for symmetric positive definite matrices
 // A = L*L^T. In-place: lower triangle of A is overwritten with L.
+// Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <cassert>
 #include <cmath>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
+#ifdef MTL5_HAS_LAPACK
+#include <mtl/interface/lapack.hpp>
+#endif
 
 namespace mtl {
 
@@ -20,6 +25,15 @@ int cholesky_factor(M& A) {
     using std::sqrt;
     const size_type n = A.num_rows();
     assert(A.num_cols() == n);
+
+#ifdef MTL5_HAS_LAPACK
+    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+        int n_int = static_cast<int>(n);
+        int info = interface::lapack::potrf('L', n_int,
+                       const_cast<value_type*>(A.data()), n_int);
+        return (info > 0) ? info : 0;
+    }
+#endif
 
     for (size_type j = 0; j < n; ++j) {
         // Compute L(j,j) = sqrt(A(j,j) - sum(L(j,k)^2 for k < j))

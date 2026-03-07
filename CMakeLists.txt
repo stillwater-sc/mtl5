@@ -19,6 +19,7 @@ option(MTL5_BUILD_EXAMPLES "Build the examples"         ON)
 option(MTL5_ENABLE_OPENMP  "Enable OpenMP parallelism"  OFF)
 option(MTL5_ENABLE_BLAS    "Enable BLAS acceleration"   OFF)
 option(MTL5_ENABLE_LAPACK  "Enable LAPACK acceleration" OFF)
+option(MTL5_ENABLE_UMFPACK "Enable UMFPACK sparse solver" OFF)
 option(MTL5_CMAKE_TRACE    "Trace CMake target creation" OFF)
 
 # ── Global settings ─────────────────────────────────────────────────────
@@ -61,6 +62,21 @@ if(MTL5_ENABLE_LAPACK)
     find_package(LAPACK REQUIRED)
     target_compile_definitions(mtl5 INTERFACE MTL5_HAS_LAPACK)
     target_link_libraries(mtl5 INTERFACE ${LAPACK_LIBRARIES})
+endif()
+
+if(MTL5_ENABLE_UMFPACK)
+    find_path(UMFPACK_INCLUDE_DIR umfpack.h
+        PATH_SUFFIXES suitesparse SuiteSparse)
+    find_library(UMFPACK_LIBRARY NAMES umfpack)
+    if(UMFPACK_INCLUDE_DIR AND UMFPACK_LIBRARY)
+        target_compile_definitions(mtl5 INTERFACE MTL5_HAS_UMFPACK)
+        target_include_directories(mtl5 INTERFACE ${UMFPACK_INCLUDE_DIR})
+        target_link_libraries(mtl5 INTERFACE ${UMFPACK_LIBRARY})
+        message(STATUS "UMFPACK found: ${UMFPACK_LIBRARY}")
+    else()
+        message(FATAL_ERROR "UMFPACK requested but not found. "
+            "Install libsuitesparse-dev or set UMFPACK_INCLUDE_DIR and UMFPACK_LIBRARY.")
+    endif()
 endif()
 
 # ── Subdirectories ───────────────────────────────────────────────────────

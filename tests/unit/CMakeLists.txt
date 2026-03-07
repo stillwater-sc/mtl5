@@ -33,3 +33,6 @@ compile_all("true" "recursion" "Tests/recursion" "MTL5::mtl5;Catch2::Catch2WithM
 
 file(GLOB GENERATOR_SRC "generators/*.cpp")
 compile_all("true" "generators" "Tests/generators" "MTL5::mtl5;Catch2::Catch2WithMain" ${GENERATOR_SRC})
+
+file(GLOB INTERFACE_SRC "interface/*.cpp")
+compile_all("true" "iface" "Tests/interface" "MTL5::mtl5;Catch2::Catch2WithMain" ${INTERFACE_SRC})
