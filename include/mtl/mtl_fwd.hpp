@@ -47,6 +47,7 @@ namespace vec {
 
     template <typename Value, typename Parameters> class dense_vector;
     template <typename Value, typename Parameters> class sparse_vector;
+    template <typename Value>                      class strided_vector_ref;
 } // namespace vec
 
 // ── Math ────────────────────────────────────────────────────────────────
