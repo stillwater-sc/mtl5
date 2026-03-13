@@ -20,6 +20,7 @@ option(MTL5_ENABLE_OPENMP  "Enable OpenMP parallelism"  OFF)
 option(MTL5_ENABLE_BLAS    "Enable BLAS acceleration"   OFF)
 option(MTL5_ENABLE_LAPACK  "Enable LAPACK acceleration" OFF)
 option(MTL5_ENABLE_UMFPACK "Enable UMFPACK sparse solver" OFF)
+option(MTL5_BUILD_BENCHMARKS "Build the benchmark suite" OFF)
 option(MTL5_CMAKE_TRACE    "Trace CMake target creation" OFF)
 
 # ── Global settings ─────────────────────────────────────────────────────
@@ -87,6 +88,10 @@ endif()
 
 if(MTL5_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(MTL5_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
 endif()
 
 # ── Install rules ────────────────────────────────────────────────────────
