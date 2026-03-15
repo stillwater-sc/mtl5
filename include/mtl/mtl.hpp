@@ -166,6 +166,10 @@
 #include <mtl/interface/blas.hpp>
 #include <mtl/interface/lapack.hpp>
 #include <mtl/interface/umfpack.hpp>
+#include <mtl/interface/superlu.hpp>
+#include <mtl/interface/klu.hpp>
+#include <mtl/interface/cholmod.hpp>
+#include <mtl/interface/spqr.hpp>
 
 // Expression templates
 #include <mtl/mat/expr/mat_expr.hpp>
