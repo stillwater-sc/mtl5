@@ -19,35 +19,7 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
-// -- KLU C API declarations ---------------------------------------------------
-extern "C" {
-
-typedef struct klu_common_struct {
-    double tol;
-    double memgrow;
-    double mempolicy;
-    double maxwork;
-    int btf;
-    int ordering;
-    int scale;
-    // ... additional fields exist but are not used directly
-    // KLU internally manages these; we only need the struct type
-    char padding_[512];  // conservative padding for ABI compatibility
-} klu_common;
-
-typedef struct klu_symbolic_struct klu_symbolic;
-typedef struct klu_numeric_struct klu_numeric;
-
-int klu_defaults(klu_common* Common);
-klu_symbolic* klu_analyze(int n, int* Ap, int* Ai, klu_common* Common);
-klu_numeric* klu_factor(int* Ap, int* Ai, double* Ax,
-                        klu_symbolic* Symbolic, klu_common* Common);
-int klu_solve(klu_symbolic* Symbolic, klu_numeric* Numeric, int ldim, int nrhs,
-              double* B, klu_common* Common);
-int klu_free_symbolic(klu_symbolic** Symbolic, klu_common* Common);
-int klu_free_numeric(klu_numeric** Numeric, klu_common* Common);
-
-} // extern "C"
+#include <klu.h>
 
 namespace mtl::interface {
 
@@ -130,7 +102,6 @@ public:
         for (int i = 0; i < n_; ++i)
             x(i) = b(i);
 
-        // klu_solve modifies Common for statistics, need mutable copy
         klu_common common_copy = common_;
         int ok = klu_solve(symbolic_, numeric_, n_, 1, x.data(), &common_copy);
         if (!ok) {
