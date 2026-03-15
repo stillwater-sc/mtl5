@@ -21,3 +21,5 @@
 
 // Orderings
 #include <mtl/sparse/ordering/rcm.hpp>
+#include <mtl/sparse/ordering/amd.hpp>
+#include <mtl/sparse/ordering/colamd.hpp>
