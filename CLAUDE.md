@@ -53,6 +53,7 @@ All library headers live under `include/mtl/`:
 - **`functor/`** — Scalar functors (plus, times, abs, ...) and typed functors (scale, rscale, ...)
 - **`recursion/`** — Block-recursive matrix infrastructure
 - **`io/`** — Matrix Market I/O
+- **`sparse/`** — Sparse direct solver infrastructure: orderings (RCM, AMD, COLAMD), analysis (elimination tree, postorder), factorization (triangular solve), utilities (CSC, permutations, scatter)
 - **`itl/`** — Iterative Template Library: Krylov solvers (CG, BiCGSTAB, GMRES, ...), preconditioners, smoothers
 - **`interface/`** — Optional external library bindings: `blas.hpp` (L1/L2/L3), `lapack.hpp` (factorizations, eigensolvers), `umfpack.hpp` (sparse direct solver), `dispatch_traits.hpp` (compile-time dispatch decisions). Operations in `operation/` auto-dispatch to BLAS/LAPACK when `MTL5_HAS_BLAS`/`MTL5_HAS_LAPACK` is defined and types are `dense2D<float/double>`
 - **`mtl.hpp`** — Kitchen-sink umbrella include
@@ -68,6 +69,7 @@ Under `tests/`:
 - `unit/operation/` — Operation tests
 - `unit/math/` — Math utility tests
 - `unit/itl/` — ITL solver tests
+- `unit/sparse/` — Sparse direct solver infrastructure tests
 - `integration/` — Integration tests (future)
 
 ### Namespaces
@@ -89,6 +91,11 @@ Under `tests/`:
 - `mtl::recursion` — block-recursive infrastructure
 - `mtl::io` — I/O utilities
 - `mtl::interface` — external library bindings
+- `mtl::sparse` — sparse direct solver infrastructure
+- `mtl::sparse::ordering` — fill-reducing orderings
+- `mtl::sparse::analysis` — symbolic analysis (elimination trees, postorder)
+- `mtl::sparse::factorization` — numeric factorization algorithms
+- `mtl::sparse::util` — permutations, CSC format, sparse accumulators
 
 ### Key Patterns
 
@@ -126,3 +133,75 @@ This library targets Linux (x64/ARM64), macOS (ARM64), and Windows (MSVC/Clang-C
 
 - **Operation**: create header in `include/mtl/operation/`, include from `mtl.hpp` when ready
 - **Test**: create `test_<name>.cpp` in appropriate `tests/unit/` subdirectory, register in `tests/unit/CMakeLists.txt`
+
+## Git Workflow
+
+### Branch Protection
+
+The `main` branch is protected:
+- All changes go through pull requests (no direct pushes)
+- CI must pass before merge
+- CodeRabbit AI review is triggered on every PR
+
+### Branch Naming
+
+Use conventional prefixes matching the commit type:
+
+- `feat/<topic>` — new features (e.g., `feat/sparse-cholesky`)
+- `fix/<topic>` — bug fixes (e.g., `fix/csc-transpose-empty`)
+- `refactor/<topic>` — code restructuring
+- `test/<topic>` — adding or fixing tests
+- `docs/<topic>` — documentation changes
+- `perf/<topic>` — performance improvements
+- `chore/<topic>` — build, CI, tooling changes
+
+### Conventional Commits
+
+All commit messages MUST follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Types:**
+- `feat` — a new feature (correlates with MINOR in semver)
+- `fix` — a bug fix (correlates with PATCH in semver)
+- `refactor` — code change that neither fixes a bug nor adds a feature
+- `test` — adding or correcting tests
+- `docs` — documentation only changes
+- `perf` — performance improvement
+- `chore` — build process, CI, tooling, dependencies
+- `style` — formatting, whitespace (no code change)
+
+**Scopes** (optional, in parentheses): `sparse`, `mat`, `vec`, `itl`, `interface`, `operation`, `concepts`, `ci`, `build`
+
+**Examples:**
+```
+feat(sparse): add sparse Cholesky symbolic and numeric factorization
+fix(interface): correct CRS-to-CCS row index ordering for UMFPACK
+refactor(mat): simplify compressed2D inserter finalization
+test(sparse): add edge case tests for empty matrix permutation
+docs: update design doc with Phase 2 implementation notes
+perf(operation): use BLAS dispatch for sparse triangular solve
+chore(ci): add MSVC 2025 to CI matrix
+```
+
+**Breaking changes:** add `!` after type/scope and a `BREAKING CHANGE:` footer:
+```
+refactor(concepts)!: rename Scalar concept to ArithmeticScalar
+
+BREAKING CHANGE: All code using `Scalar<T>` must update to `ArithmeticScalar<T>`
+```
+
+### PR Workflow
+
+1. Create a feature branch from `main`
+2. Make commits following conventional commit format
+3. Push branch and create PR targeting `main`
+4. CodeRabbit reviews automatically; address feedback
+5. CI must pass on all platforms (Linux GCC/Clang, macOS Apple Clang, Windows MSVC/Clang-CL)
+6. Merge via squash-merge or regular merge (maintainer preference)

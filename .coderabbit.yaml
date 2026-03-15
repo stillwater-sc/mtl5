@@ -1,0 +1,63 @@
+# CodeRabbit configuration for MTL5
+# https://docs.coderabbit.ai/getting-started/configure-coderabbit
+
+language: en-US
+
+reviews:
+  # Review every PR
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  # Focus areas for a C++20 header-only library
+  path_instructions:
+    - path: "include/mtl/**/*.hpp"
+      instructions: |
+        This is a C++20 header-only linear algebra library. Review for:
+        - Correct use of C++20 concepts, constexpr, if constexpr
+        - Template correctness (SFINAE, concept constraints, dependent types)
+        - Cross-platform portability (GCC, Clang, Apple Clang, MSVC)
+        - No POSIX-only APIs without #ifdef guards
+        - No use of M_PI/M_E (use std::numbers)
+        - Expression template safety (dangling references, evaluation order)
+        - Numerical stability and correctness
+        - Include hygiene (#pragma once, minimal includes)
+        - Namespace conventions (mtl::, mtl::mat, mtl::vec, etc.)
+    - path: "include/mtl/sparse/**/*.hpp"
+      instructions: |
+        Sparse direct solver infrastructure. Additionally review for:
+        - Algorithmic correctness vs CSparse/Davis reference implementations
+        - Proper handling of sparse data structures (CSC/CRS, sorted indices)
+        - Fill-reducing ordering quality
+        - Symbolic/numeric phase separation
+        - Memory efficiency (avoid dense-sized allocations for sparse data)
+    - path: "include/mtl/interface/**/*.hpp"
+      instructions: |
+        External library bindings (BLAS, LAPACK, UMFPACK, etc.). Review for:
+        - Correct C/Fortran API calling conventions
+        - Proper #ifdef guards (MTL5_HAS_BLAS, etc.)
+        - RAII resource management for C library handles
+        - Type safety in conversions (size_t <-> int, row-major <-> col-major)
+    - path: "tests/**/*.cpp"
+      instructions: |
+        Catch2 test files. Review for:
+        - Test coverage of edge cases (empty matrices, 1x1, rectangular)
+        - Numerical tolerance in floating-point comparisons
+        - No hardcoded paths or platform-specific assumptions
+        - Test names follow [tag] convention
+
+  # High-level review profile
+  profile: chill
+  request_changes_workflow: false
+
+  # Review tools
+  tools:
+    cppcheck:
+      enabled: true
+    ast-grep:
+      enabled: true
+
+chat:
+  auto_reply: true
