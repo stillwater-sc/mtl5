@@ -16,6 +16,7 @@
 // Factorization infrastructure
 #include <mtl/sparse/factorization/triangular_solve.hpp>
 #include <mtl/sparse/factorization/sparse_cholesky.hpp>
+#include <mtl/sparse/factorization/sparse_qr.hpp>
 
 // Orderings
 #include <mtl/sparse/ordering/rcm.hpp>
