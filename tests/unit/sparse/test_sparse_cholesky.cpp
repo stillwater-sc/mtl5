@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
 #include <cstddef>
+#include <stdexcept>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -47,6 +49,9 @@ static double relative_residual(
         double ri = Ax_i - b(i);
         res_norm += ri * ri;
         b_norm += b(i) * b(i);
+    }
+    if (b_norm == 0.0) {
+        return std::sqrt(res_norm);  // absolute residual when ||b|| = 0
     }
     return std::sqrt(res_norm) / std::sqrt(b_norm);
 }

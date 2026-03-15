@@ -26,6 +26,7 @@
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -68,8 +69,12 @@ struct cholesky_numeric {
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
         std::size_t n = symbolic.n;
-        assert(static_cast<std::size_t>(x.size()) == n);
-        assert(static_cast<std::size_t>(b.size()) == n);
+        if (static_cast<std::size_t>(x.size()) != n ||
+            static_cast<std::size_t>(b.size()) != n) {
+            throw std::invalid_argument(
+                "cholesky_numeric::solve: vector size mismatch (expected "
+                + std::to_string(n) + ")");
+        }
 
         // Step 1: Apply permutation: w = P * b
         std::vector<Value> w(n);
@@ -102,14 +107,21 @@ cholesky_symbolic sparse_cholesky_symbolic(
     const mat::compressed2D<Value, Parameters>& A,
     const Ordering& ordering)
 {
-    assert(A.num_rows() == A.num_cols());
+    if (A.num_rows() != A.num_cols()) {
+        throw std::invalid_argument(
+            "sparse_cholesky_symbolic: matrix must be square");
+    }
     std::size_t n = A.num_rows();
 
     cholesky_symbolic sym;
     sym.n = n;
 
-    // Step 1: Compute fill-reducing ordering
+    // Step 1: Compute fill-reducing ordering and validate
     sym.perm = ordering(A);
+    if (!util::is_valid_permutation(sym.perm) || sym.perm.size() != n) {
+        throw std::invalid_argument(
+            "sparse_cholesky_symbolic: ordering returned invalid permutation");
+    }
     sym.pinv = util::invert_permutation(sym.perm);
 
     // Step 2: Apply symmetric permutation and convert to CSC
@@ -136,7 +148,10 @@ template <typename Value, typename Parameters>
 cholesky_symbolic sparse_cholesky_symbolic(
     const mat::compressed2D<Value, Parameters>& A)
 {
-    assert(A.num_rows() == A.num_cols());
+    if (A.num_rows() != A.num_cols()) {
+        throw std::invalid_argument(
+            "sparse_cholesky_symbolic: matrix must be square");
+    }
     std::size_t n = A.num_rows();
 
     cholesky_symbolic sym;
@@ -172,7 +187,12 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
 {
     using size_type = std::size_t;
     size_type n = sym.n;
-    assert(A.num_rows() == n && A.num_cols() == n);
+    if (A.num_rows() != n || A.num_cols() != n) {
+        throw std::invalid_argument(
+            "sparse_cholesky_numeric: matrix dimensions ("
+            + std::to_string(A.num_rows()) + "x" + std::to_string(A.num_cols())
+            + ") do not match symbolic analysis (n=" + std::to_string(n) + ")");
+    }
 
     // Apply symmetric permutation and convert to CSC
     auto PA = util::symmetric_permute(A, sym.perm);
@@ -275,43 +295,44 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
         }
         Value ljj = std::sqrt(diag);
 
-        // Store column j of L
-        size_type write_pos = L.col_ptr[j] + nz[j];
-        L.row_ind[write_pos] = j;
-        L.values[write_pos] = ljj;
-        nz[j]++;
+        // Guarded write into column j of L
+        size_type col_capacity = sym.col_counts[j];
+        auto push_entry = [&](size_type row, Value val) {
+            if (nz[j] >= col_capacity) {
+                throw std::runtime_error(
+                    "sparse_cholesky_numeric: column count underestimated at column "
+                    + std::to_string(j));
+            }
+            size_type pos = L.col_ptr[j] + nz[j];
+            L.row_ind[pos] = row;
+            L.values[pos] = val;
+            ++nz[j];
+        };
+
+        // Store diagonal
+        push_entry(j, ljj);
 
         // Store off-diagonal entries L(i,j) = x[i] / L(j,j) for i > j
-        // Collect nonzero rows from x that are > j
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
             if (i > j && x[i] != Value{0}) {
-                write_pos = L.col_ptr[j] + nz[j];
-                L.row_ind[write_pos] = i;
-                L.values[write_pos] = x[i] / ljj;
-                nz[j]++;
+                push_entry(i, x[i] / ljj);
             }
         }
 
         // Also store fill-in entries: rows where x[i] != 0 but not in C(:,j)
-        // These come from the etree-based updates above
-        // We need to check all rows > j where x was modified
         for (size_type col_k : affecting_cols) {
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
             for (size_type p = col_start; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
                 if (i > j && x[i] != Value{0}) {
-                    // Check if already stored (from C pattern)
                     bool already = false;
                     for (size_type q = L.col_ptr[j]; q < L.col_ptr[j] + nz[j]; ++q) {
                         if (L.row_ind[q] == i) { already = true; break; }
                     }
                     if (!already) {
-                        write_pos = L.col_ptr[j] + nz[j];
-                        L.row_ind[write_pos] = i;
-                        L.values[write_pos] = x[i] / ljj;
-                        nz[j]++;
+                        push_entry(i, x[i] / ljj);
                     }
                 }
             }
