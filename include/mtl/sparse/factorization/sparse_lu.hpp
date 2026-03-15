@@ -38,6 +38,7 @@
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
@@ -167,6 +168,7 @@ lu_symbolic sparse_lu_symbolic(
 ///
 /// \throws std::runtime_error if a zero pivot is encountered (singular matrix)
 template <typename Value, typename Parameters>
+    requires OrderedField<Value>
 lu_numeric<Value> sparse_lu_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const lu_symbolic& sym,
@@ -179,6 +181,10 @@ lu_numeric<Value> sparse_lu_numeric(
             "sparse_lu_numeric: matrix dimensions ("
             + std::to_string(A.num_rows()) + "x" + std::to_string(A.num_cols())
             + ") do not match symbolic analysis (n=" + std::to_string(n) + ")");
+    }
+    if (sym.col_perm.size() != n || !util::is_valid_permutation(sym.col_perm)) {
+        throw std::invalid_argument(
+            "sparse_lu_numeric: symbolic permutation is invalid or wrong size");
     }
 
     // Apply column permutation and convert to CSC
@@ -201,22 +207,25 @@ lu_numeric<Value> sparse_lu_numeric(
     std::vector<std::vector<size_type>> U_rows(n);   // row indices per column
     std::vector<std::vector<Value>>     U_vals(n);   // values per column
 
-    // Dense workspace
+    // Dense workspace with sparse tracking
     std::vector<Value> x(n, Value{0});
+    std::vector<size_type> touched;  // indices touched in current column
+    touched.reserve(n);
 
     for (size_type k = 0; k < n; ++k) {
+        touched.clear();
+
         // Scatter column k of permuted-row C into workspace x
         // We need to apply the current row permutation
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) {
             size_type orig_row = C.row_ind[p];
             size_type cur_pos = piv_inv[orig_row];
             x[cur_pos] = C.values[p];
+            touched.push_back(cur_pos);
         }
 
         // Left-looking: subtract contributions from previously factored columns
-        // For each column j < k where L(:,j) has a nonzero in the rows that
-        // overlap with the current column's pattern:
-        // x -= L(:,j) * U(j,k)
+        // Only visit columns j < k where x[j] != 0 (sparse traversal)
         for (size_type j = 0; j < k; ++j) {
             // U(j,k) is in x[j] at this point (entries above diagonal)
             Value ujk = x[j];
@@ -226,6 +235,7 @@ lu_numeric<Value> sparse_lu_numeric(
             for (size_type idx = 0; idx < L_rows[j].size(); ++idx) {
                 size_type i = L_rows[j][idx];
                 if (i == j) continue;  // skip diagonal (L has unit diagonal)
+                if (x[i] == Value{0}) touched.push_back(i);
                 x[i] -= L_vals[j][idx] * ujk;
             }
         }
@@ -233,22 +243,26 @@ lu_numeric<Value> sparse_lu_numeric(
         // Threshold partial pivoting: find the best pivot in x[k..n-1]
         Value max_val = Value{0};
         size_type pivot_pos = k;
-        for (size_type i = k; i < n; ++i) {
+        for (size_type ti = 0; ti < touched.size(); ++ti) {
+            size_type i = touched[ti];
+            if (i < k) continue;
             Value abs_val = std::abs(x[i]);
             if (abs_val > max_val) {
                 max_val = abs_val;
                 pivot_pos = i;
             }
         }
+        // Also check x[k] itself (may not be in touched if it was set to 0)
+        {
+            Value abs_k = std::abs(x[k]);
+            if (abs_k > max_val) {
+                max_val = abs_k;
+                pivot_pos = k;
+            }
+        }
 
         if (max_val == Value{0}) {
-            // Clear workspace before throwing
-            for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
-                x[piv_inv[C.row_ind[p]]] = Value{0};
-            for (size_type j = 0; j < k; ++j) {
-                for (size_type idx = 0; idx < L_rows[j].size(); ++idx)
-                    x[L_rows[j][idx]] = Value{0};
-            }
+            for (size_type i : touched) x[i] = Value{0};
             throw std::runtime_error(
                 "sparse_lu_numeric: zero pivot at column " + std::to_string(k)
                 + " (matrix is singular)");
@@ -296,8 +310,11 @@ lu_numeric<Value> sparse_lu_numeric(
             }
         }
 
-        // Clear workspace
-        for (size_type i = 0; i < n; ++i)
+        // Clear only touched workspace entries
+        for (size_type i : touched)
+            x[i] = Value{0};
+        // Also clear any entries in 0..k that weren't in touched
+        for (size_type i = 0; i <= k; ++i)
             x[i] = Value{0};
     }
 
@@ -353,6 +370,7 @@ lu_numeric<Value> sparse_lu_numeric(
 /// One-shot sparse LU solve: factor and solve A*x = b.
 template <typename Value, typename Parameters, typename VecX, typename VecB,
           typename Ordering>
+    requires OrderedField<Value>
 void sparse_lu_solve(
     const mat::compressed2D<Value, Parameters>& A,
     VecX& x, const VecB& b,

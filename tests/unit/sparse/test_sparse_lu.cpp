@@ -217,29 +217,37 @@ TEST_CASE("Sparse LU throws for singular matrix", "[sparse][lu]") {
 }
 
 TEST_CASE("Sparse LU with threshold pivoting", "[sparse][lu]") {
-    // Matrix where threshold pivoting matters:
-    // A = [[1e-10  1]
-    //      [1      1]]
-    // With full pivoting (threshold=1): swaps rows
-    // With threshold=0 (no pivoting): doesn't swap
+    // A = [[0.6  1]
+    //      [1.0  1]]
+    // With threshold=1.0 (full pivoting): |0.6| < 1.0*|1.0|, swaps rows
+    // With threshold=0.5: |0.6| >= 0.5*|1.0|, does NOT swap rows
     mat::compressed2D<double> A(2, 2);
     {
         mat::inserter<mat::compressed2D<double>> ins(A);
-        ins[0][0] << 1e-10; ins[0][1] << 1.0;
-        ins[1][0] << 1.0;   ins[1][1] << 1.0;
+        ins[0][0] << 0.6; ins[0][1] << 1.0;
+        ins[1][0] << 1.0; ins[1][1] << 1.0;
     }
 
-    vec::dense_vector<double> b = {1.0, 2.0};
+    auto sym = factorization::sparse_lu_symbolic(A);
 
-    // Full pivoting (threshold = 1.0)
+    // Full pivoting: should swap rows (0.6 < 1.0*1.0)
+    auto full = factorization::sparse_lu_numeric(A, sym, 1.0);
+    // Relaxed threshold: should NOT swap rows (0.6 >= 0.5*1.0)
+    auto relaxed = factorization::sparse_lu_numeric(A, sym, 0.5);
+
+    // Verify different pivot choices
+    REQUIRE(full.row_perm != relaxed.row_perm);
+
+    // Both should still produce correct solves
+    vec::dense_vector<double> b = {1.6, 2.0};
+
     vec::dense_vector<double> x1(2, 0.0);
-    factorization::sparse_lu_solve(A, x1, b, ordering::rcm{}, 1.0);
-    REQUIRE(relative_residual(A, x1, b) < 1e-10);
+    full.solve(x1, b);
+    REQUIRE(relative_residual(A, x1, b) < 1e-12);
 
-    // Relaxed threshold
     vec::dense_vector<double> x2(2, 0.0);
-    factorization::sparse_lu_solve(A, x2, b, ordering::rcm{}, 0.5);
-    REQUIRE(relative_residual(A, x2, b) < 1e-10);
+    relaxed.solve(x2, b);
+    REQUIRE(relative_residual(A, x2, b) < 1e-12);
 }
 
 TEST_CASE("Sparse LU solve: larger 10x10 system", "[sparse][lu]") {
