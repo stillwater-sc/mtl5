@@ -17,6 +17,7 @@
 #include <mtl/sparse/factorization/triangular_solve.hpp>
 #include <mtl/sparse/factorization/sparse_cholesky.hpp>
 #include <mtl/sparse/factorization/sparse_qr.hpp>
+#include <mtl/sparse/factorization/sparse_lu.hpp>
 
 // Orderings
 #include <mtl/sparse/ordering/rcm.hpp>
