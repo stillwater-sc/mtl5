@@ -188,5 +188,8 @@
 // Generators -- Test matrix generation facility
 #include <mtl/generators/generators.hpp>
 
+// Sparse direct solver infrastructure
+#include <mtl/sparse/sparse.hpp>
+
 // ITL -- Iterative Template Library
 #include <mtl/itl/itl.hpp>

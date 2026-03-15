@@ -36,3 +36,6 @@ compile_all("true" "generators" "Tests/generators" "MTL5::mtl5;Catch2::Catch2Wit
 
 file(GLOB INTERFACE_SRC "interface/*.cpp")
 compile_all("true" "iface" "Tests/interface" "MTL5::mtl5;Catch2::Catch2WithMain" ${INTERFACE_SRC})
+
+file(GLOB SPARSE_SRC "sparse/*.cpp")
+compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" ${SPARSE_SRC})
