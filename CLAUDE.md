@@ -205,3 +205,27 @@ BREAKING CHANGE: All code using `Scalar<T>` must update to `ArithmeticScalar<T>`
 4. CodeRabbit reviews automatically; address feedback
 5. CI must pass on all platforms (Linux GCC/Clang, macOS Apple Clang, Windows MSVC/Clang-CL)
 6. Merge via squash-merge or regular merge (maintainer preference)
+
+### Releases
+
+Releases follow [Semantic Versioning](https://semver.org/) and are triggered by pushing a git tag:
+
+```bash
+git tag v5.2.0
+git push --tags
+```
+
+This triggers the release workflow (`.github/workflows/release.yml`) which:
+1. Runs the full CI matrix (8 platforms) on the tagged commit
+2. Verifies the CMake fallback version matches the tag
+3. Generates release notes from conventional commit messages
+4. Creates a GitHub Release with the changelog
+
+The CMake build system extracts the version from the git tag automatically (`git describe --tags`). When building outside a git repo or without a tag, it falls back to `MTL5_FALLBACK_VERSION` in `CMakeLists.txt`.
+
+**Version bumping checklist:**
+1. Update `MTL5_FALLBACK_VERSION` in `CMakeLists.txt` to the new version
+2. Update `CHANGELOG.md` with the release date and changes
+3. Commit, push, create and merge the PR
+4. Tag the merge commit: `git tag v<major>.<minor>.<patch>`
+5. Push the tag: `git push --tags`

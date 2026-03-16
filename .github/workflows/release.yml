@@ -1,0 +1,118 @@
+name: Release
+
+# Triggered when a version tag is pushed: git tag v5.2.0 && git push --tags
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Run the full CI matrix first ──────────────────────────────────────
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # ── Create GitHub release after CI passes ─────────────────────────────
+  release:
+    needs: ci
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for changelog generation
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release: $TAG (version $VERSION)"
+
+      - name: Verify CMake version matches tag
+        run: |
+          CMAKE_VERSION=$(grep 'MTL5_FALLBACK_VERSION' CMakeLists.txt | head -1 | grep -oP '\d+\.\d+\.\d+')
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          echo "CMake fallback version: $CMAKE_VERSION"
+          echo "Tag version: $TAG_VERSION"
+          if [ "$CMAKE_VERSION" != "$TAG_VERSION" ]; then
+            echo "::warning::CMake fallback version ($CMAKE_VERSION) does not match tag ($TAG_VERSION). The build will use the git tag version."
+          fi
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Get the previous tag for changelog range
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            echo "Changes since $PREV_TAG:"
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            echo "Initial release"
+            RANGE="HEAD"
+          fi
+
+          # Generate changelog from conventional commits
+          {
+            echo "## What's Changed"
+            echo ""
+
+            # Features
+            FEATS=$(git log "$RANGE" --pretty=format:"%s" 2>/dev/null | grep "^feat" | sed 's/^feat[^:]*: /- /' || true)
+            if [ -n "$FEATS" ]; then
+              echo "### Features"
+              echo "$FEATS"
+              echo ""
+            fi
+
+            # Fixes
+            FIXES=$(git log "$RANGE" --pretty=format:"%s" 2>/dev/null | grep "^fix" | sed 's/^fix[^:]*: /- /' || true)
+            if [ -n "$FIXES" ]; then
+              echo "### Bug Fixes"
+              echo "$FIXES"
+              echo ""
+            fi
+
+            # Tests
+            TESTS=$(git log "$RANGE" --pretty=format:"%s" 2>/dev/null | grep "^test" | sed 's/^test[^:]*: /- /' || true)
+            if [ -n "$TESTS" ]; then
+              echo "### Tests"
+              echo "$TESTS"
+              echo ""
+            fi
+
+            # Docs
+            DOCS=$(git log "$RANGE" --pretty=format:"%s" 2>/dev/null | grep "^docs\|^doc" | sed 's/^docs\?[^:]*: /- /' || true)
+            if [ -n "$DOCS" ]; then
+              echo "### Documentation"
+              echo "$DOCS"
+              echo ""
+            fi
+
+            # Other
+            OTHER=$(git log "$RANGE" --pretty=format:"%s" 2>/dev/null | grep -v "^feat\|^fix\|^test\|^docs\|^doc\|^Merge" | sed 's/^[^:]*: /- /' || true)
+            if [ -n "$OTHER" ]; then
+              echo "### Other Changes"
+              echo "$OTHER"
+              echo ""
+            fi
+
+            echo "---"
+            echo ""
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG:-v0.0.0}...${{ steps.version.outputs.tag }}"
+          } > release_notes.md
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "MTL5 ${{ steps.version.outputs.tag }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          generate_release_notes: false
