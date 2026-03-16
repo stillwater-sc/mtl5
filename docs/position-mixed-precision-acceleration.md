@@ -67,27 +67,31 @@ The obstacle is not the algorithms — it is the infrastructure. No existing lin
 The platform has three layers:
 
 ```
-┌──────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────┐
 │                    Application Layer                      │
+│                                                           │
 │   Autonomous navigation, FEM, circuit simulation, ML      │
-├──────────────────────────────────────────────────────────┤
-│                  MTL5 — Algebra Layer                      │
+├───────────────────────────────────────────────────────────┤
+│                  MTL5 — Algebra Layer                     │
+│                                                           │
 │   Vectors, matrices, decompositions, solvers              │
 │   C++20 concepts: Scalar, Field, Matrix, Vector           │
 │   Expression templates, sparse/dense, iterative/direct    │
 │   Parameterized over Value type — any arithmetic works    │
-├──────────────────────────────────────────────────────────┤
-│                Universal — Arithmetic Layer                │
-│   posit<N,ES>  cfloat<N,E>  lns<N>  fixpnt<N,M>          │
+├───────────────────────────────────────────────────────────┤
+│                Universal — Arithmetic Layer               │
+│                                                           │
+│   posit<N,ES>  cfloat<N,E>  lns<N>  fixpnt<N,M>           │
 │   Bit-exact, constexpr, hardware-synthesizable            │
 │   std::numeric_limits specializations                     │
 │   ADL-compatible abs(), sqrt(), math functions            │
-├──────────────────────────────────────────────────────────┤
-│                  Hardware Layer                            │
-│   CPU (reference)  │  FPGA  │  ASIC  │  KPU              │
-│   SuiteSparse/BLAS │  HLS   │  RTL   │  Custom ALU/SFU   │
-│   (IEEE 754 only)  │  (any) │  (any) │  (any)            │
-└──────────────────────────────────────────────────────────┘
+├───────────────────────────────────────────────────────────┤
+│                    Hardware Layer                         │
+│                                                           │
+│   CPU (reference)  │  FPGA  │  ASIC   │  KPU              │
+│   SuiteSparse/BLAS │  HLS   │  RTL    │  Custom ALU/SFU   │
+│   (IEEE 754 only)  │  (any) │  (any)  │  (any)            │
+└───────────────────────────────────────────────────────────┘
 ```
 
 **Key property**: the algebra layer (MTL5) and arithmetic layer (Universal) are connected only through C++20 concepts. Changing the number system changes a single template parameter, not the algorithm. Changing the hardware target changes the dispatch layer, not the mathematics.
@@ -138,9 +142,9 @@ One line changes. The algorithm, data structures, ordering, and solver infrastru
 
 ### 2.3 How Universal Enables Hardware-Ready Arithmetic
 
-Universal number types are designed for hardware synthesis:
+Universal number types are designed for hardware acceleration:
 
-- **Static bit-width**: `posit<32,2>` is always exactly 32 bits, with known encoding
+- **Static bit-width**: `posit<32,2>` is always exactly 32 bits, with known encoding, and address alignment
 - **Bit-exact semantics**: operations produce identical results on any platform
 - **No special cases**: posits have no NaN, no denormals, no ±0 ambiguity — simpler hardware
 - **Constexpr constructors**: `T{0}` and `T{1}` work at compile time
@@ -151,7 +155,7 @@ The path from software to hardware:
 1. **Explore** in software: use Universal + MTL5 to test algorithms across number systems
 2. **Profile** precision requirements: identify which phases need which precision
 3. **Validate** hardware designs: test FPGA/ASIC implementations against Universal's bit-exact reference
-4. **Deploy**: MTL5 dispatch layer routes operations to CPU or accelerator based on type
+4. **Deploy**: MTL5 dispatch layer routes operations to CPU or custom hardware accelerator based on type
 
 ### 2.4 The Dispatch Architecture
 
@@ -176,10 +180,10 @@ This pattern extends naturally to hardware accelerators:
 if constexpr (is_blas_scalar_v<Value>) {
     // CPU BLAS path (float/double)
 } else if constexpr (is_acceleratable_v<Value>) {
-    // Custom accelerator path (posit, lns, cfloat)
+    // Custom accelerator path (integer, fixpnt, cfloat, areal, posit, lns, dbns)
     accelerator::dispatch(A, x, result);
 } else {
-    // Software reference path (any type)
+    // Software reference path (any type, through software emulation)
     detail::mult_generic(A, x);
 }
 ```
@@ -218,7 +222,7 @@ MTL5's native sparse solvers (Phases 2-5) serve a different purpose: they are **
 | `amd` | Approximate min degree | AMD |
 | `colamd` | Column AMD | COLAMD |
 
-For `double` on CPUs, SuiteSparse will be faster (supernodal BLAS, decades of tuning). But for `posit<32,2>` on an FPGA, the native solvers are the only option — and they work out of the box.
+For `double` on CPUs, SuiteSparse will be faster (supernodal BLAS, decades of tuning). But for `posit<32,2>` on an FPGA or RISC-V with posit extensions, the native solvers are the only option — and they work out of the box.
 
 ### 3.3 Unified Dispatch (Phase 7)
 
@@ -227,10 +231,10 @@ The planned unified dispatch layer (design document Phase 7) will automatically 
 ```
 sparse_cholesky_factor(A)
   ├── double + MTL5_HAS_CHOLMOD  → CHOLMOD (production CPU)
-  ├── double                      → native sparse Cholesky (portable CPU)
-  ├── posit<32,2>                 → native sparse Cholesky (software reference)
-  ├── posit<32,2> + HAS_KPU      → KPU accelerated Cholesky (future)
-  └── lns<16> + HAS_FPGA         → FPGA accelerated Cholesky (future)
+  ├── double                     → native sparse Cholesky (portable CPU)
+  ├── posit<32,2>                → native sparse Cholesky (software reference)
+  ├── cfloat<18,8> + HAS_KPU     → KPU accelerated Cholesky (future)
+  └── lns<16,8> + HAS_FPGA       → FPGA accelerated Cholesky (future)
 ```
 
 The user writes one line of code. The compiler selects the optimal implementation.
@@ -368,5 +372,5 @@ The sparse direct solver infrastructure implemented in Phases 1-6 — native Cho
 6. Carson, E., Higham, N.J. "Accelerating the Solution of Linear Systems by Iterative Refinement in Three Precisions." *SIAM J. Sci. Comput.*, 40(2), 2018.
 7. Davis, T.A., Natarajan, E.P. "Algorithm 907: KLU, A Direct Sparse Solver for Circuit Simulation Problems." *ACM TOMS*, 37(3), 2010.
 8. Gustafson, J.L., Yonemoto, I.T. "Beating Floating Point at its Own Game: Posit Arithmetic." *Supercomputing Frontiers and Innovations*, 4(2), 2017.
-9. Omtzigt, E.T.L., Kliuchnikov, V., Stillwater Supercomputing. "Universal: Reliable, Reproducible, and Energy-Efficient Numerics." *LNCS 13348*, Springer, 2022.
+9. Omtzigt, E.T.L., Quinlan, J., "Universal: Reliable, Reproducible, and Energy-Efficient Numerics." *LNCS 13348*, Springer, 2022.
 10. Demmel, J.W. et al. "A Supernodal Approach to Sparse Partial Pivoting." *SIAM J. Matrix Anal. Appl.*, 20(3), 1999.
