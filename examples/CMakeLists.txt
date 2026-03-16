@@ -37,8 +37,11 @@ compile_all("false" "example" "Examples/phase10_matrix_views" "MTL5::mtl5" ${PHA
 file(GLOB PHASE11_SRC "phase11_assembly_reorder/*.cpp")
 compile_all("false" "example" "Examples/phase11_assembly_reorder" "MTL5::mtl5" ${PHASE11_SRC})
 
-file(GLOB PHASE12_SRC "phase12_transcendental_io/*.cpp")
-compile_all("false" "example" "Examples/phase12_transcendental_io" "MTL5::mtl5" ${PHASE12_SRC})
+file(GLOB PHASE12_SRC "phase12_transcendental_functions/*.cpp")
+compile_all("false" "example" "Examples/phase12_transcendental_functions" "MTL5::mtl5" ${PHASE12_SRC})
+
+file(GLOB PHASE12S_SRC "phase12s_io_generators/*.cpp")
+compile_all("false" "example" "Examples/phase12s_io_generators" "MTL5::mtl5" ${PHASE12S_SRC})
 
 file(GLOB PHASE13_SRC "phase13_krylov_multigrid/*.cpp")
 compile_all("false" "example" "Examples/phase13_krylov_multigrid" "MTL5::mtl5" ${PHASE13_SRC})
