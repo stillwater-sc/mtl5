@@ -3,7 +3,7 @@
 All notable changes to MTL5 are documented in this file.
 Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [Unreleased]
+## [5.2.0] — 2026-03-16
 
 ### Added
 

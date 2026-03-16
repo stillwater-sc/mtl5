@@ -1,7 +1,35 @@
 cmake_minimum_required(VERSION 3.22)
 
+# ── Version from git tag ────────────────────────────────────────────────
+# If building from a git tag like v5.2.0, extract the version automatically.
+# Falls back to the hardcoded version below when git is unavailable or
+# the working directory is not a tagged commit.
+set(MTL5_FALLBACK_VERSION "5.2.0")
+
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --tags --match "v[0-9]*" --abbrev=0
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE MTL5_GIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE GIT_DESCRIBE_RESULT
+    )
+    if(GIT_DESCRIBE_RESULT EQUAL 0 AND MTL5_GIT_TAG MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)")
+        set(MTL5_DETECTED_VERSION "${CMAKE_MATCH_1}")
+        message(STATUS "MTL5 version from git tag: ${MTL5_DETECTED_VERSION}")
+    else()
+        set(MTL5_DETECTED_VERSION "${MTL5_FALLBACK_VERSION}")
+        message(STATUS "MTL5 version (fallback): ${MTL5_DETECTED_VERSION}")
+    endif()
+else()
+    set(MTL5_DETECTED_VERSION "${MTL5_FALLBACK_VERSION}")
+    message(STATUS "MTL5 version (no git): ${MTL5_DETECTED_VERSION}")
+endif()
+
 project(MTL5
-    VERSION 5.1.0
+    VERSION ${MTL5_DETECTED_VERSION}
     LANGUAGES CXX
     DESCRIPTION "Matrix Template Library 5 — C++20 header-only linear algebra"
 )
