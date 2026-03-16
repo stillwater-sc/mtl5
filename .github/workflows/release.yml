@@ -1,6 +1,8 @@
 name: Release
 
 # Triggered when a version tag is pushed: git tag v5.2.0 && git push --tags
+# CI runs separately via ci.yml (which also triggers on v* tags).
+# This workflow only creates the GitHub Release — no duplicate builds.
 on:
   push:
     tags:
@@ -10,13 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  # ── Run the full CI matrix first ──────────────────────────────────────
-  ci:
-    uses: ./.github/workflows/ci.yml
-
-  # ── Create GitHub release after CI passes ─────────────────────────────
   release:
-    needs: ci
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +39,6 @@ jobs:
           fi
 
       - name: Generate release notes
-        id: notes
         run: |
           # Get the previous tag for changelog range
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
