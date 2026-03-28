@@ -74,6 +74,45 @@ TEST_CASE("ILUT converges in fewer iterations than identity PC", "[itl][pc][ilut
     REQUIRE(iters_ilut <= iters_id);
 }
 
+TEST_CASE("ILUT with fill-in on arrowhead matrix", "[itl][pc][ilut]") {
+    // Arrowhead matrix: row 0 couples to all columns, forcing fill-in at
+    // low column indices when processing later rows.  This is the exact
+    // pattern that triggers out-of-order column processing if fill-in
+    // entries are simply appended rather than visited in ascending order.
+    const std::size_t n = 30;
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 10.0;
+            if (i > 0) {
+                ins[0][i] << 1.0;
+                ins[i][0] << 1.0;
+            }
+        }
+    }
+
+    vec::dense_vector<double> b(n, 1.0);
+    vec::dense_vector<double> x(n, 0.0);
+
+    // Generous fill allowance to ensure fill-in actually happens
+    itl::pc::ilut<double> pc(A, /*fill=*/20, /*threshold=*/1e-6);
+    itl::basic_iteration<double> iter(b, 300, 1e-10);
+
+    int err = itl::bicgstab(A, x, b, pc, iter);
+    REQUIRE(err == 0);
+
+    // Verify the actual residual is small (not just the preconditioned one)
+    auto Ax = A * x;
+    double res = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        double diff = Ax(i) - b(i);
+        res += diff * diff;
+    }
+    res = std::sqrt(res);
+    REQUIRE(res < 1e-8);
+}
+
 // --- ILDL tests ---
 
 TEST_CASE("ILDL preconditioned CG on SPD system converges", "[itl][pc][ildl]") {

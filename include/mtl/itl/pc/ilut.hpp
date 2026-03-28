@@ -89,14 +89,13 @@ private:
                 nz_cols.push_back(j);
             }
 
-            // IKJ elimination: for each k < i where w[k] is nonzero
-            // Process columns in order
-            std::sort(nz_cols.begin(), nz_cols.end());
-
-            // Iterate over columns k < i in sorted order
-            for (size_type ki = 0; ki < nz_cols.size(); ++ki) {
-                size_type k = nz_cols[ki];
-                if (k >= i) break;
+            // IKJ elimination: for each k < i where w[k] is nonzero.
+            // Process columns in strictly ascending order (k = 0, 1, ..., i-1)
+            // so that fill-in at lower columns is incorporated before higher
+            // columns are finalized.  A nz_cols-indexed loop would process
+            // fill-in entries appended by push_back out of order, producing
+            // incorrect L/U factors.
+            for (size_type k = 0; k < i; ++k) {
                 if (!w_nz[k]) continue;
 
                 w[k] /= u_diag_[k];
