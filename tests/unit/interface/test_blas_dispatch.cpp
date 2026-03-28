@@ -114,6 +114,55 @@ TEST_CASE("mult mat*mat rectangular", "[interface][blas]") {
     REQUIRE_THAT(C(1,1), WithinAbs(154.0, 1e-12));
 }
 
+// -- Mixed-orientation GEMM (must fall back to generic path) -----------------
+
+TEST_CASE("mult mat*mat mixed orientation row*col", "[interface][blas]") {
+    using row_params = mat::parameters<tag::row_major>;
+    using col_params = mat::parameters<tag::col_major>;
+
+    // A(2x3) row-major, B(3x2) col-major, C(2x2) row-major
+    mat::dense2D<double, row_params> A(2, 3);
+    A(0,0) = 1; A(0,1) = 2; A(0,2) = 3;
+    A(1,0) = 4; A(1,1) = 5; A(1,2) = 6;
+
+    mat::dense2D<double, col_params> B(3, 2);
+    B(0,0) = 7;  B(0,1) = 8;
+    B(1,0) = 9;  B(1,1) = 10;
+    B(2,0) = 11; B(2,1) = 12;
+
+    mat::dense2D<double, row_params> C(2, 2);
+    mult(A, B, C);
+
+    // C = [1*7+2*9+3*11, 1*8+2*10+3*12; 4*7+5*9+6*11, 4*8+5*10+6*12]
+    //   = [58, 64; 139, 154]
+    REQUIRE_THAT(C(0,0), WithinAbs(58.0, 1e-12));
+    REQUIRE_THAT(C(0,1), WithinAbs(64.0, 1e-12));
+    REQUIRE_THAT(C(1,0), WithinAbs(139.0, 1e-12));
+    REQUIRE_THAT(C(1,1), WithinAbs(154.0, 1e-12));
+}
+
+TEST_CASE("mult mat*mat mixed orientation col*row", "[interface][blas]") {
+    using row_params = mat::parameters<tag::row_major>;
+    using col_params = mat::parameters<tag::col_major>;
+
+    mat::dense2D<double, col_params> A(2, 2);
+    A(0,0) = 1; A(0,1) = 2;
+    A(1,0) = 3; A(1,1) = 4;
+
+    mat::dense2D<double, row_params> B(2, 2);
+    B(0,0) = 5; B(0,1) = 6;
+    B(1,0) = 7; B(1,1) = 8;
+
+    mat::dense2D<double, col_params> C(2, 2);
+    mult(A, B, C);
+
+    // C = [1*5+2*7, 1*6+2*8; 3*5+4*7, 3*6+4*8] = [19, 22; 43, 50]
+    REQUIRE_THAT(C(0,0), WithinAbs(19.0, 1e-12));
+    REQUIRE_THAT(C(0,1), WithinAbs(22.0, 1e-12));
+    REQUIRE_THAT(C(1,0), WithinAbs(43.0, 1e-12));
+    REQUIRE_THAT(C(1,1), WithinAbs(50.0, 1e-12));
+}
+
 // -- Norm dispatch -----------------------------------------------------------
 
 TEST_CASE("two_norm dispatch produces correct result", "[interface][blas]") {
