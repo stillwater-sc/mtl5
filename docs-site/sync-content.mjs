@@ -34,6 +34,7 @@ const BASE = '/mtl5';  // Astro base path
 // These are copied verbatim — they already contain frontmatter.
 const SITE_FILES = {
   'site/index.mdx': 'index.mdx',
+  'site/contributing/index.md': 'contributing/index.md',
 };
 
 // ── Synced docs (source path relative to docs/ → dest relative to content/docs/) ──
@@ -70,6 +71,8 @@ const FILE_MAP = {
 // ── Root files (relative to repo root) ────────────────────────────
 const ROOT_FILE_MAP = {
   'CHANGELOG.md': 'changelog.md',
+  'CONTRIBUTORS.md': 'contributing/contributors.md',
+  'CODE-OF-CONDUCT.md': 'contributing/code-of-conduct.md',
 };
 
 // ── Link lookup ───────────────────────────────────────────────────

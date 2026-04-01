@@ -46,6 +46,10 @@ export default defineConfig({
           label: 'Generators',
           autogenerate: { directory: 'generators' },
         },
+        {
+          label: 'Contributing',
+          autogenerate: { directory: 'contributing' },
+        },
       ],
     }),
   ],
