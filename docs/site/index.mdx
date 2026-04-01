@@ -1,0 +1,41 @@
+---
+title: MTL5 — Matrix Template Library
+description: A C++20 header-only linear algebra library for mixed-precision algorithm design.
+template: splash
+hero:
+  tagline: >
+    A modern C++20 successor to MTL4 — header-only linear algebra with concepts,
+    expression templates, and first-class support for custom number types.
+  actions:
+    - text: Get Started
+      link: /mtl5/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/stillwater-sc/mtl5
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Pure C++20" icon="seti:cpp">
+    Concepts, `if constexpr`, `std::span`, ranges — zero Boost dependencies.
+  </Card>
+  <Card title="Header-Only" icon="document">
+    Just `#include` and go. No linking, no build-system gymnastics.
+  </Card>
+  <Card title="Mixed Precision" icon="random">
+    Designed for custom arithmetic types — posits, LNS, cfloats, and more via
+    the [Universal](https://github.com/stillwater-sc/universal) library.
+  </Card>
+  <Card title="Dense & Sparse" icon="list-format">
+    CSR, CSC, COO, ELLPACK, dense row/column-major matrices with expression templates.
+  </Card>
+  <Card title="Iterative Solvers" icon="rocket">
+    CG, BiCGSTAB, GMRES, IDR(s), and more — with preconditioners and smoothers.
+  </Card>
+  <Card title="Sparse Direct Solvers" icon="setting">
+    Built-in Cholesky, LU, and QR factorizations with AMD/COLAMD orderings.
+  </Card>
+</CardGrid>

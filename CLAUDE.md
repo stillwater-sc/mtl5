@@ -133,6 +133,40 @@ This library targets Linux (x64/ARM64), macOS (ARM64), and Windows (MSVC/Clang-C
 
 - **Operation**: create header in `include/mtl/operation/`, include from `mtl.hpp` when ready
 - **Test**: create `test_<name>.cpp` in appropriate `tests/unit/` subdirectory, register in `tests/unit/CMakeLists.txt`
+- **Documentation page**: create `.md` in `docs/<category>/`, add to `FILE_MAP` in `docs-site/sync-content.mjs`
+
+### Documentation Site Architecture
+
+The docs site (`docs-site/`) is an Astro/Starlight site deployed to GitHub Pages.
+
+**CRITICAL RULE: `docs-site/src/content/docs/` is 100% GENERATED — NEVER write or edit files there.**
+
+All documentation content lives in `docs/`:
+
+- `docs/site/` — Starlight-specific MDX pages (landing page with Hero component, etc.)
+- `docs/getting-started/` — Installation, build options
+- `docs/architecture/` — Architecture overview, concepts
+- `docs/design/` — Design documents
+- `docs/examples/` — Example walkthroughs
+- `docs/generators/` — Test matrix generators
+- `docs/img/` — Images (copied to `docs-site/public/img/`)
+
+The build pipeline (`npm run build` in `docs-site/`):
+1. `sync-content.mjs` wipes `src/content/docs/` entirely
+2. Copies `docs/site/*.mdx` verbatim (already have frontmatter)
+3. Transforms `docs/**/*.md` → adds YAML frontmatter from H1, rewrites links/images
+4. Copies `docs/img/` → `public/img/`
+5. Astro builds the static site from the generated content
+
+To add a new doc page:
+1. Write the `.md` file in `docs/<category>/` (pure markdown, H1 heading, no frontmatter needed)
+2. Add the mapping to `FILE_MAP` in `docs-site/sync-content.mjs`
+3. If it's a new sidebar section, add to `sidebar` in `docs-site/astro.config.mjs`
+
+```bash
+# Preview locally
+cd docs-site && npm install && npm run dev
+```
 
 ## Git Workflow
 

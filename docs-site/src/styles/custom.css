@@ -1,0 +1,13 @@
+/* Custom styles for MTL5 docs */
+
+:root {
+  --sl-color-accent-low: #0c2d48;
+  --sl-color-accent: #2e86ab;
+  --sl-color-accent-high: #a3d5e0;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #a3d5e0;
+  --sl-color-accent: #2e86ab;
+  --sl-color-accent-high: #0c2d48;
+}
