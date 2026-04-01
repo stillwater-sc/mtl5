@@ -31,6 +31,10 @@ export default defineConfig({
           autogenerate: { directory: 'architecture' },
         },
         {
+          label: 'Modernization',
+          autogenerate: { directory: 'modernization' },
+        },
+        {
           label: 'Design',
           autogenerate: { directory: 'design' },
         },
