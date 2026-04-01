@@ -86,7 +86,9 @@ void mult(const MA& A, const MB& B, MC& C) {
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::BlasDenseMatrix<MA> &&
                   interface::BlasDenseMatrix<MB> &&
-                  interface::BlasDenseMatrix<MC>) {
+                  interface::BlasDenseMatrix<MC> &&
+                  interface::is_row_major_v<MA> == interface::is_row_major_v<MC> &&
+                  interface::is_row_major_v<MB> == interface::is_row_major_v<MC>) {
         using T = typename MC::value_type;
         int m = static_cast<int>(A.num_rows());
         int n = static_cast<int>(B.num_cols());
@@ -95,13 +97,8 @@ void mult(const MA& A, const MB& B, MC& C) {
         T beta  = math::zero<T>();
         if constexpr (interface::is_row_major_v<MC>) {
             // Row-major: C_row = A_row * B_row
-            // Equivalent to C_col^T = (B_col^T)^T ... use transpose trick:
-            // Store in column-major perspective: C_col = B_col * A_col
-            // gemm('N','N', n, m, k, alpha, B_data, n, A_data, k, beta, C_data, n)
-            // But for row-major, lda = num_cols.
             // C = A*B in row-major = (B^T * A^T)^T in col-major
-            // So call gemm with B^T and A^T, which with row-major data means 'N','N'
-            // but swapping A and B pointers.
+            // So call gemm with swapped A and B pointers.
             interface::blas::gemm('N', 'N', n, m, k, alpha,
                                   B.data(), n, A.data(), k,
                                   beta, C.data(), n);
