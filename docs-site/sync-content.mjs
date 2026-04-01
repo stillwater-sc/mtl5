@@ -49,15 +49,22 @@ const FILE_MAP = {
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',
   'position-mixed-precision-acceleration.md':   'design/mixed-precision-acceleration.md',
-  'spectral-control-generators.md':             'design/spectral-control-generators.md',
+
+  // ── Modernization ──────────────────────────────────────────────────────
+  'modernization/advanced-itl-components.md':                  'modernization/advanced-itl-components.md',
+  'modernization/mtl4-modernization.md':                       'modernization/mtl4-modernization.md',
+  'modernization/element-wise-transcendental-functions.md':    'modernization/element-wise-transcendental-functions.md',
+  'modernization/examples.md':                                 'modernization/examples.md',
+  'modernization/vector-and-insertion-utilities.md':           'modernization/vector-and-insertion-utilities.md',
 
   // ── Examples ────────────────────────────────────────────────────
   'examples/expression-templates.md':  'examples/expression-templates.md',
   'examples/numerical-examples.md':    'examples/numerical-examples.md',
 
   // ── Generators ──────────────────────────────────────────────────
-  'generators/tier1-2-matrices.md':                         'generators/tier1-2-matrices.md',
   'generators/strengthen-LA-tests-with-generator-matrices.md': 'generators/strengthen-tests.md',
+  'generators/tier1-2-matrices.md':                            'generators/tier1-2-matrices.md',
+  'generators/tier3-spectral-control.md':                      'generators/tier3-spectral-control.md',
 };
 
 // ── Root files (relative to repo root) ────────────────────────────
