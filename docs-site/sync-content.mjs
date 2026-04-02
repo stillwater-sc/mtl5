@@ -46,6 +46,7 @@ const FILE_MAP = {
   // ── Architecture ────────────────────────────────────────────────
   'architecture/index.md':           'architecture/index.md',
   'architecture/concepts.md':        'architecture/concepts.md',
+  'architecture/aggregate-types.md': 'architecture/aggregate-types.md',
 
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',
