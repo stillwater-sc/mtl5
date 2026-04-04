@@ -70,6 +70,12 @@
 #include <mtl/array/broadcast.hpp>
 #include <mtl/array/operations.hpp>
 
+// Tensor algebra
+#include <mtl/tensor/tensor.hpp>
+#include <mtl/tensor/index.hpp>
+#include <mtl/tensor/symmetric.hpp>
+#include <mtl/tensor/metric.hpp>
+
 // Scalar functors
 #include <mtl/functor/scalar/plus.hpp>
 #include <mtl/functor/scalar/minus.hpp>
