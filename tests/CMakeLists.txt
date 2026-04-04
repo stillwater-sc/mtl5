@@ -12,3 +12,7 @@ include(Catch2Testing OPTIONAL)
 
 add_subdirectory(unit)
 add_subdirectory(integration)
+
+if(MTL5_BUILD_REGRESSION_TESTS)
+    add_subdirectory(regression)
+endif()
