@@ -66,6 +66,13 @@ namespace array {
     template <typename Value, std::size_t N, typename Order> class ndarray;
 } // namespace array
 
+// -- Tensor types --------------------------------------------------------
+namespace tensor {
+    template <typename Value, std::size_t Rank, std::size_t Dim> class tensor;
+    template <typename Value, std::size_t Dim> class symmetric_tensor;
+    template <typename Value, std::size_t Dim> class antisymmetric_tensor;
+} // namespace tensor
+
 // -- Generators ----------------------------------------------------------
 namespace generators {
     template <typename Value> class hilbert;

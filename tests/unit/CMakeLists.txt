@@ -42,3 +42,6 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 
 file(GLOB ARRAY_SRC "array/*.cpp")
 compile_all("true" "array" "Tests/array" "MTL5::mtl5;Catch2::Catch2WithMain" ${ARRAY_SRC})
+
+file(GLOB TENSOR_SRC "tensor/*.cpp")
+compile_all("true" "tensor" "Tests/tensor" "MTL5::mtl5;Catch2::Catch2WithMain" ${TENSOR_SRC})
