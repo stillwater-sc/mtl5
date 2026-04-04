@@ -35,6 +35,18 @@
                 "MTL5_BUILD_TESTS": "ON",
                 "MTL5_BUILD_EXAMPLES": "ON"
             }
+        },
+        {
+            "name": "ci-regression",
+            "displayName": "CI + Regression Tests",
+            "binaryDir": "${sourceDir}/build-ci-regression",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CXX_STANDARD": "20",
+                "MTL5_BUILD_TESTS": "ON",
+                "MTL5_BUILD_EXAMPLES": "OFF",
+                "MTL5_BUILD_REGRESSION_TESTS": "ON"
+            }
         }
     ]
 }

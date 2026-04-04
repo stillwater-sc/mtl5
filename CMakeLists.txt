@@ -53,6 +53,7 @@ option(MTL5_WITH_SUITESPARSE_KLU    "Link KLU sparse solver (SuiteSparse)"    OF
 option(MTL5_WITH_SUITESPARSE_CHOLMOD "Link CHOLMOD Cholesky (SuiteSparse)"    OFF)
 option(MTL5_WITH_SUITESPARSE_SPQR   "Link SuiteSparseQR (SuiteSparse)"       OFF)
 option(MTL5_BUILD_BENCHMARKS "Build the benchmark suite" OFF)
+option(MTL5_BUILD_REGRESSION_TESTS "Build large-scale regression tests (slow)" OFF)
 option(MTL5_CMAKE_TRACE    "Trace CMake target creation" OFF)
 
 # ── Global settings ─────────────────────────────────────────────────────
