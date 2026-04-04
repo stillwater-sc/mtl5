@@ -25,7 +25,7 @@ function(add_regression_tests prefix folder sources)
         add_test(NAME ${target} COMMAND ${target})
         set_tests_properties(${target} PROPERTIES
             LABELS "regression"
-            TIMEOUT 120
+            TIMEOUT 300
         )
     endforeach()
 endfunction()

@@ -9,13 +9,12 @@
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
-#include <mtl/operation/lu.hpp>
+#include <mtl/operation/cholesky.hpp>
 #include <mtl/operation/operators.hpp>
 #include <mtl/operation/norms.hpp>
-#include <mtl/generators/frank.hpp>
-#include <mtl/generators/moler.hpp>
+#include <mtl/generators/randspd.hpp>
 #include <mtl/generators/lehmer.hpp>
-#include <mtl/generators/pascal.hpp>
+#include <mtl/generators/moler.hpp>
 
 using namespace mtl;
 
@@ -41,12 +40,19 @@ mat::dense2D<double> copy_matrix(const mat::dense2D<double>& A) {
     return B;
 }
 
-double backward_error(const mat::dense2D<double>& A,
-                      const vec::dense_vector<double>& x,
-                      const vec::dense_vector<double>& b) {
+double cholesky_solve_check(const mat::dense2D<double>& A,
+                            const vec::dense_vector<double>& b) {
+    auto L = copy_matrix(A);
+    int info = cholesky_factor(L);
+    REQUIRE(info == 0);
+
+    auto n = A.num_rows();
+    vec::dense_vector<double> x(n);
+    cholesky_solve(L, x, b);
+
     auto r = A * x;
     double res_norm = 0.0;
-    for (std::size_t i = 0; i < b.size(); ++i) {
+    for (std::size_t i = 0; i < n; ++i) {
         double d = r(i) - b(i);
         res_norm += d * d;
     }
@@ -57,56 +63,41 @@ double backward_error(const mat::dense2D<double>& A,
     return res_norm / (A_norm * x_norm);
 }
 
-double lu_solve_check(const mat::dense2D<double>& A,
-                      const vec::dense_vector<double>& b) {
-    auto LU = copy_matrix(A);
-    std::vector<std::size_t> pivot;
-    int info = lu_factor(LU, pivot);
-    REQUIRE(info == 0);
-    vec::dense_vector<double> x(A.num_rows());
-    lu_solve(LU, pivot, x, b);
-    return backward_error(A, x, b);
-}
-
 } // anonymous namespace
 
-TEST_CASE("LU regression: Frank matrix", "[regression][dense][lu]") {
+TEST_CASE("Cholesky regression: randspd (kappa=100)", "[regression][dense][cholesky]") {
     auto n = GENERATE(100, 500, 1000);
     CAPTURE(n);
-    auto A = generators::frank<double>(n);
+
+    // randspd(n, kappa) generates SPD with condition number ~kappa
+    auto A = generators::randspd<double>(static_cast<std::size_t>(n), 100.0);
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
+
+    double be = cholesky_solve_check(A, b);
     REQUIRE(be < double(n) * std::numeric_limits<double>::epsilon());
 }
 
-TEST_CASE("LU regression: Moler matrix", "[regression][dense][lu]") {
-    auto n = GENERATE(100, 500);
-    CAPTURE(n);
-    auto A = generators::moler<double>(n);
-    vec::dense_vector<double> x_exact(n, 1.0);
-    auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
-    REQUIRE(be < double(n) * 1000.0 * std::numeric_limits<double>::epsilon());
-}
-
-TEST_CASE("LU regression: Lehmer matrix (SPD)", "[regression][dense][lu]") {
+TEST_CASE("Cholesky regression: Lehmer matrix", "[regression][dense][cholesky]") {
     auto n = GENERATE(100, 500, 1000);
     CAPTURE(n);
+
     auto A = materialize(generators::lehmer<double>(n));
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
+
+    double be = cholesky_solve_check(A, b);
     REQUIRE(be < double(n) * std::numeric_limits<double>::epsilon());
 }
 
-TEST_CASE("LU regression: Pascal matrix", "[regression][dense][lu]") {
-    // Pascal is catastrophically ill-conditioned beyond ~100; keep sizes small
-    auto n = GENERATE(50, 100);
+TEST_CASE("Cholesky regression: Moler matrix", "[regression][dense][cholesky]") {
+    auto n = GENERATE(100, 500);
     CAPTURE(n);
-    auto A = generators::pascal<double>(n);
+
+    auto A = generators::moler<double>(n);
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
-    REQUIRE(be < double(n) * 1e8 * std::numeric_limits<double>::epsilon());
+
+    double be = cholesky_solve_check(A, b);
+    REQUIRE(be < double(n) * 1000.0 * std::numeric_limits<double>::epsilon());
 }
