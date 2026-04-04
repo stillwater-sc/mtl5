@@ -69,6 +69,7 @@
 #include <mtl/array/slice.hpp>
 #include <mtl/array/broadcast.hpp>
 #include <mtl/array/operations.hpp>
+#include <mtl/array/interop.hpp>
 
 // Tensor algebra
 #include <mtl/tensor/tensor.hpp>
