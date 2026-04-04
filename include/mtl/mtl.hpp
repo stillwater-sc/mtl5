@@ -17,6 +17,7 @@
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/linear_operator.hpp>
 #include <mtl/concepts/preconditioner.hpp>
+#include <mtl/concepts/ndarray.hpp>
 
 // Tags
 #include <mtl/tag/orientation.hpp>
@@ -61,6 +62,13 @@
 #include <mtl/mat/shifted_inserter.hpp>
 #include <mtl/vec/unit_vector.hpp>
 #include <mtl/vec/strided_vector_ref.hpp>
+
+// N-dimensional array
+#include <mtl/array/shape.hpp>
+#include <mtl/array/ndarray.hpp>
+#include <mtl/array/slice.hpp>
+#include <mtl/array/broadcast.hpp>
+#include <mtl/array/operations.hpp>
 
 // Scalar functors
 #include <mtl/functor/scalar/plus.hpp>
