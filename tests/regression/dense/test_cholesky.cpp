@@ -17,6 +17,7 @@
 #include <mtl/generators/randspd.hpp>
 #include <mtl/generators/lehmer.hpp>
 #include <mtl/generators/moler.hpp>
+#include <mtl/generators/minij.hpp>
 
 using namespace mtl;
 
@@ -102,5 +103,15 @@ TEST_CASE("Cholesky regression: Moler matrix", "[regression][dense][cholesky]") 
     auto b = A * x_exact;
     double tol = double(n) * 1000.0 * std::numeric_limits<double>::epsilon();
     double be = cholesky_solve_report("Moler", n, A, b, tol);
+    REQUIRE(be < tol);
+}
+
+TEST_CASE("Cholesky regression: Minij matrix (SPD)", "[regression][dense][cholesky]") {
+    auto n = GENERATE(100, 500, 1000);
+    auto A = materialize(generators::minij<double>(n));
+    vec::dense_vector<double> x_exact(n, 1.0);
+    auto b = A * x_exact;
+    double tol = double(n) * std::numeric_limits<double>::epsilon();
+    double be = cholesky_solve_report("Minij", n, A, b, tol);
     REQUIRE(be < tol);
 }

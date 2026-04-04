@@ -9,7 +9,7 @@
 #   ctest -LE regression        — run ONLY unit tests (excludes regression)
 #   ctest                       — run ALL tests (unit + regression)
 #
-# Default timeout per regression test: 120 seconds.
+# Default timeout per regression test: 300 seconds.
 
 # Helper: compile regression tests with the "regression" CTest label.
 # Same pattern as compile_all() in unit tests but adds the label.

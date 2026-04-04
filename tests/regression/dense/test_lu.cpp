@@ -18,6 +18,7 @@
 #include <mtl/generators/moler.hpp>
 #include <mtl/generators/lehmer.hpp>
 #include <mtl/generators/pascal.hpp>
+#include <mtl/generators/hilbert.hpp>
 
 using namespace mtl;
 
@@ -120,5 +121,17 @@ TEST_CASE("LU regression: Pascal matrix", "[regression][dense][lu]") {
     auto b = A * x_exact;
     double tol = double(n) * 1e8 * std::numeric_limits<double>::epsilon();
     double be = lu_solve_report("Pascal", n, A, b, tol);
+    REQUIRE(be < tol);
+}
+
+TEST_CASE("LU regression: Hilbert matrix (ill-conditioned)", "[regression][dense][lu]") {
+    // Hilbert is notoriously ill-conditioned; cond(H_n) ~ O((1+sqrt(2))^{4n})
+    auto n = GENERATE(50, 100);
+    auto A = materialize(generators::hilbert<double>(n));
+    vec::dense_vector<double> x_exact(n, 1.0);
+    auto b = A * x_exact;
+    // Very relaxed tolerance due to extreme ill-conditioning
+    double tol = double(n) * 1e10 * std::numeric_limits<double>::epsilon();
+    double be = lu_solve_report("Hilbert", n, A, b, tol);
     REQUIRE(be < tol);
 }

@@ -16,6 +16,7 @@
 #include <mtl/operation/trans.hpp>
 #include <mtl/generators/frank.hpp>
 #include <mtl/generators/kahan.hpp>
+#include <mtl/generators/vandermonde.hpp>
 
 using namespace mtl;
 
@@ -71,7 +72,7 @@ void report(const char* test, const char* matrix, int n,
 } // anonymous namespace
 
 TEST_CASE("QR regression: Frank matrix", "[regression][dense][qr]") {
-    auto n = GENERATE(100, 500);
+    auto n = GENERATE(100, 500, 1000);
     auto A = generators::frank<double>(n);
     auto Acopy = copy_matrix(A);
 
@@ -113,14 +114,15 @@ TEST_CASE("QR regression: Kahan matrix", "[regression][dense][qr]") {
 }
 
 TEST_CASE("QR regression: solve via QR", "[regression][dense][qr]") {
-    auto n = GENERATE(100, 500);
+    auto n = GENERATE(100, 500, 1000);
     auto A = generators::frank<double>(n);
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
 
     auto Acopy = copy_matrix(A);
     vec::dense_vector<double> tau(n);
-    qr_factor(Acopy, tau);
+    int info = qr_factor(Acopy, tau);
+    REQUIRE(info == 0);
 
     vec::dense_vector<double> x(n);
     qr_solve(Acopy, tau, x, b);
@@ -135,4 +137,30 @@ TEST_CASE("QR regression: solve via QR", "[regression][dense][qr]") {
     double tol = double(n) * std::numeric_limits<double>::epsilon();
     report("QR-solve", "Frank", n, "backward_err  ", res, tol);
     REQUIRE(res < tol);
+}
+
+TEST_CASE("QR regression: Vandermonde matrix", "[regression][dense][qr]") {
+    // Vandermonde is ill-conditioned; keep sizes modest
+    auto n = GENERATE(100, 200);
+    // Uniformly-spaced nodes on [0, 1]
+    std::vector<double> nodes(n);
+    for (int i = 0; i < n; ++i) nodes[i] = double(i) / double(n - 1);
+    auto A = generators::vandermonde<double>(nodes);
+    auto Acopy = copy_matrix(A);
+
+    vec::dense_vector<double> tau(n);
+    int info = qr_factor(Acopy, tau);
+    REQUIRE(info == 0);
+
+    auto Q = qr_extract_Q(Acopy, tau);
+    auto R = qr_extract_R(Acopy);
+
+    // Vandermonde is ill-conditioned — relaxed tolerance
+    double tol = double(n) * 1e6 * std::numeric_limits<double>::epsilon();
+    double fe = factorization_error(A, Q, R);
+    double oe = orthogonality_error(Q);
+    report("QR", "Vander", n, "||QR-A||/||A||", fe, tol);
+    report("QR", "Vander", n, "||Q'Q-I||     ", oe, tol);
+    REQUIRE(fe < tol);
+    REQUIRE(oe < tol);
 }
