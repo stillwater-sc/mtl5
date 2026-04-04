@@ -32,9 +32,13 @@ ctest --test-dir build -R <test_name>   # e.g. -R test_concepts
 - `-DMTL5_BUILD_TESTS=ON` (default ON) — build Catch2 test suite
 - `-DMTL5_BUILD_EXAMPLES=ON` (default ON) — build examples
 - `-DMTL5_ENABLE_OPENMP=ON` — enable OpenMP parallelism
-- `-DMTL5_ENABLE_BLAS=ON` — enable BLAS acceleration for dense mult/norms
-- `-DMTL5_ENABLE_LAPACK=ON` — enable LAPACK acceleration for LU/QR/Cholesky/SVD/eigenvalue
-- `-DMTL5_ENABLE_UMFPACK=ON` — enable UMFPACK sparse direct solver (requires SuiteSparse)
+- `-DMTL5_WITH_BLAS=ON` — link BLAS library for dense acceleration
+- `-DMTL5_WITH_LAPACK=ON` — link LAPACK library for factorizations
+- `-DMTL5_WITH_UMFPACK=ON` — link UMFPACK library (SuiteSparse)
+- `-DMTL5_WITH_SUPERLU=ON` — link SuperLU library
+- `-DMTL5_WITH_SUITESPARSE_KLU=ON` — link KLU sparse solver (SuiteSparse)
+- `-DMTL5_WITH_SUITESPARSE_CHOLMOD=ON` — link CHOLMOD Cholesky (SuiteSparse)
+- `-DMTL5_WITH_SUITESPARSE_SPQR=ON` — link SuiteSparseQR (SuiteSparse)
 
 ## Architecture
 
