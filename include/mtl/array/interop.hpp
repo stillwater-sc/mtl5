@@ -87,14 +87,16 @@ vec::dense_vector<const Value> as_vector(const ndarray<Value, 1, Order>& a) {
 // ── ndarray → matrix view ──────────────────────────────────────────
 
 /// Create a dense2D view over a 2D ndarray (zero-copy).
-/// Requires contiguous C-order storage.
+/// Requires contiguous C-order (row-major) storage.
 template <typename Value, typename Order>
+    requires std::is_same_v<Order, c_order>
 mat::dense2D<Value> as_matrix(ndarray<Value, 2, Order>& a) {
     assert(a.is_contiguous() && "as_matrix requires contiguous ndarray");
     return mat::dense2D<Value>(a.extent(0), a.extent(1), a.data());
 }
 
 template <typename Value, typename Order>
+    requires std::is_same_v<Order, c_order>
 mat::dense2D<const Value> as_matrix(const ndarray<Value, 2, Order>& a) {
     assert(a.is_contiguous() && "as_matrix requires contiguous ndarray");
     return mat::dense2D<const Value>(
