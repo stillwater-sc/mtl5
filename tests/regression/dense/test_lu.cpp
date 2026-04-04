@@ -4,6 +4,8 @@
 
 #include <cmath>
 #include <cstddef>
+#include <iomanip>
+#include <iostream>
 #include <limits>
 #include <vector>
 
@@ -57,56 +59,66 @@ double backward_error(const mat::dense2D<double>& A,
     return res_norm / (A_norm * x_norm);
 }
 
-double lu_solve_check(const mat::dense2D<double>& A,
-                      const vec::dense_vector<double>& b) {
+/// Solve Ax=b via LU, report backward error, return it for assertion.
+double lu_solve_report(const char* matrix_name, int n,
+                       const mat::dense2D<double>& A,
+                       const vec::dense_vector<double>& b,
+                       double tol) {
     auto LU = copy_matrix(A);
     std::vector<std::size_t> pivot;
     int info = lu_factor(LU, pivot);
     REQUIRE(info == 0);
     vec::dense_vector<double> x(A.num_rows());
     lu_solve(LU, pivot, x, b);
-    return backward_error(A, x, b);
+    double be = backward_error(A, x, b);
+
+    std::cout << std::left << std::setw(12) << matrix_name
+              << "  n=" << std::setw(6) << n
+              << "  backward_err=" << std::scientific << std::setprecision(3) << be
+              << "  tol=" << tol
+              << (be < tol ? "  PASS" : "  FAIL")
+              << std::defaultfloat << std::endl;
+    return be;
 }
 
 } // anonymous namespace
 
 TEST_CASE("LU regression: Frank matrix", "[regression][dense][lu]") {
     auto n = GENERATE(100, 500, 1000);
-    CAPTURE(n);
     auto A = generators::frank<double>(n);
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
-    REQUIRE(be < double(n) * std::numeric_limits<double>::epsilon());
+    double tol = double(n) * std::numeric_limits<double>::epsilon();
+    double be = lu_solve_report("Frank", n, A, b, tol);
+    REQUIRE(be < tol);
 }
 
 TEST_CASE("LU regression: Moler matrix", "[regression][dense][lu]") {
     auto n = GENERATE(100, 500);
-    CAPTURE(n);
     auto A = generators::moler<double>(n);
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
-    REQUIRE(be < double(n) * 1000.0 * std::numeric_limits<double>::epsilon());
+    double tol = double(n) * 1000.0 * std::numeric_limits<double>::epsilon();
+    double be = lu_solve_report("Moler", n, A, b, tol);
+    REQUIRE(be < tol);
 }
 
 TEST_CASE("LU regression: Lehmer matrix (SPD)", "[regression][dense][lu]") {
     auto n = GENERATE(100, 500, 1000);
-    CAPTURE(n);
     auto A = materialize(generators::lehmer<double>(n));
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
-    REQUIRE(be < double(n) * std::numeric_limits<double>::epsilon());
+    double tol = double(n) * std::numeric_limits<double>::epsilon();
+    double be = lu_solve_report("Lehmer", n, A, b, tol);
+    REQUIRE(be < tol);
 }
 
 TEST_CASE("LU regression: Pascal matrix", "[regression][dense][lu]") {
-    // Pascal is catastrophically ill-conditioned beyond ~100; keep sizes small
     auto n = GENERATE(50, 100);
-    CAPTURE(n);
     auto A = generators::pascal<double>(n);
     vec::dense_vector<double> x_exact(n, 1.0);
     auto b = A * x_exact;
-    double be = lu_solve_check(A, b);
-    REQUIRE(be < double(n) * 1e8 * std::numeric_limits<double>::epsilon());
+    double tol = double(n) * 1e8 * std::numeric_limits<double>::epsilon();
+    double be = lu_solve_report("Pascal", n, A, b, tol);
+    REQUIRE(be < tol);
 }
