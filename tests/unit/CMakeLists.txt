@@ -39,3 +39,6 @@ compile_all("true" "iface" "Tests/interface" "MTL5::mtl5;Catch2::Catch2WithMain"
 
 file(GLOB SPARSE_SRC "sparse/*.cpp")
 compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" ${SPARSE_SRC})
+
+file(GLOB ARRAY_SRC "array/*.cpp")
+compile_all("true" "array" "Tests/array" "MTL5::mtl5;Catch2::Catch2WithMain" ${ARRAY_SRC})

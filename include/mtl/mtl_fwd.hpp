@@ -60,6 +60,12 @@ namespace math {
     template <typename T> constexpr T one();
 } // namespace math
 
+// -- N-dimensional array -----------------------------------------------------
+namespace array {
+    template <std::size_t N> class shape;
+    template <typename Value, std::size_t N, typename Order> class ndarray;
+} // namespace array
+
 // -- Generators ----------------------------------------------------------
 namespace generators {
     template <typename Value> class hilbert;
