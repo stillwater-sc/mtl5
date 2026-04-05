@@ -181,6 +181,20 @@ The `main` branch is protected:
 - CI must pass before merge
 - CodeRabbit AI review is triggered on every PR
 
+### Two-Tier CI
+
+| Tier | Trigger | What runs | Time |
+|------|---------|-----------|------|
+| **Tier 1** | Every push, every PR (draft or ready) | Unit tests on 8 platforms (Linux GCC/Clang x64+ARM64, macOS, Windows MSVC/Clang-CL) | ~2 min |
+| **Tier 2** | Non-draft PRs only (after Tier 1 passes) | Regression tests on Linux GCC — dense, sparse, iterative solvers at 100–50K DOF | ~10 min |
+
+To run regression tests locally:
+```bash
+cmake --preset ci-regression
+cmake --build build-ci-regression --parallel
+ctest --test-dir build-ci-regression -L regression --output-on-failure
+```
+
 ### Branch Naming
 
 Use conventional prefixes matching the commit type:
