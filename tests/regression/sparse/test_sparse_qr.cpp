@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
