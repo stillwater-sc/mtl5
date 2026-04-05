@@ -8,6 +8,8 @@ on:
     branches: [ main ]
 
 jobs:
+  # ── Tier 1: Fast unit tests on all platforms (~2 min) ───────────────
+  # Runs on every push and every PR (draft or ready).
   build:
     strategy:
       fail-fast: false
@@ -115,3 +117,37 @@ jobs:
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: ctest --test-dir build -C Release --output-on-failure
+
+  # ── Tier 2: Regression tests on Linux (~10 min) ─────────────────────
+  # Runs only on non-draft PRs, after Tier 1 passes.
+  # Exercises dense, sparse, and iterative solvers at 100–50K DOF.
+  regression:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false
+    needs: build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Configure
+        run: >
+          cmake --preset ci-regression
+          -DCMAKE_C_COMPILER=gcc-13
+          -DCMAKE_CXX_COMPILER=g++-13
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+      - name: Build
+        run: cmake --build build-ci-regression --parallel
+
+      - name: Run regression tests
+        run: >
+          ctest --test-dir build-ci-regression
+          -L regression
+          --output-on-failure
+          --timeout 300
