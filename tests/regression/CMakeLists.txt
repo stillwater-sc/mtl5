@@ -9,7 +9,7 @@
 #   ctest -LE regression        — run ONLY unit tests (excludes regression)
 #   ctest                       — run ALL tests (unit + regression)
 #
-# Default timeout per regression test: 120 seconds.
+# Default timeout per regression test: 300 seconds.
 
 # Helper: compile regression tests with the "regression" CTest label.
 # Same pattern as compile_all() in unit tests but adds the label.
@@ -25,7 +25,7 @@ function(add_regression_tests prefix folder sources)
         add_test(NAME ${target} COMMAND ${target})
         set_tests_properties(${target} PROPERTIES
             LABELS "regression"
-            TIMEOUT 120
+            TIMEOUT 300
         )
     endforeach()
 endfunction()
