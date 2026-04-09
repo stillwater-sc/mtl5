@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <stdexcept>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/ldlt.hpp>
@@ -117,6 +118,11 @@ TEST_CASE("LDL^T detects zero pivot", "[operation][ldlt]") {
     int info = ldlt_factor(A);
     REQUIRE(info != 0);  // D(0,0) = 0 → returns 1
     REQUIRE(info == 1);
+
+    // Verify ldlt_solve throws on zero diagonal
+    vec::dense_vector<double> b = {1.0, 2.0};
+    vec::dense_vector<double> x(2);
+    REQUIRE_THROWS_AS(ldlt_solve(A, x, b), std::domain_error);
 }
 
 TEST_CASE("LDL^T on randspd with known eigenvalues", "[operation][ldlt][generator]") {
@@ -242,7 +248,8 @@ TEST_CASE("LDL^T on 1x1 matrix", "[operation][ldlt]") {
     // Re-create for solve (factor overwrites D on diagonal)
     mat::dense2D<double> Af(1, 1);
     Af(0, 0) = 7.0;
-    ldlt_factor(Af);
+    int info_af = ldlt_factor(Af);
+    REQUIRE(info_af == 0);
 
     vec::dense_vector<double> b = {21.0};
     vec::dense_vector<double> x(1);

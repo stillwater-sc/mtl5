@@ -162,9 +162,10 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
 
     // Reach workspace: marker-based etree walk (avoids sort/unique per column)
     constexpr size_type unmarked = std::numeric_limits<size_type>::max();
-    std::vector<size_type> mark(n, unmarked);  // mark[k] = j if col k is in reach of j
-    std::vector<size_type> reach_stack(n);     // stack for reach computation
-    std::vector<size_type> reach_list;         // accumulated reach in topological order
+    std::vector<size_type> mark(n, unmarked);    // mark[k] = j if col k is in reach of j
+    std::vector<size_type> emitted(n, unmarked); // emitted[i] = j if row i already stored in L(:,j)
+    std::vector<size_type> reach_stack(n);       // stack for reach computation
+    std::vector<size_type> reach_list;           // accumulated reach in topological order
     reach_list.reserve(n);
 
     // Up-looking LDL^T: process columns in order 0..n-1
@@ -253,31 +254,26 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
             ++nz[j];
         };
 
-        // Collect all rows i > j where x[i] != 0 (original entries + fill-in)
-        // We use a marker to track which rows have been emitted
+        // Collect all rows i > j where x[i] != 0 (original entries + fill-in).
+        // Use emitted[i] == j as epoch marker to avoid quadratic dedupe scans.
         // First: rows from original matrix C(:,j)
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
-            if (i > j && x[i] != Value{0})
+            if (i > j && x[i] != Value{0}) {
                 push_entry(i, x[i] / dj);
+                emitted[i] = j;
+            }
         }
 
         // Fill-in entries: rows touched by L(:,k) scatter but not in C(:,j)
-        // Use a simple flag based on whether x[i] is still nonzero after
-        // subtracting entries we already stored
         for (size_type col_k : reach_list) {
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
             for (size_type p = col_start; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
-                if (i > j && x[i] != Value{0}) {
-                    // Check if already stored
-                    bool already = false;
-                    for (size_type q = L.col_ptr[j]; q < L.col_ptr[j] + nz[j]; ++q) {
-                        if (L.row_ind[q] == i) { already = true; break; }
-                    }
-                    if (!already)
-                        push_entry(i, x[i] / dj);
+                if (i > j && x[i] != Value{0} && emitted[i] != j) {
+                    push_entry(i, x[i] / dj);
+                    emitted[i] = j;
                 }
             }
         }
