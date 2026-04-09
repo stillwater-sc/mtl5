@@ -78,22 +78,36 @@ TEST_CASE("Sparse LDL^T symbolic with RCM ordering", "[sparse][ldlt]") {
     REQUIRE(sym.nnz_L > 0);
 }
 
+TEST_CASE("Sparse LDL^T rejects rectangular matrix", "[sparse][ldlt]") {
+    mat::compressed2D<double> A(3, 4);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][0] << 1.0;
+        ins[1][1] << 2.0;
+        ins[2][2] << 3.0;
+    }
+
+    REQUIRE_THROWS_AS(
+        factorization::sparse_ldlt_symbolic(A),
+        std::invalid_argument);
+}
+
 TEST_CASE("Sparse LDL^T numeric: 3x3 SPD matrix", "[sparse][ldlt]") {
     auto A = make_spd_tridiag(3);
 
     auto sym = factorization::sparse_ldlt_symbolic(A);
     auto num = factorization::sparse_ldlt_numeric(A, sym);
 
-    // Verify L structure
+    // Verify L structure: unit lower triangular with no diagonal stored
     const auto& L = num.L;
     REQUIRE(L.nrows == 3);
     REQUIRE(L.ncols == 3);
 
-    // Verify unit diagonal in L
+    // L stores only strictly-lower entries (no diagonal — unit diagonal is implicit)
+    // For a tridiagonal 3x3, each column except the last has 1 off-diagonal entry
     for (std::size_t j = 0; j < 3; ++j) {
-        REQUIRE(L.col_ptr[j] < L.col_ptr[j + 1]);
-        REQUIRE(L.row_ind[L.col_ptr[j]] == j);
-        REQUIRE_THAT(L.values[L.col_ptr[j]], Catch::Matchers::WithinAbs(1.0, 1e-14));
+        for (std::size_t p = L.col_ptr[j]; p < L.col_ptr[j + 1]; ++p)
+            REQUIRE(L.row_ind[p] > j);  // all entries strictly below diagonal
     }
 
     // Verify D has positive entries (SPD matrix)

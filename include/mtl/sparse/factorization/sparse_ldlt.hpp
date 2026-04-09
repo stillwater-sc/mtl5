@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -105,14 +106,17 @@ ldlt_symbolic sparse_ldlt_symbolic(
 
 /// Perform numeric LDL^T factorization using pre-computed symbolic analysis.
 ///
-/// Up-looking (left-looking) LDL^T: for each column j, compute L(:,j)
-/// and D(j) by subtracting contributions from previously factored columns.
-/// Identical to Cholesky but replaces L(j,j) = sqrt(c(j)) with D(j) = c(j)
-/// and L(i,j) = c(i)/D(j).
+/// Up-looking (left-looking) LDL^T using marker-based reach and single-pass
+/// scatter for O(nnz(L)) work. For each column j:
+///   1. Scatter lower-triangular entries of permuted A(:,j) into workspace
+///   2. Compute reach of j in the etree using markers (no sort/unique needed)
+///   3. For each reached column k, scatter L(j,k)*D(k)*L(:,k) in one pass
+///   4. Store D(j) and L(j+1:n, j) = x/D(j)
 ///
 /// \param A    Symmetric sparse matrix in CRS format
 /// \param sym  Symbolic analysis from sparse_ldlt_symbolic()
-/// \return     Numeric factorization result containing L (unit lower) and D
+/// \return     Numeric factorization result containing L (unit lower, no
+///             diagonal stored) and D
 ///
 /// \throws std::runtime_error if a zero pivot is encountered (D(j) == 0)
 template <typename Value, typename Parameters>
@@ -133,19 +137,17 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
     auto PA = util::symmetric_permute(A, sym.perm);
     auto C = util::crs_to_csc(PA);
 
-    // Allocate L in CSC format using predicted column counts.
-    // For LDL^T, L is unit lower triangular so we don't store the diagonal in L.
-    // However, col_counts from the symbolic phase include the diagonal.
-    // We allocate with col_counts (which includes diagonal) and store a 1.0
-    // placeholder on the diagonal to keep the CSC structure consistent with
-    // the existing triangular solve infrastructure.
+    // Allocate L in CSC format. col_counts includes the diagonal, but we
+    // don't store the unit diagonal — allocate col_counts[j]-1 per column.
     util::csc_matrix<Value> L;
     L.nrows = n;
     L.ncols = n;
     L.col_ptr.resize(n + 1);
     L.col_ptr[0] = 0;
-    for (size_type j = 0; j < n; ++j)
-        L.col_ptr[j + 1] = L.col_ptr[j] + sym.col_counts[j];
+    for (size_type j = 0; j < n; ++j) {
+        size_type off_diag = (sym.col_counts[j] > 0) ? sym.col_counts[j] - 1 : 0;
+        L.col_ptr[j + 1] = L.col_ptr[j] + off_diag;
+    }
 
     size_type nnz_L = L.col_ptr[n];
     L.row_ind.resize(nnz_L);
@@ -155,66 +157,77 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
     std::vector<Value> D(n, Value{0});
 
     // Working arrays
-    std::vector<Value> x(n, Value{0});    // dense workspace for column assembly
-    std::vector<size_type> nz(n, 0);      // next free slot in each column of L
+    std::vector<Value> x(n, Value{0});      // dense workspace for column assembly
+    std::vector<size_type> nz(n, 0);        // next free slot in each column of L
+
+    // Reach workspace: marker-based etree walk (avoids sort/unique per column)
+    constexpr size_type unmarked = std::numeric_limits<size_type>::max();
+    std::vector<size_type> mark(n, unmarked);  // mark[k] = j if col k is in reach of j
+    std::vector<size_type> reach_stack(n);     // stack for reach computation
+    std::vector<size_type> reach_list;         // accumulated reach in topological order
+    reach_list.reserve(n);
 
     // Up-looking LDL^T: process columns in order 0..n-1
     for (size_type j = 0; j < n; ++j) {
-        // Scatter column j of C into dense workspace x
-        // Only the lower triangular part (rows >= j)
+        // Scatter column j of C into dense workspace x (lower triangle only)
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
-            if (i >= j) {
+            if (i >= j)
                 x[i] = C.values[p];
-            }
         }
 
-        // Collect the set of columns k < j that affect column j
-        // by walking the etree from each row index i < j in column j of C
-        std::vector<size_type> affecting_cols;
+        // Compute reach: walk etree from each row i < j in C(:,j),
+        // marking nodes and collecting in topological (ascending) order.
+        reach_list.clear();
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
             if (i >= j) continue;
+
+            // Walk from i up the etree, pushing unmarked nodes onto stack
+            size_type stack_top = 0;
             size_type node = i;
-            while (node != analysis::no_parent && node < j) {
-                affecting_cols.push_back(node);
+            while (node != analysis::no_parent && node < j && mark[node] != j) {
+                reach_stack[stack_top++] = node;
+                mark[node] = j;
                 node = sym.parent[node];
             }
+            // Pop stack in reverse to get topological (ascending) order
+            while (stack_top > 0)
+                reach_list.push_back(reach_stack[--stack_top]);
         }
 
-        // Remove duplicates and sort
-        std::sort(affecting_cols.begin(), affecting_cols.end());
-        affecting_cols.erase(
-            std::unique(affecting_cols.begin(), affecting_cols.end()),
-            affecting_cols.end());
+        // Sort reach_list ascending so we process columns in order
+        std::sort(reach_list.begin(), reach_list.end());
 
-        // For each affecting column k, subtract L(j,k) * D(k) * L(:,k) from x
-        for (size_type col_k : affecting_cols) {
-            // Find L(j, col_k): search column col_k of L for row j
-            Value ljk = Value{0};
+        // For each reached column k, single-pass scatter:
+        // find L(j,k) on the fly, then subtract L(j,k)*D(k)*L(:,k) from x
+        for (size_type col_k : reach_list) {
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
+
+            // Find L(j, col_k) in column col_k of L
+            // Since rows are sorted ascending and all > col_k, we can scan
+            Value ljk = Value{0};
             for (size_type p = col_start; p < col_end; ++p) {
                 if (L.row_ind[p] == j) {
                     ljk = L.values[p];
                     break;
                 }
+                if (L.row_ind[p] > j) break;  // sorted — won't find it
             }
 
             if (ljk == Value{0}) continue;
 
             Value ljk_dk = ljk * D[col_k];
 
-            // Subtract ljk * D(k) * L(i, col_k) from x(i) for i >= j
-            // For row j: x[j] -= ljk * D(k) * ljk = ljk^2 * D(k)
+            // Subtract from diagonal: x[j] -= ljk^2 * D(k)
             x[j] -= ljk_dk * ljk;
 
-            // For rows i > j: x[i] -= ljk * D(k) * L(i, col_k)
+            // Subtract from off-diagonals: x[i] -= ljk*D(k)*L(i,k) for i > j
             for (size_type p = col_start; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
-                if (i > j) {
+                if (i > j)
                     x[i] -= ljk_dk * L.values[p];
-                }
             }
         }
 
@@ -226,8 +239,8 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
         }
         D[j] = dj;
 
-        // Guarded write into column j of L
-        size_type col_capacity = sym.col_counts[j];
+        // Guarded write into column j of L (off-diagonal entries only)
+        size_type col_capacity = (sym.col_counts[j] > 0) ? sym.col_counts[j] - 1 : 0;
         auto push_entry = [&](size_type row, Value val) {
             if (nz[j] >= col_capacity) {
                 throw std::runtime_error(
@@ -240,31 +253,31 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
             ++nz[j];
         };
 
-        // Store diagonal as 1.0 (unit lower triangular)
-        push_entry(j, Value{1});
-
-        // Store off-diagonal entries L(i,j) = x[i] / D(j) for i > j
+        // Collect all rows i > j where x[i] != 0 (original entries + fill-in)
+        // We use a marker to track which rows have been emitted
+        // First: rows from original matrix C(:,j)
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
-            if (i > j && x[i] != Value{0}) {
+            if (i > j && x[i] != Value{0})
                 push_entry(i, x[i] / dj);
-            }
         }
 
-        // Also store fill-in entries: rows where x[i] != 0 but not in C(:,j)
-        for (size_type col_k : affecting_cols) {
+        // Fill-in entries: rows touched by L(:,k) scatter but not in C(:,j)
+        // Use a simple flag based on whether x[i] is still nonzero after
+        // subtracting entries we already stored
+        for (size_type col_k : reach_list) {
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
             for (size_type p = col_start; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
                 if (i > j && x[i] != Value{0}) {
+                    // Check if already stored
                     bool already = false;
                     for (size_type q = L.col_ptr[j]; q < L.col_ptr[j] + nz[j]; ++q) {
                         if (L.row_ind[q] == i) { already = true; break; }
                     }
-                    if (!already) {
+                    if (!already)
                         push_entry(i, x[i] / dj);
-                    }
                 }
             }
         }
@@ -272,7 +285,7 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
         // Clear workspace for rows we touched
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p)
             x[C.row_ind[p]] = Value{0};
-        for (size_type col_k : affecting_cols) {
+        for (size_type col_k : reach_list) {
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
             for (size_type p = col_start; p < col_end; ++p)

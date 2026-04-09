@@ -230,3 +230,28 @@ TEST_CASE("LDL^T on Lehmer matrix", "[operation][ldlt][generator]") {
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE_THAT(r(i), Catch::Matchers::WithinAbs(b(i), 1e-8));
 }
+
+TEST_CASE("LDL^T on 1x1 matrix", "[operation][ldlt]") {
+    mat::dense2D<double> A(1, 1);
+    A(0, 0) = 7.0;
+
+    int info = ldlt_factor(A);
+    REQUIRE(info == 0);
+    REQUIRE_THAT(A(0, 0), Catch::Matchers::WithinAbs(7.0, 1e-14));
+
+    // Re-create for solve (factor overwrites D on diagonal)
+    mat::dense2D<double> Af(1, 1);
+    Af(0, 0) = 7.0;
+    ldlt_factor(Af);
+
+    vec::dense_vector<double> b = {21.0};
+    vec::dense_vector<double> x(1);
+    ldlt_solve(Af, x, b);
+    REQUIRE_THAT(x(0), Catch::Matchers::WithinAbs(3.0, 1e-12));
+}
+
+TEST_CASE("LDL^T on empty (0x0) matrix", "[operation][ldlt]") {
+    mat::dense2D<double> A(0, 0);
+    int info = ldlt_factor(A);
+    REQUIRE(info == 0);
+}
