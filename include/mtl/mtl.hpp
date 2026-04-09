@@ -162,6 +162,7 @@
 #include <mtl/operation/qr.hpp>
 #include <mtl/operation/lq.hpp>
 #include <mtl/operation/cholesky.hpp>
+#include <mtl/operation/ldlt.hpp>
 #include <mtl/operation/inv.hpp>
 #include <mtl/operation/hessenberg.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
