@@ -51,3 +51,6 @@ compile_all("false" "example" "Examples/phase15_sparse_direct" "MTL5::mtl5" ${PH
 
 file(GLOB UKF_SRC "ukf_cholesky_vs_ldlt/*.cpp")
 compile_all("false" "example" "Examples/ukf_cholesky_vs_ldlt" "MTL5::mtl5" ${UKF_SRC})
+
+file(GLOB UKF_BEARING_SRC "ukf_bearing_only/*.cpp")
+compile_all("false" "example" "Examples/ukf_bearing_only" "MTL5::mtl5" ${UKF_BEARING_SRC})
