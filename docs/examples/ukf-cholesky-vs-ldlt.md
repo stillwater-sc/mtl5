@@ -1,86 +1,86 @@
-# UKF Numerical Stability: Cholesky vs LDL^T Decomposition
+# UKF Numerical Stability: Cholesky vs $LDL^T$ Decomposition
 
-The Unscented Kalman Filter (UKF) generates sigma points from the state covariance matrix P at every time step. This requires a matrix factorization that serves as a "square root" of P. The choice of factorization has a direct impact on filter stability, particularly when P becomes ill-conditioned after informative observations.
+The Unscented Kalman Filter (UKF) generates sigma points from the state covariance matrix $P$ at every time step. This requires a matrix factorization that serves as a "square root" of $P$. The choice of factorization has a direct impact on filter stability, particularly when $P$ becomes ill-conditioned after informative observations.
 
-This document walks through MTL5's UKF comparison examples, explains why the LDL^T (square-root-free Cholesky) decomposition provides superior numerical robustness, and offers guidance on when to use each method.
+This document walks through MTL5's UKF comparison examples, explains why the $LDL^T$ (square-root-free Cholesky) decomposition provides superior numerical robustness, and offers guidance on when to use each method.
 
 ## The Problem: Square Roots and Ill-Conditioned Covariances
 
 ### Why the UKF needs a matrix square root
 
-The UKF approximates a nonlinear probability distribution by propagating a carefully chosen set of **sigma points** through the system model. For a state with covariance P, the sigma points are:
+The UKF approximates a nonlinear probability distribution by propagating a carefully chosen set of **sigma points** through the system model. For a state with covariance $P$, the sigma points are:
 
-    sigma_k = x_hat +/- sqrt(n + lambda) * column_k(S)
+$$\sigma_k = \hat{x} \pm \sqrt{n + \lambda} \cdot S_{:,k}$$
 
-where S is a matrix satisfying S * S^T = P. The standard approach computes S via Cholesky factorization: P = L * L^T.
+where $S$ is a matrix satisfying $SS^T = P$. The standard approach computes $S$ via Cholesky factorization: $P = LL^T$.
 
 ### How informative observations create ill-conditioning
 
-When a measurement is very precise (small measurement noise R), the Kalman update collapses one or more directions of the state covariance toward machine epsilon while others remain O(1). This creates extreme eigenvalue spread:
+When a measurement is very precise (small measurement noise $R$), the Kalman update collapses one or more directions of the state covariance toward machine epsilon while others remain $O(1)$. This creates extreme eigenvalue spread:
 
-- **Well-observed direction**: eigenvalue ~ epsilon_machine
-- **Poorly-observed direction**: eigenvalue ~ O(1) or larger
+- **Well-observed direction**: eigenvalue $\sim \varepsilon_{\text{mach}}$
+- **Poorly-observed direction**: eigenvalue $\sim O(1)$ or larger
 
-The condition number cond(P) = lambda_max / lambda_min can reach 10^6 in double precision and 10^3 in single precision after just a few updates.
+The condition number $\kappa(P) = \lambda_{\max} / \lambda_{\min}$ can reach $10^6$ in double precision and $10^3$ in single precision after just a few updates.
 
 ### The precision loss mechanism
 
-Standard Cholesky factorization computes the diagonal of L via:
+Standard Cholesky factorization computes the diagonal of $L$ via:
 
-    L(j,j) = sqrt(A(j,j) - sum_{k<j} L(j,k)^2)
+$$L_{jj} = \sqrt{A_{jj} - \sum_{k<j} L_{jk}^2}$$
 
-When A(j,j) is near machine epsilon after the subtraction, the `sqrt()` operation halves the number of significant digits:
+When $A_{jj}$ is near machine epsilon after the subtraction, the $\sqrt{\cdot}$ operation halves the number of significant digits:
 
-- In float64 (53-bit significand): `sqrt(1e-15)` = `3.16e-8`, losing ~7.5 digits
-- In float32 (24-bit significand): `sqrt(1e-7)` = `3.16e-4`, losing ~3.5 digits
+- In float64 (53-bit significand): $\sqrt{10^{-15}} = 3.16 \times 10^{-8}$, losing ~7.5 digits
+- In float32 (24-bit significand): $\sqrt{10^{-7}} = 3.16 \times 10^{-4}$, losing ~3.5 digits
 - In float16 (11-bit significand): essentially all precision is lost
 
-This degraded diagonal entry propagates into every subsequent column of L, contaminating the entire factorization.
+This degraded diagonal entry propagates into every subsequent column of $L$, contaminating the entire factorization.
 
-## The Solution: LDL^T Factorization
+## The Solution: $LDL^T$ Factorization
 
 ### Mathematical relationship
 
-The LDL^T decomposition factors a symmetric matrix as:
+The $LDL^T$ decomposition factors a symmetric matrix as:
 
-    A = L * D * L^T
+$$A = L D L^T$$
 
-where L is **unit** lower triangular (ones on the diagonal) and D is diagonal. Comparing with Cholesky:
+where $L$ is **unit** lower triangular (ones on the diagonal) and $D$ is diagonal. Comparing with Cholesky:
 
-| Property | Cholesky (LL^T) | LDL^T |
+| Property | Cholesky ($LL^T$) | $LDL^T$ |
 |----------|----------------|-------|
-| Diagonal of L | sqrt(pivot values) | 1 (unit diagonal) |
+| Diagonal of $L$ | $\sqrt{\text{pivot values}}$ | 1 (unit diagonal) |
 | Square roots | One per column | **None** |
-| Stores | L (lower triangular) | L (unit lower) + D (diagonal) |
-| Cost | O(n^3/3) | O(n^3/3) |
+| Stores | $L$ (lower triangular) | $L$ (unit lower) + $D$ (diagonal) |
+| Cost | $O(n^3/3)$ | $O(n^3/3)$ |
 | SPD required | Yes | No (works for indefinite) |
 
 ### Why avoiding square roots preserves precision
 
-The LDL^T algorithm computes D(j) directly:
+The $LDL^T$ algorithm computes $D_j$ directly:
 
-    D(j) = A(j,j) - sum_{k<j} L(j,k)^2 * D(k)
+$$D_j = A_{jj} - \sum_{k<j} L_{jk}^2 \cdot D_k$$
 
-No square root is taken. D(j) retains the full precision of the subtraction result, however small. The unit lower triangular entries are:
+No square root is taken. $D_j$ retains the full precision of the subtraction result, however small. The unit lower triangular entries are:
 
-    L(i,j) = (A(i,j) - sum_{k<j} L(i,k) * D(k) * L(j,k)) / D(j)
+$$L_{ij} = \frac{A_{ij} - \sum_{k<j} L_{ik} \cdot D_k \cdot L_{jk}}{D_j}$$
 
-This is a simple division, not a precision-destroying sqrt.
+This is a simple division, not a precision-destroying $\sqrt{\cdot}$.
 
-### Sigma point generation with LDL^T
+### Sigma point generation with $LDL^T$
 
-With the LDL^T factorization, sigma points are generated as:
+With the $LDL^T$ factorization, sigma points are generated as:
 
-    sigma_k = x_hat +/- sqrt(n + lambda) * L * sqrt(D(k)) * e_k
+$$\sigma_k = \hat{x} \pm \sqrt{n + \lambda} \cdot L \cdot \sqrt{D_k} \cdot e_k$$
 
-Each `sqrt(D(k))` involves only a **single scalar** -- not an accumulated error propagated from previous columns. This is the fundamental stability advantage.
+Each $\sqrt{D_k}$ involves only a **single scalar** -- not an accumulated error propagated from previous columns. This is the fundamental stability advantage.
 
 ### Detecting indefiniteness
 
-A critical practical benefit: when the covariance update `P = P_pred - K * S * K^T` introduces rounding errors that make P slightly non-SPD (which happens in practice), the two methods behave very differently:
+A critical practical benefit: when the covariance update $P = P_{\text{pred}} - K S K^T$ introduces rounding errors that make $P$ slightly non-SPD (which happens in practice), the two methods behave very differently:
 
-- **Cholesky**: attempts `sqrt(negative)` and fails completely
-- **LDL^T**: produces a negative D entry, which can be detected and handled (e.g., clamping, covariance reset, or using Bunch-Kaufman pivoting)
+- **Cholesky**: attempts $\sqrt{\text{negative}}$ and fails completely
+- **$LDL^T$**: produces a negative $D$ entry, which can be detected and handled (e.g., clamping, covariance reset, or using Bunch-Kaufman pivoting)
 
 ## Experiment Setup
 
@@ -155,7 +155,7 @@ Both methods detect the failure -- but the failure modes differ:
 
 This diagnostic difference is what enables graceful recovery strategies: inspect D after factorization, clamp negative entries, reset the covariance, or trigger a warning — rather than handling a hard factorization failure.
 
-### Indefinite matrices: Cholesky crashes, LDL^T succeeds
+### Indefinite matrices: Cholesky crashes, $LDL^T$ succeeds
 
 The direct factorization stress test constructs matrices with one deliberately negative eigenvalue -- simulating what happens when covariance update rounding goes wrong:
 
@@ -168,18 +168,18 @@ The direct factorization stress test constructs matrices with one deliberately n
       -1.0e-02  FAIL (non-SPD)              OK  [+,+,+,-]
 ```
 
-Cholesky fails on all four cases. LDL^T succeeds and reports the D entry signs, showing exactly one negative pivot. A UKF implementation can use this information to clamp the offending direction, reset the covariance, or trigger a diagnostic warning.
+Cholesky fails on all four cases. $LDL^T$ succeeds and reports the $D$ entry signs, showing exactly one negative pivot. A UKF implementation can use this information to clamp the offending direction, reset the covariance, or trigger a diagnostic warning.
 
 ## When to Use Which
 
-### Use Cholesky (LL^T) when:
+### Use Cholesky ($LL^T$) when:
 
-- The matrix is guaranteed SPD (e.g., formed as A^T A + regularization)
+- The matrix is guaranteed SPD (e.g., formed as $A^T A + \text{regularization}$)
 - You need maximum performance and LAPACK `dpotrf` is available (it's the most optimized factorization in most BLAS libraries)
-- Working in double precision with well-conditioned matrices (cond < 10^8)
+- Working in double precision with well-conditioned matrices ($\kappa < 10^8$)
 - Backward compatibility with existing code is required
 
-### Use LDL^T when:
+### Use $LDL^T$ when:
 
 - The matrix may be ill-conditioned (Kalman filters, optimization Hessians)
 - The matrix may be symmetric indefinite (modified Newton methods, saddle-point systems)
@@ -187,17 +187,15 @@ Cholesky fails on all four cases. LDL^T succeeds and reports the D entry signs, 
 - You need to detect indefiniteness rather than crashing
 - No square root is available for the number type (e.g., some custom arithmetic)
 
-### Use Bunch-Kaufman pivoted LDL^T when:
+### Use Bunch-Kaufman pivoted $LDL^T$ when:
 
 - The matrix is expected to be indefinite (not just nearly-indefinite)
 - You need a numerically stable factorization regardless of pivot ordering
 - Graceful degradation is more important than raw speed
 
-Bunch-Kaufman is planned for MTL5 (see issue #46) and will be available as a third path in future examples.
-
 ### Rule of thumb
 
-If `cond(P)` can exceed approximately 10^8 in your application, prefer LDL^T over Cholesky for sigma point generation. For reduced-precision types (float32, posit), the threshold is proportionally lower -- roughly 10^(significand_bits / 4).
+If $\kappa(P)$ can exceed approximately $10^8$ in your application, prefer $LDL^T$ over Cholesky for sigma point generation. For reduced-precision types (float32, posit), the threshold is proportionally lower -- roughly $10^{b/4}$ where $b$ is the number of significand bits.
 
 ## MTL5 API Reference
 
@@ -213,7 +211,7 @@ int info = mtl::cholesky_factor(A);  // returns 0 on success
 mtl::cholesky_solve(L, x, b);
 ```
 
-### Dense LDL^T
+### Dense $LDL^T$
 
 ```cpp
 #include <mtl/operation/ldlt.hpp>
@@ -231,7 +229,7 @@ Both factorizations have sparse counterparts in `mtl::sparse::factorization::` w
 
 ## Further Reading
 
-- Golub & Van Loan, *Matrix Computations*, Section 4.1.2 (LDL^T factorization)
+- Golub & Van Loan, *Matrix Computations*, Section 4.1.2 ($LDL^T$ factorization)
 - Julier & Uhlmann, "Unscented Filtering and Nonlinear Estimation", Proc. IEEE, 92(3), 2004
 - Davis, *Direct Methods for Sparse Linear Systems*, SIAM, 2006
 - Bar-Shalom, Li, Kirubarajan, *Estimation with Applications to Tracking and Navigation*, Ch. 11
