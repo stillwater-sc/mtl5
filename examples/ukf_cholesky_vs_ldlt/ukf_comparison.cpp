@@ -248,6 +248,11 @@ static bool generate_sigma_ldlt(
 
     // Sigma points: x_hat +/- gamma * L * sqrt(|D|) * e_k
     // Each sigma direction is column k of L * sqrt(|D(k)|)
+    // Note: using abs(D(k)) flips negative eigenvalues to positive, which is a
+    // practical heuristic for graceful degradation when P is slightly indefinite
+    // (e.g., due to covariance update rounding). This produces sigma points from
+    // a modified covariance rather than mathematically rigorous generation, but
+    // keeps the filter running and makes the issue detectable via D sign checks.
     sigma[0] = x_hat;
     for (std::size_t k = 0; k < NX; ++k) {
         double sqrtDk = std::sqrt(std::abs(D(k)));

@@ -31,7 +31,7 @@ where each sqrt(D_k) involves only a single scalar -- not an accumulated error.
 |----------|---|-------------------|
 | Benign | diag(1, 1) | Both methods perform identically |
 | Moderate stress | diag(0.01, 0.1) | Mild ill-conditioning; Cholesky may show slight degradation |
-| Severe stress | diag(1e-8, 1e-2) | Cholesky expected to degrade or diverge |
+| Severe stress | diag(1e-14, 1e-2) | Cholesky expected to degrade or diverge |
 | Intermittent | alternating | Tests recovery after ill-conditioning episodes |
 
 ## Building and Running
