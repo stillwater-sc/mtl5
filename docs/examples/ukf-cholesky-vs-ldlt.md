@@ -1,4 +1,4 @@
-# UKF Numerical Stability: Cholesky vs $LDL^T$ Decomposition
+# UKF Numerical Stability: Cholesky vs LDL^T Decomposition
 
 The Unscented Kalman Filter (UKF) generates sigma points from the state covariance matrix $P$ at every time step. This requires a matrix factorization that serves as a "square root" of $P$. The choice of factorization has a direct impact on filter stability, particularly when $P$ becomes ill-conditioned after informative observations.
 
