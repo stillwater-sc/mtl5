@@ -1,4 +1,4 @@
-// norms_and_products.cpp — Vector Norms, Dot Products, and Matrix-Vector Multiply
+// norms_and_products.cpp -- Vector Norms, Dot Products, and Matrix-Vector Multiply
 //
 // This example demonstrates the fundamental numerical operations:
 //   - Vector norms: one_norm, two_norm, infinity_norm

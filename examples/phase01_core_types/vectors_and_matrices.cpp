@@ -1,4 +1,4 @@
-// vectors_and_matrices.cpp — Dense Vectors and Matrices: The Building Blocks
+// vectors_and_matrices.cpp -- Dense Vectors and Matrices: The Building Blocks
 //
 // This example demonstrates the core data types of MTL5:
 //   - Dense vectors (column and row orientation)
@@ -13,7 +13,7 @@
 int main() {
     using namespace mtl;
 
-    std::cout << "MTL5 Phase 1: Core Types — Vectors and Matrices\n";
+    std::cout << "MTL5 Phase 1: Core Types -- Vectors and Matrices\n";
     std::cout << "================================================\n\n";
 
     // ---- Dense Vectors ----

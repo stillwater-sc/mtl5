@@ -1,4 +1,4 @@
-// matrix_arithmetic.cpp — Matrix Addition, Scaling, and Matrix-Matrix Multiply
+// matrix_arithmetic.cpp -- Matrix Addition, Scaling, and Matrix-Matrix Multiply
 //
 // This example demonstrates matrix-level arithmetic operations:
 //   - Matrix addition and subtraction (expression templates)
@@ -44,7 +44,7 @@ int main() {
     print_dense("A", A);
     print_dense("B (10*I)", B);
 
-    auto C = A + B;  // expression template — evaluated when assigned
+    auto C = A + B;  // expression template -- evaluated when assigned
     mat::dense2D<double> C_mat = C;
     print_dense("A + B", C_mat);
 
@@ -128,7 +128,7 @@ int main() {
 
     std::cout << "   Dense  A*x = [" << y_d(0) << ", " << y_d(1) << ", " << y_d(2) << "]\n";
     std::cout << "   Sparse A*x = [" << y_s(0) << ", " << y_s(1) << ", " << y_s(2) << "]\n";
-    std::cout << "   (Identical results — same algorithm, different storage)\n";
+    std::cout << "   (Identical results -- same algorithm, different storage)\n";
 
     std::cout << '\n';
     return 0;

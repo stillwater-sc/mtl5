@@ -1,4 +1,4 @@
-// concepts_and_traits.cpp — C++20 Concepts and Type Traits in MTL5
+// concepts_and_traits.cpp -- C++20 Concepts and Type Traits in MTL5
 //
 // This example demonstrates the concept hierarchy and type trait system
 // that enables MTL5's generic programming model:
@@ -45,9 +45,9 @@ int main() {
     // ---- Scalar concept hierarchy ----
     std::cout << "1. Scalar Concept Hierarchy\n\n";
 
-    std::cout << "   Scalar<T> — arithmetic ops (+, -, *, unary-, zero)\n";
-    std::cout << "   Field<T>  — Scalar + division\n";
-    std::cout << "   OrderedField<T> — Field + total ordering (<, >, <=, >=)\n\n";
+    std::cout << "   Scalar<T> -- arithmetic ops (+, -, *, unary-, zero)\n";
+    std::cout << "   Field<T>  -- Scalar + division\n";
+    std::cout << "   OrderedField<T> -- Field + total ordering (<, >, <=, >=)\n\n";
 
     std::cout << "   Built-in types:\n";
     std::cout << "     Scalar<int>:    " << std::boolalpha << Scalar<int> << '\n';
@@ -70,11 +70,11 @@ int main() {
     // ---- Matrix/Vector concepts ----
     std::cout << "\n2. Matrix and Vector Concepts\n\n";
 
-    std::cout << "   Collection<T> — has value_type, size_type, size()\n";
-    std::cout << "   Vector<T>     — Collection + v(i) access\n";
-    std::cout << "   Matrix<T>     — Collection + m(r,c), num_rows, num_cols\n";
-    std::cout << "   DenseMatrix<T>  — Matrix + category == tag::dense\n";
-    std::cout << "   SparseMatrix<T> — Matrix + category == tag::sparse\n\n";
+    std::cout << "   Collection<T> -- has value_type, size_type, size()\n";
+    std::cout << "   Vector<T>     -- Collection + v(i) access\n";
+    std::cout << "   Matrix<T>     -- Collection + m(r,c), num_rows, num_cols\n";
+    std::cout << "   DenseMatrix<T>  -- Matrix + category == tag::dense\n";
+    std::cout << "   SparseMatrix<T> -- Matrix + category == tag::sparse\n\n";
 
     using DenseVec  = vec::dense_vector<double>;
     using DenseMat  = mat::dense2D<double>;
@@ -102,9 +102,9 @@ int main() {
               << std::is_same_v<traits::category_t<SparseMat>, tag::sparse> << '\n';
 
     std::cout << "\n   These traits drive if-constexpr dispatch in operations:\n";
-    std::cout << "   - Dense float/double → BLAS/LAPACK when available\n";
-    std::cout << "   - Sparse float/double → SuiteSparse when available\n";
-    std::cout << "   - Any type → generic template implementation\n";
+    std::cout << "   - Dense float/double -> BLAS/LAPACK when available\n";
+    std::cout << "   - Sparse float/double -> SuiteSparse when available\n";
+    std::cout << "   - Any type -> generic template implementation\n";
 
     // ---- Mixed-type expressions ----
     std::cout << "\n4. Mixed-Type Expressions\n\n";
@@ -115,9 +115,9 @@ int main() {
 
     vec::dense_vector<double> x_dbl = {1.5, 2.5};
 
-    // int matrix * double vector → double result (via std::common_type)
+    // int matrix * double vector -> double result (via std::common_type)
     auto y = A_int * x_dbl;
-    std::cout << "   int matrix * double vector → double result:\n";
+    std::cout << "   int matrix * double vector -> double result:\n";
     std::cout << "   [1 2] * [1.5] = [" << y(0) << "]\n";
     std::cout << "   [3 4]   [2.5]   [" << y(1) << "]\n";
 
