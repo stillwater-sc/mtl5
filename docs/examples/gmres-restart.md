@@ -31,52 +31,44 @@ GMRES handles all of these.
 
 ### The Krylov subspace
 
-Given a starting residual r = b - Ax_0, GMRES builds the **Krylov subspace**:
+Given a starting residual $r = b - Ax_0$, GMRES builds the **Krylov subspace**:
 
-```text
-K_m = span{ r, Ar, A^2 r, A^3 r, ..., A^(m-1) r }
-```
+$$\mathcal{K}_m = \text{span}\{ r,\; Ar,\; A^2 r,\; A^3 r,\; \ldots,\; A^{m-1} r \}$$
 
-At iteration m, this subspace has dimension m (assuming no lucky breakdown). GMRES finds the vector x_m in x_0 + K_m that minimizes ||b - Ax_m||.
+At iteration $m$, this subspace has dimension $m$ (assuming no lucky breakdown). GMRES finds the vector $x_m \in x_0 + \mathcal{K}_m$ that minimizes $\|b - Ax_m\|_2$.
 
-**Intuition**: each multiplication by A "reveals" more information about A's action on the residual. After m steps, GMRES has explored m independent directions in the solution space.
+**Intuition**: each multiplication by $A$ "reveals" more information about $A$'s action on the residual. After $m$ steps, GMRES has explored $m$ independent directions in the solution space.
 
 ### The Arnoldi process
 
-GMRES doesn't work with the raw vectors {r, Ar, A^2 r, ...} because they quickly become nearly parallel (dominated by the eigenvector of the largest eigenvalue). Instead, it builds an **orthonormal** basis V_1, V_2, ..., V_m via the Arnoldi process:
+GMRES doesn't work with the raw vectors $\{r, Ar, A^2 r, \ldots\}$ because they quickly become nearly parallel (dominated by the eigenvector of the largest eigenvalue). Instead, it builds an **orthonormal** basis $v_1, v_2, \ldots, v_m$ via the Arnoldi process:
 
-```text
-for k = 1, 2, ..., m:
-    w = A * V_k                          # expand the subspace
-    for j = 1 to k:                      # orthogonalize against all previous
-        h_{j,k} = <V_j, w>
-        w = w - h_{j,k} * V_j
-    h_{k+1,k} = ||w||                    # normalize
-    V_{k+1} = w / h_{k+1,k}
-```
+$$\text{for } k = 1, 2, \ldots, m:$$
 
-This produces an (m+1) x m upper Hessenberg matrix H such that A * V_m = V_{m+1} * H.
+1. Expand: $w = A v_k$
+2. Orthogonalize: for $j = 1$ to $k$: $h_{j,k} = \langle v_j, w \rangle$, then $w \leftarrow w - h_{j,k} v_j$
+3. Normalize: $h_{k+1,k} = \|w\|$, then $v_{k+1} = w / h_{k+1,k}$
+
+This produces an $(m{+}1) \times m$ upper Hessenberg matrix $H$ such that $A V_m = V_{m+1} H$.
 
 ### The least-squares solve
 
-The minimization ||b - Ax|| over x_0 + K_m reduces to a small (m+1) x m least-squares problem:
+The minimization $\|b - Ax\|$ over $x_0 + \mathcal{K}_m$ reduces to a small $(m{+}1) \times m$ least-squares problem:
 
-```text
-minimize ||beta * e_1 - H * y||
-```
+$$\min_y \| \beta e_1 - H y \|_2$$
 
-where beta = ||r_0||. This is solved efficiently using Givens rotations as each column of H is produced -- no separate least-squares solve is needed at the end.
+where $\beta = \|r_0\|$. This is solved efficiently using Givens rotations as each column of $H$ is produced -- no separate least-squares solve is needed at the end.
 
 ### Cost per iteration
 
 | Operation | Cost |
 |-----------|------|
-| Matrix-vector product A * v | O(nnz) |
-| Orthogonalization against k vectors | O(kn) |
-| Givens rotation update | O(k) |
-| **Total at iteration m** | **O(nnz + mn)** |
+| Matrix-vector product $Av$ | $O(\text{nnz})$ |
+| Orthogonalization against $k$ vectors | $O(kn)$ |
+| Givens rotation update | $O(k)$ |
+| **Total at iteration $m$** | $O(\text{nnz} + mn)$ |
 
-The critical point: orthogonalization cost grows linearly with the subspace dimension m. After m iterations, the total work is O(m * nnz + m^2 * n).
+The critical point: orthogonalization cost grows linearly with the subspace dimension $m$. After $m$ iterations, the total work is $O(m \cdot \text{nnz} + m^2 n)$.
 
 ## The Restart Problem
 
@@ -84,19 +76,19 @@ The critical point: orthogonalization cost grows linearly with the subspace dime
 
 As the Krylov subspace grows, two costs accumulate:
 
-- **Memory**: m vectors of length n must be stored (the Arnoldi basis V)
-- **Orthogonalization**: each new vector must be orthogonalized against all m previous vectors
+- **Memory**: $m$ vectors of length $n$ must be stored (the Arnoldi basis $V$)
+- **Orthogonalization**: each new vector must be orthogonalized against all $m$ previous vectors
 
-For m = 1000 on a system with n = 100,000:
-- Memory: 1000 * 100,000 * 8 bytes = 800 MB just for the basis
+For $m = 1000$ on a system with $n = 100{,}000$:
+- Memory: $1000 \times 100{,}000 \times 8$ bytes = 800 MB just for the basis
 - Orthogonalization: dominates the computation time
 
-**Restarted GMRES** caps the subspace dimension at a parameter `restart` (typically 20-50). When m reaches `restart`:
+**Restarted GMRES** caps the subspace dimension at a parameter `restart` (typically 20--50). When $m$ reaches `restart`:
 
-1. Take the current best solution x_m
-2. Discard all m basis vectors and the Hessenberg matrix
-3. Compute the new residual r = b - Ax_m
-4. Start a fresh GMRES cycle from x_m
+1. Take the current best solution $x_m$
+2. Discard all $m$ basis vectors and the Hessenberg matrix
+3. Compute the new residual $r = b - Ax_m$
+4. Start a fresh GMRES cycle from $x_m$
 
 ### The stalling problem
 
@@ -117,13 +109,13 @@ restart = 50:
 
 ### When does stalling happen?
 
-GMRES(m) (restarted with dimension m) stalls when:
+$\text{GMRES}(m)$ (restarted with dimension $m$) stalls when:
 
 - The matrix has eigenvalues with **small imaginary parts** relative to their real parts -- the Krylov subspace needs many directions to capture oscillatory components
 - The eigenvalues are **clustered in multiple groups** separated by gaps -- each cluster requires its own Krylov directions
 - The system is **highly non-normal** (eigenvectors far from orthogonal) -- the effective condition number is much worse than the eigenvalue condition number
 
-**Rule of thumb**: if GMRES(m) converges in k < m iterations, restart doesn't matter. If it needs k >> m iterations, the stalling penalty can be severe.
+**Rule of thumb**: if $\text{GMRES}(m)$ converges in $k < m$ iterations, restart doesn't matter. If it needs $k \gg m$ iterations, the stalling penalty can be severe.
 
 ## Using GMRES in MTL5
 
@@ -266,11 +258,11 @@ With ILU(0): restart=10 -> CONVERGED in 12 iters
 
 | Solver | Symmetry | Memory | Convergence | When to use |
 |--------|----------|--------|-------------|-------------|
-| **CG** | SPD only | O(n) | Optimal | SPD systems (Laplacian, elasticity) |
-| **GMRES(m)** | Any | O(mn) | Monotone decrease | General non-symmetric, smooth convergence needed |
-| **BiCGSTAB** | Any | O(n) | Non-monotone | Memory-limited, tolerates irregular convergence |
-| **TFQMR** | Any | O(n) | Quasi-monotone | Like BiCGSTAB but smoother convergence |
-| **IDR(s)** | Any | O(sn) | Tunable | Between BiCGSTAB (s=1) and GMRES (s large) |
+| **CG** | SPD only | $O(n)$ | Optimal | SPD systems (Laplacian, elasticity) |
+| **GMRES(m)** | Any | $O(mn)$ | Monotone decrease | General non-symmetric, smooth convergence needed |
+| **BiCGSTAB** | Any | $O(n)$ | Non-monotone | Memory-limited, tolerates irregular convergence |
+| **TFQMR** | Any | $O(n)$ | Quasi-monotone | Like BiCGSTAB but smoother convergence |
+| **IDR(s)** | Any | $O(sn)$ | Tunable | Between BiCGSTAB ($s{=}1$) and GMRES ($s$ large) |
 
 **GMRES is the safest default** for non-symmetric systems: its residual decreases monotonically (within each cycle), it never breaks down on nonsingular systems, and the restart parameter gives explicit memory control. The tradeoff is higher memory usage compared to short-recurrence methods like BiCGSTAB.
 
