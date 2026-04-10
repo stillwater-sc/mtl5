@@ -3,9 +3,9 @@
 // This example demonstrates MTL5's unified solve dispatch, which
 // automatically selects the best solver backend at compile time:
 //
-//   Sparse double + SuiteSparse → external solver (UMFPACK, CHOLMOD, SPQR)
-//   Sparse (any type)           → native solver + fill-reducing ordering
-//   Dense                       → dense factorization (with optional LAPACK)
+//   Sparse double + SuiteSparse -> external solver (UMFPACK, CHOLMOD, SPQR)
+//   Sparse (any type)           -> native solver + fill-reducing ordering
+//   Dense                       -> dense factorization (with optional LAPACK)
 //
 // The user writes one function call. The compiler picks the backend.
 
@@ -380,7 +380,7 @@ void demo_backend_summary() {
 // ---------------------------------------------------------------------------
 
 int main() {
-    std::cout << "MTL5 Sparse Direct Solvers — Unified Dispatch Demo\n";
+    std::cout << "MTL5 Sparse Direct Solvers -- Unified Dispatch Demo\n";
     std::cout << "==================================================\n\n";
 
     demo_unified_solve();

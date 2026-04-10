@@ -14,7 +14,7 @@ Bearing-only measurements create extreme eigenvalue spread in P:
 - **Large eigenvalue**: along the line of sight (unobserved)
 
 After a few updates with R = 1e-4 (tight bearing), cond(P) can reach 10^6
-in double, 10^3 in float — exactly where Cholesky starts failing silently.
+in double, 10^3 in float -- exactly where Cholesky starts failing silently.
 
 ## The Silent Killer: Sigma-Point Mean Bias
 

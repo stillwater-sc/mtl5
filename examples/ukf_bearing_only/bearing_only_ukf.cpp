@@ -1,4 +1,4 @@
-// bearing_only_ukf.cpp — Bearing-only UKF stress test: Cholesky vs LDL^T
+// bearing_only_ukf.cpp -- Bearing-only UKF stress test: Cholesky vs LDL^T
 //
 // The canonical ill-conditioning generator for UKF sigma point factorization:
 // a 2D tracker with bearing-only measurements. The bearing direction is
@@ -75,7 +75,7 @@ struct Rng {
 };
 
 // ============================================================================
-// Bearing-only UKF — templated over Scalar
+// Bearing-only UKF -- templated over Scalar
 // ============================================================================
 
 static constexpr std::size_t NX = 4;  // [px, py, vx, vy]
@@ -238,13 +238,13 @@ bool generate_sigma_ldlt(
     }
 
     // Sigma = x +/- gamma * L * sqrt(D(k)) * e_k
-    // Negative D(k) means P is indefinite — report failure rather than
+    // Negative D(k) means P is indefinite -- report failure rather than
     // silently using abs(D(k)), which would produce sigma points for
     // L|D|L^T instead of P. This keeps the comparison fair: LDL^T
     // detects the problem; the caller decides how to recover.
     sigma[0] = x;
     for (std::size_t k = 0; k < NX; ++k) {
-        if (D(k) <= T(0)) return false;  // indefinite pivot — fail cleanly
+        if (D(k) <= T(0)) return false;  // indefinite pivot -- fail cleanly
         using std::sqrt;
         T sqrtDk = sqrt(D(k));
         vec::dense_vector<T> sp(NX), sm(NX);
@@ -320,7 +320,7 @@ std::vector<StepResult> run_bearing_only_ukf(int num_steps) {
     x_true(0) = T(0); x_true(1) = T(5);
     x_true(2) = T(2); x_true(3) = T(-0.5);
 
-    // Process noise (small — we want P conditioning to be driven by measurements)
+    // Process noise (small -- we want P conditioning to be driven by measurements)
     mat::dense2D<T> Q(NX, NX);
     for (std::size_t i = 0; i < NX; ++i)
         for (std::size_t j = 0; j < NX; ++j)
@@ -591,10 +591,10 @@ int main() {
               << "             range direction stays large -> extreme cond(P)\n"
               << "\n"
               << "Diagnostics:\n"
-              << "  cond(P)    — eigenvalue ratio (higher = harder)\n"
-              << "  Chol/LDLT  — did the factorization succeed?\n"
-              << "  bias       — sigma-point mean asymmetry (the silent killer)\n"
-              << "  resid      — ||P - reconstruct|| / ||P||\n";
+              << "  cond(P)    -- eigenvalue ratio (higher = harder)\n"
+              << "  Chol/LDLT  -- did the factorization succeed?\n"
+              << "  bias       -- sigma-point mean asymmetry (the silent killer)\n"
+              << "  resid      -- ||P - reconstruct|| / ||P||\n";
 
     constexpr int num_steps = 15;
 

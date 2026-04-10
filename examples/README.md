@@ -29,7 +29,7 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 ## phase01_core_types/
 
-**Vectors, matrices, and the C++20 concept system.** Introduces the fundamental data types — dense vectors, dense matrices, and sparse matrices via the RAII inserter pattern. Demonstrates the concept hierarchy (`Scalar`, `Field`, `OrderedField`, `Matrix`, `Vector`, `DenseMatrix`, `SparseMatrix`) and the category traits that drive compile-time dispatch. Shows how custom number types plug into MTL5 by satisfying the same concepts.
+**Vectors, matrices, and the C++20 concept system.** Introduces the fundamental data types -- dense vectors, dense matrices, and sparse matrices via the RAII inserter pattern. Demonstrates the concept hierarchy (`Scalar`, `Field`, `OrderedField`, `Matrix`, `Vector`, `DenseMatrix`, `SparseMatrix`) and the category traits that drive compile-time dispatch. Shows how custom number types plug into MTL5 by satisfying the same concepts.
 
 | Example | Description |
 |---------|-------------|
@@ -56,13 +56,13 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 | Example | Description |
 |---------|-------------|
 | `heat_equation_1d.cpp` | 1D steady-state heat equation solved by CG (SPD system) |
-| `convection_diffusion.cpp` | Non-symmetric system from convection — CG fails, BiCGSTAB succeeds |
+| `convection_diffusion.cpp` | Non-symmetric system from convection -- CG fails, BiCGSTAB succeeds |
 
 ---
 
 ## phase04_sparse_assembly/
 
-**2D sparse assembly and stationary iterative methods.** Scales up to two dimensions with the 5-point Laplacian stencil, assembling larger sparse systems with the compressed2D inserter. Introduces GMRES for non-symmetric systems and compares classical smoothers — Jacobi, Gauss-Seidel, and SOR — showing how relaxation parameters affect convergence.
+**2D sparse assembly and stationary iterative methods.** Scales up to two dimensions with the 5-point Laplacian stencil, assembling larger sparse systems with the compressed2D inserter. Introduces GMRES for non-symmetric systems and compares classical smoothers -- Jacobi, Gauss-Seidel, and SOR -- showing how relaxation parameters affect convergence.
 
 | Example | Description |
 |---------|-------------|
@@ -95,7 +95,7 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 ## phase07_sparse_formats/
 
-**Sparse storage formats and structured matrix views.** Compares COO (coordinate), CRS (compressed row), and ELLPACK storage with their space/time tradeoffs. Introduces structured views — Hermitian, banded, upper/lower triangular — that reinterpret existing storage without copying data.
+**Sparse storage formats and structured matrix views.** Compares COO (coordinate), CRS (compressed row), and ELLPACK storage with their space/time tradeoffs. Introduces structured views -- Hermitian, banded, upper/lower triangular -- that reinterpret existing storage without copying data.
 
 | Example | Description |
 |---------|-------------|
@@ -129,7 +129,7 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 ## phase10_matrix_views/
 
-**Triangular views and permutation matrices.** Demonstrates extracting upper, lower, strict-upper, and strict-lower views from matrices — essential for working with LU and Cholesky factors. Shows permutation matrices for row/column reordering with O(n) matvec.
+**Triangular views and permutation matrices.** Demonstrates extracting upper, lower, strict-upper, and strict-lower views from matrices -- essential for working with LU and Cholesky factors. Shows permutation matrices for row/column reordering with O(n) matvec.
 
 | Example | Description |
 |---------|-------------|
@@ -151,7 +151,7 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 ## phase12_transcendental_functions/
 
-**Element-wise transcendental operations for applied mathematics.** Applies MTL5's vectorized math functions — exp, log, sin, cos, tanh, erf — to real-world domains: signal processing (modulated waveforms, spectral analysis), neural network activation functions (sigmoid, ReLU, GELU), radioactive decay chains, and coordinate transformations in 2D/3D geometry.
+**Element-wise transcendental operations for applied mathematics.** Applies MTL5's vectorized math functions -- exp, log, sin, cos, tanh, erf -- to real-world domains: signal processing (modulated waveforms, spectral analysis), neural network activation functions (sigmoid, ReLU, GELU), radioactive decay chains, and coordinate transformations in 2D/3D geometry.
 
 | Example | Description |
 |---------|-------------|
@@ -164,7 +164,7 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 ## phase13_krylov_multigrid/
 
-**Advanced iterative solvers: Krylov subspace methods and multigrid.** Compares Krylov solvers — CGS, QMR, TFQMR, IDR(s) — on non-symmetric sparse systems, showing convergence characteristics and breakdown behavior. Demonstrates geometric multigrid with restriction, prolongation, and V-cycle smoothing for the 1D Poisson equation.
+**Advanced iterative solvers: Krylov subspace methods and multigrid.** Compares Krylov solvers -- CGS, QMR, TFQMR, IDR(s) -- on non-symmetric sparse systems, showing convergence characteristics and breakdown behavior. Demonstrates geometric multigrid with restriction, prolongation, and V-cycle smoothing for the 1D Poisson equation.
 
 | Example | Description |
 |---------|-------------|
@@ -186,7 +186,7 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 ## phase15_sparse_direct/
 
-**Sparse direct solvers with unified dispatch.** The culmination of MTL5's sparse direct solver infrastructure: native Cholesky (LL^T), LU (PA=LU with pivoting), and QR (Householder) factorizations with AMD and COLAMD fill-reducing orderings. Demonstrates the unified dispatch that automatically selects the best backend — SuiteSparse (UMFPACK, CHOLMOD, SPQR) for production `double` systems, native solvers for custom number types. Shows fill-in reduction from different orderings on a 2D Laplacian.
+**Sparse direct solvers with unified dispatch.** The culmination of MTL5's sparse direct solver infrastructure: native Cholesky (LL^T), LU (PA=LU with pivoting), and QR (Householder) factorizations with AMD and COLAMD fill-reducing orderings. Demonstrates the unified dispatch that automatically selects the best backend -- SuiteSparse (UMFPACK, CHOLMOD, SPQR) for production `double` systems, native solvers for custom number types. Shows fill-in reduction from different orderings on a 2D Laplacian.
 
 | Example | Description |
 |---------|-------------|

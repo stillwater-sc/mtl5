@@ -1,11 +1,11 @@
-// ukf_comparison.cpp — UKF numerical stability: Cholesky vs LDL^T
+// ukf_comparison.cpp -- UKF numerical stability: Cholesky vs LDL^T
 //
 // Demonstrates that the LDL^T (square-root-free Cholesky) decomposition
 // provides superior numerical stability for Unscented Kalman Filter sigma
 // point generation when the state covariance becomes ill-conditioned.
 //
 // System model:
-//   State: [px, py, vx, vy]^T — 2D position + velocity
+//   State: [px, py, vx, vy]^T -- 2D position + velocity
 //   Process: constant velocity with quadratic drag
 //   Measurement: range + bearing from a known beacon
 //
@@ -111,7 +111,7 @@ static double ldlt_residual(const mat::dense2D<double>& P) {
 }
 
 // ============================================================================
-// Simple pseudo-random number generator (Xoshiro128+ — no external deps)
+// Simple pseudo-random number generator (Xoshiro128+ -- no external deps)
 // ============================================================================
 
 struct Rng {
@@ -516,7 +516,7 @@ static void print_row(int step,
 {
     std::cout << std::setw(6) << step;
 
-    // Condition number (from LDLT — it runs longer when Cholesky diverges)
+    // Condition number (from LDLT -- it runs longer when Cholesky diverges)
     if (idx < ldlt.cond_P.size())
         std::cout << std::setw(14) << std::scientific << std::setprecision(2) << ldlt.cond_P[idx];
     else if (idx < chol.cond_P.size())
@@ -613,7 +613,7 @@ int main() {
               << "State:       [px, py, vx, vy] (4-state 2D tracking)\n"
               << "Process:     constant velocity + quadratic drag\n"
               << "Measurement: range + bearing from beacon at (10, 0)\n"
-              << "Key knob:    measurement noise R — smaller R drives P ill-conditioned\n"
+              << "Key knob:    measurement noise R -- smaller R drives P ill-conditioned\n"
               << "\n";
 
     constexpr int num_steps = 200;
