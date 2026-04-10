@@ -60,8 +60,9 @@ const FILE_MAP = {
   'modernization/vector-and-insertion-utilities.md':           'modernization/vector-and-insertion-utilities.md',
 
   // ── Examples ────────────────────────────────────────────────────
-  'examples/expression-templates.md':  'examples/expression-templates.md',
-  'examples/numerical-examples.md':    'examples/numerical-examples.md',
+  'examples/expression-templates.md':    'examples/expression-templates.md',
+  'examples/numerical-examples.md':      'examples/numerical-examples.md',
+  'examples/ukf-cholesky-vs-ldlt.md':   'examples/ukf-cholesky-vs-ldlt.md',
 
   // ── Generators ──────────────────────────────────────────────────
   'generators/strengthen-LA-tests-with-generator-matrices.md': 'generators/strengthen-tests.md',
