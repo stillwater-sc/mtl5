@@ -217,4 +217,48 @@ void dense_lower_transpose_solve(
     }
 }
 
+/// Dense unit lower triangular solve: solve Lx = b where L is unit lower
+/// triangular in CSC format (diagonal entries in L are ignored; assumed 1).
+/// b is overwritten with the solution x.
+template <typename Value, typename SizeType>
+void dense_unit_lower_solve(
+    const util::csc_matrix<Value, SizeType>& L,
+    std::vector<Value>& x)
+{
+    SizeType n = L.ncols;
+
+    for (SizeType j = 0; j < n; ++j) {
+        // Skip diagonal entry (implicit 1), scatter off-diagonal entries
+        for (SizeType p = L.col_ptr[j]; p < L.col_ptr[j + 1]; ++p) {
+            SizeType i = L.row_ind[p];
+            if (i > j) {
+                x[i] -= L.values[p] * x[j];
+            }
+        }
+    }
+}
+
+/// Dense unit lower triangular transpose solve: solve L^T x = b where L is
+/// unit lower triangular in CSC (diagonal entries ignored; assumed 1).
+/// Processes columns in reverse order. b is overwritten with x.
+template <typename Value, typename SizeType>
+void dense_unit_lower_transpose_solve(
+    const util::csc_matrix<Value, SizeType>& L,
+    std::vector<Value>& x)
+{
+    SizeType n = L.ncols;
+
+    for (SizeType j = n; j > 0; --j) {
+        SizeType col = j - 1;
+        // Gather: subtract contributions from off-diagonal entries below diagonal
+        for (SizeType p = L.col_ptr[col]; p < L.col_ptr[col + 1]; ++p) {
+            SizeType i = L.row_ind[p];
+            if (i > col) {
+                x[col] -= L.values[p] * x[i];
+            }
+        }
+        // No diagonal division (unit diagonal)
+    }
+}
+
 } // namespace mtl::sparse::factorization
