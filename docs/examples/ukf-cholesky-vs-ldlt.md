@@ -119,7 +119,7 @@ cmake --build build --target example_ukf_comparison example_bearing_only_ukf
 
 In float64, both Cholesky and LDL^T succeed across all scenarios. The condition numbers reach ~10^4, well within the ~10^15 that double precision can handle:
 
-```
+```text
 === Scenario: Benign (R = diag(1.0e+00, 1.0e+00)) ===
   Step       cond(P)      Chol-err      LDLT-err    Chol-resid    LDLT-resid
      0      2.21e+00      9.70e-01      9.70e-01      6.12e-17      0.00e+00
@@ -136,7 +136,7 @@ Both methods produce identical estimation errors and residuals at machine epsilo
 
 The bearing-only example in float32 shows the critical difference. At step 5, the covariance update rounding errors make P non-SPD:
 
-```
+```text
 === Bearing-Only UKF (float32, 24-bit significand) ===
   Step     cond(P)    Chol    LDLT     Chol-bias     LDLT-bias
      0     1.0e+00      OK      OK      2.19e-02      2.19e-02
@@ -151,15 +151,15 @@ The bearing-only example in float32 shows the critical difference. At step 5, th
 Both methods detect the failure -- but the failure modes differ:
 
 - **Cholesky** fails via `sqrt(negative)`, providing no information about which direction went bad
-- **LDL^T** fails by detecting a negative D entry, pinpointing exactly which eigenvalue direction became indefinite
+- **LDL^T** `ldlt_factor()` **succeeds** — it only fails on zero pivots. Negative D entries are representable and indicate indefiniteness when inspected afterward. The caller can examine the D vector to identify exactly which eigenvalue direction became negative.
 
-This diagnostic difference is what enables graceful recovery strategies.
+This diagnostic difference is what enables graceful recovery strategies: inspect D after factorization, clamp negative entries, reset the covariance, or trigger a warning — rather than handling a hard factorization failure.
 
 ### Indefinite matrices: Cholesky crashes, LDL^T succeeds
 
 The direct factorization stress test constructs matrices with one deliberately negative eigenvalue -- simulating what happens when covariance update rounding goes wrong:
 
-```
+```text
 --- Nearly-indefinite matrices (smallest eigenvalue < 0) ---
        min_eig        Cholesky           LDL^T     D entries
       -1.0e-14  FAIL (non-SPD)              OK  [+,+,+,-]
