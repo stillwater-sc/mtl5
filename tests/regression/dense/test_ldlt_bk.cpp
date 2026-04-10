@@ -15,7 +15,6 @@
 #include <mtl/generators/randspd.hpp>
 #include <mtl/generators/lehmer.hpp>
 #include <mtl/generators/moler.hpp>
-#include <mtl/generators/minij.hpp>
 
 using namespace mtl;
 
@@ -107,14 +106,15 @@ TEST_CASE("Bunch-Kaufman regression: Moler matrix", "[regression][dense][ldlt_bk
 
 TEST_CASE("Bunch-Kaufman regression: indefinite tridiagonal", "[regression][dense][ldlt_bk]") {
     auto n = GENERATE(100, 500);
+    std::size_t sz = static_cast<std::size_t>(n);
     // Symmetric indefinite tridiagonal: alternating +/- diagonal
     mat::dense2D<double> A(n, n);
-    for (std::size_t i = 0; i < static_cast<std::size_t>(n); ++i)
-        for (std::size_t j = 0; j < static_cast<std::size_t>(n); ++j)
+    for (std::size_t i = 0; i < sz; ++i)
+        for (std::size_t j = 0; j < sz; ++j)
             A(i, j) = 0.0;
-    for (std::size_t i = 0; i < static_cast<std::size_t>(n); ++i) {
+    for (std::size_t i = 0; i < sz; ++i) {
         A(i, i) = (i % 2 == 0) ? 10.0 : -5.0;
-        if (i + 1 < static_cast<std::size_t>(n)) {
+        if (i + 1 < sz) {
             A(i, i + 1) = 2.0;
             A(i + 1, i) = 2.0;
         }
