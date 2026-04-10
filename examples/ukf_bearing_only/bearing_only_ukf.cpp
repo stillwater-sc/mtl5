@@ -237,14 +237,16 @@ bool generate_sigma_ldlt(
             Lmat(i, j) = (i == j) ? T(1) : ((j < i) ? F(i, j) : T(0));
     }
 
-    // Sigma = x +/- gamma * L * sqrt(|D(k)|) * e_k
-    // Using abs(D(k)) flips negative eigenvalues to positive — a practical
-    // heuristic for indefinite covariances. LDL^T detects the issue via
-    // D sign rather than producing garbage from sqrt(negative).
+    // Sigma = x +/- gamma * L * sqrt(D(k)) * e_k
+    // Negative D(k) means P is indefinite — report failure rather than
+    // silently using abs(D(k)), which would produce sigma points for
+    // L|D|L^T instead of P. This keeps the comparison fair: LDL^T
+    // detects the problem; the caller decides how to recover.
     sigma[0] = x;
     for (std::size_t k = 0; k < NX; ++k) {
-        using std::sqrt; using std::abs;
-        T sqrtDk = sqrt(abs(D(k)));
+        if (D(k) <= T(0)) return false;  // indefinite pivot — fail cleanly
+        using std::sqrt;
+        T sqrtDk = sqrt(D(k));
         vec::dense_vector<T> sp(NX), sm(NX);
         for (std::size_t i = 0; i < NX; ++i) {
             T col_val = Lmat(i, k) * sqrtDk;
@@ -341,6 +343,7 @@ std::vector<StepResult> run_bearing_only_ukf(int num_steps) {
 
     std::vector<vec::dense_vector<T>> sigma_chol(num_sigma);
     std::vector<vec::dense_vector<T>> sigma_ldlt(num_sigma);
+    bool filter_failed = false;
 
     for (int step = 0; step < num_steps; ++step) {
         StepResult sr;
@@ -395,8 +398,11 @@ std::vector<StepResult> run_bearing_only_ukf(int num_steps) {
         // === UKF predict+update using LDL^T (the more robust path) ===
         // We use LDL^T for the actual filter progression so both precisions
         // run the same number of steps for fair comparison.
+        // If LDL^T fails, freeze P and continue emitting diagnostic rows.
+        if (filter_failed) continue;
+
         std::vector<vec::dense_vector<T>>& sigma = sigma_ldlt;
-        if (!sr.ldlt_ok) break;  // can't continue if even LDL^T fails
+        if (!sr.ldlt_ok) { filter_failed = true; continue; }
 
         // Propagate sigma points through process model (constant velocity)
         for (std::size_t s = 0; s < num_sigma; ++s) {
@@ -430,8 +436,10 @@ std::vector<StepResult> run_bearing_only_ukf(int num_steps) {
 
         // === Measurement update (bearing-only, linearized via sigma points) ===
         // Regenerate sigma points from P_pred for measurement transform
-        if (!generate_sigma_ldlt(x_pred, P_pred, gamma, sigma))
-            break;
+        if (!generate_sigma_ldlt(x_pred, P_pred, gamma, sigma)) {
+            filter_failed = true;
+            continue;
+        }
 
         // Predicted measurement
         std::vector<T> z_sigma(num_sigma);
@@ -491,7 +499,7 @@ std::vector<StepResult> run_bearing_only_ukf(int num_steps) {
         bool has_nan = false;
         for (std::size_t i = 0; i < NX; ++i)
             if (!std::isfinite(static_cast<double>(x_hat(i)))) has_nan = true;
-        if (has_nan) break;
+        if (has_nan) filter_failed = true;
     }
 
     return results;
