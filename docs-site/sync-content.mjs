@@ -63,6 +63,7 @@ const FILE_MAP = {
   'examples/expression-templates.md':    'examples/expression-templates.md',
   'examples/numerical-examples.md':      'examples/numerical-examples.md',
   'examples/ukf-cholesky-vs-ldlt.md':   'examples/ukf-cholesky-vs-ldlt.md',
+  'examples/gmres-restart.md':          'examples/gmres-restart.md',
 
   // ── Generators ──────────────────────────────────────────────────
   'generators/strengthen-LA-tests-with-generator-matrices.md': 'generators/strengthen-tests.md',
