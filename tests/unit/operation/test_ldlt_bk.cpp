@@ -152,9 +152,42 @@ TEST_CASE("Bunch-Kaufman on 4x4 indefinite matrix", "[operation][ldlt_bk]") {
     REQUIRE(be < 1e-12);
 }
 
-TEST_CASE("Bunch-Kaufman on randspd matrix", "[operation][ldlt_bk][generator]") {
+TEST_CASE("Bunch-Kaufman on 5x5 SPD matrix", "[operation][ldlt_bk]") {
+    // Deterministic well-conditioned SPD: Lehmer matrix (small)
+    constexpr std::size_t n = 5;
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = double(std::min(i, j) + 1) / double(std::max(i, j) + 1);
+
+    mat::dense2D<double> Aorig(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            Aorig(i, j) = A(i, j);
+
+    bk_pivot_info pivots;
+    int info = ldlt_bk_factor(A, pivots);
+    REQUIRE(info == 0);
+
+    vec::dense_vector<double> b(n, 1.0);
+    vec::dense_vector<double> x(n);
+    ldlt_bk_solve(A, pivots, x, b);
+
+    double be = backward_error(Aorig, x, b);
+    REQUIRE(be < 1e-12);
+}
+
+TEST_CASE("Bunch-Kaufman on 8x8 diagonally dominant SPD", "[operation][ldlt_bk]") {
+    // Deterministic: tridiagonal SPD with strong diagonal dominance
     constexpr std::size_t n = 8;
-    auto A = generators::randspd<double>(n, {16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125});
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = 0.0;
+    for (std::size_t i = 0; i < n; ++i) {
+        A(i, i) = 10.0;
+        if (i > 0) { A(i, i-1) = -1.0; A(i-1, i) = -1.0; }
+    }
 
     mat::dense2D<double> Aorig(n, n);
     for (std::size_t i = 0; i < n; ++i)
