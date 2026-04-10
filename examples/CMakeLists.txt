@@ -48,3 +48,6 @@ compile_all("false" "example" "Examples/phase13_krylov_multigrid" "MTL5::mtl5" $
 
 file(GLOB PHASE15_SRC "phase15_sparse_direct/*.cpp")
 compile_all("false" "example" "Examples/phase15_sparse_direct" "MTL5::mtl5" ${PHASE15_SRC})
+
+file(GLOB UKF_SRC "ukf_cholesky_vs_ldlt/*.cpp")
+compile_all("false" "example" "Examples/ukf_cholesky_vs_ldlt" "MTL5::mtl5" ${UKF_SRC})
