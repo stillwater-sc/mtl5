@@ -173,6 +173,7 @@
 #include <mtl/operation/reorder.hpp>
 #include <mtl/operation/transcendental.hpp>
 #include <mtl/operation/sparse_solve.hpp>
+#include <mtl/operation/projection.hpp>
 
 // Recursion
 #include <mtl/recursion/base_case_test.hpp>
