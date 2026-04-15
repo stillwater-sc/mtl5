@@ -167,6 +167,19 @@ TEST_CASE("scaled project_onto: float vector to int8 with scale", "[operation][p
     REQUIRE(vi(3) == 31);    // 127 * 0.25 = 31.75 -> 31
 }
 
+TEST_CASE("scaled project_onto: saturation prevents overflow", "[operation][projection][scaled]") {
+    vec::dense_vector<float> v(3);
+    v(0) = 2.0f;   // 127 * 2.0 = 254 > 127 -> saturate to 127
+    v(1) = -2.0f;  // 127 * -2.0 = -254 < -128 -> saturate to -128
+    v(2) = 0.5f;   // 127 * 0.5 = 63.5 -> 63 (within range)
+
+    auto vi = project_onto<int8_t>(v, 127.0);
+
+    REQUIRE(vi(0) == 127);   // saturated to max
+    REQUIRE(vi(1) == -128);  // saturated to min
+    REQUIRE(vi(2) == 63);    // normal conversion
+}
+
 TEST_CASE("scaled embed_into: int8 vector to float with inverse scale", "[operation][projection][scaled]") {
     vec::dense_vector<int8_t> vi(3);
     vi(0) = 63; vi(1) = -127; vi(2) = 0;
