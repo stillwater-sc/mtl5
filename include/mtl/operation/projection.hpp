@@ -19,7 +19,7 @@
 //   - dense_vector<T> -> dense_vector<U>
 //   - dense2D<T> -> dense2D<U>
 
-#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <type_traits>
@@ -56,10 +56,15 @@ namespace detail {
 /// Floating-point targets pass through without clamping.
 template <typename Target, typename Value>
 Target saturating_cast(Value v) {
-    if constexpr (std::is_integral_v<Target>) {
+    if constexpr (std::is_integral_v<Target> && std::is_floating_point_v<Value>) {
         using limit = std::numeric_limits<Target>;
+        if (std::isnan(v)) return Target{0};
         if (v >= static_cast<Value>(limit::max())) return limit::max();
         if (v <= static_cast<Value>(limit::min())) return limit::min();
+    } else if constexpr (std::is_integral_v<Target> && std::is_integral_v<Value>) {
+        using limit = std::numeric_limits<Target>;
+        if (v > static_cast<Value>(limit::max())) return limit::max();
+        if (v < static_cast<Value>(limit::min())) return limit::min();
     }
     return static_cast<Target>(v);
 }
