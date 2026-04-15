@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -149,6 +150,99 @@ TEST_CASE("embed_into: 1x1 matrix", "[operation][projection]") {
 }
 
 // ============================================================================
+// Scaled projection tests (quantization workflows)
+// ============================================================================
+
+TEST_CASE("scaled project_onto: float vector to int8 with scale", "[operation][projection][scaled]") {
+    vec::dense_vector<float> v(4);
+    v(0) = 0.5f; v(1) = -1.0f; v(2) = 0.0f; v(3) = 0.25f;
+
+    double scale = 127.0;
+    auto vi = project_onto<int8_t>(v, scale);
+
+    REQUIRE(vi.size() == 4);
+    REQUIRE(vi(0) == 63);    // 127 * 0.5 = 63.5 -> 63
+    REQUIRE(vi(1) == -127);  // 127 * -1.0 = -127
+    REQUIRE(vi(2) == 0);     // 127 * 0.0 = 0
+    REQUIRE(vi(3) == 31);    // 127 * 0.25 = 31.75 -> 31
+}
+
+TEST_CASE("scaled project_onto: saturation prevents overflow", "[operation][projection][scaled]") {
+    vec::dense_vector<float> v(3);
+    v(0) = 2.0f;   // 127 * 2.0 = 254 > 127 -> saturate to 127
+    v(1) = -2.0f;  // 127 * -2.0 = -254 < -128 -> saturate to -128
+    v(2) = 0.5f;   // 127 * 0.5 = 63.5 -> 63 (within range)
+
+    auto vi = project_onto<int8_t>(v, 127.0);
+
+    REQUIRE(vi(0) == 127);   // saturated to max
+    REQUIRE(vi(1) == -128);  // saturated to min
+    REQUIRE(vi(2) == 63);    // normal conversion
+}
+
+TEST_CASE("scaled embed_into: int8 vector to float with inverse scale", "[operation][projection][scaled]") {
+    vec::dense_vector<int8_t> vi(3);
+    vi(0) = 63; vi(1) = -127; vi(2) = 0;
+
+    double inv_scale = 1.0 / 127.0;
+    auto vf = embed_into<float>(vi, inv_scale);
+
+    REQUIRE(vf.size() == 3);
+    REQUIRE_THAT(static_cast<double>(vf(0)), Catch::Matchers::WithinAbs(63.0 / 127.0, 1e-6));
+    REQUIRE_THAT(static_cast<double>(vf(1)), Catch::Matchers::WithinAbs(-1.0, 1e-6));
+    REQUIRE(vf(2) == 0.0f);
+}
+
+TEST_CASE("scaled roundtrip: float -> int8 -> float quantization", "[operation][projection][scaled]") {
+    vec::dense_vector<float> v(5);
+    v(0) = 1.0f; v(1) = -1.0f; v(2) = 0.5f; v(3) = -0.5f; v(4) = 0.0f;
+
+    double scale = 127.0;
+    auto quantized = project_onto<int8_t>(v, scale);
+    auto recovered = embed_into<float>(quantized, 1.0 / scale);
+
+    // Roundtrip error should be bounded by 1/scale ~ 0.008
+    for (std::size_t i = 0; i < 5; ++i)
+        REQUIRE_THAT(static_cast<double>(recovered(i)),
+                     Catch::Matchers::WithinAbs(static_cast<double>(v(i)), 1.0 / scale + 1e-6));
+}
+
+TEST_CASE("scaled project_onto: float matrix to int8", "[operation][projection][scaled]") {
+    mat::dense2D<float> A(2, 2);
+    A(0,0) = 1.0f; A(0,1) = -0.5f;
+    A(1,0) = 0.0f; A(1,1) = 0.75f;
+
+    auto Ai = project_onto<int8_t>(A, 127.0);
+
+    REQUIRE(Ai(0,0) == 127);
+    REQUIRE(Ai(0,1) == -63);  // 127 * -0.5 = -63.5 -> -63
+    REQUIRE(Ai(1,0) == 0);
+    REQUIRE(Ai(1,1) == 95);   // 127 * 0.75 = 95.25 -> 95
+}
+
+TEST_CASE("scaled embed_into: int8 matrix to float", "[operation][projection][scaled]") {
+    mat::dense2D<int8_t> A(2, 2);
+    A(0,0) = 127; A(0,1) = -63;
+    A(1,0) = 0;   A(1,1) = 95;
+
+    auto Af = embed_into<float>(A, 1.0 / 127.0);
+
+    REQUIRE_THAT(static_cast<double>(Af(0,0)), Catch::Matchers::WithinAbs(1.0, 1e-6));
+    REQUIRE_THAT(static_cast<double>(Af(0,1)), Catch::Matchers::WithinAbs(-63.0/127.0, 1e-6));
+}
+
+TEST_CASE("scaled project_onto: double to float with scale=1 is same as unscaled", "[operation][projection][scaled]") {
+    vec::dense_vector<double> v(3);
+    v(0) = 1.5; v(1) = -2.5; v(2) = 3.14;
+
+    auto vf_unscaled = project_onto<float>(v);
+    auto vf_scaled = project_onto<float>(v, 1.0);
+
+    for (std::size_t i = 0; i < 3; ++i)
+        REQUIRE(vf_scaled(i) == vf_unscaled(i));
+}
+
+// ============================================================================
 // Concept enforcement (compile-time)
 // ============================================================================
 
@@ -167,5 +261,11 @@ TEST_CASE("concept check: ProjectableOnto and EmbeddableInto", "[operation][proj
     static_assert(EmbeddableInto<double, double>);
     static_assert(EmbeddableInto<float, float>);
     static_assert(!EmbeddableInto<float, double>);   // can't embed narrower
+
+    // Integer types: int8_t has 7 digits, float has 24
+    static_assert(ProjectableOnto<int8_t, float>);   // 7 <= 24
+    static_assert(EmbeddableInto<float, int8_t>);    // 24 >= 7
+    static_assert(!ProjectableOnto<float, int8_t>);  // 24 > 7
+    static_assert(!EmbeddableInto<int8_t, float>);   // 7 < 24
     REQUIRE(true);  // test needs at least one assertion
 }
