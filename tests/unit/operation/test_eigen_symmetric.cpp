@@ -13,7 +13,7 @@
 
 using namespace mtl;
 
-// Helper: max eigenpair residual ||Av - λv|| / (||A|| * ||v||)
+// Helper: max eigenpair residual ||Av - lambda*v|| / (||A|| * ||v||)
 static double max_eigenpair_residual(const mat::dense2D<double>& A,
                                       const vec::dense_vector<double>& eigs,
                                       const mat::dense2D<double>& V) {
@@ -21,7 +21,7 @@ static double max_eigenpair_residual(const mat::dense2D<double>& A,
     double Anorm = frobenius_norm(A);
     double max_res = 0.0;
     for (std::size_t k = 0; k < n; ++k) {
-        // Compute Av - λv
+        // Compute Av - lambda*v
         double res_sq = 0.0;
         double v_sq = 0.0;
         for (std::size_t i = 0; i < n; ++i) {

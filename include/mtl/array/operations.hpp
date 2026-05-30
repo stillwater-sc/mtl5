@@ -15,7 +15,7 @@
 
 namespace mtl::array {
 
-// ── Full reductions (scalar result) ────────────────────────────────
+// -- Full reductions (scalar result) --------------------------------
 
 /// Sum all elements.
 template <typename V, std::size_t N, typename O>
@@ -57,7 +57,7 @@ V mean(const ndarray<V, N, O>& a) {
     return sum(a) / static_cast<V>(a.size());
 }
 
-// ── Axis reductions (ndarray result) ───────────────────────────────
+// -- Axis reductions (ndarray result) -------------------------------
 
 /// Sum along a specified axis, producing an ndarray of rank N-1.
 template <typename V, std::size_t N, typename O>

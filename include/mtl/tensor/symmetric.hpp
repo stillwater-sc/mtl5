@@ -16,7 +16,7 @@
 
 namespace mtl::tensor {
 
-// ── Symmetric rank-2 tensor ────────────────────────────────────────
+// -- Symmetric rank-2 tensor ----------------------------------------
 
 namespace detail_sym {
 
@@ -130,7 +130,7 @@ V trace(const symmetric_tensor<V, D>& t) {
     return result;
 }
 
-// ── Antisymmetric rank-2 tensor ────────────────────────────────────
+// -- Antisymmetric rank-2 tensor ------------------------------------
 
 /// Antisymmetric (skew-symmetric) rank-2 tensor.
 /// T(i,j) == -T(j,i), T(i,i) == 0.

@@ -2,10 +2,10 @@
 // MTL5 -- Interop between ndarray and existing vector/matrix types
 //
 // Provides:
-//   - as_ndarray(vec)  → ndarray<T, 1> view (zero-copy)
-//   - as_ndarray(mat)  → ndarray<T, 2> view (zero-copy, row-major only)
-//   - as_vector(ndarray<T,1>) → dense_vector view (zero-copy)
-//   - as_matrix(ndarray<T,2>) → dense2D view (zero-copy, contiguous only)
+//   - as_ndarray(vec)  -> ndarray<T, 1> view (zero-copy)
+//   - as_ndarray(mat)  -> ndarray<T, 2> view (zero-copy, row-major only)
+//   - as_vector(ndarray<T,1>) -> dense_vector view (zero-copy)
+//   - as_matrix(ndarray<T,2>) -> dense2D view (zero-copy, contiguous only)
 //   - Generic algorithms: transform, reduce, flatten
 
 #include <array>
@@ -21,7 +21,7 @@
 
 namespace mtl::array {
 
-// ── Vector → ndarray view ──────────────────────────────────────────
+// -- Vector -> ndarray view ------------------------------------------
 
 /// Create a 1D ndarray view over a dense_vector (zero-copy).
 template <typename Value, typename Params>
@@ -35,7 +35,7 @@ ndarray<const Value, 1, c_order> as_ndarray(const vec::dense_vector<Value, Param
         const_cast<const Value*>(v.data()), shape<1>{v.size()});
 }
 
-// ── Matrix → ndarray view ──────────────────────────────────────────
+// -- Matrix -> ndarray view ------------------------------------------
 
 /// Create a 2D ndarray view over a dense2D matrix (zero-copy).
 /// Works for row-major matrices; column-major uses F-order strides.
@@ -68,7 +68,7 @@ auto as_ndarray(const mat::dense2D<Value, Params>& m) {
     }
 }
 
-// ── ndarray → vector view ──────────────────────────────────────────
+// -- ndarray -> vector view ------------------------------------------
 
 /// Create a dense_vector view over a 1D ndarray (zero-copy).
 /// Requires contiguous storage.
@@ -84,7 +84,7 @@ vec::dense_vector<const Value> as_vector(const ndarray<Value, 1, Order>& a) {
     return vec::dense_vector<const Value>(a.size(), const_cast<const Value*>(a.data()));
 }
 
-// ── ndarray → matrix view ──────────────────────────────────────────
+// -- ndarray -> matrix view ------------------------------------------
 
 /// Create a dense2D view over a 2D ndarray (zero-copy).
 /// Requires contiguous C-order (row-major) storage.
@@ -103,7 +103,7 @@ mat::dense2D<const Value> as_matrix(const ndarray<Value, 2, Order>& a) {
         a.extent(0), a.extent(1), const_cast<const Value*>(a.data()));
 }
 
-// ── Generic algorithms ─────────────────────────────────────────────
+// -- Generic algorithms ---------------------------------------------
 
 /// Element-wise transform: apply f to every element of a, writing to out.
 /// Works on any NdArray (ndarray, or adapted vector/matrix views).

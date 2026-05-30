@@ -4,7 +4,7 @@
 // Provides:
 //   - Index variance tags: up (contravariant) and down (covariant)
 //   - Named index objects: Index<'i'>, Index<'j'>, ...
-//   - contract(A(i,j), B(j,k)) — Einstein summation over repeated indices
+//   - contract(A(i,j), B(j,k)) - Einstein summation over repeated indices
 //   - Compile-time detection of repeated indices and validation
 
 #include <array>
@@ -15,15 +15,15 @@
 
 namespace mtl::tensor {
 
-// ── Index variance tags ────────────────────────────────────────────
+// -- Index variance tags --------------------------------------------
 
-/// Contravariant (upper) index — transforms inversely to basis vectors.
+/// Contravariant (upper) index - transforms inversely to basis vectors.
 struct up {};
 
-/// Covariant (lower) index — transforms with basis vectors.
+/// Covariant (lower) index - transforms with basis vectors.
 struct down {};
 
-// ── Named index objects ────────────────────────────────────────────
+// -- Named index objects --------------------------------------------
 
 /// Compile-time named index for Einstein notation.
 /// Usage: Index<'i'> i; Index<'j'> j;
@@ -32,7 +32,7 @@ struct Index {
     static constexpr char name = Name;
 };
 
-// ── Index expression (tensor bound to named indices) ───────────────
+// -- Index expression (tensor bound to named indices) ---------------
 
 /// A tensor expression with named indices attached.
 /// Created by: A(i, j) where i, j are Index objects.
@@ -43,7 +43,7 @@ struct indexed_tensor {
     static constexpr std::array<char, sizeof...(Names)> names{Names...};
 };
 
-// ── Binding tensors to indices ─────────────────────────────────────
+// -- Binding tensors to indices -------------------------------------
 
 /// Bind a rank-2 tensor to two named indices: A(i, j)
 template <typename V, std::size_t D, char I, char J>
@@ -57,7 +57,7 @@ auto bind(const tensor<V, 1, D>& t, Index<I>) {
     return indexed_tensor<tensor<V, 1, D>, I>{t};
 }
 
-// ── Contraction (Einstein summation) ───────────────────────────────
+// -- Contraction (Einstein summation) -------------------------------
 
 namespace detail_index {
 
@@ -147,7 +147,7 @@ auto contract(const indexed_tensor<tensor<V, 2, D>, AI, AJ>& a,
     return result;
 }
 
-// ── Outer product ──────────────────────────────────────────────────
+// -- Outer product --------------------------------------------------
 
 /// Outer product of two rank-1 tensors: C_ij = a_i * b_j
 template <typename V, std::size_t D>

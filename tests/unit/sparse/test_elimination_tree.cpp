@@ -46,7 +46,7 @@ TEST_CASE("Elimination tree of arrow matrix", "[sparse][etree]") {
     // The etree: parent[0] = no_parent (row 0 connects to all),
     // but since we process upper triangle: col 0 has entries at rows 0,
     // cols 1,2,3 have entry at row 0.
-    // etree: parent[1]=0? No — etree is: parent[j] = first subdiag nz in col j.
+    // etree: parent[1]=0? No - etree is: parent[j] = first subdiag nz in col j.
     // For upper triangular: column 0 has row 0 only (diag), so we look at
     // which columns have row index 0 in upper triangle.
     // Upper triangle entries: (0,0),(0,1),(0,2),(0,3),(1,1),(2,2),(3,3)

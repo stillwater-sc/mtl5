@@ -154,7 +154,7 @@ auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
 /// Compute eigenvalues and eigenvectors of a symmetric matrix.
 /// Returns {eigenvalues, eigenvectors} where:
 ///   eigenvalues:  dense_vector of size n, sorted ascending
-///   eigenvectors: dense2D of size n×n, column k = eigenvector for eigenvalues(k)
+///   eigenvectors: dense2D of size n x n, column k = eigenvector for eigenvalues(k)
 ///
 /// The algorithm accumulates similarity transforms (Householder reflectors
 /// from tridiagonalization + Givens rotations from QR iteration) into Q,

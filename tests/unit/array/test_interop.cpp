@@ -10,7 +10,7 @@
 using namespace mtl;
 using namespace mtl::array;
 
-// ── Vector → ndarray round-trip ────────────────────────────────────
+// -- Vector -> ndarray round-trip ------------------------------------
 
 TEST_CASE("dense_vector to ndarray view (zero-copy)", "[interop][vec]") {
     vec::dense_vector<double> v = {1.0, 2.0, 3.0, 4.0};
@@ -40,7 +40,7 @@ TEST_CASE("const dense_vector to const ndarray view", "[interop][vec]") {
     // a(0) = 5.0;  // should not compile (const)
 }
 
-// ── Matrix → ndarray round-trip ────────────────────────────────────
+// -- Matrix -> ndarray round-trip ------------------------------------
 
 TEST_CASE("dense2D to ndarray view (zero-copy)", "[interop][mat]") {
     mat::dense2D<double> m(3, 4);
@@ -65,7 +65,7 @@ TEST_CASE("mutation through ndarray view visible in matrix", "[interop][mat]") {
     REQUIRE(m(1, 1) == 77);
 }
 
-// ── ndarray → vector round-trip ────────────────────────────────────
+// -- ndarray -> vector round-trip ------------------------------------
 
 TEST_CASE("ndarray to dense_vector view", "[interop][vec]") {
     ndarray<double, 1> a(shape<1>{5});
@@ -89,7 +89,7 @@ TEST_CASE("ndarray to dense2D view", "[interop][mat]") {
     REQUIRE(m.data() == a.data());  // zero-copy
 }
 
-// ── Matrix → ndarray → slice row → verify 1D view ─────────────────
+// -- Matrix -> ndarray -> slice row -> verify 1D view -----------------
 
 TEST_CASE("matrix to ndarray, slice row, get vector view", "[interop][slice]") {
     mat::dense2D<int> m(3, 4);
@@ -98,7 +98,7 @@ TEST_CASE("matrix to ndarray, slice row, get vector view", "[interop][slice]") {
             m(i, j) = static_cast<int>(i * 4 + j);
 
     auto a = as_ndarray(m);
-    auto row1 = slice(a, 1, all);  // row 1 → 1D view
+    auto row1 = slice(a, 1, all);  // row 1 -> 1D view
 
     REQUIRE(row1.size() == 4);
     REQUIRE(row1(0) == 4);
@@ -111,7 +111,7 @@ TEST_CASE("matrix to ndarray, slice row, get vector view", "[interop][slice]") {
     REQUIRE(m(1, 2) == 99);
 }
 
-// ── Generic algorithms ─────────────────────────────────────────────
+// -- Generic algorithms ---------------------------------------------
 
 TEST_CASE("transform on ndarray", "[interop][algorithm]") {
     ndarray<int, 1> a(shape<1>{4});

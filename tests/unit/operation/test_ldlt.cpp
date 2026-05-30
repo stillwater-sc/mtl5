@@ -116,7 +116,7 @@ TEST_CASE("LDL^T detects zero pivot", "[operation][ldlt]") {
     A(1,0) = 1;  A(1,1) = 0;
 
     int info = ldlt_factor(A);
-    REQUIRE(info != 0);  // D(0,0) = 0 → returns 1
+    REQUIRE(info != 0);  // D(0,0) = 0 -> returns 1
     REQUIRE(info == 1);
 
     // Verify ldlt_solve throws on zero diagonal

@@ -103,7 +103,7 @@ TEST_CASE("Sparse LDL^T numeric: 3x3 SPD matrix", "[sparse][ldlt]") {
     REQUIRE(L.nrows == 3);
     REQUIRE(L.ncols == 3);
 
-    // L stores only strictly-lower entries (no diagonal — unit diagonal is implicit)
+    // L stores only strictly-lower entries (no diagonal - unit diagonal is implicit)
     // For a tridiagonal 3x3, each column except the last has 1 off-diagonal entry
     for (std::size_t j = 0; j < 3; ++j) {
         for (std::size_t p = L.col_ptr[j]; p < L.col_ptr[j + 1]; ++p)

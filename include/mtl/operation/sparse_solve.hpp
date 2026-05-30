@@ -4,12 +4,12 @@
 // Provides top-level solve() free functions that automatically select the
 // best available backend based on matrix type and library availability:
 //
-//   Dense float/double + LAPACK  → LAPACK (existing in lu.hpp/cholesky.hpp/qr.hpp)
-//   Sparse float/double + UMFPACK → UMFPACK (for LU)
-//   Sparse float/double + CHOLMOD → CHOLMOD (for Cholesky)
-//   Sparse float/double + SPQR   → SPQR (for QR)
-//   Sparse (any type)             → native sparse solvers
-//   Dense (any type)              → dense generic solvers
+//   Dense float/double + LAPACK  -> LAPACK (existing in lu.hpp/cholesky.hpp/qr.hpp)
+//   Sparse float/double + UMFPACK -> UMFPACK (for LU)
+//   Sparse float/double + CHOLMOD -> CHOLMOD (for Cholesky)
+//   Sparse float/double + SPQR   -> SPQR (for QR)
+//   Sparse (any type)             -> native sparse solvers
+//   Dense (any type)              -> dense generic solvers
 //
 // The dispatch is entirely at compile time via if constexpr + traits.
 //
