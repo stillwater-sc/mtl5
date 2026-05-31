@@ -104,7 +104,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@9e326ebed976843c9932b3aa0e021c6f50310eb4 # v0.0.6
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Configure (Unix, GCC/Clang)
         if: runner.os != 'Windows'
@@ -168,7 +168,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@9e326ebed976843c9932b3aa0e021c6f50310eb4 # v0.0.6
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Configure
         run: >
