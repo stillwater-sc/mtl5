@@ -35,13 +35,6 @@ import os
 import sys
 from collections import defaultdict
 
-try:
-    import matplotlib
-    matplotlib.use("Agg")  # headless-safe; override-able via MPLBACKEND
-    import matplotlib.pyplot as plt
-except ImportError:
-    sys.exit("error: matplotlib is required (pip install matplotlib)")
-
 # CSV column -> human-readable y-axis label
 METRICS = {
     "gflops": "GFLOP/s",
@@ -79,6 +72,18 @@ def main(argv=None):
     ap.add_argument("--logy", action="store_true", help="log-scale the metric axis")
     ap.add_argument("--show", action="store_true", help="display interactively instead of saving")
     args = ap.parse_args(argv)
+
+    # Import matplotlib only after parsing args, and pick the backend *before*
+    # pyplot is imported: a headless-safe Agg for saving, or the default
+    # (interactive) backend for --show. Selecting the backend after pyplot is
+    # initialised would have no effect.
+    try:
+        import matplotlib
+        if not args.show:
+            matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        sys.exit("error: matplotlib is required (pip install matplotlib)")
 
     if args.labels:
         labels = args.labels.split(",")
@@ -136,7 +141,6 @@ def main(argv=None):
     fig.tight_layout(rect=(0, 0, 1, 0.97))
 
     if args.show:
-        matplotlib.use("TkAgg", force=True)  # best-effort interactive
         plt.show()
     else:
         out = args.out or f"{os.path.splitext(args.csv[0])[0]}_{args.metric}.png"
