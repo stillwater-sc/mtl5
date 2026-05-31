@@ -51,3 +51,8 @@ _deps/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code: ignore per-user and runtime files.
+# Shared config (.claude/agents, hooks, skills, settings.json) IS committed.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
