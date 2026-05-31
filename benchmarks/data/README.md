@@ -11,76 +11,52 @@ All CSVs in this directory were produced on:
 
 | | |
 |---|---|
-| CPU | 12th Gen Intel Core i7-12700K |
-| Logical cores | 20 (run pinned to a single thread) |
+| CPU | 12th Gen Intel Core i7-12700K (hybrid: 8 P-core + 4 E-core) |
+| Pinning | single thread, pinned to a P-core (`BENCH_CPU=4`) |
 | OS | Ubuntu 24.04.4 LTS (Noble), kernel 6.8.0-117 |
 | Compiler | GCC 13, `-O3 -DNDEBUG` (CMake `Release`) |
 | OpenBLAS | 0.3.26 (`libopenblas-dev` 0.3.26+ds-1ubuntu0.1, pthreads build) |
 | Intel MKL | oneAPI 2026.0 (`BLA_VENDOR=Intel10_64lp`) |
 
 Single-threaded for stable, comparable per-size numbers
-(`OMP_NUM_THREADS=1`, plus `OPENBLAS_NUM_THREADS=1` / `MKL_NUM_THREADS=1`).
+(`OMP_NUM_THREADS=1`, plus `OPENBLAS_NUM_THREADS=1` / `MKL_NUM_THREADS=1`), and
+pinned to a performance core so the small L1 kernels don't land on an E-core.
 
 ## Files
 
-| File | Backends | How it was generated |
-|------|----------|----------------------|
-| `blas_sweep_openblas.csv`   | native, blas (OpenBLAS)   | OpenBLAS build, `--suite blas` |
-| `blas_sweep_mkl.csv`        | native, blas (MKL)        | MKL build, `--suite blas` |
-| `lapack_sweep_openblas.csv` | native, lapack (OpenBLAS) | OpenBLAS build, `--suite lapack` |
-| `lapack_sweep_mkl.csv`      | native, lapack (MKL)      | MKL build, `--suite lapack` |
+One file per **backend** (the build configuration *is* the backend — see
+`../README.md`). Each contains exactly one backend's numbers:
 
-All four use the same odd-size sweep `65:1025:80` (all odd, non-power-of-2
+| File | Backend | Build |
+|------|---------|-------|
+| `blas_sweep_native.csv`     | native   | generic-only (no BLAS) |
+| `blas_sweep_openblas.csv`   | openblas | `MTL5_WITH_BLAS/LAPACK=ON` |
+| `blas_sweep_mkl.csv`        | mkl      | `… BLA_VENDOR=Intel10_64lp` |
+| `lapack_sweep_native.csv`   | native   | generic-only |
+| `lapack_sweep_openblas.csv` | openblas | OpenBLAS |
+| `lapack_sweep_mkl.csv`      | mkl      | MKL |
+
+All six use the same odd-size sweep `65:1025:80` (all odd, non-power-of-2
 sizes). The `blas_*` files cover L1/L2/L3 (`dot`, `nrm2`, `gemv`, `gemm`); the
 `lapack_*` files cover the factorizations (`lu_factor`, `qr_factor`, `cholesky`,
-`eig_sym`). In the `lapack_*` files the `native` `eig_sym` rows are the generic
-C++ eigensolver (not LAPACK), so native vs lapack is a genuine comparison.
+`eig_sym`).
+
+## Regenerate
+
+All six CSVs (and a clean build of each variant) come from one script:
 
 ```bash
-# OpenBLAS build
-cmake -B build-openblas -DMTL5_BUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release \
-      -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON
-cmake --build build-openblas --target bench_all
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-  ./build-openblas/benchmarks/bench_all --suite blas --sweep 65:1025:80 \
-    --csv benchmarks/data/blas_sweep_openblas.csv
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
-  ./build-openblas/benchmarks/bench_all --suite lapack --lapack-sweep 65:1025:80 \
-    --csv benchmarks/data/lapack_sweep_openblas.csv
-
-# MKL build
-source /opt/intel/oneapi/setvars.sh
-cmake -B build-mkl -DMTL5_BUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release \
-      -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON -DBLA_VENDOR=Intel10_64lp
-cmake --build build-mkl --target bench_all
-OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-  ./build-mkl/benchmarks/bench_all --suite blas --sweep 65:1025:80 \
-    --csv benchmarks/data/blas_sweep_mkl.csv
-OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-  ./build-mkl/benchmarks/bench_all --suite lapack --lapack-sweep 65:1025:80 \
-    --csv benchmarks/data/lapack_sweep_mkl.csv
+BENCH_CPU=4 ../run_sweeps.sh          # 4 = a P-core; MKL skipped if not installed
 ```
 
-## Plot
+## Plots
+
+GFLOP/s vs N, native vs OpenBLAS vs MKL, single-threaded — one curve per
+backend:
 
 ```bash
-./benchmarks/plot_results.py \
-    benchmarks/data/blas_sweep_openblas.csv \
-    benchmarks/data/blas_sweep_mkl.csv \
-    --labels openblas,mkl --op gemm --out gemm_gflops.png
-```
-
-### Rendered curves
-
-GFLOP/s vs N, native (C++) vs OpenBLAS vs MKL, single-threaded. Regenerate with:
-
-```bash
-./benchmarks/plot_results.py benchmarks/data/blas_sweep_openblas.csv \
-    benchmarks/data/blas_sweep_mkl.csv --labels openblas,mkl \
-    --out benchmarks/data/blas_sweep_gflops.png
-./benchmarks/plot_results.py benchmarks/data/lapack_sweep_openblas.csv \
-    benchmarks/data/lapack_sweep_mkl.csv --labels openblas,mkl \
-    --out benchmarks/data/lapack_sweep_gflops.png
+../plot_results.py blas_sweep_*.csv   --out blas_sweep_gflops.png
+../plot_results.py lapack_sweep_*.csv --out lapack_sweep_gflops.png
 ```
 
 **BLAS L1/L2/L3** (`dot`, `nrm2`, `gemv`, `gemm`):
@@ -91,6 +67,7 @@ GFLOP/s vs N, native (C++) vs OpenBLAS vs MKL, single-threaded. Regenerate with:
 
 ![LAPACK sweep GFLOP/s](lapack_sweep_gflops.png)
 
-The two `native` curves coincide (same C++ code regardless of linked BLAS). On
-`eig_sym`, `native` is the generic C++ solver (post-#78), so native vs lapack is
-a real comparison; note MKL trailing OpenBLAS on `eig_sym` past N ~= 400.
+`native` is the generic C++ path (one curve, measured by the no-BLAS build — no
+more per-vendor `native` duplication). Note MKL trailing OpenBLAS on `eig_sym`
+past N ≈ 400, and that `dot` is now BLAS-accelerated (the public `mtl::dot`
+gained a BLAS path alongside `two_norm`).
