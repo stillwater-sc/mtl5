@@ -109,11 +109,25 @@ for_each_backend(dense_backends{}, [&]<typename Backend>() {
 cmake -B build -DMTL5_BUILD_BENCHMARKS=ON
 cmake --build build --target bench_all
 
-# With BLAS + LAPACK comparison
+# With BLAS + LAPACK comparison (uses the system default BLAS, e.g. OpenBLAS)
 cmake -B build -DMTL5_BUILD_BENCHMARKS=ON \
-      -DMTL5_ENABLE_BLAS=ON -DMTL5_ENABLE_LAPACK=ON
+      -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON
 cmake --build build --target bench_all
+
+# Against Intel MKL: select it through CMake's FindBLAS vendor, with the
+# oneAPI environment sourced so the libraries are found at configure and run time.
+source /opt/intel/oneapi/setvars.sh
+cmake -B build-mkl -DMTL5_BUILD_BENCHMARKS=ON \
+      -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON \
+      -DBLA_VENDOR=Intel10_64lp
+cmake --build build-mkl --target bench_all
 ```
+
+> The CMake options are `MTL5_WITH_BLAS` / `MTL5_WITH_LAPACK`. The benchmark
+> output labels the accelerated backend `blas` / `lapack` regardless of which
+> library is linked, so "native vs MKL" is the `blas` / `lapack` rows of a
+> binary built against MKL. Use separate build directories to keep OpenBLAS and
+> MKL results apart.
 
 ## Running
 
