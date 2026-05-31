@@ -59,6 +59,16 @@ export default defineConfig({
           label: 'Contributing',
           autogenerate: { directory: 'contributing' },
         },
+        {
+          // Doxygen C++ API reference, generated into public/api/ by
+          // `npm run api` and served at <base>api/ (i.e. /mtl5/api/ on
+          // Pages, /api/ in local dev). Starlight prepends the site `base` to
+          // internal links, so this stays base-relative. Opens in a new tab
+          // since it is a separate, fully self-contained doc tree.
+          label: 'C++ API Reference (Doxygen)',
+          link: '/api/',
+          attrs: { target: '_blank', rel: 'noopener noreferrer' },
+        },
       ],
     }),
   ],

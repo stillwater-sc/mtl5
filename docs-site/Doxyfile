@@ -1,0 +1,42 @@
+# Doxygen config for the MTL5 (Matrix Template Library) C++ API reference.
+#
+# Run from docs-site/ (the deploy workflow and `npm run api` do this); the
+# HTML lands in public/api/, which Astro serves at <base>api/ (so
+# /mtl5/api/ on GitHub Pages, /api/ in local dev) alongside the Starlight
+# site. The library is header-only, so the headers under include/mtl/ ARE the
+# API.
+
+PROJECT_NAME           = "MTL5 -- Matrix Template Library C++ API"
+PROJECT_BRIEF          = "mtl:: -- C++20 header-only linear algebra for mixed-precision algorithm design"
+OUTPUT_DIRECTORY       = public
+HTML_OUTPUT            = api
+GENERATE_LATEX         = NO
+
+INPUT                  = ../include/mtl
+RECURSIVE              = YES
+FILE_PATTERNS          = *.hpp *.h
+
+# Header-only template library: surface every declaration, documented or not.
+EXTRACT_ALL            = YES
+EXTRACT_STATIC         = YES
+JAVADOC_AUTOBRIEF      = YES
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO
+
+# Navigation / presentation.
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+ALPHABETICAL_INDEX     = YES
+SORT_MEMBER_DOCS       = YES
+
+# A full syntax-highlighted source browser would balloon the Pages artifact.
+# The treeview + namespace/class/file API pages are what we want; skip the
+# verbatim source copy to keep the deploy lean. Likewise no dot graphs (no
+# graphviz dependency in CI).
+SOURCE_BROWSER         = NO
+VERBATIM_HEADERS       = NO
+HAVE_DOT               = NO
+
+# C++20: let Doxygen see concepts/templates cleanly.
+BUILTIN_STL_SUPPORT    = YES
