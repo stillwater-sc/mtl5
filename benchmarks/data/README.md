@@ -25,11 +25,16 @@ Single-threaded for stable, comparable per-size numbers
 
 | File | Backends | How it was generated |
 |------|----------|----------------------|
-| `blas_sweep_openblas.csv` | native, blas (OpenBLAS) | OpenBLAS build, command below |
-| `blas_sweep_mkl.csv`      | native, blas (MKL)      | MKL build, command below |
+| `blas_sweep_openblas.csv`   | native, blas (OpenBLAS)   | OpenBLAS build, `--suite blas` |
+| `blas_sweep_mkl.csv`        | native, blas (MKL)        | MKL build, `--suite blas` |
+| `lapack_sweep_openblas.csv` | native, lapack (OpenBLAS) | OpenBLAS build, `--suite lapack` |
+| `lapack_sweep_mkl.csv`      | native, lapack (MKL)      | MKL build, `--suite lapack` |
 
-Both are the odd-size BLAS sweep `65:1025:80` (all odd, non-power-of-2 sizes)
-across L1/L2/L3 (`dot`, `nrm2`, `gemv`, `gemm`).
+All four use the same odd-size sweep `65:1025:80` (all odd, non-power-of-2
+sizes). The `blas_*` files cover L1/L2/L3 (`dot`, `nrm2`, `gemv`, `gemm`); the
+`lapack_*` files cover the factorizations (`lu_factor`, `qr_factor`, `cholesky`,
+`eig_sym`). In the `lapack_*` files the `native` `eig_sym` rows are the generic
+C++ eigensolver (not LAPACK), so native vs lapack is a genuine comparison.
 
 ```bash
 # OpenBLAS build
@@ -39,6 +44,9 @@ cmake --build build-openblas --target bench_all
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   ./build-openblas/benchmarks/bench_all --suite blas --sweep 65:1025:80 \
     --csv benchmarks/data/blas_sweep_openblas.csv
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+  ./build-openblas/benchmarks/bench_all --suite lapack --lapack-sweep 65:1025:80 \
+    --csv benchmarks/data/lapack_sweep_openblas.csv
 
 # MKL build
 source /opt/intel/oneapi/setvars.sh
@@ -48,6 +56,9 @@ cmake --build build-mkl --target bench_all
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   ./build-mkl/benchmarks/bench_all --suite blas --sweep 65:1025:80 \
     --csv benchmarks/data/blas_sweep_mkl.csv
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  ./build-mkl/benchmarks/bench_all --suite lapack --lapack-sweep 65:1025:80 \
+    --csv benchmarks/data/lapack_sweep_mkl.csv
 ```
 
 ## Plot
