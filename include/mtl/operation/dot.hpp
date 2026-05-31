@@ -4,6 +4,8 @@
 // (real float/double dense vectors), mirroring two_norm.
 #include <cassert>
 #include <complex>
+#include <cstddef>
+#include <limits>
 #include <type_traits>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/scalar.hpp>
@@ -22,10 +24,13 @@ auto dot(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
 #ifdef MTL5_HAS_BLAS
     // BlasDenseVector is real float/double, where conj is the identity, so
-    // BLAS ?dot matches the Hermitian product on these types.
+    // BLAS ?dot matches the Hermitian product on these types. Guard the int
+    // length cast: BLAS takes int, so fall back to the loop for huge vectors.
     if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2>) {
-        return interface::blas::dot(static_cast<int>(v1.size()),
-                                    v1.data(), 1, v2.data(), 1);
+        if (v1.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            return interface::blas::dot(static_cast<int>(v1.size()),
+                                        v1.data(), 1, v2.data(), 1);
+        }
     }
 #endif
     using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
@@ -42,8 +47,10 @@ auto dot_real(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2>) {
-        return interface::blas::dot(static_cast<int>(v1.size()),
-                                    v1.data(), 1, v2.data(), 1);
+        if (v1.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            return interface::blas::dot(static_cast<int>(v1.size()),
+                                        v1.data(), 1, v2.data(), 1);
+        }
     }
 #endif
     using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
