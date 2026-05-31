@@ -17,10 +17,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for non-ASCII characters in source
         run: |
+          # grep -l exits 0 (matches), 1 (no matches), >1 (execution error).
+          # Don't mask >1 with '|| true' — a broken scan must fail CI, not pass.
+          set +e
           hits=$(grep -rlP '[^\x00-\x7F]' \
             --include='*.hpp' --include='*.cpp' --include='*.h' \
             --include='*.cc' --include='*.cxx' \
-            include tests examples || true)
+            include tests examples)
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then
+            echo "ASCII scan failed to execute (grep exit $status)."
+            exit "$status"
+          fi
           if [ -n "$hits" ]; then
             echo "Non-ASCII characters found in:"
             echo "$hits"
