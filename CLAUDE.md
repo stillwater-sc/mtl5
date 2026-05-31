@@ -172,6 +172,18 @@ To add a new doc page:
 cd docs-site && npm install && npm run dev
 ```
 
+#### C++ API Reference (Doxygen)
+
+The Doxygen-generated C++ API reference is a separate, self-contained HTML tree
+served alongside the Starlight site:
+
+- **Config**: `docs-site/Doxyfile` (`INPUT = ../include/mtl`, header-only, HTML only — no LaTeX/dot/source browser to keep the deploy lean)
+- **Generate**: `npm run api` (from `docs-site/`) runs `doxygen Doxyfile`, emitting HTML into `docs-site/public/api/`. Astro copies `public/` verbatim into `dist/`, so it lands at `<base>api/` — `/mtl5/api/` on Pages, `/api/` in local dev.
+- **Full local build**: `npm run build:full` runs Doxygen then the Astro build (`npm run build` alone skips Doxygen).
+- **Sidebar link**: the "C++ API Reference (Doxygen)" entry in `astro.config.mjs` links to `/api/` (opens in a new tab).
+- **CI**: `.github/workflows/docs.yml` installs `doxygen`, runs `npm run api`, then `npm run build`.
+- `public/api/` is generated and git-ignored — never commit it.
+
 ## Git Workflow
 
 ### Branch Protection
