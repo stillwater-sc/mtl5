@@ -270,6 +270,35 @@ TEST_CASE("antisymmetric to full round-trip", "[tensor][antisymmetric]") {
     REQUIRE(trace(full) == Catch::Approx(0.0));
 }
 
+TEST_CASE("antisymmetric tensor set on diagonal is a safe no-op", "[tensor][antisymmetric]") {
+    // Regression test for issue #61: under NDEBUG the diagonal assert is
+    // compiled out, and set(i, i, val) fell into the else branch where
+    // asym2_index(i, i, Dim) returns the num_stored sentinel -> out-of-bounds
+    // write. set on the diagonal must instead be a no-op (diagonal == 0).
+    antisymmetric_tensor<double, 3> a;
+    a.set(0, 1, 1.0);
+    a.set(0, 2, 2.0);
+    a.set(1, 2, 3.0);
+
+    // Setting any diagonal element must not touch stored off-diagonal data...
+    a.set(0, 0, 99.0);
+    a.set(1, 1, 99.0);
+    a.set(2, 2, 99.0);
+
+    // ...the diagonal stays zero...
+    REQUIRE(a(0, 0) == 0.0);
+    REQUIRE(a(1, 1) == 0.0);
+    REQUIRE(a(2, 2) == 0.0);
+
+    // ...and the previously set components are unchanged.
+    REQUIRE(a(0, 1) == 1.0);
+    REQUIRE(a(0, 2) == 2.0);
+    REQUIRE(a(1, 2) == 3.0);
+    REQUIRE(a(1, 0) == -1.0);
+    REQUIRE(a(2, 0) == -2.0);
+    REQUIRE(a(2, 1) == -3.0);
+}
+
 // -- Metric operations ----------------------------------------------
 
 TEST_CASE("Euclidean metric raise/lower is identity", "[tensor][metric]") {

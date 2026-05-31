@@ -153,8 +153,14 @@ public:
     antisymmetric_tensor() = default;
 
     /// Set the (i,j) component where i < j. Setting (j,i) sets -(i,j).
+    /// Setting a diagonal element (i == j) is a no-op: the diagonal of an
+    /// antisymmetric tensor is structurally zero and has no storage slot.
     void set(size_type i, size_type j, const Value& val) {
-        assert(i != j && "Diagonal of antisymmetric tensor is always zero");
+        assert(i < Dim && j < Dim && "Index out of bounds");
+        // Guard the diagonal explicitly: asym2_index(i, i, Dim) returns the
+        // num_stored sentinel, so writing there would be out of bounds. The
+        // assert above is compiled out under NDEBUG, so this cannot rely on it.
+        if (i == j) return;
         if (i < j) {
             data_[detail_sym::asym2_index(i, j, Dim)] = val;
         } else {
