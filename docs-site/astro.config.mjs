@@ -67,7 +67,7 @@ export default defineConfig({
           // since it is a separate, fully self-contained doc tree.
           label: 'C++ API Reference (Doxygen)',
           link: '/api/',
-          attrs: { target: '_blank' },
+          attrs: { target: '_blank', rel: 'noopener noreferrer' },
         },
       ],
     }),

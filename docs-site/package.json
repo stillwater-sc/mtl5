@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "sync": "node sync-content.mjs",
-    "clean": "git clean -fXd src/content/docs/ && rm -rf public/api/",
+    "clean": "git clean -fXd src/content/docs/ public/api/",
     "api": "doxygen Doxyfile",
     "dev": "node sync-content.mjs && astro dev",
     "build": "node sync-content.mjs && astro build",
