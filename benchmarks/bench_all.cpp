@@ -12,7 +12,6 @@
 
 #include <benchmarks/harness/runner.hpp>
 #include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <set>
