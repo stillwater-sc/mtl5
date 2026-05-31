@@ -82,5 +82,5 @@ TEST_CASE("Symmetric eigenvalue regression: Wilkinson", "[regression][dense][eig
     REQUIRE(std::abs(trace_eig - trace_A) < tol);
 }
 
-// NOTE: SVD regression test omitted — native SVD has accuracy issues beyond
+// NOTE: SVD regression test omitted - native SVD has accuracy issues beyond
 // n~20 (see known limitation). Tracked separately for investigation.

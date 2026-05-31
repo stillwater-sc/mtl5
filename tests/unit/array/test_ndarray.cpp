@@ -13,7 +13,7 @@
 using namespace mtl;
 using namespace mtl::array;
 
-// ── Shape tests ────────────────────────────────────────────────────
+// -- Shape tests ----------------------------------------------------
 
 TEST_CASE("shape construction and access", "[array][shape]") {
     shape<3> sh{4, 5, 6};
@@ -31,7 +31,7 @@ TEST_CASE("shape equality", "[array][shape]") {
     REQUIRE(a != c);
 }
 
-// ── Stride tests ───────────────────────────────────────────────────
+// -- Stride tests ---------------------------------------------------
 
 TEST_CASE("c-order strides", "[array][strides]") {
     shape<3> sh{2, 3, 4};
@@ -51,7 +51,7 @@ TEST_CASE("f-order strides", "[array][strides]") {
     REQUIRE(strides[2] == 6);
 }
 
-// ── Construction tests ─────────────────────────────────────────────
+// -- Construction tests ---------------------------------------------
 
 TEST_CASE("ndarray default construction", "[array][ctor]") {
     ndarray<double, 2> a;
@@ -81,7 +81,7 @@ TEST_CASE("ndarray fill construction", "[array][ctor]") {
     REQUIRE(a(1, 2) == 42);
 }
 
-// ── Concept satisfaction ───────────────────────────────────────────
+// -- Concept satisfaction -------------------------------------------
 
 TEST_CASE("ndarray satisfies NdArray concept", "[array][concept]") {
     STATIC_REQUIRE(Collection<ndarray<double, 2>>);
@@ -95,7 +95,7 @@ TEST_CASE("ndarray has dense category trait", "[array][trait]") {
     STATIC_REQUIRE(std::is_same_v<cat, tag::dense>);
 }
 
-// ── Element access ─────────────────────────────────────────────────
+// -- Element access -------------------------------------------------
 
 TEST_CASE("ndarray element access via operator()", "[array][access]") {
     ndarray<int, 2> a({3, 4});
@@ -142,7 +142,7 @@ TEST_CASE("ndarray F-order memory layout", "[array][layout]") {
     }
 }
 
-// ── View tests ─────────────────────────────────────────────────────
+// -- View tests -----------------------------------------------------
 
 TEST_CASE("ndarray view shares memory", "[array][view]") {
     ndarray<int, 2> a({3, 4}, 0);
@@ -168,7 +168,7 @@ TEST_CASE("ndarray external pointer constructor", "[array][view]") {
     REQUIRE(data[1] == 42);
 }
 
-// ── Reshape and transpose ──────────────────────────────────────────
+// -- Reshape and transpose ------------------------------------------
 
 TEST_CASE("ndarray reshape", "[array][reshape]") {
     ndarray<int, 2> a({3, 4});
@@ -196,7 +196,7 @@ TEST_CASE("ndarray transpose", "[array][transpose]") {
     REQUIRE(t(2, 1) == 6);
 }
 
-// ── Slicing tests ──────────────────────────────────────────────────
+// -- Slicing tests --------------------------------------------------
 
 TEST_CASE("slice with all keeps full dimension", "[array][slice]") {
     ndarray<int, 2> a({3, 4}, 0);
@@ -204,7 +204,7 @@ TEST_CASE("slice with all keeps full dimension", "[array][slice]") {
         for (std::size_t j = 0; j < 4; ++j)
             a(i, j) = static_cast<int>(i * 4 + j);
 
-    auto row = slice(a, 1, all);  // row 1 → 1D view
+    auto row = slice(a, 1, all);  // row 1 -> 1D view
     REQUIRE(row.size() == 4);
     REQUIRE(row(0) == 4);
     REQUIRE(row(1) == 5);
@@ -216,7 +216,7 @@ TEST_CASE("slice with integer reduces rank", "[array][slice]") {
     ndarray<int, 3> a({2, 3, 4}, 0);
     a(1, 2, 3) = 42;
 
-    auto s = slice(a, 1, all, all);  // fix first dim → 2D
+    auto s = slice(a, 1, all, all);  // fix first dim -> 2D
     REQUIRE(s.extent(0) == 3);
     REQUIRE(s.extent(1) == 4);
     REQUIRE(s(2, 3) == 42);
@@ -242,7 +242,7 @@ TEST_CASE("slice mutation visible in original", "[array][slice]") {
     REQUIRE(a(1, 2) == 99);
 }
 
-// ── Broadcasting tests ─────────────────────────────────────────────
+// -- Broadcasting tests ---------------------------------------------
 
 TEST_CASE("broadcast shape computation", "[array][broadcast]") {
     shape<3> a{4, 1, 6};
@@ -270,7 +270,7 @@ TEST_CASE("element-wise addition same shape", "[array][broadcast]") {
 }
 
 TEST_CASE("element-wise multiplication with broadcasting", "[array][broadcast]") {
-    // a is (3, 1), b is (1, 4) → result is (3, 4)
+    // a is (3, 1), b is (1, 4) -> result is (3, 4)
     ndarray<int, 2> a(shape<2>{3, 1});
     ndarray<int, 2> b(shape<2>{1, 4});
 
@@ -286,7 +286,7 @@ TEST_CASE("element-wise multiplication with broadcasting", "[array][broadcast]")
     REQUIRE(c(2, 3) == 12);
 }
 
-// ── Reduction tests ────────────────────────────────────────────────
+// -- Reduction tests ------------------------------------------------
 
 TEST_CASE("sum all elements", "[array][reduction]") {
     ndarray<int, 2> a({2, 3}, 5);
@@ -317,14 +317,14 @@ TEST_CASE("sum along axis", "[array][reduction]") {
     a(0, 0) = 1; a(0, 1) = 2; a(0, 2) = 3;
     a(1, 0) = 4; a(1, 1) = 5; a(1, 2) = 6;
 
-    // Sum along axis 0 → shape (3,)
+    // Sum along axis 0 -> shape (3,)
     auto s0 = sum_axis(a, 0);
     REQUIRE(s0.extent(0) == 3);
     REQUIRE(s0(0) == 5);   // 1+4
     REQUIRE(s0(1) == 7);   // 2+5
     REQUIRE(s0(2) == 9);   // 3+6
 
-    // Sum along axis 1 → shape (2,)
+    // Sum along axis 1 -> shape (2,)
     auto s1 = sum_axis(a, 1);
     REQUIRE(s1.extent(0) == 2);
     REQUIRE(s1(0) == 6);   // 1+2+3
@@ -342,7 +342,7 @@ TEST_CASE("mean along axis", "[array][reduction]") {
     REQUIRE(m(2) == Catch::Approx(4.5));
 }
 
-// ── Fill and compound assignment ───────────────────────────────────
+// -- Fill and compound assignment -----------------------------------
 
 TEST_CASE("ndarray fill", "[array][fill]") {
     ndarray<int, 2> a({3, 4});
@@ -364,7 +364,7 @@ TEST_CASE("ndarray compound assignment", "[array][ops]") {
     REQUIRE(a(2) == 26);
 }
 
-// ── 3D array test ──────────────────────────────────────────────────
+// -- 3D array test --------------------------------------------------
 
 TEST_CASE("3D ndarray construction and access", "[array][3d]") {
     ndarray<double, 3> vol({4, 5, 6});
@@ -375,7 +375,7 @@ TEST_CASE("3D ndarray construction and access", "[array][3d]") {
     REQUIRE(vol(2, 3, 4) == Catch::Approx(3.14));
 }
 
-// ── Contiguity ─────────────────────────────────────────────────────
+// -- Contiguity -----------------------------------------------------
 
 TEST_CASE("contiguity check", "[array][contiguous]") {
     ndarray<int, 2> a({3, 4});
@@ -391,7 +391,7 @@ TEST_CASE("contiguity check", "[array][contiguous]") {
     REQUIRE(!s.is_contiguous());
 }
 
-// ── Copy semantics ─────────────────────────────────────────────────
+// -- Copy semantics -------------------------------------------------
 
 TEST_CASE("ndarray copy is deep", "[array][copy]") {
     ndarray<int, 1> a(shape<1>{3});

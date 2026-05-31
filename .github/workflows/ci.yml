@@ -8,7 +8,37 @@ on:
     branches: [ main ]
 
 jobs:
-  # ── Tier 1: Fast unit tests on all platforms (~2 min) ───────────────
+  # -- ASCII guard: source files must contain only ASCII bytes ---------
+  # Fails fast if any C++ source under include/, tests/, examples/
+  # introduces non-ASCII (multibyte) characters.
+  ascii-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for non-ASCII characters in source
+        run: |
+          # grep -l exits 0 (matches), 1 (no matches), >1 (execution error).
+          # Don't mask >1 with '|| true' — a broken scan must fail CI, not pass.
+          set +e
+          hits=$(grep -rlP '[^\x00-\x7F]' \
+            --include='*.hpp' --include='*.cpp' --include='*.h' \
+            --include='*.cc' --include='*.cxx' \
+            include tests examples)
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then
+            echo "ASCII scan failed to execute (grep exit $status)."
+            exit "$status"
+          fi
+          if [ -n "$hits" ]; then
+            echo "Non-ASCII characters found in:"
+            echo "$hits"
+            echo "Source files must be ASCII-only. See CONTRIBUTING / issue #59."
+            exit 1
+          fi
+          echo "OK: all source files are ASCII-only."
+
+  # -- Tier 1: Fast unit tests on all platforms (~2 min) ---------------
   # Runs on every push and every PR (draft or ready).
   build:
     strategy:

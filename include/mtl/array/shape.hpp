@@ -16,7 +16,7 @@ namespace mtl::array {
 using c_order = tag::row_major;     // last index varies fastest (NumPy default)
 using f_order = tag::col_major;     // first index varies fastest (Fortran/MATLAB)
 
-// ── Shape ──────────────────────────────────────────────────────────
+// -- Shape ----------------------------------------------------------
 
 /// Static-rank shape: an array of N extents.
 template <std::size_t N>
@@ -49,7 +49,7 @@ public:
     constexpr bool operator==(const shape&) const = default;
 };
 
-// ── Strides ────────────────────────────────────────────────────────
+// -- Strides --------------------------------------------------------
 
 /// Compute C-order (row-major) strides: last dimension has stride 1.
 template <std::size_t N>
@@ -86,7 +86,7 @@ constexpr std::array<std::size_t, N> compute_strides(const shape<N>& sh) {
         return c_order_strides(sh);
 }
 
-// ── Offset computation ─────────────────────────────────────────────
+// -- Offset computation ---------------------------------------------
 
 /// Compute flat offset from multi-index and strides.
 template <std::size_t N>
@@ -99,7 +99,7 @@ constexpr std::size_t compute_offset(const std::array<std::size_t, N>& indices,
     return offset;
 }
 
-/// Variadic offset computation — converts (i, j, k, ...) to flat index.
+/// Variadic offset computation - converts (i, j, k, ...) to flat index.
 template <std::size_t N, typename... Indices>
 constexpr std::size_t offset_from(const std::array<std::size_t, N>& strides,
                                   Indices... indices) {
@@ -108,7 +108,7 @@ constexpr std::size_t offset_from(const std::array<std::size_t, N>& strides,
     return compute_offset(idx, strides);
 }
 
-// ── Broadcasting ───────────────────────────────────────────────────
+// -- Broadcasting ---------------------------------------------------
 
 /// Compute the broadcast shape of two shapes.
 /// Follows NumPy rules: trailing dimensions aligned, size-1 axes stretch.
@@ -141,7 +141,7 @@ constexpr std::array<std::size_t, N> broadcast_strides(const shape<N>& original,
     return result;
 }
 
-// ── Contiguity check ───────────────────────────────────────────────
+// -- Contiguity check -----------------------------------------------
 
 /// Check if strides correspond to a contiguous C-order layout.
 template <std::size_t N>

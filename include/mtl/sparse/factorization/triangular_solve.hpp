@@ -98,7 +98,7 @@ inline std::size_t reach(
 ///
 /// \param L       Lower triangular matrix in CSC format
 /// \param b       Dense right-hand side vector (overwritten with solution x)
-/// \param xi      Topological order from reach() — xi[top..n-1]
+/// \param xi      Topological order from reach() - xi[top..n-1]
 /// \param top     Starting index in xi (from reach())
 ///
 /// On entry, b contains the right-hand side. On exit, b contains the solution.

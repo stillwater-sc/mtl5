@@ -2,9 +2,9 @@
 // MTL5 -- Slicing helpers for ndarray
 //
 // Provides slice descriptors that can be used with ndarray::slice():
-//   all       — select entire dimension
-//   range     — select a contiguous range with optional step
-//   integer   — select a single index (reduces rank by 1)
+//   all       - select entire dimension
+//   range     - select a contiguous range with optional step
+//   integer   - select a single index (reduces rank by 1)
 
 #include <array>
 #include <cstddef>
@@ -15,7 +15,7 @@
 
 namespace mtl::array {
 
-// ── Slice descriptors ──────────────────────────────────────────────
+// -- Slice descriptors ----------------------------------------------
 
 /// Select all elements along a dimension.
 struct all_t {};
@@ -35,11 +35,11 @@ struct range {
     }
 };
 
-// ── Slice implementation ───────────────────────────────────────────
+// -- Slice implementation -------------------------------------------
 
 namespace detail_slice {
 
-// Count how many integer (non-slice) arguments there are → rank reduction
+// Count how many integer (non-slice) arguments there are -> rank reduction
 template <typename T>
 struct is_index_arg : std::false_type {};
 
@@ -66,9 +66,9 @@ constexpr std::size_t count_kept_dims() {
 /// Slice an ndarray, returning a view with potentially reduced rank.
 ///
 /// Each argument is one of:
-///   - all       → keep the full dimension
-///   - range     → select a sub-range (adjusts shape + offset)
-///   - integer   → fix an index (reduces rank by 1)
+///   - all       -> keep the full dimension
+///   - range     -> select a sub-range (adjusts shape + offset)
+///   - integer   -> fix an index (reduces rank by 1)
 ///
 /// Returns an ndarray view with rank = N - (number of integer args).
 template <typename Value, std::size_t N, typename Order, typename... Args>

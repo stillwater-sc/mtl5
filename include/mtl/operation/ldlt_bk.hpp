@@ -8,11 +8,11 @@
 // The Bunch-Kaufman partial pivoting strategy selects the largest available
 // pivot at each step, using 2x2 blocks when no single diagonal entry is
 // a good pivot. This handles symmetric indefinite matrices without breakdown
-// and provides bounded element growth (factor ≤ (1+sqrt(17))/8 ≈ 2.57).
+// and provides bounded element growth (factor <= (1+sqrt(17))/8 ~= 2.57).
 //
 // The pivot sequence is stored in LAPACK convention:
-//   ipiv[k] > 0  → 1x1 pivot, row/col swap with ipiv[k]-1
-//   ipiv[k] < 0 && ipiv[k+1] < 0  → 2x2 pivot using rows |ipiv[k]|-1, |ipiv[k+1]|-1
+//   ipiv[k] > 0  -> 1x1 pivot, row/col swap with ipiv[k]-1
+//   ipiv[k] < 0 && ipiv[k+1] < 0  -> 2x2 pivot using rows |ipiv[k]|-1, |ipiv[k+1]|-1
 //
 // Reference:
 //   Bunch & Kaufman, "Some Stable Methods for Calculating Inertia and
@@ -60,7 +60,7 @@ void symmetric_swap(M& A, std::size_t r1, std::size_t r2) {
     // Swap entries in column r1 (rows between r1 and r2) with row r2
     for (std::size_t i = r1 + 1; i < r2; ++i) {
         tmp = A(i, r1);
-        A(i, r1) = A(r2, i);  // A(r2, i) is in upper triangle → use A(i, r2) conceptually
+        A(i, r1) = A(r2, i);  // A(r2, i) is in upper triangle -> use A(i, r2) conceptually
         A(r2, i) = tmp;
     }
 
@@ -92,7 +92,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
     std::size_t k = 0;
     while (k < n) {
         if (k == n - 1) {
-            // Last 1x1 pivot — no choice
+            // Last 1x1 pivot - no choice
             if (A(k, k) == math::zero<value_type>())
                 return static_cast<int>(k + 1);
             pivots.ipiv[k] = static_cast<int>(k + 1);  // 1-based, positive = 1x1
@@ -117,7 +117,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
         std::size_t swap_r = r;
 
         if (lambda_val == math::zero<value_type>()) {
-            // Column k is zero below diagonal — 1x1 pivot (might be zero)
+            // Column k is zero below diagonal - 1x1 pivot (might be zero)
             if (A(k, k) == math::zero<value_type>())
                 return static_cast<int>(k + 1);
             use_1x1 = true;
@@ -127,7 +127,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
             use_1x1 = true;
             swap_r = k;
         } else {
-            // Step 3: Find largest off-diagonal magnitude in row r (cols ≠ r)
+            // Step 3: Find largest off-diagonal magnitude in row r (cols != r)
             value_type sigma = math::zero<value_type>();
             for (std::size_t j = k; j < r; ++j) {
                 value_type arj = abs(A(r, j));
@@ -143,13 +143,13 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
                 use_1x1 = true;
                 swap_r = k;
             } else if (abs(A(r, r)) >= alpha * sigma) {
-                // Test 3: A(r,r) is a good pivot — swap r↔k, use 1x1
+                // Test 3: A(r,r) is a good pivot - swap r<->k, use 1x1
                 use_1x1 = true;
                 swap_r = r;
                 symmetric_swap(A, k, r);
             } else {
                 // Use 2x2 pivot from rows/cols {k, r}
-                // Swap r ↔ k+1 to put the 2x2 block at positions {k, k+1}
+                // Swap r <-> k+1 to put the 2x2 block at positions {k, k+1}
                 use_2x2 = true;
                 if (r != k + 1)
                     symmetric_swap(A, k + 1, r);
@@ -248,7 +248,7 @@ void ldlt_bk_solve(const M& A, const bk_pivot_info& pivots, VecX& x, const VecB&
     std::size_t k = 0;
     while (k < n) {
         if (pivots.ipiv[k] > 0) {
-            // 1x1 pivot — swap if needed
+            // 1x1 pivot - swap if needed
             std::size_t p = static_cast<std::size_t>(pivots.ipiv[k] - 1);
             if (p != k) {
                 auto tmp = x(k);
@@ -261,7 +261,7 @@ void ldlt_bk_solve(const M& A, const bk_pivot_info& pivots, VecX& x, const VecB&
                 x(i) = x(i) - A(i, k) * x(k);
             ++k;
         } else {
-            // 2x2 pivot — swap k+1 with |ipiv[k]|-1
+            // 2x2 pivot - swap k+1 with |ipiv[k]|-1
             std::size_t p = static_cast<std::size_t>(-pivots.ipiv[k] - 1);
             if (p != k + 1) {
                 auto tmp = x(k + 1);

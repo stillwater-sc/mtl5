@@ -11,7 +11,7 @@
 // as up-looking Cholesky but stores D separately and avoids sqrt.
 //
 // Key advantages over LL^T:
-//   - No square roots — avoids precision loss for ill-conditioned matrices
+//   - No square roots - avoids precision loss for ill-conditioned matrices
 //   - Works for symmetric indefinite matrices (D can have negative entries)
 //   - Only fails on zero pivots (D(j) == 0)
 //
@@ -37,7 +37,7 @@
 
 namespace mtl::sparse::factorization {
 
-/// Symbolic analysis result — identical to Cholesky since sparsity of L
+/// Symbolic analysis result - identical to Cholesky since sparsity of L
 /// is the same for LDL^T and LL^T.
 using ldlt_symbolic = cholesky_symbolic;
 
@@ -138,7 +138,7 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
     auto C = util::crs_to_csc(PA);
 
     // Allocate L in CSC format. col_counts includes the diagonal, but we
-    // don't store the unit diagonal — allocate col_counts[j]-1 per column.
+    // don't store the unit diagonal - allocate col_counts[j]-1 per column.
     util::csc_matrix<Value> L;
     L.nrows = n;
     L.ncols = n;
@@ -214,7 +214,7 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
                     ljk = L.values[p];
                     break;
                 }
-                if (L.row_ind[p] > j) break;  // sorted — won't find it
+                if (L.row_ind[p] > j) break;  // sorted - won't find it
             }
 
             if (ljk == Value{0}) continue;

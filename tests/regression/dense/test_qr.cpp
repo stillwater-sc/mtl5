@@ -155,7 +155,7 @@ TEST_CASE("QR regression: Vandermonde matrix", "[regression][dense][qr]") {
     auto Q = qr_extract_Q(Acopy, tau);
     auto R = qr_extract_R(Acopy);
 
-    // Vandermonde is ill-conditioned — relaxed tolerance
+    // Vandermonde is ill-conditioned - relaxed tolerance
     double tol = double(n) * 1e6 * std::numeric_limits<double>::epsilon();
     double fe = factorization_error(A, Q, R);
     double oe = orthogonality_error(Q);

@@ -82,7 +82,7 @@ TEST_CASE("Bunch-Kaufman on symmetric indefinite matrix", "[operation][ldlt_bk]"
 TEST_CASE("Bunch-Kaufman on matrix requiring 2x2 pivot", "[operation][ldlt_bk]") {
     // Matrix where diagonal is zero but off-diagonals are large
     // Forces 2x2 pivot selection
-    // A = {{0, 1, 0}, {1, 0, 1}, {0, 1, 0}} — singular, but
+    // A = {{0, 1, 0}, {1, 0, 1}, {0, 1, 0}} - singular, but
     // Use: A = {{0, 3, 1}, {3, 0, 2}, {1, 2, 5}}
     // A(0,0) = 0 forces a pivot swap or 2x2
     mat::dense2D<double> A(3, 3);
@@ -128,7 +128,7 @@ TEST_CASE("Bunch-Kaufman on 1x1 matrix", "[operation][ldlt_bk]") {
 }
 
 TEST_CASE("Bunch-Kaufman on 4x4 indefinite matrix", "[operation][ldlt_bk]") {
-    // Symmetric indefinite 4x4 — the type that arises in UKF covariance updates
+    // Symmetric indefinite 4x4 - the type that arises in UKF covariance updates
     mat::dense2D<double> A(4, 4);
     A(0,0) =  2; A(0,1) =  1; A(0,2) = -1; A(0,3) =  0;
     A(1,0) =  1; A(1,1) = -3; A(1,2) =  2; A(1,3) =  1;

@@ -3,8 +3,8 @@
 //
 // A metric tensor g_ij enables converting between covariant and
 // contravariant components:
-//   raise:  T^i = g^ij * T_j     (covariant → contravariant)
-//   lower:  T_i = g_ij * T^j     (contravariant → covariant)
+//   raise:  T^i = g^ij * T_j     (covariant -> contravariant)
+//   lower:  T_i = g_ij * T^j     (contravariant -> covariant)
 //
 // Provides common metrics: Euclidean (identity) and Minkowski.
 
@@ -13,7 +13,7 @@
 
 namespace mtl::tensor {
 
-// ── Standard metrics ───────────────────────────────────────────────
+// -- Standard metrics -----------------------------------------------
 
 /// Euclidean metric: g_ij = delta_ij (identity matrix).
 template <typename V, std::size_t D>
@@ -33,7 +33,7 @@ tensor<V, 2, 4> minkowski_metric() {
     return g;
 }
 
-// ── Index raising/lowering for rank-1 tensors ──────────────────────
+// -- Index raising/lowering for rank-1 tensors ----------------------
 
 /// Lower a contravariant vector: v_i = g_ij * v^j
 template <typename V, std::size_t D>
@@ -54,7 +54,7 @@ tensor<V, 1, D> raise(const tensor<V, 1, D>& v, const tensor<V, 2, D>& g_inv) {
     return lower(v, g_inv); // same operation, just the metric meaning differs
 }
 
-// ── Index raising/lowering for rank-2 tensors ──────────────────────
+// -- Index raising/lowering for rank-2 tensors ----------------------
 
 /// Lower the first index of a rank-2 tensor: T_ij = g_ik * T^k_j
 template <typename V, std::size_t D>

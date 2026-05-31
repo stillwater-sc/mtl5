@@ -5,7 +5,7 @@
 // diagonal of A is overwritten with D.
 //
 // Key advantages over LL^T Cholesky:
-//   - No square roots — avoids precision loss for ill-conditioned matrices
+//   - No square roots - avoids precision loss for ill-conditioned matrices
 //   - Works for symmetric indefinite matrices (D can have negative entries)
 //   - Same O(n^3/3) cost as Cholesky
 //

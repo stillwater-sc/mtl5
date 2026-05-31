@@ -159,7 +159,7 @@ public:
         return mem_[compute_offset(idx, strides_)];
     }
 
-    /// Flat (linear) index access — only valid for contiguous arrays.
+    /// Flat (linear) index access - only valid for contiguous arrays.
     reference flat(size_type i) {
         assert(i < size());
         return mem_[i];

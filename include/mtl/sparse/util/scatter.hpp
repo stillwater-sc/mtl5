@@ -20,7 +20,7 @@ public:
     explicit sparse_accumulator(SizeType n)
         : n_(n), x_(n, Value{0}), mark_(n, SizeType{0}), generation_(1) {}
 
-    /// Reset for a new column assembly. O(1) — just bumps the generation counter.
+    /// Reset for a new column assembly. O(1) - just bumps the generation counter.
     void clear() {
         ++generation_;
         // Handle wraparound (extremely unlikely in practice)

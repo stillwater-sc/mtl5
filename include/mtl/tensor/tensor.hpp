@@ -26,7 +26,7 @@
 
 namespace mtl::tensor {
 
-// ── Helpers ────────────────────────────────────────────────────────
+// -- Helpers --------------------------------------------------------
 
 namespace detail {
 
@@ -66,7 +66,7 @@ constexpr std::size_t flat_index_arr(const std::array<std::size_t, Rank>& idx) {
 
 } // namespace detail
 
-// ── Core tensor class ──────────────────────────────────────────────
+// -- Core tensor class ----------------------------------------------
 
 /// Mathematical tensor with compile-time rank and spatial dimension.
 ///
@@ -213,7 +213,7 @@ private:
     }
 };
 
-// ── Free functions on tensor ───────────────────────────────────────
+// -- Free functions on tensor ---------------------------------------
 
 /// Trace of a rank-2 tensor: sum of diagonal elements.
 template <typename V, std::size_t D>

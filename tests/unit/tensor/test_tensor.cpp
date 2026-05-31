@@ -8,7 +8,7 @@
 
 using namespace mtl::tensor;
 
-// ── Core tensor construction ───────────────────────────────────────
+// -- Core tensor construction ---------------------------------------
 
 TEST_CASE("tensor default construction is zero", "[tensor][ctor]") {
     tensor<double, 2, 3> t;
@@ -41,7 +41,7 @@ TEST_CASE("tensor initializer list", "[tensor][ctor]") {
     REQUIRE(t(1, 1) == 4);
 }
 
-// ── Element access ─────────────────────────────────────────────────
+// -- Element access -------------------------------------------------
 
 TEST_CASE("tensor element access rank-1", "[tensor][access]") {
     tensor<double, 1, 3> v;
@@ -64,7 +64,7 @@ TEST_CASE("tensor element access rank-4", "[tensor][access]") {
     REQUIRE(t(1, 0, 1, 0) == 7);
 }
 
-// ── Arithmetic ─────────────────────────────────────────────────────
+// -- Arithmetic -----------------------------------------------------
 
 TEST_CASE("tensor addition", "[tensor][arithmetic]") {
     tensor<int, 2, 2> a{1, 2, 3, 4};
@@ -93,7 +93,7 @@ TEST_CASE("tensor negation", "[tensor][arithmetic]") {
     REQUIRE(neg(2) == -3);
 }
 
-// ── Trace ──────────────────────────────────────────────────────────
+// -- Trace ----------------------------------------------------------
 
 TEST_CASE("trace of rank-2 tensor", "[tensor][trace]") {
     tensor<double, 2, 3> t;
@@ -106,7 +106,7 @@ TEST_CASE("trace of identity", "[tensor][trace]") {
     REQUIRE(trace(I) == Catch::Approx(3.0));
 }
 
-// ── Determinant ────────────────────────────────────────────────────
+// -- Determinant ----------------------------------------------------
 
 TEST_CASE("determinant 2x2", "[tensor][det]") {
     tensor<double, 2, 2> t{1, 2, 3, 4};
@@ -127,14 +127,14 @@ TEST_CASE("determinant of identity", "[tensor][det]") {
     REQUIRE(determinant(identity<double, 3>()) == Catch::Approx(1.0));
 }
 
-// ── Frobenius norm ─────────────────────────────────────────────────
+// -- Frobenius norm -------------------------------------------------
 
 TEST_CASE("frobenius norm of identity", "[tensor][norm]") {
     auto I = identity<double, 3>();
     REQUIRE(frobenius_norm(I) == Catch::Approx(std::sqrt(3.0)));
 }
 
-// ── Transpose ──────────────────────────────────────────────────────
+// -- Transpose ------------------------------------------------------
 
 TEST_CASE("transpose of rank-2 tensor", "[tensor][transpose]") {
     tensor<int, 2, 3> t;
@@ -144,7 +144,7 @@ TEST_CASE("transpose of rank-2 tensor", "[tensor][transpose]") {
     REQUIRE(tt(0, 1) == 7);
 }
 
-// ── Einstein summation (contraction) ───────────────────────────────
+// -- Einstein summation (contraction) -------------------------------
 
 TEST_CASE("contract rank-2 tensors (matrix multiply)", "[tensor][contract]") {
     Index<'i'> i; Index<'j'> j; Index<'k'> k;
@@ -192,7 +192,7 @@ TEST_CASE("contraction identity * A = A", "[tensor][contract]") {
             REQUIRE(result(r, c) == Catch::Approx(A(r, c)));
 }
 
-// ── Outer product ──────────────────────────────────────────────────
+// -- Outer product --------------------------------------------------
 
 TEST_CASE("outer product of rank-1 tensors", "[tensor][outer]") {
     tensor<double, 1, 3> a;
@@ -206,7 +206,7 @@ TEST_CASE("outer product of rank-1 tensors", "[tensor][outer]") {
     REQUIRE(C(2, 1) == Catch::Approx(15.0));
 }
 
-// ── Symmetric tensor ───────────────────────────────────────────────
+// -- Symmetric tensor -----------------------------------------------
 
 TEST_CASE("symmetric tensor storage size", "[tensor][symmetric]") {
     STATIC_REQUIRE(symmetric_tensor<double, 3>::num_stored == 6);
@@ -241,7 +241,7 @@ TEST_CASE("symmetric tensor trace", "[tensor][symmetric]") {
     REQUIRE(trace(s) == Catch::Approx(6.0));
 }
 
-// ── Antisymmetric tensor ───────────────────────────────────────────
+// -- Antisymmetric tensor -------------------------------------------
 
 TEST_CASE("antisymmetric tensor storage size", "[tensor][antisymmetric]") {
     STATIC_REQUIRE(antisymmetric_tensor<double, 3>::num_stored == 3);
@@ -270,7 +270,7 @@ TEST_CASE("antisymmetric to full round-trip", "[tensor][antisymmetric]") {
     REQUIRE(trace(full) == Catch::Approx(0.0));
 }
 
-// ── Metric operations ──────────────────────────────────────────────
+// -- Metric operations ----------------------------------------------
 
 TEST_CASE("Euclidean metric raise/lower is identity", "[tensor][metric]") {
     auto g = euclidean_metric<double, 3>();
@@ -317,7 +317,7 @@ TEST_CASE("lower_first with identity is identity", "[tensor][metric]") {
             REQUIRE(lowered(i, j) == Catch::Approx(t(i, j)));
 }
 
-// ── Identity tensor ────────────────────────────────────────────────
+// -- Identity tensor ------------------------------------------------
 
 TEST_CASE("identity tensor properties", "[tensor][identity]") {
     auto I = identity<double, 3>();
@@ -328,7 +328,7 @@ TEST_CASE("identity tensor properties", "[tensor][identity]") {
     REQUIRE(I(1, 0) == 0.0);
 }
 
-// ── Equality ───────────────────────────────────────────────────────
+// -- Equality -------------------------------------------------------
 
 TEST_CASE("tensor equality", "[tensor][equality]") {
     tensor<int, 2, 2> a{1, 2, 3, 4};

@@ -16,7 +16,7 @@
 
 namespace mtl::array {
 
-// ── Broadcast expression ───────────────────────────────────────────
+// -- Broadcast expression -------------------------------------------
 
 /// Lazy expression for element-wise binary operations with broadcasting.
 template <typename LHS, typename RHS, typename Op, std::size_t N>
@@ -67,7 +67,7 @@ public:
     operator ndarray<value_type, N>() const { return eval(); }
 };
 
-// ── Functors ───────────────────────────────────────────────────────
+// -- Functors -------------------------------------------------------
 
 namespace ops {
     struct plus  { template <typename T, typename U> auto operator()(T a, U b) const { return a + b; } };
@@ -76,7 +76,7 @@ namespace ops {
     struct divides { template <typename T, typename U> auto operator()(T a, U b) const { return a / b; } };
 } // namespace ops
 
-// ── Operators ──────────────────────────────────────────────────────
+// -- Operators ------------------------------------------------------
 
 template <typename V1, std::size_t N, typename O1, typename V2, typename O2>
 auto operator+(const ndarray<V1, N, O1>& a, const ndarray<V2, N, O2>& b) {
