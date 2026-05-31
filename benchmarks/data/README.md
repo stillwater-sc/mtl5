@@ -69,3 +69,28 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
     benchmarks/data/blas_sweep_mkl.csv \
     --labels openblas,mkl --op gemm --out gemm_gflops.png
 ```
+
+### Rendered curves
+
+GFLOP/s vs N, native (C++) vs OpenBLAS vs MKL, single-threaded. Regenerate with:
+
+```bash
+./benchmarks/plot_results.py benchmarks/data/blas_sweep_openblas.csv \
+    benchmarks/data/blas_sweep_mkl.csv --labels openblas,mkl \
+    --out benchmarks/data/blas_sweep_gflops.png
+./benchmarks/plot_results.py benchmarks/data/lapack_sweep_openblas.csv \
+    benchmarks/data/lapack_sweep_mkl.csv --labels openblas,mkl \
+    --out benchmarks/data/lapack_sweep_gflops.png
+```
+
+**BLAS L1/L2/L3** (`dot`, `nrm2`, `gemv`, `gemm`):
+
+![BLAS sweep GFLOP/s](blas_sweep_gflops.png)
+
+**LAPACK factorizations** (`lu_factor`, `qr_factor`, `cholesky`, `eig_sym`):
+
+![LAPACK sweep GFLOP/s](lapack_sweep_gflops.png)
+
+The two `native` curves coincide (same C++ code regardless of linked BLAS). On
+`eig_sym`, `native` is the generic C++ solver (post-#78), so native vs lapack is
+a real comparison; note MKL trailing OpenBLAS on `eig_sym` past N ~= 400.
