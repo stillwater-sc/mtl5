@@ -181,6 +181,31 @@ around a boundary (e.g. `250:262:1`) to zoom in on a specific cliff, and `--csv`
 to capture the curve for plotting. Pin threads (`OMP_NUM_THREADS=1`,
 `MKL_NUM_THREADS=1` / `OPENBLAS_NUM_THREADS=1`) for stable per-size numbers.
 
+## Plotting
+
+`plot_results.py` turns one or more bench_all CSVs into GFLOP/s-vs-N curves
+(matplotlib; standard library otherwise). Pass several CSVs to overlay backends
+from different builds -- e.g. a native/OpenBLAS/MKL comparison in one figure:
+
+```bash
+# One figure per operation from a single run
+./benchmarks/plot_results.py results.csv
+
+# Overlay OpenBLAS vs MKL for gemm (committed example data)
+./benchmarks/plot_results.py \
+    benchmarks/data/blas_sweep_openblas.csv \
+    benchmarks/data/blas_sweep_mkl.csv \
+    --labels openblas,mkl --op gemm --out gemm_gflops.png
+
+# Wall-clock time, log-log
+./benchmarks/plot_results.py results.csv --op gemm --metric median_ns --logx --logy
+```
+
+`benchmarks/data/` holds small committed example sweeps (the odd-size BLAS sweep
+`65:1025:80`, single-threaded, native + OpenBLAS / MKL) so the script and curves
+are reproducible without re-running the suite. (This is plotting *tooling* --
+the NumPy/SciPy bindings live in the separate `mtl5-python` repo.)
+
 ## Example output
 
 Native vs OpenBLAS on an AMD Ryzen 9 (single-threaded):
