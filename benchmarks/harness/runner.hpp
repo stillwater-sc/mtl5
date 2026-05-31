@@ -193,8 +193,10 @@ void bench_eigenvalue(reporter& rep, const std::vector<std::size_t>& sizes,
 // ── Convenience: run all suites ───────────────────────────────────────────
 
 inline void run_all(reporter& rep,
-                    const std::vector<std::size_t>& blas_sizes = {64, 128, 256, 512, 1024},
-                    const std::vector<std::size_t>& lapack_sizes = {64, 128, 256, 512}) {
+                    const std::vector<std::size_t>& blas_sizes =
+                        {48, 64, 65, 96, 128, 129, 192, 255, 256, 257, 384, 512, 513, 768, 1024},
+                    const std::vector<std::size_t>& lapack_sizes =
+                        {48, 64, 65, 96, 128, 129, 192, 255, 256, 257, 384, 512}) {
     std::cout << "=== BLAS Level 1 ===" << std::endl;
     bench_dot(rep, blas_sizes);
     bench_nrm2(rep, blas_sizes);

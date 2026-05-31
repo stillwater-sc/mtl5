@@ -135,10 +135,10 @@ cmake --build build-mkl --target bench_all
 # Full suite with default sizes
 ./build/benchmarks/bench_all
 
-# Specific suite
-./build/benchmarks/bench_all --suite gemm
+# A whole BLAS level: l1 (dot+nrm2), l2 (gemv), l3 (gemm)
+./build/benchmarks/bench_all --suite l3
 
-# Custom sizes
+# Custom explicit sizes
 ./build/benchmarks/bench_all --suite gemm --sizes 32,64,128,256,512,1024
 
 # Separate BLAS and LAPACK size ranges
@@ -148,8 +148,38 @@ cmake --build build-mkl --target bench_all
 ./build/benchmarks/bench_all --csv results.csv
 ```
 
-Available suites: `all`, `dot`, `nrm2`, `gemv`, `gemm`, `lu`, `qr`,
-`cholesky`, `eig`.
+### Suites
+
+`all`, `blas` (= l1 + l2 + l3), `lapack`, the level groups `l1` (dot + nrm2),
+`l2` (gemv), `l3` (gemm), and the individual ops `dot`, `nrm2`, `gemv`, `gemm`,
+`lu`, `qr`, `cholesky`, `eig`.
+
+### Sweeping size N (padding / odd-size overhead)
+
+Instead of listing sizes, generate them with `--sweep` (or the per-tier
+`--blas-sweep` / `--lapack-sweep`):
+
+```bash
+# Linear, inclusive: START:STOP:STEP
+./build/benchmarks/bench_all --suite l3 --sweep 16:1024:16
+
+# Geometric, inclusive: START:STOP:xFACTOR
+./build/benchmarks/bench_all --suite blas --sweep 16:1024:x2
+
+# Odd sweep -- a non-power-of-2 step yields only odd, non-aligned sizes
+./build/benchmarks/bench_all --suite l1 --sweep 33:1024:97
+
+# Dense sweep bracketing a power-of-2 cliff to measure padding overhead
+./build/benchmarks/bench_all --suite l3 --sweep 250:262:1 --csv around_256.csv
+```
+
+The **default** size set is intentionally *not* all powers of two -- it brackets
+each power of two with its `+/-1` neighbours and 1.5x midpoints
+(`48, 64, 65, 96, 128, 129, 192, 255, 256, 257, 384, 512, 513, 768, 1024`), so a
+plain run already surfaces odd-size / padding effects. Use a dense `--sweep`
+around a boundary (e.g. `250:262:1`) to zoom in on a specific cliff, and `--csv`
+to capture the curve for plotting. Pin threads (`OMP_NUM_THREADS=1`,
+`MKL_NUM_THREADS=1` / `OPENBLAS_NUM_THREADS=1`) for stable per-size numbers.
 
 ## Example output
 
