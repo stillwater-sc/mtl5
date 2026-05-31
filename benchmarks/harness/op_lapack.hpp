@@ -285,7 +285,9 @@ template <>
 struct eigenvalue_sym_op<Native> {
     template <Matrix M>
     static auto run(const M& A) {
-        return mtl::eigenvalue_symmetric(A);
+        // Call the generic solver directly so the Native backend never
+        // dispatches to LAPACK (mtl::eigenvalue_symmetric would when available).
+        return mtl::eigenvalue_symmetric_generic(A);
     }
     static constexpr double flops(std::size_t n) {
         // Approximate: 4/3 * n^3 for tridiagonalization + QR iterations

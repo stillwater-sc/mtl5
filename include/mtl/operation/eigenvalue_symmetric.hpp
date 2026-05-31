@@ -18,44 +18,22 @@
 
 namespace mtl {
 
-/// Compute eigenvalues of a symmetric matrix via implicit QR on tridiagonal form.
-/// Returns eigenvalues as a dense_vector sorted in ascending order.
+/// Generic (LAPACK-free) symmetric eigenvalue solver: tridiagonalize, then run
+/// implicit QR with Wilkinson shifts on the tridiagonal form. Returns the
+/// eigenvalues as a dense_vector sorted in ascending order.
+///
+/// This is the C++ reference path. `eigenvalue_symmetric` dispatches to LAPACK
+/// when available and otherwise calls this; benchmarks and tests can call this
+/// directly to exercise the generic algorithm regardless of MTL5_HAS_LAPACK.
 template <Matrix M>
-auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
-                          typename M::size_type max_iter = 0) {
+auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10,
+                                  typename M::size_type max_iter = 0) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
     using std::abs;
     using std::sqrt;
     const size_type n = A.num_rows();
     assert(n == A.num_cols());
-
-#ifdef MTL5_HAS_LAPACK
-    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
-        // LAPACK syev: eigenvalues only ('N'), lower triangle ('L')
-        // Work on a column-major copy
-        std::vector<value_type> A_copy(n * n);
-        for (size_type i = 0; i < n; ++i)
-            for (size_type j = 0; j < n; ++j)
-                A_copy[j * n + i] = A(i, j);
-
-        std::vector<value_type> W(n);
-        // Workspace query
-        value_type work_opt;
-        interface::lapack::syev('N', 'L', static_cast<int>(n),
-            A_copy.data(), static_cast<int>(n), W.data(), &work_opt, -1);
-        int lwork = static_cast<int>(work_opt);
-        std::vector<value_type> work(lwork);
-        interface::lapack::syev('N', 'L', static_cast<int>(n),
-            A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork);
-
-        // LAPACK returns eigenvalues in ascending order
-        vec::dense_vector<value_type> result(n);
-        for (size_type i = 0; i < n; ++i)
-            result(i) = W[i];
-        return result;
-    }
-#endif
 
     if (max_iter == 0) max_iter = 30 * n;
 
@@ -149,6 +127,47 @@ auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
     for (size_type i = 0; i < n; ++i)
         result(i) = eigs[i];
     return result;
+}
+
+/// Compute eigenvalues of a symmetric matrix via implicit QR on tridiagonal form.
+/// Returns eigenvalues as a dense_vector sorted in ascending order.
+/// Dispatches to LAPACK syev when available and the type qualifies; otherwise
+/// uses eigenvalue_symmetric_generic.
+template <Matrix M>
+auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
+                          typename M::size_type max_iter = 0) {
+#ifdef MTL5_HAS_LAPACK
+    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+        using value_type = typename M::value_type;
+        using size_type  = typename M::size_type;
+        const size_type n = A.num_rows();
+        assert(n == A.num_cols());
+        // LAPACK syev: eigenvalues only ('N'), lower triangle ('L')
+        // Work on a column-major copy
+        std::vector<value_type> A_copy(n * n);
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < n; ++j)
+                A_copy[j * n + i] = A(i, j);
+
+        std::vector<value_type> W(n);
+        // Workspace query
+        value_type work_opt;
+        interface::lapack::syev('N', 'L', static_cast<int>(n),
+            A_copy.data(), static_cast<int>(n), W.data(), &work_opt, -1);
+        int lwork = static_cast<int>(work_opt);
+        std::vector<value_type> work(lwork);
+        interface::lapack::syev('N', 'L', static_cast<int>(n),
+            A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork);
+
+        // LAPACK returns eigenvalues in ascending order
+        vec::dense_vector<value_type> result(n);
+        for (size_type i = 0; i < n; ++i)
+            result(i) = W[i];
+        return result;
+    }
+#endif
+
+    return eigenvalue_symmetric_generic(A, tol, max_iter);
 }
 
 /// Compute eigenvalues and eigenvectors of a symmetric matrix.
