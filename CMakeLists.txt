@@ -47,6 +47,7 @@ option(MTL5_BUILD_EXAMPLES "Build the examples"         ON)
 option(MTL5_ENABLE_OPENMP  "Enable OpenMP parallelism"  OFF)
 option(MTL5_WITH_BLAS               "Link BLAS library for dense acceleration" OFF)
 option(MTL5_WITH_LAPACK             "Link LAPACK library for factorizations"  OFF)
+option(MTL5_WITH_HIGHWAY            "Use Google Highway for SIMD-accelerated native kernels" OFF)
 option(MTL5_WITH_UMFPACK            "Link UMFPACK library (SuiteSparse)"      OFF)
 option(MTL5_WITH_SUPERLU            "Link SuperLU library"                    OFF)
 option(MTL5_WITH_SUITESPARSE_KLU    "Link KLU sparse solver (SuiteSparse)"    OFF)
@@ -96,6 +97,32 @@ if(MTL5_WITH_LAPACK)
     find_package(LAPACK REQUIRED)
     target_compile_definitions(mtl5 INTERFACE MTL5_HAS_LAPACK)
     target_link_libraries(mtl5 INTERFACE ${LAPACK_LIBRARIES})
+endif()
+
+# Google Highway (Apache-2.0 / BSD-3-Clause): SIMD backend for mtl::simd.
+# Optional, like BLAS/LAPACK — without it mtl::simd uses a portable scalar
+# fallback, so MTL5 stays MIT and dependency-free by default. Found if already
+# installed, otherwise fetched at a pinned version (reproducible).
+if(MTL5_WITH_HIGHWAY)
+    find_package(hwy 1.0 QUIET)
+    if(NOT hwy_FOUND)
+        include(FetchContent)
+        set(HWY_ENABLE_TESTS    OFF CACHE BOOL "" FORCE)
+        set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(HWY_ENABLE_CONTRIB  OFF CACHE BOOL "" FORCE)
+        set(HWY_ENABLE_INSTALL  OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(highway
+            GIT_REPOSITORY https://github.com/google/highway.git
+            GIT_TAG        1.4.0
+            GIT_SHALLOW    TRUE)
+        FetchContent_MakeAvailable(highway)
+    endif()
+    # BUILD_INTERFACE only: a fetched `hwy` target can't be part of MTL5's
+    # install export set. Highway is active for in-tree consumers (tests,
+    # benchmarks, the native kernels); an installed MTL5 re-enables it against
+    # its own Highway, like the BLAS/LAPACK backends.
+    target_compile_definitions(mtl5 INTERFACE $<BUILD_INTERFACE:MTL5_HAS_HIGHWAY>)
+    target_link_libraries(mtl5 INTERFACE $<BUILD_INTERFACE:hwy>)
 endif()
 
 if(MTL5_WITH_UMFPACK)

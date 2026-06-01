@@ -4,6 +4,9 @@
 file(GLOB CONCEPT_SRC "concepts/*.cpp")
 compile_all("true" "concept" "Tests/concepts" "MTL5::mtl5;Catch2::Catch2WithMain" ${CONCEPT_SRC})
 
+file(GLOB SIMD_SRC "simd/*.cpp")
+compile_all("true" "simd" "Tests/simd" "MTL5::mtl5;Catch2::Catch2WithMain" ${SIMD_SRC})
+
 file(GLOB MATH_SRC "math/*.cpp")
 compile_all("true" "math" "Tests/math" "MTL5::mtl5;Catch2::Catch2WithMain" ${MATH_SRC})
 
