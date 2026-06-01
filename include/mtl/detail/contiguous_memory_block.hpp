@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <utility>
 
+#include <mtl/detail/aligned_allocator.hpp>
 #include <mtl/tag/storage.hpp>
 
 namespace mtl::detail {
@@ -22,9 +23,10 @@ template <typename Value, typename Storage, std::size_t StaticSize = 0>
 class contiguous_memory_block {
     static constexpr bool on_stack = std::is_same_v<Storage, tag::on_stack>;
 
-    // Stack storage: fixed-size aligned array
+    // Stack storage: fixed-size array, over-aligned to the SIMD/cache-line
+    // boundary so fixed-size operands also support aligned SIMD loads.
     struct stack_data {
-        alignas(alignof(Value)) Value data_[StaticSize > 0 ? StaticSize : 1];
+        alignas(block_alignment<Value>) Value data_[StaticSize > 0 ? StaticSize : 1];
     };
 
     // Heap storage: pointer + size + ownership
@@ -36,11 +38,12 @@ class contiguous_memory_block {
 
     std::conditional_t<on_stack, stack_data, heap_data> store_;
 
-    // Heap helpers
+    // Heap helpers. Owned blocks are over-aligned (block_alignment<Value>, i.e.
+    // >= 64B) so .data() is suitable for aligned SIMD loads/stores.
     void allocate(std::size_t n) {
         assert(!on_stack);
         if constexpr (!on_stack) {
-            store_.data_ = (n > 0) ? new Value[n]{} : nullptr;
+            store_.data_ = allocate_aligned<Value>(n);   // value-initialized, nullptr if n==0
             store_.size_ = n;
             store_.category_ = memory_category::own;
         }
@@ -49,7 +52,7 @@ class contiguous_memory_block {
     void deallocate() {
         if constexpr (!on_stack) {
             if (store_.category_ == memory_category::own) {
-                delete[] store_.data_;
+                deallocate_aligned<Value>(store_.data_, store_.size_);
             }
             store_.data_ = nullptr;
             store_.size_ = 0;
