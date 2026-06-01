@@ -3,6 +3,36 @@
 All notable changes to MTL5 are documented in this file.
 Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Added
+
+#### Benchmark suite
+- **Size-N sweep** (`--sweep START:STOP:STEP` and `:xFACTOR`) plus BLAS-level suite groups `l1`/`l2`/`l3`/`blas`; default sizes now bracket powers of two with odd/1.5x neighbours to expose padding overhead (#77)
+- **GFLOP/s-vs-N plotting** (`benchmarks/plot_results.py`, matplotlib) and committed example data + rendered plots under `benchmarks/data/` with provenance (#78, #79, #80)
+- **One-executable-per-backend methodology** — `bench_all` calls only the public `mtl::` API; the build flags choose the backend (native / OpenBLAS / MKL); `run_sweeps.sh` builds all variants, pins to a P-core, and emits one CSV per backend (#81)
+
+#### Documentation & API
+- **Doxygen C++ API reference** generated into the docs site (`docs-site/Doxyfile`, `npm run api`, sidebar link, CI step) (#73)
+- Public `eigenvalue_symmetric_generic()` — the generic (LAPACK-free) symmetric eigensolver, extracted so it can be called regardless of `MTL5_HAS_LAPACK` (#78)
+
+#### Tooling / CI
+- `.github/dependabot.yml` for the `github-actions` ecosystem (#64)
+
+### Changed
+- **`mtl::dot` / `dot_real` now dispatch to BLAS `?dot`** when types qualify (consistency with `two_norm`); both `dot` and `two_norm` BLAS paths guard the `int` length cast against overflow (#81)
+- **Benchmarks rewritten** to the single-path public-API model; deleted the `Native/Blas/Lapack` policy-tag harness (#81)
+- **CI hardening**: all GitHub Actions pinned to commit SHAs with `persist-credentials: false` (#64); sccache gated to trusted runs to prevent GHA cache poisoning (#74); Dependabot action bumps (#66–#71)
+- Benchmark README: corrected CMake option names (`MTL5_WITH_BLAS/LAPACK`) and added Intel MKL (`BLA_VENDOR=Intel10_64lp`) instructions (#75)
+- `.gitignore`: ignore Claude Code per-user/runtime files (#76)
+
+### Fixed
+- `antisymmetric_tensor::set` wrote out of bounds for diagonal indices (`i == j`) under `NDEBUG`, where the guarding `assert` is compiled out; now a safe no-op (#63)
+- Benchmark `native` eigenvalue backend was silently dispatching to LAPACK; it now uses the generic C++ solver so `native` vs `lapack` is a genuine comparison (#78)
+
+### Planned
+- **Epic #82 — native dense BLAS performance** (sub-issues #83–#93, milestone v0.6): bring the native GEMM/GEMV/L1 kernels to within 10–20% of OpenBLAS/MKL via a SIMD abstraction layer, register-blocked micro-kernel, GotoBLAS/BLIS-style cache blocking + packing, and multithreading
+
 ## [5.2.0] — 2026-03-16
 
 ### Added
