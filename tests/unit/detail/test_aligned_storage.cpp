@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>   // std::move
 #include <vector>
 
 namespace {

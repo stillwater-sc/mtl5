@@ -34,7 +34,12 @@ template <typename T>
     if (n == 0) return nullptr;
     void* raw = ::operator new(n * sizeof(U), std::align_val_t(block_alignment<U>));
     U* p = static_cast<U*>(raw);
-    std::uninitialized_value_construct_n(p, n);
+    try {
+        std::uninitialized_value_construct_n(p, n);
+    } catch (...) {
+        ::operator delete(raw, std::align_val_t(block_alignment<U>));   // no leak if a ctor throws
+        throw;
+    }
     return p;   // implicit U* -> T* (adds const/volatile back if any)
 }
 
