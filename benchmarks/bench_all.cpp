@@ -76,20 +76,29 @@ static std::vector<std::size_t> parse_sweep(const std::string& spec) {
     return {uniq.begin(), uniq.end()};
 }
 
-static void print_backend_info() {
+// One binary == one backend, fixed by the build flags. With no BLAS/LAPACK the
+// public mtl:: ops run the generic C++ path; otherwise they dispatch. The label
+// (passed via --label, default below) names this build in the output.
+#if defined(MTL5_HAS_BLAS) || defined(MTL5_HAS_LAPACK)
+static constexpr const char* kDefaultLabel = "blas";
+#else
+static constexpr const char* kDefaultLabel = "native";
+#endif
+
+static void print_build_info(const std::string& label) {
     std::cout << "MTL5 Benchmark Suite\n";
     std::cout << "====================\n";
-    std::cout << "Available backends: native";
+    std::cout << "Backend (build): " << label << "  [compiled with:";
 #ifdef MTL5_HAS_BLAS
-    std::cout << ", blas";
+    std::cout << " BLAS";
 #endif
 #ifdef MTL5_HAS_LAPACK
-    std::cout << ", lapack";
+    std::cout << " LAPACK";
 #endif
-#ifdef MTL5_HAS_UMFPACK
-    std::cout << ", umfpack";
+#if !defined(MTL5_HAS_BLAS) && !defined(MTL5_HAS_LAPACK)
+    std::cout << " generic-only";
 #endif
-    std::cout << "\n\n";
+    std::cout << " ]\n\n";
 }
 
 static void print_usage() {
@@ -103,6 +112,8 @@ static void print_usage() {
         "  --blas-sweep <spec>     Generated sizes for BLAS suites\n"
         "  --lapack-sweep <spec>   Generated sizes for LAPACK suites\n"
         "  --suite <name>          Suite or group to run (default: all)\n"
+        "  --label <name>          Backend label recorded in output\n"
+        "                          (default: this build's config)\n"
         "\n"
         "Sweep spec:\n"
         "  START:STOP:STEP         linear, inclusive    (e.g. 16:1024:16)\n"
@@ -121,6 +132,7 @@ int main(int argc, char* argv[]) {
     std::vector<std::size_t> lapack_sizes = kDefaultLapackSizes;
     std::string csv_path;
     std::string suite = "all";
+    std::string label = kDefaultLabel;
 
     try {
         for (int i = 1; i < argc; ++i) {
@@ -144,6 +156,8 @@ int main(int argc, char* argv[]) {
                 lapack_sizes = parse_sweep(need_arg("--lapack-sweep"));
             } else if (std::strcmp(argv[i], "--suite") == 0) {
                 suite = need_arg("--suite");
+            } else if (std::strcmp(argv[i], "--label") == 0) {
+                label = need_arg("--label");
             } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
                 print_usage();
                 return 0;
@@ -157,53 +171,53 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    print_backend_info();
+    print_build_info(label);
 
     mtl::bench::reporter rep;
     namespace b = mtl::bench;
 
     if (suite == "all") {
-        b::run_all(rep, blas_sizes, lapack_sizes);
+        b::run_all(rep, label, blas_sizes, lapack_sizes);
     } else if (suite == "blas") {
         std::cout << "=== BLAS Level 1 ===" << std::endl;
-        b::bench_dot(rep, blas_sizes);
-        b::bench_nrm2(rep, blas_sizes);
+        b::bench_dot(rep, label, blas_sizes);
+        b::bench_nrm2(rep, label, blas_sizes);
         std::cout << "=== BLAS Level 2 ===" << std::endl;
-        b::bench_gemv(rep, blas_sizes);
+        b::bench_gemv(rep, label, blas_sizes);
         std::cout << "=== BLAS Level 3 ===" << std::endl;
-        b::bench_gemm(rep, blas_sizes);
+        b::bench_gemm(rep, label, blas_sizes);
     } else if (suite == "l1") {
         std::cout << "=== BLAS Level 1 ===" << std::endl;
-        b::bench_dot(rep, blas_sizes);
-        b::bench_nrm2(rep, blas_sizes);
+        b::bench_dot(rep, label, blas_sizes);
+        b::bench_nrm2(rep, label, blas_sizes);
     } else if (suite == "l2") {
         std::cout << "=== BLAS Level 2 ===" << std::endl;
-        b::bench_gemv(rep, blas_sizes);
+        b::bench_gemv(rep, label, blas_sizes);
     } else if (suite == "l3") {
         std::cout << "=== BLAS Level 3 ===" << std::endl;
-        b::bench_gemm(rep, blas_sizes);
+        b::bench_gemm(rep, label, blas_sizes);
     } else if (suite == "lapack") {
         std::cout << "=== LAPACK Factorizations ===" << std::endl;
-        b::bench_lu(rep, lapack_sizes);
-        b::bench_qr(rep, lapack_sizes);
-        b::bench_cholesky(rep, lapack_sizes);
-        b::bench_eigenvalue(rep, lapack_sizes);
+        b::bench_lu(rep, label, lapack_sizes);
+        b::bench_qr(rep, label, lapack_sizes);
+        b::bench_cholesky(rep, label, lapack_sizes);
+        b::bench_eigenvalue(rep, label, lapack_sizes);
     } else if (suite == "dot") {
-        b::bench_dot(rep, blas_sizes);
+        b::bench_dot(rep, label, blas_sizes);
     } else if (suite == "nrm2") {
-        b::bench_nrm2(rep, blas_sizes);
+        b::bench_nrm2(rep, label, blas_sizes);
     } else if (suite == "gemv") {
-        b::bench_gemv(rep, blas_sizes);
+        b::bench_gemv(rep, label, blas_sizes);
     } else if (suite == "gemm") {
-        b::bench_gemm(rep, blas_sizes);
+        b::bench_gemm(rep, label, blas_sizes);
     } else if (suite == "lu") {
-        b::bench_lu(rep, lapack_sizes);
+        b::bench_lu(rep, label, lapack_sizes);
     } else if (suite == "qr") {
-        b::bench_qr(rep, lapack_sizes);
+        b::bench_qr(rep, label, lapack_sizes);
     } else if (suite == "cholesky") {
-        b::bench_cholesky(rep, lapack_sizes);
+        b::bench_cholesky(rep, label, lapack_sizes);
     } else if (suite == "eig") {
-        b::bench_eigenvalue(rep, lapack_sizes);
+        b::bench_eigenvalue(rep, label, lapack_sizes);
     } else {
         std::cerr << "Unknown suite: " << suite << "\n\n";
         print_usage();

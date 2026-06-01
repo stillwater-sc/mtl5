@@ -18,62 +18,30 @@ class reporter {
 public:
     void add(const timing& t) { results_.push_back(t); }
 
-    /// Print a formatted comparison table to stdout
+    /// Print a formatted results table to stdout. One binary == one backend,
+    /// so there is no in-run baseline; cross-backend speedups are computed at
+    /// analysis time across the per-backend CSVs (see plot_results.py).
     void print_table() const {
         if (results_.empty()) return;
 
-        // Header
-        std::printf("\n%-20s %-10s %8s %14s %14s %14s %10s\n",
-                    "Operation", "Backend", "Size", "Median(us)", "Min(us)", "Speedup", "GFLOP/s");
-        std::printf("%s\n", std::string(92, '-').c_str());
+        std::printf("\n%-20s %-10s %8s %14s %14s %10s\n",
+                    "Operation", "Backend", "Size", "Median(us)", "Min(us)", "GFLOP/s");
+        std::printf("%s\n", std::string(80, '-').c_str());
 
-        // Group by (operation, size) to compute speedups relative to native
-        std::size_t i = 0;
-        while (i < results_.size()) {
-            // Find all results for this (operation, size) group
-            auto op   = results_[i].operation;
-            auto size = results_[i].size;
-            std::size_t group_start = i;
-            while (i < results_.size() &&
-                   results_[i].operation == op && results_[i].size == size) {
-                ++i;
-            }
+        std::string prev_op;
+        for (const auto& r : results_) {
+            if (!prev_op.empty() && r.operation != prev_op) std::printf("\n");
+            prev_op = r.operation;
 
-            // Find native baseline in this group
-            double baseline_ns = 0.0;
-            for (std::size_t j = group_start; j < i; ++j) {
-                if (results_[j].backend == "native") {
-                    baseline_ns = results_[j].median_ns;
-                    break;
-                }
-            }
+            double median_us = r.median_ns / 1000.0;
+            double min_us    = r.min_ns / 1000.0;
+            char gflops_str[16] = "      --";
+            if (r.gflops > 0.0)
+                std::snprintf(gflops_str, sizeof(gflops_str), "%8.2f", r.gflops);
 
-            // Print each row in the group
-            for (std::size_t j = group_start; j < i; ++j) {
-                const auto& r = results_[j];
-                double speedup = (baseline_ns > 0.0 && r.median_ns > 0.0)
-                    ? baseline_ns / r.median_ns : 0.0;
-                double median_us = r.median_ns / 1000.0;
-                double min_us    = r.min_ns / 1000.0;
-
-                char gflops_str[16] = "  --";
-                if (r.gflops > 0.0)
-                    std::snprintf(gflops_str, sizeof(gflops_str), "%8.2f", r.gflops);
-
-                char speedup_str[16];
-                if (r.backend == "native")
-                    std::snprintf(speedup_str, sizeof(speedup_str), "  (base)");
-                else
-                    std::snprintf(speedup_str, sizeof(speedup_str), "%8.2fx", speedup);
-
-                std::printf("%-20s %-10s %8zu %14.2f %14.2f %14s %10s\n",
-                            r.operation.c_str(), r.backend.c_str(),
-                            r.size, median_us, min_us,
-                            speedup_str, gflops_str);
-            }
-            // Separator between groups
-            if (i < results_.size())
-                std::printf("\n");
+            std::printf("%-20s %-10s %8zu %14.2f %14.2f %10s\n",
+                        r.operation.c_str(), r.backend.c_str(),
+                        r.size, median_us, min_us, gflops_str);
         }
         std::printf("\n");
     }

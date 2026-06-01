@@ -91,9 +91,17 @@ def main(argv=None):
             ap.error(f"--labels has {len(labels)} entries but {len(args.csv)} CSVs given")
     else:
         labels = [os.path.splitext(os.path.basename(p))[0] for p in args.csv]
-    multi = len(args.csv) > 1
 
     loaded = [(lbl, load(p)) for lbl, p in zip(labels, args.csv)]
+
+    # A backend only needs the file label appended to disambiguate if the same
+    # backend name appears in more than one file (e.g. the legacy multi-backend
+    # CSVs). With one-backend-per-file inputs the backend names are already
+    # unique, so the legend stays clean (native / openblas / mkl).
+    backend_files = defaultdict(set)
+    for lbl, series in loaded:
+        for _op, backend in series:
+            backend_files[backend].add(lbl)
 
     # Determine the set of operations to plot.
     ops = []
@@ -121,7 +129,7 @@ def main(argv=None):
                 if not pts:
                     continue
                 xs, ys = zip(*pts)
-                name = f"{backend} ({lbl})" if multi else backend
+                name = f"{backend} ({lbl})" if len(backend_files[backend]) > 1 else backend
                 ax.plot(xs, ys, marker="o", markersize=3, linewidth=1.3, label=name)
         ax.set_title(op)
         ax.set_xlabel("N (matrix / vector dimension)")

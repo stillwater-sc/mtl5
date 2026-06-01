@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cassert>
+#include <cstddef>
+#include <limits>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/magnitude.hpp>
@@ -33,8 +35,11 @@ auto one_norm(const V& v) {
 template <Vector V>
 auto two_norm(const V& v) {
 #ifdef MTL5_HAS_BLAS
+    // BLAS takes int; fall back to the loop for vectors larger than INT_MAX.
     if constexpr (interface::BlasDenseVector<V>) {
-        return interface::blas::nrm2(static_cast<int>(v.size()), v.data(), 1);
+        if (v.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            return interface::blas::nrm2(static_cast<int>(v.size()), v.data(), 1);
+        }
     }
 #endif
     using mag_t = magnitude_t<typename V::value_type>;
