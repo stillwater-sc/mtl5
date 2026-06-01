@@ -12,6 +12,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/simd/algorithm.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -33,12 +34,19 @@ auto dot(const V1& v1, const V2& v2) {
         }
     }
 #endif
-    using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
-    auto acc = math::zero<result_type>();
-    for (typename V1::size_type i = 0; i < v1.size(); ++i) {
-        acc += functor::scalar::conj<typename V1::value_type>::apply(v1(i)) * v2(i);
+    // Native SIMD path for contiguous, same-type real float/double vectors
+    // (conj is the identity there, so reduce_dot matches the Hermitian product).
+    if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2> &&
+                  std::is_same_v<typename V1::value_type, typename V2::value_type>) {
+        return simd::reduce_dot<typename V1::value_type>(v1.data(), v2.data(), v1.size());
+    } else {
+        using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
+        auto acc = math::zero<result_type>();
+        for (typename V1::size_type i = 0; i < v1.size(); ++i) {
+            acc += functor::scalar::conj<typename V1::value_type>::apply(v1(i)) * v2(i);
+        }
+        return acc;
     }
-    return acc;
 }
 
 /// Real dot product: sum(v1[i] * v2[i]) -- no conjugation
@@ -53,12 +61,17 @@ auto dot_real(const V1& v1, const V2& v2) {
         }
     }
 #endif
-    using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
-    auto acc = math::zero<result_type>();
-    for (typename V1::size_type i = 0; i < v1.size(); ++i) {
-        acc += v1(i) * v2(i);
+    if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2> &&
+                  std::is_same_v<typename V1::value_type, typename V2::value_type>) {
+        return simd::reduce_dot<typename V1::value_type>(v1.data(), v2.data(), v1.size());
+    } else {
+        using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
+        auto acc = math::zero<result_type>();
+        for (typename V1::size_type i = 0; i < v1.size(); ++i) {
+            acc += v1(i) * v2(i);
+        }
+        return acc;
     }
-    return acc;
 }
 
 } // namespace mtl

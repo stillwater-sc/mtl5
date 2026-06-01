@@ -142,6 +142,7 @@
 #include <mtl/operation/num_rows.hpp>
 #include <mtl/operation/num_cols.hpp>
 #include <mtl/operation/dot.hpp>
+#include <mtl/operation/axpy.hpp>
 #include <mtl/operation/sum.hpp>
 #include <mtl/operation/product.hpp>
 #include <mtl/operation/norms.hpp>

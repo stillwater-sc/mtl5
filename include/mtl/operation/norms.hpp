@@ -11,6 +11,7 @@
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/simd/algorithm.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -42,15 +43,21 @@ auto two_norm(const V& v) {
         }
     }
 #endif
-    using mag_t = magnitude_t<typename V::value_type>;
-    auto acc = math::zero<mag_t>();
-    for (typename V::size_type i = 0; i < v.size(); ++i) {
-        using std::abs;
-        auto a = abs(v(i));
-        acc += a * a;
+    // Native SIMD path for contiguous real float/double (abs is the identity).
+    if constexpr (interface::BlasDenseVector<V>) {
+        using std::sqrt;
+        return sqrt(simd::reduce_sum_squares<typename V::value_type>(v.data(), v.size()));
+    } else {
+        using mag_t = magnitude_t<typename V::value_type>;
+        auto acc = math::zero<mag_t>();
+        for (typename V::size_type i = 0; i < v.size(); ++i) {
+            using std::abs;
+            auto a = abs(v(i));
+            acc += a * a;
+        }
+        using std::sqrt;
+        return sqrt(acc);
     }
-    using std::sqrt;
-    return sqrt(acc);
 }
 
 /// infinity_norm(v) = max(|v[i]|)
