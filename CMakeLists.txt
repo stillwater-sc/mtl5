@@ -104,7 +104,7 @@ endif()
 # fallback, so MTL5 stays MIT and dependency-free by default. Found if already
 # installed, otherwise fetched at a pinned version (reproducible).
 if(MTL5_WITH_HIGHWAY)
-    find_package(hwy 1.0 QUIET)
+    find_package(hwy 1.4 QUIET)   # match the pinned FetchContent tag below
     if(NOT hwy_FOUND)
         include(FetchContent)
         set(HWY_ENABLE_TESTS    OFF CACHE BOOL "" FORCE)

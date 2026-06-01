@@ -44,6 +44,11 @@ namespace hn = hwy::HWY_NAMESPACE;
 /// SIMD register of `T`, backed by Google Highway (static dispatch).
 template <typename T>
 class batch {
+    static_assert(std::is_floating_point_v<T>,
+                  "mtl::simd::batch currently supports floating-point lanes "
+                  "(float/double) -- the dense-BLAS use case. The ops (/, fma, "
+                  "reductions) assume floating semantics; integer lanes are a "
+                  "future extension.");
     using D = hn::ScalableTag<T>;
     using V = hn::VFromD<D>;
     static constexpr D d_{};
@@ -80,6 +85,11 @@ public:
 
 template <typename T>
 class batch {
+    static_assert(std::is_floating_point_v<T>,
+                  "mtl::simd::batch currently supports floating-point lanes "
+                  "(float/double) -- the dense-BLAS use case. The ops (/, fma, "
+                  "reductions) assume floating semantics; integer lanes are a "
+                  "future extension.");
     T v_{};
 
 public:
