@@ -9,6 +9,9 @@
 // Forward declarations
 #include <mtl/mtl_fwd.hpp>
 
+// SIMD abstraction (Highway-backed when MTL5_HAS_HIGHWAY, scalar fallback otherwise)
+#include <mtl/simd/batch.hpp>
+
 // Concepts
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/magnitude.hpp>
