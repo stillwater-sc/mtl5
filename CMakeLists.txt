@@ -48,6 +48,7 @@ option(MTL5_ENABLE_OPENMP  "Enable OpenMP parallelism"  OFF)
 option(MTL5_WITH_BLAS               "Link BLAS library for dense acceleration" OFF)
 option(MTL5_WITH_LAPACK             "Link LAPACK library for factorizations"  OFF)
 option(MTL5_WITH_HIGHWAY            "Use Google Highway for SIMD-accelerated native kernels" OFF)
+option(MTL5_NATIVE_ARCH            "Tune in-tree builds for the host CPU (-march=native; non-portable binaries)" OFF)
 option(MTL5_WITH_UMFPACK            "Link UMFPACK library (SuiteSparse)"      OFF)
 option(MTL5_WITH_SUPERLU            "Link SuperLU library"                    OFF)
 option(MTL5_WITH_SUITESPARSE_KLU    "Link KLU sparse solver (SuiteSparse)"    OFF)
@@ -81,6 +82,14 @@ target_include_directories(mtl5 INTERFACE
 )
 
 target_compile_features(mtl5 INTERFACE cxx_std_20)
+
+# Host-CPU tuning for in-tree builds (tests, benchmarks, native kernels). Off by
+# default to keep binaries portable; -march=native lets the SIMD layer pick the
+# widest ISA (the blocking params in mtl/simd/blocking.hpp adapt accordingly).
+# BUILD_INTERFACE only, so it never leaks into the installed/exported flags.
+if(MTL5_NATIVE_ARCH AND NOT MSVC)
+    target_compile_options(mtl5 INTERFACE $<BUILD_INTERFACE:-march=native>)
+endif()
 
 if(MTL5_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED)

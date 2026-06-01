@@ -11,6 +11,7 @@
 
 // SIMD abstraction (Highway-backed when MTL5_HAS_HIGHWAY, scalar fallback otherwise)
 #include <mtl/simd/batch.hpp>
+#include <mtl/simd/blocking.hpp>
 
 // Concepts
 #include <mtl/concepts/scalar.hpp>
