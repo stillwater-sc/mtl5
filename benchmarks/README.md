@@ -15,8 +15,14 @@ backend:
 | Build | CMake flags | What every op runs |
 |-------|-------------|--------------------|
 | `native`   | *(none)* | generic C++ |
+| `native-fast` | `-DMTL5_NATIVE_FAST_GEMM=ON -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON` | MTL5's own SIMD GEMM/GEMV (no external BLAS) |
 | `openblas` | `-DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON` | system BLAS/LAPACK (OpenBLAS) |
 | `mkl`      | `… -DBLA_VENDOR=Intel10_64lp` (oneAPI sourced) | Intel MKL |
+
+`native-fast` is the epic #82 path: `mult()` routes through the blocked GEMM
+(`detail/gemm_blocked.hpp`) and SIMD GEMV (`detail/gemv.hpp`), built over Google
+Highway with `-march=native`. It links **no external BLAS** — it is MTL5
+competing with OpenBLAS/MKL on its own kernels.
 
 So we build the same `bench_all.cpp` once per backend and run each, producing
 **one CSV per backend** with a single `--label`. There is no `native` curve
@@ -34,8 +40,9 @@ the numbers are what a real app compiled that way would get.
 ```
 benchmarks/
   bench_all.cpp          CLI driver (sizes/sweeps/suites + --label)
-  run_sweeps.sh          builds native/openblas/mkl variants and runs the sweeps
+  run_sweeps.sh          builds native/native-fast/openblas/mkl variants and runs the sweeps
   plot_results.py        GFLOP/s-vs-N plots from the CSVs
+  analyze_gate.py        % of OpenBLAS / % of FMA peak + the pass/fail perf gate
   harness/
     timer.hpp            high-resolution timing + statistics
     reporter.hpp         console table + CSV output
@@ -47,15 +54,17 @@ benchmarks/
 ## Build & run (reproducible, all variants)
 
 ```bash
-# Builds native / openblas / mkl, pins to a P-core, writes one CSV per backend.
+# Builds native / native-fast / openblas / mkl, pins to a P-core, one CSV each.
 BENCH_CPU=4 benchmarks/run_sweeps.sh            # 4 = a P-core; see note below
 # custom sweep:        BENCH_CPU=4 benchmarks/run_sweeps.sh 16:2048:32
+# BLAS-only (the #82 gate; native LAPACK at large N is slow):
+BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sweeps.sh
 ```
 
 `run_sweeps.sh` configures each variant in its own (clean) build dir, builds
-`bench_all`, and runs the BLAS and LAPACK sweeps single-threaded. The MKL
-variant is skipped automatically if `/opt/intel/oneapi/setvars.sh` is absent
-(override with `MKL_SETVARS=...`).
+`bench_all`, and runs the suites named in `BENCH_SUITES` (default `blas lapack`)
+single-threaded. The MKL variant is skipped automatically if
+`/opt/intel/oneapi/setvars.sh` is absent (override with `MKL_SETVARS=...`).
 
 **CPU pinning matters.** On hybrid CPUs (e.g. Intel P/E-core parts) an unpinned
 single-threaded run lets short L1 kernels land on slow E-cores, skewing results.
@@ -132,6 +141,36 @@ run on, and the rendered curves.
 
 > The plotting script is benchmark *tooling*; the NumPy/SciPy bindings live in
 > the separate `mtl5-python` repo.
+
+## The native-fast acceptance gate (epic #82)
+
+The epic's goal is for MTL5's **own** dense kernels (no external BLAS) to land
+**within 10–20% of OpenBLAS** for GEMM at practical sizes, and at the memory
+ceiling for GEMV/L1. `analyze_gate.py` measures this from the CSVs:
+
+```bash
+# Build the gate variants (BLAS suite only -- native LAPACK at large N is slow):
+BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sweeps.sh 65:1025:80
+
+# % of OpenBLAS and % of FMA peak, per op and size (peak = 1 P-core fp64):
+benchmarks/analyze_gate.py benchmarks/data/blas_sweep_native-fast.csv \
+    benchmarks/data/blas_sweep_openblas.csv --peak-gflops 78
+
+# Pass/fail gate: GEMM native-fast >= 80% of OpenBLAS for N >= 256
+benchmarks/analyze_gate.py benchmarks/data/blas_sweep_native-fast.csv \
+    benchmarks/data/blas_sweep_openblas.csv --gate --op gemm --threshold 0.80 --min-size 256
+```
+
+The gate (`--gate`) exits non-zero if native-fast drops below the threshold, so
+it can run in an opt-in workflow. It is **not** wired into the per-push CI:
+shared CI runners have unstable clocks and no P-core pinning, which makes
+absolute perf gates flaky. Run it on dedicated hardware.
+
+**Measured result** (i7-12700K, 1 P-core, fp64, single-thread — see
+`data/README.md`): GEMM native-fast is **80–84% of OpenBLAS for all N ≥ 256**
+(~76–78% of FMA peak); GEMV is **~100–116% of OpenBLAS** and `dot`/`nrm2` are at
+or above it (both bandwidth-bound). The GEMM gate **passes** at the 80% / N≥256
+threshold. This is single-threaded; multithreading is #92.
 
 ## Adding a new backend (e.g. CUDA)
 

@@ -95,7 +95,13 @@ static void print_build_info(const std::string& label) {
 #ifdef MTL5_HAS_LAPACK
     std::cout << " LAPACK";
 #endif
-#if !defined(MTL5_HAS_BLAS) && !defined(MTL5_HAS_LAPACK)
+#ifdef MTL5_HAS_HIGHWAY
+    std::cout << " Highway";
+#endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+    std::cout << " native-fast-gemm";
+#endif
+#if !defined(MTL5_HAS_BLAS) && !defined(MTL5_HAS_LAPACK) && !defined(MTL5_NATIVE_FAST_GEMM)
     std::cout << " generic-only";
 #endif
     std::cout << " ]\n\n";

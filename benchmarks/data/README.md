@@ -29,24 +29,44 @@ One file per **backend** (the build configuration *is* the backend — see
 
 | File | Backend | Build |
 |------|---------|-------|
-| `blas_sweep_native.csv`     | native   | generic-only (no BLAS) |
-| `blas_sweep_openblas.csv`   | openblas | `MTL5_WITH_BLAS/LAPACK=ON` |
-| `blas_sweep_mkl.csv`        | mkl      | `… BLA_VENDOR=Intel10_64lp` |
-| `lapack_sweep_native.csv`   | native   | generic-only |
-| `lapack_sweep_openblas.csv` | openblas | OpenBLAS |
-| `lapack_sweep_mkl.csv`      | mkl      | MKL |
+| `blas_sweep_native.csv`      | native      | generic-only (no BLAS) |
+| `blas_sweep_native-fast.csv` | native-fast | `MTL5_NATIVE_FAST_GEMM + Highway + -march=native` (no BLAS) |
+| `blas_sweep_openblas.csv`    | openblas    | `MTL5_WITH_BLAS/LAPACK=ON` |
+| `blas_sweep_mkl.csv`         | mkl         | `… BLA_VENDOR=Intel10_64lp` |
+| `lapack_sweep_native.csv`    | native      | generic-only |
+| `lapack_sweep_openblas.csv`  | openblas    | OpenBLAS |
+| `lapack_sweep_mkl.csv`       | mkl         | MKL |
 
-All six use the same odd-size sweep `65:1025:80` (all odd, non-power-of-2
-sizes). The `blas_*` files cover L1/L2/L3 (`dot`, `nrm2`, `gemv`, `gemm`); the
-`lapack_*` files cover the factorizations (`lu_factor`, `qr_factor`, `cholesky`,
-`eig_sym`).
+All use the same odd-size sweep `65:1025:80` (all odd, non-power-of-2 sizes).
+The `blas_*` files cover L1/L2/L3 (`dot`, `nrm2`, `gemv`, `gemm`); the `lapack_*`
+files cover the factorizations (`lu_factor`, `qr_factor`, `cholesky`, `eig_sym`).
+The four `blas_sweep_*.csv` files (native, native-fast, openblas, mkl) were
+regenerated together this session for the epic #82 gate (`BENCH_SUITES=blas`,
+single P-core); the `lapack_*` files are prior reference runs on the same
+machine.
+
+## Epic #82 gate result (native-fast vs OpenBLAS)
+
+From `blas_sweep_native-fast.csv` vs `blas_sweep_openblas.csv`
+(`../analyze_gate.py`, 1 P-core fp64, FMA peak ≈ 78 GFLOP/s):
+
+| Op | native-fast vs OpenBLAS (N ≥ 256) | Notes |
+|----|-----------------------------------|-------|
+| `gemm` | **80–84%** (76–78% of FMA peak) | within the 10–20% target; gate **passes** |
+| `gemv` | **~100–116%** | bandwidth-bound; matches/beats OpenBLAS |
+| `dot`  | ~88–110% | bandwidth-bound |
+| `nrm2` | ~120–278% | SIMD sum-of-squares >> OpenBLAS's overflow-careful scalar nrm2 |
+
+Single-threaded; multithreaded GEMM is tracked separately (#92).
 
 ## Regenerate
 
-All six CSVs (and a clean build of each variant) come from one script:
+All CSVs (and a clean build of each variant) come from one script. The epic #82
+gate trio (`blas_sweep_{native,native-fast,openblas}.csv`) is the BLAS-only run:
 
 ```bash
-BENCH_CPU=4 ../run_sweeps.sh          # 4 = a P-core; MKL skipped if not installed
+BENCH_CPU=4 BENCH_SUITES=blas ../run_sweeps.sh   # gate: native/native-fast/openblas
+BENCH_CPU=4 ../run_sweeps.sh                     # everything (blas + lapack)
 ```
 
 ## Plots
@@ -59,7 +79,7 @@ backend:
 ../plot_results.py lapack_sweep_*.csv --out lapack_sweep_gflops.png
 ```
 
-**BLAS L1/L2/L3** (`dot`, `nrm2`, `gemv`, `gemm`):
+**BLAS L1/L2/L3** (`dot`, `nrm2`, `gemv`, `gemm`) — native vs native-fast vs OpenBLAS:
 
 ![BLAS sweep GFLOP/s](blas_sweep_gflops.png)
 
