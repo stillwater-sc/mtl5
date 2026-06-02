@@ -31,6 +31,8 @@
 #include <cstddef>
 #include <type_traits>
 
+#include <mtl/concepts/scalar.hpp>
+
 namespace mtl::detail {
 
 /// Elements needed to pack an m x k A block into MR-row panels (rows padded to MR).
@@ -51,6 +53,7 @@ constexpr std::size_t packed_B_size(std::size_t k, std::size_t n, std::size_t NR
 /// for p in [0,k), i in [0,MR). This is exactly what gemm_microkernel reads as
 /// Ap[p*MR + i]. `Ap` must hold packed_A_size(m,k,MR) elements.
 template <typename T, std::size_t MR>
+    requires mtl::Scalar<T>
 void pack_A(const T* A, std::ptrdiff_t rs, std::ptrdiff_t cs,
             std::size_t m, std::size_t k, T* Ap) {
     static_assert(MR > 0, "MR must be positive");
@@ -76,6 +79,7 @@ void pack_A(const T* A, std::ptrdiff_t rs, std::ptrdiff_t cs,
 /// for p in [0,k), j in [0,NR). This is exactly what gemm_microkernel reads as
 /// Bp[p*NR + j]. `Bp` must hold packed_B_size(k,n,NR) elements.
 template <typename T, std::size_t NR>
+    requires mtl::Scalar<T>
 void pack_B(const T* B, std::ptrdiff_t rs, std::ptrdiff_t cs,
             std::size_t k, std::size_t n, T* Bp) {
     static_assert(NR > 0, "NR must be positive");
