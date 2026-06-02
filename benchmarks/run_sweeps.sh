@@ -94,8 +94,13 @@ run_variant build-openblas openblas
 
 if [[ -f "$MKL_SETVARS" ]]; then
     echo "=== mkl ==="
+    # oneAPI's setvars.sh references unset variables, which would trip our
+    # `set -u` (nounset) and silently abort the whole script mid-source -- and
+    # it may also return non-zero under `set -e`. Relax both just around it.
+    set +u +e
     # shellcheck disable=SC1090
-    source "$MKL_SETVARS" >/dev/null 2>&1
+    source "$MKL_SETVARS" >/dev/null 2>&1 || true
+    set -u -e
     configure_build build-mkl -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON -DBLA_VENDOR=Intel10_64lp
     run_variant build-mkl mkl
 else

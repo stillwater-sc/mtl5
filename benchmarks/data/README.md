@@ -40,9 +40,10 @@ One file per **backend** (the build configuration *is* the backend — see
 All use the same odd-size sweep `65:1025:80` (all odd, non-power-of-2 sizes).
 The `blas_*` files cover L1/L2/L3 (`dot`, `nrm2`, `gemv`, `gemm`); the `lapack_*`
 files cover the factorizations (`lu_factor`, `qr_factor`, `cholesky`, `eig_sym`).
-The `blas_sweep_{native,native-fast,openblas}.csv` trio was regenerated together
-for the epic #82 gate (`BENCH_SUITES=blas`); the `mkl` and `lapack_*` files are
-prior reference runs on the same machine.
+The four `blas_sweep_*.csv` files (native, native-fast, openblas, mkl) were
+regenerated together this session for the epic #82 gate (`BENCH_SUITES=blas`,
+single P-core); the `lapack_*` files are prior reference runs on the same
+machine.
 
 ## Epic #82 gate result (native-fast vs OpenBLAS)
 
