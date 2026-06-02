@@ -3,6 +3,7 @@
 // of FMA/accumulation order, so we compare bit-exactly to a triple-loop ref.
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_template_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <mtl/detail/gemm_microkernel.hpp>
 #include <mtl/simd/blocking.hpp>
@@ -10,16 +11,17 @@
 #include <cstddef>
 #include <vector>
 
-namespace {
-const std::size_t kKc[] = {1, 2, 4, 7, 16, 64, 200};
-}
-
 TEMPLATE_TEST_CASE("gemm_microkernel: C += A*B for a packed MRxNR tile", "[detail][gemm][simd]", float, double) {
     constexpr std::size_t MR = mtl::simd::default_blocking<TestType>.mr;
     constexpr std::size_t NR = mtl::simd::default_blocking<TestType>.nr;
     INFO("MR=" << MR << " NR=" << NR << " W=" << mtl::simd::width<TestType>);
 
-    for (std::size_t kc : kKc) {
+    // GENERATE (not a for-loop): with SECTIONs inside a loop, Catch2's same-named
+    // sections across iterations collapse and only the first kc would ever run.
+    // As a generator, each kc re-enters the test so every SECTION runs per kc.
+    const std::size_t kc = GENERATE(as<std::size_t>{}, 1, 2, 4, 7, 16, 64, 200);
+    CAPTURE(kc);
+    {
         // A is MR x kc (row-major), B is kc x NR (row-major == packed B panel).
         std::vector<TestType> A(MR * kc), Bm(kc * NR), Ap(MR * kc);
         for (std::size_t i = 0; i < MR; ++i)
