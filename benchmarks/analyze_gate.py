@@ -132,6 +132,8 @@ def main():
     ap.add_argument("--min-size", type=int, default=256,
                     help="only gate sizes >= this (default: 256)")
     args = ap.parse_args()
+    if args.peak_gflops is not None and args.peak_gflops <= 0:
+        ap.error("--peak-gflops must be > 0")
 
     data = load(args.csv)
     if args.gate:
