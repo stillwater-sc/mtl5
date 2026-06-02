@@ -44,7 +44,6 @@ print_header()
 # ── Options ──────────────────────────────────────────────────────────────
 option(MTL5_BUILD_TESTS    "Build the test suite"       ON)
 option(MTL5_BUILD_EXAMPLES "Build the examples"         ON)
-option(MTL5_ENABLE_OPENMP  "Enable OpenMP parallelism"  OFF)
 option(MTL5_WITH_BLAS               "Link BLAS library for dense acceleration" OFF)
 option(MTL5_WITH_LAPACK             "Link LAPACK library for factorizations"  OFF)
 option(MTL5_WITH_HIGHWAY            "Use Google Highway for SIMD-accelerated native kernels" OFF)
@@ -109,11 +108,6 @@ if(MTL5_SANITIZE AND NOT MSVC)
         $<BUILD_INTERFACE:-fsanitize=${MTL5_SANITIZE};-fno-omit-frame-pointer;-g>)
     target_link_options(mtl5 INTERFACE
         $<BUILD_INTERFACE:-fsanitize=${MTL5_SANITIZE}>)
-endif()
-
-if(MTL5_ENABLE_OPENMP)
-    find_package(OpenMP REQUIRED)
-    target_link_libraries(mtl5 INTERFACE OpenMP::OpenMP_CXX)
 endif()
 
 if(MTL5_WITH_BLAS)

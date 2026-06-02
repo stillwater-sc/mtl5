@@ -31,7 +31,6 @@ ctest --test-dir build -R <test_name>   # e.g. -R test_concepts
 
 - `-DMTL5_BUILD_TESTS=ON` (default ON) — build Catch2 test suite
 - `-DMTL5_BUILD_EXAMPLES=ON` (default ON) — build examples
-- `-DMTL5_ENABLE_OPENMP=ON` — enable OpenMP parallelism
 - `-DMTL5_WITH_BLAS=ON` — link BLAS library for dense acceleration
 - `-DMTL5_WITH_LAPACK=ON` — link LAPACK library for factorizations
 - `-DMTL5_WITH_UMFPACK=ON` — link UMFPACK library (SuiteSparse)
