@@ -9,6 +9,10 @@
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+#include <cstddef>
+#include <mtl/detail/gemm_blocked.hpp>
+#endif
 
 namespace mtl {
 
@@ -106,6 +110,38 @@ void mult(const MA& A, const MB& B, MC& C) {
             interface::blas::gemm('N', 'N', m, n, k, alpha,
                                   A.data(), m, B.data(), k,
                                   beta, C.data(), m);
+        }
+        return;
+    }
+#endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+    // Native blocked GEMM: preferred over the generic triple loop for dense
+    // contiguous float/double matrices when no external BLAS handled it above.
+    if constexpr (interface::BlasDenseMatrix<MA> &&
+                  interface::BlasDenseMatrix<MB> &&
+                  interface::BlasDenseMatrix<MC>) {
+        using T = typename MC::value_type;
+        const std::size_t M = A.num_rows();
+        const std::size_t N = B.num_cols();
+        const std::size_t K = A.num_cols();
+        // Tightly-packed dense layout: ld = ncols (row-major) or nrows (col-major).
+        const std::ptrdiff_t a_rs = interface::is_row_major_v<MA> ? static_cast<std::ptrdiff_t>(A.num_cols()) : 1;
+        const std::ptrdiff_t a_cs = interface::is_row_major_v<MA> ? 1 : static_cast<std::ptrdiff_t>(A.num_rows());
+        const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
+        const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
+        if constexpr (interface::is_row_major_v<MC>) {
+            detail::gemm_blocked<T>(M, N, K, math::one<T>(),
+                                    A.data(), a_rs, a_cs,
+                                    B.data(), b_rs, b_cs,
+                                    math::zero<T>(), C.data(), N);
+        } else {
+            // Col-major C: compute C^T = B^T * A^T into the same buffer, viewed as
+            // a row-major N x M matrix (ld = M). Pack picks up B^T/A^T by swapping
+            // each operand's strides.
+            detail::gemm_blocked<T>(N, M, K, math::one<T>(),
+                                    B.data(), b_cs, b_rs,
+                                    A.data(), a_cs, a_rs,
+                                    math::zero<T>(), C.data(), M);
         }
         return;
     }
