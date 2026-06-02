@@ -46,8 +46,9 @@ bool gemv_matches(std::size_t m, std::size_t n, bool rowmajor) {
     return true;
 }
 
-// Sizes straddling the SIMD width, the MR=4 row block, and the UB*W y-strip.
-const std::size_t kDims[] = {1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 31, 33, 64, 100};
+// Sizes straddling the SIMD width, the MR=4 row block, and the UB*W y-strip;
+// 0 exercises the empty-shape / zero-iteration paths (incl. m==n==0).
+const std::size_t kDims[] = {0, 1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 31, 33, 64, 100};
 
 } // namespace
 
@@ -87,7 +88,7 @@ bool mult_matches(std::size_t m, std::size_t n) {
 } // namespace
 
 TEMPLATE_TEST_CASE("mult() native GEMV dispatch matches naive (row- and col-major A)", "[operation][gemv][dispatch]", float, double) {
-    const std::size_t cases[][2] = {{1, 1}, {7, 5}, {16, 16}, {33, 20}, {100, 64}};
+    const std::size_t cases[][2] = {{0, 0}, {0, 5}, {7, 0}, {1, 1}, {7, 5}, {16, 16}, {33, 20}, {100, 64}};
     for (auto& c : cases) {
         INFO("m=" << c[0] << " n=" << c[1]);
         CHECK(mult_matches<mtl::mat::dense2D<TestType, rowmaj>>(c[0], c[1]));
