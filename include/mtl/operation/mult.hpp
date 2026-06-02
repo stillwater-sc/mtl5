@@ -11,7 +11,9 @@
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM
 #include <cstddef>
+#include <type_traits>
 #include <mtl/detail/gemm_blocked.hpp>
+#include <mtl/detail/gemv.hpp>
 #endif
 
 namespace mtl {
@@ -73,6 +75,25 @@ void mult(const M& A, const VIn& x, VOut& y) {
             interface::blas::gemv('N', m, n, alpha,
                                   A.data(), m, x.data(), 1,
                                   beta, y.data(), 1);
+        }
+        return;
+    }
+#endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+    // Native SIMD GEMV: preferred over the generic scalar loop for dense
+    // contiguous float/double when no external BLAS handled it above.
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::BlasDenseVector<VIn> &&
+                  interface::BlasDenseVector<VOut> &&
+                  std::is_same_v<typename M::value_type, typename VIn::value_type> &&
+                  std::is_same_v<typename M::value_type, typename VOut::value_type>) {
+        using T = typename M::value_type;
+        const std::size_t mm = A.num_rows();
+        const std::size_t nn = A.num_cols();
+        if constexpr (interface::is_row_major_v<M>) {
+            detail::gemv_rowmajor<T>(mm, nn, A.data(), nn, x.data(), y.data());
+        } else {
+            detail::gemv_colmajor<T>(mm, nn, A.data(), mm, x.data(), y.data());
         }
         return;
     }
