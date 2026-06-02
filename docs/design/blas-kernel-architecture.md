@@ -28,7 +28,7 @@ The jump that matters is L2 -> L3: only at L3 does work (n^3) outgrow data
 L1 and L2 move as many (or more) bytes than they do flops, so the best a kernel
 can do is **saturate memory bandwidth** -- no amount of blocking changes that.
 
-```
+```text
    flop/byte (log)                                     L3 gemm
         ^                                             /   (compute-bound;
         |                                            /     ~93% FMA peak)
@@ -41,7 +41,7 @@ can do is **saturate memory bandwidth** -- no amount of blocking changes that.
 
 **Legend used in the diagrams**
 
-```
+```text
   [b] or |a a a a|   one SIMD batch = W lanes (W = simd::batch<T>::size:
                      2 for SSE, 4 for AVX2, 8 for AVX-512, all fp64)
   fma(x,y,z)         fused multiply-add  x*y + z   (one rounding)
@@ -60,7 +60,7 @@ plus, for reductions, *multiple accumulators* to hide the FP add/FMA latency.
 
 ### dot / nrm2 -- reduction with K independent accumulators
 
-```
+```text
   dot:  s = SUM_i a[i]*b[i]            nrm2: s = sqrt( SUM_i a[i]*a[i] )
 
   a: |....|....|....|....| |....| ...   unit-stride, W lanes per batch
@@ -82,7 +82,7 @@ in `simd/algorithm.hpp`.)
 
 ### axpy / scal -- map / stream (no reduction)
 
-```
+```text
   axpy: y[i] += alpha*x[i]                 scal: x[i] *= alpha
   va = bcast(alpha)
 
@@ -95,7 +95,7 @@ in `simd/algorithm.hpp`.)
 ```
 
 Both are pure bandwidth: ~2 flops per 16-24 bytes moved. The kernel's whole job
-is to issue wide aligned loads/stores and reach the DRAM ceiling.
+is to issue wide-aligned loads/stores and reach the DRAM ceiling.
 
 ---
 
@@ -111,7 +111,7 @@ Orientation decides which axis is unit-stride and therefore the kernel shape.
 `y[i] = dot(A_row_i, x)`. A rows are unit-stride -> SIMD-dot each row with x.
 Block **MR rows** so one `x` batch is loaded once and reused MR times.
 
-```
+```text
         x   (loaded once per j-batch, reused across MR rows)
         |....|....|....| ...  -->
           |  (reused MR times)
@@ -130,7 +130,7 @@ Block **MR rows** so one `x` batch is loaded once and reused MR times.
 `y += x[j]*A[:,j]`. A columns are unit-stride -> keep a strip of `y` resident in
 registers and stream columns; y is written once.
 
-```
+```text
    A (col-major)     x[j]            y-strip (resident in registers)
    col j unit-stride (scalar)        |....|....| ... |
  ^ |a|a|a|a| ...      |xj| --bcast-->   per column j:
@@ -145,7 +145,7 @@ registers and stream columns; y is written once.
 twin: GEMV contracts a matrix and a vector into a vector (inner product); GER
 expands two vectors into a matrix (outer product).
 
-```
+```text
    x (M)         y^T (N)               A (M x N)  +=  alpha * x (x) y^T
    |x0|     |y0 y1 y2 ... |
    |x1|  (x)              =       row-major, vectorize over j:
@@ -169,7 +169,7 @@ plus **packing** them into contiguous, SIMD-friendly panels.
 
 ### gemm -- the GotoBLAS/BLIS 5-loop nest + packing + micro-kernel
 
-```
+```text
  Loop 5  jc: N step nc     B,C columns ---------------> nc panel targets L3
    Loop 4  pc: K step kc                                pack B(pc,jc) -> Bc
      Loop 3  ic: M step mc                              pack A(ic,pc) -> Ac (L2)
@@ -192,7 +192,7 @@ rank-1 updates** of the `mr x nr` C microtile -- the *same* outer-product step
 as GER -- except the tile stays in vector registers across all `kc` of them, so
 C is written to memory only **once** instead of every update:
 
-```
+```text
   C_tile  (mr x nr, in REGISTERS)   for p = 0 .. kc-1:
                                         a_p = mr values of A (one packed column)
    p=0:  C_tile += a_p (x) b_p          b_p = nr values of B (one packed row)
@@ -226,7 +226,7 @@ But the rank-1 update is also the **atomic step of the Level-3 micro-kernel**:
 GEMM is built as `kc` rank-1 updates of a register-resident tile, repeated over
 the blocking nest. So rank-1 updates sit exactly on the **L2 <-> L3 boundary**:
 
-```
+```text
    rank-1 update   A += x (x) y^T
         |
         +--- as a standalone op, writing A to memory each time ........ L2  (ger)
