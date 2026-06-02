@@ -52,6 +52,7 @@ const FILE_MAP = {
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',
   'position-mixed-precision-acceleration.md':   'design/mixed-precision-acceleration.md',
   'design/blas-kernel-architecture.md':         'design/blas-kernel-architecture.md',
+  'design/mixed-precision-custom-types-SIMD.md': 'design/mixed-precision-custom-types-SIMD.md',
 
   // ── Modernization ──────────────────────────────────────────────────────
   'modernization/advanced-itl-components.md':                  'modernization/advanced-itl-components.md',
