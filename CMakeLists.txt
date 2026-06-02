@@ -49,6 +49,7 @@ option(MTL5_WITH_BLAS               "Link BLAS library for dense acceleration" O
 option(MTL5_WITH_LAPACK             "Link LAPACK library for factorizations"  OFF)
 option(MTL5_WITH_HIGHWAY            "Use Google Highway for SIMD-accelerated native kernels" OFF)
 option(MTL5_NATIVE_ARCH            "Tune in-tree builds for the host CPU (-march=native; non-portable binaries)" OFF)
+option(MTL5_NATIVE_FAST_GEMM       "Route mtl::mult through the native blocked GEMM / SIMD GEMV path" OFF)
 option(MTL5_WITH_UMFPACK            "Link UMFPACK library (SuiteSparse)"      OFF)
 option(MTL5_WITH_SUPERLU            "Link SuperLU library"                    OFF)
 option(MTL5_WITH_SUITESPARSE_KLU    "Link KLU sparse solver (SuiteSparse)"    OFF)
@@ -89,6 +90,13 @@ target_compile_features(mtl5 INTERFACE cxx_std_20)
 # BUILD_INTERFACE only, so it never leaks into the installed/exported flags.
 if(MTL5_NATIVE_ARCH AND NOT MSVC)
     target_compile_options(mtl5 INTERFACE $<BUILD_INTERFACE:-march=native>)
+endif()
+
+# Route mtl::mult through the native blocked GEMM / SIMD GEMV path (epic #82).
+# Off by default so the generic path is the baseline; the benchmark gate (#93)
+# turns it on for the `native-fast` build. BUILD_INTERFACE only.
+if(MTL5_NATIVE_FAST_GEMM)
+    target_compile_definitions(mtl5 INTERFACE $<BUILD_INTERFACE:MTL5_NATIVE_FAST_GEMM>)
 endif()
 
 if(MTL5_ENABLE_OPENMP)

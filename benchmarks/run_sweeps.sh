@@ -12,10 +12,19 @@
 #   BENCH_CPU    CPU id to pin to via taskset (recommend a P-core on hybrid
 #                CPUs for stable single-thread numbers). Empty = no pinning.
 #   BENCH_SWEEP  sweep spec (default 65:1025:80, all-odd / non-power-of-2).
+#   BENCH_SUITES suites to run per variant (default "blas lapack"). The native
+#                and native-fast builds have no LAPACK, so generic LU/QR/eig at
+#                large N is impractical -- set BENCH_SUITES=blas for the GEMM/
+#                GEMV/L1 acceptance gate (#93).
 #   MKL_SETVARS  path to oneAPI setvars.sh (default /opt/intel/oneapi/setvars.sh);
 #                the MKL variant is skipped if it is not found.
 #
-# Example (pin to P-core 4):  BENCH_CPU=4 benchmarks/run_sweeps.sh
+# Variants: native (generic-only), native-fast (the blocked GEMM / SIMD GEMV
+# path: -DMTL5_NATIVE_FAST_GEMM + Highway + -march=native, no external BLAS),
+# openblas, and mkl (if oneAPI is present).
+#
+# Example (P-core 4, GEMM/GEMV/L1 gate only):
+#   BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sweeps.sh
 set -euo pipefail
 
 # Resolve repo root from this script's location (portable).
@@ -24,6 +33,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT"
 
 SWEEP="${1:-${BENCH_SWEEP:-65:1025:80}}"
+SUITES="${BENCH_SUITES:-blas lapack}"
 DATA="benchmarks/data"
 MKL_SETVARS="${MKL_SETVARS:-/opt/intel/oneapi/setvars.sh}"
 mkdir -p "$DATA"
@@ -48,21 +58,35 @@ configure_build() {
 }
 
 # run_variant <build-dir> <label>
+# Runs the suites named in $SUITES (blas and/or lapack), one CSV each.
 run_variant() {
     local bin="$1/benchmarks/bench_all"; local label="$2"
-    echo ">> $label: BLAS L1/L2/L3 sweep"
-    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-        "${PIN[@]}" "$bin" --suite blas --sweep "$SWEEP" \
-        --label "$label" --csv "$DATA/blas_sweep_${label}.csv"
-    echo ">> $label: LAPACK factorization sweep"
-    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-        "${PIN[@]}" "$bin" --suite lapack --lapack-sweep "$SWEEP" \
-        --label "$label" --csv "$DATA/lapack_sweep_${label}.csv"
+    local s
+    for s in $SUITES; do
+        case "$s" in
+            blas)
+                echo ">> $label: BLAS L1/L2/L3 sweep"
+                OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+                    "${PIN[@]}" "$bin" --suite blas --blas-sweep "$SWEEP" \
+                    --label "$label" --csv "$DATA/blas_sweep_${label}.csv" ;;
+            lapack)
+                echo ">> $label: LAPACK factorization sweep"
+                OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+                    "${PIN[@]}" "$bin" --suite lapack --lapack-sweep "$SWEEP" \
+                    --label "$label" --csv "$DATA/lapack_sweep_${label}.csv" ;;
+            *) echo "  (unknown suite '$s' in BENCH_SUITES, skipping)" ;;
+        esac
+    done
 }
 
 echo "=== native (generic-only) ==="
 configure_build build-native
 run_variant build-native native
+
+echo "=== native-fast (blocked GEMM / SIMD GEMV: Highway + -march=native) ==="
+configure_build build-native-fast \
+    -DMTL5_NATIVE_FAST_GEMM=ON -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON
+run_variant build-native-fast native-fast
 
 echo "=== openblas ==="
 configure_build build-openblas -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON
