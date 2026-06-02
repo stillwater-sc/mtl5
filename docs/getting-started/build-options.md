@@ -24,6 +24,26 @@ These options link optional external libraries for hardware-accelerated or speci
 | `MTL5_WITH_SUITESPARSE_CHOLMOD` | OFF | Link CHOLMOD Cholesky (SuiteSparse) |
 | `MTL5_WITH_SUITESPARSE_SPQR` | OFF | Link SuiteSparseQR (SuiteSparse) |
 
+## Native Performance & Development
+
+These tune or instrument **in-tree** builds (tests, benchmarks). They are
+`BUILD_INTERFACE`-only and never leak into the installed/exported package.
+
+| Option | Default | Description |
+|---|---|---|
+| `MTL5_WITH_HIGHWAY` | OFF | Use Google Highway for SIMD-accelerated native kernels (found or fetched at a pinned tag); scalar fallback otherwise |
+| `MTL5_NATIVE_ARCH` | OFF | Tune for the host CPU (`-march=native`); lets the SIMD layer pick the widest ISA (non-portable binaries) |
+| `MTL5_NATIVE_FAST_GEMM` | OFF | Route `mtl::mult` through the native blocked GEMM / SIMD GEMV path instead of the generic loop |
+| `MTL5_SANITIZE` | *(empty)* | Comma-separated sanitizers for in-tree builds, e.g. `-DMTL5_SANITIZE=address,undefined` (GCC/Clang) |
+
+```bash
+# Native fast dense path, host-tuned (what benchmarks/run_sweeps.sh builds):
+cmake -B build -DMTL5_NATIVE_FAST_GEMM=ON -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON
+
+# ASan + UBSan over the kernels:
+cmake -B build-asan -DMTL5_SANITIZE=address,undefined -DMTL5_WITH_HIGHWAY=ON
+```
+
 ## Build Presets
 
 The project includes CMake presets for common configurations:

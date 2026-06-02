@@ -99,6 +99,18 @@ if(MTL5_NATIVE_FAST_GEMM)
     target_compile_definitions(mtl5 INTERFACE $<BUILD_INTERFACE:MTL5_NATIVE_FAST_GEMM>)
 endif()
 
+# Sanitizers for in-tree builds (tests/benchmarks): pass a comma-separated list,
+# e.g. -DMTL5_SANITIZE=address,undefined. BUILD_INTERFACE only so it never leaks
+# into installed/exported flags. Used to validate the packing + micro-kernel
+# (#91). Not for MSVC (use its own /fsanitize separately).
+set(MTL5_SANITIZE "" CACHE STRING "Sanitizers for in-tree builds (e.g. address,undefined)")
+if(MTL5_SANITIZE AND NOT MSVC)
+    target_compile_options(mtl5 INTERFACE
+        $<BUILD_INTERFACE:-fsanitize=${MTL5_SANITIZE};-fno-omit-frame-pointer;-g>)
+    target_link_options(mtl5 INTERFACE
+        $<BUILD_INTERFACE:-fsanitize=${MTL5_SANITIZE}>)
+endif()
+
 if(MTL5_ENABLE_OPENMP)
     find_package(OpenMP REQUIRED)
     target_link_libraries(mtl5 INTERFACE OpenMP::OpenMP_CXX)
