@@ -16,6 +16,7 @@
 // Dense GEMM building blocks (native-BLAS epic #82)
 #include <mtl/detail/gemm_pack.hpp>
 #include <mtl/detail/gemm_blocked.hpp>
+#include <mtl/detail/gemv.hpp>
 
 // Concepts
 #include <mtl/concepts/scalar.hpp>
