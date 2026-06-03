@@ -47,6 +47,14 @@ namespace mtl::detail {
 template <typename T>
 using packed_buffer = std::vector<T, aligned_allocator<T>>;
 
+/// Joins a std::thread team on destruction (exception-safe: the team is joined
+/// even if the main thread's share throws). Portable -- std::jthread is not
+/// reliably available in Apple Clang's libc++.
+struct thread_join_guard {
+    std::vector<std::thread>& threads;
+    ~thread_join_guard() { for (auto& t : threads) if (t.joinable()) t.join(); }
+};
+
 /// Default GEMM thread count: env MTL5_NUM_THREADS, clamped to the hardware
 /// concurrency; defaults to 1 (single-thread, behaviour unchanged) when unset or
 /// invalid. Read once. Set MTL5_NUM_THREADS=N to enable the parallel path.
@@ -167,15 +175,14 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                     for (std::size_t b = tid; b < ic_starts.size(); b += team)
                         do_ic_block(ic_starts[b], Aloc.data());
                 };
-                // std::jthread joins on destruction, so the team is joined even
-                // if worker(0) throws (e.g. a buffer allocation failure) -- the
-                // pool unwinds without the std::terminate a bare std::thread
-                // would trigger on an un-joined handle.
-                std::vector<std::jthread> pool;
+                // The guard joins the team on scope exit -- including if worker(0)
+                // throws (e.g. a buffer allocation failure) -- so an un-joined
+                // std::thread never reaches its destructor and calls std::terminate.
+                std::vector<std::thread> pool;
                 pool.reserve(team > 0 ? team - 1 : 0);
+                thread_join_guard guard{pool};
                 for (unsigned t = 1; t < team; ++t) pool.emplace_back(worker, t);
                 worker(0);
-                // pool destructor joins the workers here (end of scope).
             }
         }
     }
