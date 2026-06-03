@@ -57,7 +57,31 @@ From `blas_sweep_native-fast.csv` vs `blas_sweep_openblas.csv`
 | `dot`  | ~88–110% | bandwidth-bound |
 | `nrm2` | ~120–278% | SIMD sum-of-squares >> OpenBLAS's overflow-careful scalar nrm2 |
 
-Single-threaded; multithreaded GEMM is tracked separately (#92).
+Single-threaded; multithreaded GEMM scaling is below (#108).
+
+## Multi-core GEMM scaling (#108)
+
+`gemm_scaling_{native-fast,openblas,mkl}.csv` (one CSV per backend; the `backend`
+column is labelled `<name>-t<T>`) from `../run_scaling.sh`, GEMM at N ∈ {1024,
+2048}, threads ∈ {1,2,4,8}, pinned to the 8 P-cores. Speedup / efficiency and
+the plot come from `../analyze_scaling.py`.
+
+GFLOP/s and speedup vs single-thread, at **N=2048**:
+
+| threads | native-fast | OpenBLAS | MKL |
+|---|---|---|---|
+| 1 | 56.8 (1.00×) | 73.9 (1.00×) | 74.8 (1.00×) |
+| 2 | 107.4 (1.89×) | 147.5 (2.00×) | 147.5 (1.97×) |
+| 4 | 209.2 (3.68×) | 288.4 (3.90×) | 292.7 (3.91×) |
+| 8 | 330.8 (**5.82×**) | 528.5 (7.15×) | 546.7 (7.30×) |
+
+native-fast scales near-ideal to ~4 cores (~92% efficiency) but its efficiency
+trails the tuned libraries at 8 threads (73% vs ~90%), so the single-thread
+~80%-of-OpenBLAS gap widens to ~62% multi-threaded. Closing it (persistent
+thread pool, BLIS-style multi-loop parallelism) is a future optimization, not
+part of this measurement.
+
+![GEMM multi-core scaling](gemm_scaling.png)
 
 ## Regenerate
 
