@@ -8,7 +8,6 @@ MTL5 provides several CMake options to control the build and enable optional fea
 |---|---|---|
 | `MTL5_BUILD_TESTS` | ON | Build the Catch2 test suite |
 | `MTL5_BUILD_EXAMPLES` | ON | Build example programs |
-| `MTL5_ENABLE_OPENMP` | OFF | Enable OpenMP parallelism |
 
 ## External Library Bindings
 
@@ -42,6 +41,17 @@ cmake -B build -DMTL5_NATIVE_FAST_GEMM=ON -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_A
 
 # ASan + UBSan over the kernels:
 cmake -B build-asan -DMTL5_SANITIZE=address,undefined -DMTL5_WITH_HIGHWAY=ON
+```
+
+### Multithreaded GEMM
+
+The native blocked GEMM parallelizes its row (`ic`) loop with the C++ standard
+concurrency runtime (`std::thread`) — **no OpenMP dependency**. It is controlled
+at runtime by the `MTL5_NUM_THREADS` environment variable (clamped to the
+hardware concurrency); unset or `1` keeps the single-thread path unchanged.
+
+```bash
+MTL5_NUM_THREADS=8 ./your_program   # use up to 8 threads for native GEMM
 ```
 
 ## Build Presets

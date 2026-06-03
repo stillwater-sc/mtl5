@@ -45,7 +45,6 @@ ctest --test-dir build
 |---|---|---|
 | `MTL5_BUILD_TESTS` | ON | Build the Catch2 test suite |
 | `MTL5_BUILD_EXAMPLES` | ON | Build example programs |
-| `MTL5_ENABLE_OPENMP` | OFF | Enable OpenMP parallelism |
 
 ## Project Structure
 

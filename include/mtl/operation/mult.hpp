@@ -150,11 +150,12 @@ void mult(const MA& A, const MB& B, MC& C) {
         const std::ptrdiff_t a_cs = interface::is_row_major_v<MA> ? 1 : static_cast<std::ptrdiff_t>(A.num_rows());
         const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
         const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
+        const unsigned nthreads = detail::gemm_default_threads();
         if constexpr (interface::is_row_major_v<MC>) {
             detail::gemm_blocked<T>(M, N, K, math::one<T>(),
                                     A.data(), a_rs, a_cs,
                                     B.data(), b_rs, b_cs,
-                                    math::zero<T>(), C.data(), N);
+                                    math::zero<T>(), C.data(), N, nthreads);
         } else {
             // Col-major C: compute C^T = B^T * A^T into the same buffer, viewed as
             // a row-major N x M matrix (ld = M). Pack picks up B^T/A^T by swapping
@@ -162,7 +163,7 @@ void mult(const MA& A, const MB& B, MC& C) {
             detail::gemm_blocked<T>(N, M, K, math::one<T>(),
                                     B.data(), b_cs, b_rs,
                                     A.data(), a_cs, a_rs,
-                                    math::zero<T>(), C.data(), M);
+                                    math::zero<T>(), C.data(), M, nthreads);
         }
         return;
     }
