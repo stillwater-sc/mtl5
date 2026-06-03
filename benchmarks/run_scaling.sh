@@ -60,6 +60,11 @@ run_scaling_for() {
     local out="$DATA/gemm_scaling_${backend}.csv"; rm -f "$out"
     local first=1
     for T in $THREADS; do
+        if (( T > ${#PCPU_ARR[@]} )); then
+            echo "error: T=$T exceeds the ${#PCPU_ARR[@]} physical core(s) in BENCH_PCPUS ($PCPUS);" >&2
+            echo "       add more cores to BENCH_PCPUS or reduce THREADS." >&2
+            exit 1
+        fi
         local pin; pin="$(pcpus_for "$T")"
         local tmp; tmp="$(mktemp)"
         echo "  $backend  T=$T  pinned to CPUs $pin"

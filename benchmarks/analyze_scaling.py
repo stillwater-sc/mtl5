@@ -48,8 +48,8 @@ def print_tables(data):
         print(f"\n== {name} ==")
         for size in sorted(data[name]):
             by_t = data[name][size]
-            base = by_t.get(min(by_t))           # T=1 (smallest thread count present)
-            base_t = min(by_t)
+            base_t = min(by_t)                   # baseline = smallest thread count present
+            base = by_t.get(base_t)
             print(f"  N={size}")
             print(f"    {'threads':>7} {'GFLOP/s':>10} {'speedup':>8} {'efficiency':>11}")
             for t in sorted(by_t):
@@ -71,18 +71,20 @@ def make_plot(data, out):
     size = sizes[-1]
 
     fig, (ax_sp, ax_g) = plt.subplots(1, 2, figsize=(11, 4.5))
-    max_t = 1
     for name in sorted(data):
         by_t = data[name].get(size)
         if not by_t:
             continue
         ts = sorted(by_t)
-        base_t, base_g = ts[0], by_t[ts[0]]
-        max_t = max(max_t, ts[-1])
+        base_g = by_t[ts[0]]                 # speedup relative to this backend's smallest T
         ax_sp.plot(ts, [by_t[t] / base_g for t in ts], marker="o", label=name)
         ax_g.plot(ts, [by_t[t] for t in ts], marker="o", label=name)
-    ideal = list(range(1, max_t + 1))
-    ax_sp.plot(ideal, ideal, "k--", alpha=0.5, label="ideal (linear)")
+    # Ideal line normalized to the same baseline as the speedup curves (the
+    # smallest thread count present), so it is correct even if THREADS omits 1.
+    all_ts = sorted({t for name in data for t in data[name].get(size, {})})
+    if all_ts:
+        base_t = all_ts[0]
+        ax_sp.plot(all_ts, [t / base_t for t in all_ts], "k--", alpha=0.5, label="ideal (linear)")
 
     ax_sp.set(title=f"GEMM speedup vs threads (N={size})", xlabel="threads",
               ylabel="speedup vs 1 thread")
