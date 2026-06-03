@@ -172,6 +172,33 @@ absolute perf gates flaky. Run it on dedicated hardware.
 or above it (both bandwidth-bound). The GEMM gate **passes** at the 80% / N≥256
 threshold. This is single-threaded; multithreading is #92.
 
+## Multi-core GEMM scaling (#108)
+
+The native blocked GEMM parallelizes its `ic` (row) loop with the C++ standard
+concurrency runtime (set `MTL5_NUM_THREADS`). `run_scaling.sh` sweeps GEMM over
+thread counts for native-fast **and** threaded OpenBLAS/MKL (their own
+`*_NUM_THREADS`), pinning to physical performance cores; `analyze_scaling.py`
+reports speedup + parallel efficiency and draws the scaling plot.
+
+```bash
+# native-fast / openblas / mkl, T in {1,2,4,8}, pinned to P-cores:
+BENCH_PCPUS=0,2,4,6,8,10,12,14 benchmarks/run_scaling.sh
+benchmarks/analyze_scaling.py benchmarks/data/gemm_scaling_*.csv \
+    --plot benchmarks/data/gemm_scaling.png
+```
+
+> **Set `BENCH_PCPUS` to your topology** — one logical id per physical core
+> (`lscpu -e=CPU,CORE,MAXMHZ`). The default is an i7-12700K's 8 P-cores.
+
+**Measured (i7-12700K, fp64, N=2048):** native-fast scales **5.8× on 8 P-cores**
+(56.8 → 330.8 GFLOP/s), vs OpenBLAS **7.15×** (528) and MKL **7.30×** (547). So
+native-fast scales well to ~4 cores (3.7×, ~92% efficiency) but its efficiency
+trails the tuned libraries at high thread counts — the single-thread ~80%-of-
+OpenBLAS gap widens to ~62% at 8 threads. The simple per-`(jc,pc)` thread-team
+spawn and `ic`-only partition leave room for a persistent thread pool and
+multi-loop (BLIS-style) parallelization — a future optimization, tracked
+separately from this measurement.
+
 ## Adding a new backend (e.g. CUDA)
 
 Because the benchmark uses the public API, a new backend is added in the
