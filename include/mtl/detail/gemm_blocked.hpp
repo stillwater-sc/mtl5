@@ -167,11 +167,15 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                     for (std::size_t b = tid; b < ic_starts.size(); b += team)
                         do_ic_block(ic_starts[b], Aloc.data());
                 };
-                std::vector<std::thread> pool;
+                // std::jthread joins on destruction, so the team is joined even
+                // if worker(0) throws (e.g. a buffer allocation failure) -- the
+                // pool unwinds without the std::terminate a bare std::thread
+                // would trigger on an un-joined handle.
+                std::vector<std::jthread> pool;
                 pool.reserve(team > 0 ? team - 1 : 0);
                 for (unsigned t = 1; t < team; ++t) pool.emplace_back(worker, t);
                 worker(0);
-                for (auto& th : pool) th.join();
+                // pool destructor joins the workers here (end of scope).
             }
         }
     }
