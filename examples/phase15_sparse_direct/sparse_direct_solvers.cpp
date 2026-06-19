@@ -371,6 +371,7 @@ void demo_backend_summary() {
     std::cout << "     sparse::factorization::sparse_cholesky  (SPD, LL^T)\n";
     std::cout << "     sparse::factorization::sparse_lu        (general, PA=LU)\n";
     std::cout << "     sparse::factorization::sparse_qr        (least-squares, QR)\n";
+    std::cout << "     sparse::factorization::native_klu       (circuit, BTF + block LU)\n";
     std::cout << "\n   Fill-reducing orderings:\n";
     std::cout << "     sparse::ordering::rcm     (bandwidth reduction)\n";
     std::cout << "     sparse::ordering::amd     (symmetric fill, for Cholesky)\n";
