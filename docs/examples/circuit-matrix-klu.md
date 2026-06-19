@@ -68,7 +68,7 @@ cmake --build build --target example_circuit_matrix_klu -j4
 - Solves with `native_klu_factor` / `klu_numeric::solve`, reporting the BTF
   block count, factor/solve time, and residual `‖Ax − b‖∞`.
 - When built with `-DMTL5_WITH_SUITESPARSE_KLU=ON`, also solves with
-  `mtl::interface::klu_solver` and reports `max|native − external|`.
+  `mtl::interface::klu_solve` and reports `max|native − external|`.
 
 ## Notes
 

@@ -10,14 +10,15 @@
 // same system is also solved with the external KLU binding and the two results
 // are compared.
 //
-// Usage:
-//   circuit_matrix_klu [matrix.mtx]
+// Usage (the CMake target/binary is prefixed "example_"):
+//   example_circuit_matrix_klu [matrix.mtx]
 //
 // With no argument a small synthetic block-triangular circuit-like matrix is
 // used, so the example runs without any download. Fetch real matrices with
 // examples/phase15_sparse_direct/fetch_circuit_matrices.sh, e.g.:
 //
-//   ./circuit_matrix_klu data/rajat30/rajat30.mtx
+//   ./build/examples/example_circuit_matrix_klu \
+//       examples/phase15_sparse_direct/data/rajat30/rajat30.mtx
 //
 // Targets: Rajat/rajat30 (small/medium) and Freescale/circuit5M (very large).
 
