@@ -19,6 +19,7 @@ using Catch::Matchers::WithinAbs;
 
 #ifdef MTL5_HAS_KLU
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <utility>
