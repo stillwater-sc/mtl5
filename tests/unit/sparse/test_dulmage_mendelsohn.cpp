@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <stdexcept>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -166,6 +167,17 @@ TEST_CASE("BTF on a fully triangular matrix yields n singleton blocks",
     REQUIRE(btf.nblocks() == 4);
     REQUIRE(has_zero_free_diagonal(A, btf));
     REQUIRE(is_block_upper_triangular(A, btf));
+}
+
+TEST_CASE("block_triangular_form rejects a non-square matrix",
+          "[sparse][btf]") {
+    mat::compressed2D<double> A(2, 3);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][0] << 1.0;
+        ins[1][1] << 1.0;
+    }
+    REQUIRE_THROWS_AS(block_triangular_form(A), std::invalid_argument);
 }
 
 TEST_CASE("BTF flags a structurally singular matrix with valid permutations",

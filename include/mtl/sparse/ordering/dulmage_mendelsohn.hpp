@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <stdexcept>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -204,6 +205,10 @@ btf_result block_triangular_form(
     const mat::compressed2D<Value, Parameters>& A)
 {
     const std::size_t n = A.num_rows();
+    if (A.num_cols() != n) {
+        throw std::invalid_argument(
+            "block_triangular_form: matrix must be square");
+    }
     const auto& rp = A.ref_major();
     const auto& ci = A.ref_minor();
 
