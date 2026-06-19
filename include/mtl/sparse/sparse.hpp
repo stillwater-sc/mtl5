@@ -19,8 +19,10 @@
 #include <mtl/sparse/factorization/sparse_ldlt.hpp>
 #include <mtl/sparse/factorization/sparse_qr.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
+#include <mtl/sparse/factorization/native_klu.hpp>
 
 // Orderings
 #include <mtl/sparse/ordering/rcm.hpp>
 #include <mtl/sparse/ordering/amd.hpp>
 #include <mtl/sparse/ordering/colamd.hpp>
+#include <mtl/sparse/ordering/dulmage_mendelsohn.hpp>
