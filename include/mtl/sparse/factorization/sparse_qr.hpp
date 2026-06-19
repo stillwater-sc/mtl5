@@ -59,6 +59,7 @@ struct qr_numeric {
     /// min ||Ax - b|| => R * Q^T * x = (Q_h^T * b)[0:n-1]
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        using std::abs;  // ADL: also find abs() for custom number types
         std::size_t m = symbolic.nrows;
         std::size_t nc = symbolic.ncols;
         if (static_cast<std::size_t>(b.size()) != m) {
@@ -102,7 +103,7 @@ struct qr_numeric {
             if (R.col_ptr[col] > diag_pos) continue;
 
             Value diag = R.values[diag_pos];
-            if (std::abs(diag) < std::numeric_limits<Value>::min()) {
+            if (abs(diag) < std::numeric_limits<Value>::min()) {
                 throw std::runtime_error(
                     "qr_numeric::solve: zero diagonal in R at column "
                     + std::to_string(col) + " (rank deficient)");
@@ -187,6 +188,7 @@ qr_numeric<Value> sparse_qr_numeric(
     const qr_symbolic& sym)
 {
     using size_type = std::size_t;
+    using std::sqrt;  // ADL: also find sqrt() for custom number types
     size_type m = sym.nrows;
     size_type nc = sym.ncols;
     if (A.num_rows() != m || A.num_cols() != nc) {
@@ -262,7 +264,7 @@ qr_numeric<Value> sparse_qr_numeric(
             V_idx[k].push_back(k);
             V_vals[k].push_back(Value{1});
         } else {
-            Value norm_x = std::sqrt(x0 * x0 + sigma);
+            Value norm_x = sqrt(x0 * x0 + sigma);
 
             // alpha = -sign(x0) * ||x||
             Value alpha = (x0 >= Value{0}) ? -norm_x : norm_x;

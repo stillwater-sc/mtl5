@@ -293,7 +293,8 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
                 "sparse_cholesky_numeric: matrix is not positive definite "
                 "(non-positive diagonal at column " + std::to_string(j) + ")");
         }
-        Value ljj = std::sqrt(diag);
+        using std::sqrt;  // ADL: also find sqrt() for custom number types
+        Value ljj = sqrt(diag);
 
         // Guarded write into column j of L
         size_type col_capacity = sym.col_counts[j];

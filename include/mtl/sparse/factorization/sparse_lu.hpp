@@ -175,6 +175,7 @@ lu_numeric<Value> sparse_lu_numeric(
     Value threshold = Value{1})
 {
     using size_type = std::size_t;
+    using std::abs;  // ADL: also find abs() for custom number types (e.g. posit/cfloat)
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -246,7 +247,7 @@ lu_numeric<Value> sparse_lu_numeric(
         for (size_type ti = 0; ti < touched.size(); ++ti) {
             size_type i = touched[ti];
             if (i < k) continue;
-            Value abs_val = std::abs(x[i]);
+            Value abs_val = abs(x[i]);
             if (abs_val > max_val) {
                 max_val = abs_val;
                 pivot_pos = i;
@@ -254,7 +255,7 @@ lu_numeric<Value> sparse_lu_numeric(
         }
         // Also check x[k] itself (may not be in touched if it was set to 0)
         {
-            Value abs_k = std::abs(x[k]);
+            Value abs_k = abs(x[k]);
             if (abs_k > max_val) {
                 max_val = abs_k;
                 pivot_pos = k;
@@ -270,7 +271,7 @@ lu_numeric<Value> sparse_lu_numeric(
 
         // Apply threshold: if x[k] is large enough relative to max, keep it
         // Otherwise swap with the row that has the maximum
-        if (std::abs(x[k]) < threshold * max_val && pivot_pos != k) {
+        if (abs(x[k]) < threshold * max_val && pivot_pos != k) {
             // Swap rows k and pivot_pos in workspace
             std::swap(x[k], x[pivot_pos]);
 
