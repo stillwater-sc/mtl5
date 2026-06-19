@@ -5,7 +5,7 @@
 // into block triangular form, then applies Gilbert-Peierls left-looking LU
 // to each diagonal block independently.
 //
-// Guarded by MTL5_HAS_KLU (set by CMake when MTL5_ENABLE_KLU=ON)
+// Guarded by MTL5_HAS_KLU (set by CMake when MTL5_WITH_SUITESPARSE_KLU=ON)
 //
 // Reference: Davis & Palamadai Natarajan, "Algorithm 907: KLU, A Direct
 //            Sparse Solver for Circuit Simulation Problems", ACM TOMS, 2010.
