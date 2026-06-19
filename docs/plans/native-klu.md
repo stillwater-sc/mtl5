@@ -69,9 +69,11 @@ avoid deep recursion on large circuits). The SCCs, in reverse topological
 order, are the diagonal blocks; the condensation is a DAG, giving block
 **upper** triangular form.
 
-Output: a single symmetric permutation `pbtf` and the block boundary array
-`blocks` (start index of each diagonal block), such that
-`P · A · Pᵀ` is block upper triangular.
+Output: a row permutation `p`, a column permutation `q` (the matching folds
+into the columns, so a single symmetric permutation does not suffice in
+general), and the block boundary array `blocks` (start index of each diagonal
+block), such that `A(p, q)` is block upper triangular with a zero-free
+diagonal. This is the `cs_dmperm` interface from Davis.
 
 References: Davis, *Direct Methods for Sparse Linear Systems*, Ch. 7;
 Duff & Reid (MC13/MC21); SuiteSparse `BTF`.
@@ -84,16 +86,18 @@ New file `include/mtl/sparse/ordering/dulmage_mendelsohn.hpp`:
 namespace mtl::sparse::ordering {
 
 struct btf_result {
-    std::vector<std::size_t> perm;     // symmetric permutation p[new] = old
-    std::vector<std::size_t> blocks;   // size nblocks+1; block b = [blocks[b], blocks[b+1])
-    std::size_t nblocks() const { return blocks.size() - 1; }
+    std::vector<std::size_t> row_perm;   // p[new] = old row
+    std::vector<std::size_t> col_perm;   // q[new] = old column
+    std::vector<std::size_t> blocks;     // size nblocks+1; block b = [blocks[b], blocks[b+1])
     bool structurally_singular = false;
+    std::size_t nblocks() const { return blocks.empty() ? 0 : blocks.size() - 1; }
 };
 
 // Maximum matching (row, column) -> matched column for each row, -1 if none.
 std::vector<std::ptrdiff_t> maximum_matching(const mat::compressed2D<...>& A);
 
-// Full BTF: matching + Tarjan SCC, returns symmetric perm + block boundaries.
+// Full BTF: matching + Tarjan SCC. Returns row+column permutations and block
+// boundaries such that A(row_perm, col_perm) is block upper triangular.
 template <typename Value, typename Parameters>
 btf_result block_triangular_form(const mat::compressed2D<Value, Parameters>& A);
 
