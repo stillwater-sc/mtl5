@@ -16,6 +16,8 @@
 // Usage:
 //   bench_klu                       # built-in 2D Poisson suite (32^2 .. 256^2)
 //   bench_klu A.mtx B.mtx ...       # those matrices instead
+//   bench_klu ext:Big.mtx           # external-only row: skip native (too slow
+//                                   #   to finish, e.g. rajat30 before Phase 1)
 //   bench_klu --csv out.csv [mtx]   # also write a CSV scoreboard
 
 #include <chrono>
@@ -72,6 +74,7 @@ struct Score {
     double native_s = 0.0, native_resid = 0.0;
     std::size_t native_fill = 0;
     bool native_ok = false;
+    bool native_skipped = false;   // external-only matrix (native too slow to run)
 #ifdef MTL5_HAS_KLU
     double ext_s = 0.0, ext_resid = 0.0;
     bool ext_ok = false;
@@ -79,7 +82,8 @@ struct Score {
 };
 
 Score score_matrix(const std::string& name,
-                   const mtl::mat::compressed2D<double>& A) {
+                   const mtl::mat::compressed2D<double>& A,
+                   bool run_native = true) {
     Score s;
     s.name = name;
     s.n = A.num_rows();
@@ -109,20 +113,25 @@ Score score_matrix(const std::string& name,
                                        btf.blocks[b2 + 1] - btf.blocks[b2]);
     }
 
-    // Native KLU factor + solve.
-    try {
-        mtl::vec::dense_vector<double> x(n, 0.0);
-        mtl::sparse::factorization::klu_numeric<double> fac;
-        s.native_s = seconds([&] {
-            fac = mtl::sparse::factorization::native_klu_factor(A);
-            fac.solve(x, b);
-        });
-        for (const auto& blk : fac.block_numeric)
-            s.native_fill += blk.L.nnz() + blk.U.nnz();
-        s.native_resid = rel_residual(A, x, b);
-        s.native_ok = true;
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "  [native KLU failed on %s: %s]\n", name.c_str(), e.what());
+    // Native KLU factor + solve (skipped for external-only matrices that are
+    // known not to finish in reasonable time, e.g. rajat30 pre-Phase-1).
+    if (!run_native) {
+        s.native_skipped = true;
+    } else {
+        try {
+            mtl::vec::dense_vector<double> x(n, 0.0);
+            mtl::sparse::factorization::klu_numeric<double> fac;
+            s.native_s = seconds([&] {
+                fac = mtl::sparse::factorization::native_klu_factor(A);
+                fac.solve(x, b);
+            });
+            for (const auto& blk : fac.block_numeric)
+                s.native_fill += blk.L.nnz() + blk.U.nnz();
+            s.native_resid = rel_residual(A, x, b);
+            s.native_ok = true;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "  [native KLU failed on %s: %s]\n", name.c_str(), e.what());
+        }
     }
 
 #ifdef MTL5_HAS_KLU
@@ -151,8 +160,9 @@ void print_header() {
 void print_row(const Score& s) {
     std::printf("%-22s %9zu %11zu %8zu %11zu  ",
                 s.name.c_str(), s.n, s.nnz, s.nblocks, s.largest_block);
-    if (s.native_ok) std::printf("%10.3f %10zu", s.native_s, s.native_fill);
-    else             std::printf("%10s %10s", "FAIL", "-");
+    if (s.native_ok)            std::printf("%10.3f %10zu", s.native_s, s.native_fill);
+    else if (s.native_skipped)  std::printf("%10s %10s", "skip", "-");
+    else                        std::printf("%10s %10s", "FAIL", "-");
 #ifdef MTL5_HAS_KLU
     if (s.ext_ok) {
         std::printf("  %10.3f", s.ext_s);
@@ -214,7 +224,13 @@ int main(int argc, char** argv) {
             print_row(rows.back());
         }
     } else {
-        for (const auto& f : mtx_files) {
+        for (const auto& arg : mtx_files) {
+            // "ext:<file>" marks a matrix external-only (skip native, which is
+            // too slow to finish, e.g. rajat30 before Phase 1).
+            bool run_native = true;
+            std::string f = arg;
+            if (f.rfind("ext:", 0) == 0) { run_native = false; f = f.substr(4); }
+
             mtl::mat::compressed2D<double> A;
             double load = 0.0;
             try { load = seconds([&] { A = mtl::io::mm_read<double>(f); }); }
@@ -229,7 +245,7 @@ int main(int argc, char** argv) {
             auto dot = nm.find_last_of('.');
             if (dot != std::string::npos) nm = nm.substr(0, dot);
             std::fprintf(stderr, "  [loaded %s in %.2fs]\n", nm.c_str(), load);
-            rows.push_back(score_matrix(nm, A));
+            rows.push_back(score_matrix(nm, A, run_native));
             print_row(rows.back());
         }
     }
