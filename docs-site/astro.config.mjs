@@ -44,6 +44,10 @@ export default defineConfig({
           autogenerate: { directory: 'modernization' },
         },
         {
+          label: 'Linear Algebra Algorithms',
+          autogenerate: { directory: 'algorithms' },
+        },
+        {
           label: 'Design',
           autogenerate: { directory: 'design' },
         },

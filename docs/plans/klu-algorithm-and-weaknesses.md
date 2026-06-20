@@ -1,5 +1,11 @@
 # KLU: Algorithm and Implementation Weaknesses
 
+> **Note:** the durable, implementation-independent characterization of the KLU
+> algorithm is published in the docs site under **Linear Algebra Algorithms**
+> (`docs/algorithms/klu.md`). *This* document is the internal optimization
+> tracker: it maps each weakness to a phase and records MTL5's measured
+> native-vs-SuiteSparse numbers as the effort progresses.
+
 A reference for the native KLU performance effort ([epic #138](native-klu-performance.md)).
 It describes what KLU does, why it is fast, and the specific places a naive
 implementation (ours included) loses performance. Each weakness is tagged with

@@ -48,6 +48,10 @@ const FILE_MAP = {
   'architecture/concepts.md':        'architecture/concepts.md',
   'architecture/aggregate-types.md': 'architecture/aggregate-types.md',
 
+  // ── Linear Algebra Algorithms ───────────────────────────────────
+  'algorithms/overview.md':                     'algorithms/overview.md',
+  'algorithms/klu.md':                          'algorithms/klu.md',
+
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',
   'position-mixed-precision-acceleration.md':   'design/mixed-precision-acceleration.md',
