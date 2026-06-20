@@ -78,6 +78,7 @@ struct Score {
     bool native_skipped = false;   // external-only matrix (native too slow to run)
 #ifdef MTL5_HAS_KLU
     double ext_s = 0.0, ext_resid = 0.0;
+    std::size_t ext_fill = 0;
     bool ext_ok = false;
 #endif
 };
@@ -138,7 +139,14 @@ Score score_matrix(const std::string& name,
 #ifdef MTL5_HAS_KLU
     try {
         mtl::vec::dense_vector<double> x(n, 0.0);
-        s.ext_s = seconds([&] { mtl::interface::klu_solve(A, x, b); });
+        // Construct the solver explicitly (rather than the one-shot free
+        // function) so we can read its factor nnz; time factor+solve together
+        // to match the native measurement.
+        s.ext_s = seconds([&] {
+            mtl::interface::klu_solver solver(A);
+            solver.solve(x, b);
+            s.ext_fill = solver.factor_nnz();
+        });
         s.ext_resid = rel_residual(A, x, b);
         s.ext_ok = true;
     } catch (const std::exception& e) {
@@ -149,28 +157,31 @@ Score score_matrix(const std::string& name,
 }
 
 void print_header() {
-    std::printf("\n%-22s %9s %11s %8s %11s  %10s %10s",
+    std::printf("\n%-22s %9s %11s %8s %11s  %10s %12s",
                 "matrix", "n", "nnz", "blocks", "maxblock",
-                "native(s)", "fill");
+                "native(s)", "native_fill");
 #ifdef MTL5_HAS_KLU
-    std::printf("  %10s %8s", "KLU(s)", "ratio");
+    std::printf("  %10s %12s %8s %8s", "KLU(s)", "KLU_fill", "t_ratio", "f_ratio");
 #endif
-    std::printf("\n%s\n", std::string(110, '-').c_str());
+    std::printf("\n%s\n", std::string(128, '-').c_str());
 }
 
 void print_row(const Score& s) {
     std::printf("%-22s %9zu %11zu %8zu %11zu  ",
                 s.name.c_str(), s.n, s.nnz, s.nblocks, s.largest_block);
-    if (s.native_ok)            std::printf("%10.3f %10zu", s.native_s, s.native_fill);
-    else if (s.native_skipped)  std::printf("%10s %10s", "skip", "-");
-    else                        std::printf("%10s %10s", "FAIL", "-");
+    if (s.native_ok)            std::printf("%10.3f %12zu", s.native_s, s.native_fill);
+    else if (s.native_skipped)  std::printf("%10s %12s", "skip", "-");
+    else                        std::printf("%10s %12s", "FAIL", "-");
 #ifdef MTL5_HAS_KLU
     if (s.ext_ok) {
-        std::printf("  %10.3f", s.ext_s);
-        if (s.native_ok && s.ext_s > 0.0) std::printf(" %7.1fx", s.native_s / s.ext_s);
-        else                              std::printf(" %8s", "-");
+        std::printf("  %10.3f %12zu", s.ext_s, s.ext_fill);
+        if (s.native_ok && s.ext_s > 0.0)         std::printf(" %7.1fx", s.native_s / s.ext_s);
+        else                                      std::printf(" %8s", "-");
+        if (s.native_ok && s.ext_fill > 0)        std::printf(" %7.1fx",
+                                                      double(s.native_fill) / double(s.ext_fill));
+        else                                      std::printf(" %8s", "-");
     } else {
-        std::printf("  %10s %8s", "FAIL", "-");
+        std::printf("  %10s %12s %8s %8s", "FAIL", "-", "-", "-");
     }
 #endif
     std::printf("\n");
@@ -182,7 +193,7 @@ void write_csv(const std::string& path, const std::vector<Score>& rows) {
     // not ok, so "skipped/failed" is never confused with a real value of 0.
     out << "matrix,n,nnz,nblocks,largest_block,native_status,native_s,native_fill,native_resid";
 #ifdef MTL5_HAS_KLU
-    out << ",ext_status,ext_s,ext_resid,ratio";
+    out << ",ext_status,ext_s,ext_fill,ext_resid,time_ratio,fill_ratio";
 #endif
     out << "\n";
     for (const auto& s : rows) {
@@ -193,11 +204,14 @@ void write_csv(const std::string& path, const std::vector<Score>& rows) {
         else             out << ",,";   // empty native_s, native_fill, native_resid
 #ifdef MTL5_HAS_KLU
         out << ',' << (s.ext_ok ? "ok" : "fail") << ',';
-        if (s.ext_ok) out << s.ext_s << ',' << s.ext_resid;
-        else          out << ",";       // empty ext_s, ext_resid
+        if (s.ext_ok) out << s.ext_s << ',' << s.ext_fill << ',' << s.ext_resid;
+        else          out << ",,";      // empty ext_s, ext_fill, ext_resid
         out << ',';
         if (s.native_ok && s.ext_ok && s.ext_s > 0.0) out << (s.native_s / s.ext_s);
-        // else: empty ratio
+        out << ',';
+        if (s.native_ok && s.ext_ok && s.ext_fill > 0)
+            out << (double(s.native_fill) / double(s.ext_fill));
+        // else: empty ratios
 #endif
         out << "\n";
     }

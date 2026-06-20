@@ -112,6 +112,15 @@ public:
     std::size_t num_rows() const { return static_cast<std::size_t>(n_); }
     std::size_t num_cols() const { return static_cast<std::size_t>(n_); }
 
+    /// Number of nonzeros in the computed factors: nnz(L) + nnz(U), each
+    /// including its diagonal (KLU's lnz/unz). Excludes the off-diagonal BTF
+    /// coupling (Numeric->nzoff) -- matching the native fill convention so the
+    /// two are directly comparable.
+    std::size_t factor_nnz() const {
+        return static_cast<std::size_t>(numeric_->lnz)
+             + static_cast<std::size_t>(numeric_->unz);
+    }
+
 private:
     int n_;
     klu_common common_;

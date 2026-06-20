@@ -180,12 +180,12 @@ klu_numeric<Value> native_klu_factor(
         }
 
         // Per-block fill-reducing ordering: AMD on the block's symmetric
-        // structure A+Aᵀ for non-trivial blocks (KLU's default), natural
+        // structure A+A^T for non-trivial blocks (KLU's default), natural
         // ordering for tiny blocks where the setup would be pure overhead
-        // (singletons are common in circuit matrices). AMD-on-A+Aᵀ is used
-        // rather than COLAMD-on-AᵀA because on indefinite/unsymmetric circuit
-        // blocks threshold pivoting deviates from a column ordering and fill
-        // explodes; the symmetrized ordering keeps fill near-minimal (#133).
+        // (singletons are common in circuit matrices). AMD-on-(A+A^T) is used
+        // rather than COLAMD-on-(A^T*A) because on indefinite/unsymmetric
+        // circuit blocks threshold pivoting deviates from a column ordering and
+        // fill explodes; the symmetrized ordering keeps fill near-minimal (#133).
         lu_symbolic sym = (m > 4) ? sparse_lu_symbolic(block, ordering::amd{})
                                   : sparse_lu_symbolic(block);
         result.block_numeric.push_back(
