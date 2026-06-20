@@ -188,183 +188,166 @@ lu_numeric<Value> sparse_lu_numeric(
             "sparse_lu_numeric: symbolic permutation is invalid or wrong size");
     }
 
-    // Apply column permutation and convert to CSC
+    // Column-permute A (apply the fill-reducing ordering) and convert to CSC.
     auto AQ = util::column_permute(A, sym.col_perm);
     auto C = util::crs_to_csc(AQ);
 
-    // Row permutation tracking
-    // piv[k] = original row that is now in position k
-    std::vector<size_type> piv(n);
-    std::vector<size_type> piv_inv(n);  // piv_inv[original_row] = current position
-    for (size_type i = 0; i < n; ++i) {
-        piv[i] = i;
-        piv_inv[i] = i;
-    }
+    // Left-looking Gilbert-Peierls LU with threshold partial pivoting
+    // (Davis, "Direct Methods for Sparse Linear Systems", cs_lu). Each column
+    // is computed by a sparse triangular solve over the *reach* of C(:,k) in
+    // the partially-built L, so the total work is O(flops), not O(n^2).
+    //
+    //   pinv[old_row] = pivot position of that row, or -1 if not yet pivotal.
+    //
+    // L and U are accumulated in flat CSC arrays. L row indices are kept in
+    // original-row space during factorization and remapped to pivot positions
+    // at the end. L is unit lower (diagonal stored first per column, value 1);
+    // U has its diagonal stored last per column -- the layouts dense_lower_solve
+    // / dense_upper_solve expect.
+    std::vector<std::ptrdiff_t> pinv(n, -1);
+    std::vector<Value>          x(n, Value{0});   // dense numeric workspace
+    std::vector<std::ptrdiff_t> xi(n);            // DFS stack + reach output
+    std::vector<std::ptrdiff_t> pstack(n);        // DFS resume-pointer stack
+    std::vector<char>           marked(n, 0);     // reach marks
+    std::vector<std::ptrdiff_t> reach_nodes;      // marked nodes, for O(reach) reset
+    reach_nodes.reserve(n);
 
-    // Build L and U using dynamic storage (vectors of vectors)
-    // then convert to CSC at the end
-    std::vector<std::vector<size_type>> L_rows(n);   // row indices per column
-    std::vector<std::vector<Value>>     L_vals(n);   // values per column
-    std::vector<std::vector<size_type>> U_rows(n);   // row indices per column
-    std::vector<std::vector<Value>>     U_vals(n);   // values per column
-
-    // Dense workspace with sparse tracking
-    std::vector<Value> x(n, Value{0});
-    std::vector<size_type> touched;  // indices touched in current column
-    touched.reserve(n);
+    std::vector<size_type>      Lp(n + 1, 0), Up(n + 1, 0);
+    std::vector<std::ptrdiff_t> Li;  std::vector<Value> Lx;
+    std::vector<std::ptrdiff_t> Ui;  std::vector<Value> Ux;
+    Li.reserve(C.values.size() * 2); Lx.reserve(C.values.size() * 2);
+    Ui.reserve(C.values.size() * 2); Ux.reserve(C.values.size() * 2);
 
     for (size_type k = 0; k < n; ++k) {
-        touched.clear();
+        Lp[k] = Li.size();
+        Up[k] = Ui.size();
 
-        // Scatter column k of permuted-row C into workspace x
-        // We need to apply the current row permutation
+        // --- reach(C(:,k)) in L: iterative DFS, topological order in xi[top..n) ---
+        reach_nodes.clear();
+        size_type top = n;
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) {
-            size_type orig_row = C.row_ind[p];
-            size_type cur_pos = piv_inv[orig_row];
-            x[cur_pos] = C.values[p];
-            touched.push_back(cur_pos);
-        }
-
-        // Left-looking: subtract contributions from previously factored columns
-        // Only visit columns j < k where x[j] != 0 (sparse traversal)
-        for (size_type j = 0; j < k; ++j) {
-            // U(j,k) is in x[j] at this point (entries above diagonal)
-            Value ujk = x[j];
-            if (ujk == Value{0}) continue;
-
-            // Subtract ujk * L(i,j) from x[i] for all i > j in column j of L
-            for (size_type idx = 0; idx < L_rows[j].size(); ++idx) {
-                size_type i = L_rows[j][idx];
-                if (i == j) continue;  // skip diagonal (L has unit diagonal)
-                if (x[i] == Value{0}) touched.push_back(i);
-                x[i] -= L_vals[j][idx] * ujk;
-            }
-        }
-
-        // Threshold partial pivoting: find the best pivot in x[k..n-1]
-        Value max_val = Value{0};
-        size_type pivot_pos = k;
-        for (size_type ti = 0; ti < touched.size(); ++ti) {
-            size_type i = touched[ti];
-            if (i < k) continue;
-            Value abs_val = abs(x[i]);
-            if (abs_val > max_val) {
-                max_val = abs_val;
-                pivot_pos = i;
-            }
-        }
-        // Also check x[k] itself (may not be in touched if it was set to 0)
-        {
-            Value abs_k = abs(x[k]);
-            if (abs_k > max_val) {
-                max_val = abs_k;
-                pivot_pos = k;
-            }
-        }
-
-        if (max_val == Value{0}) {
-            for (size_type i : touched) x[i] = Value{0};
-            throw std::runtime_error(
-                "sparse_lu_numeric: zero pivot at column " + std::to_string(k)
-                + " (matrix is singular)");
-        }
-
-        // Apply threshold: if x[k] is large enough relative to max, keep it
-        // Otherwise swap with the row that has the maximum
-        if (abs(x[k]) < threshold * max_val && pivot_pos != k) {
-            // Swap rows k and pivot_pos in workspace
-            std::swap(x[k], x[pivot_pos]);
-
-            // Update permutation tracking
-            size_type orig_k = piv[k];
-            size_type orig_p = piv[pivot_pos];
-            std::swap(piv[k], piv[pivot_pos]);
-            piv_inv[orig_k] = pivot_pos;
-            piv_inv[orig_p] = k;
-
-            // Swap rows k and pivot_pos in all previously stored L columns
-            for (size_type j = 0; j < k; ++j) {
-                for (size_type idx = 0; idx < L_rows[j].size(); ++idx) {
-                    if (L_rows[j][idx] == k) L_rows[j][idx] = pivot_pos;
-                    else if (L_rows[j][idx] == pivot_pos) L_rows[j][idx] = k;
+            std::ptrdiff_t start = static_cast<std::ptrdiff_t>(C.row_ind[p]);
+            if (marked[start]) continue;
+            std::ptrdiff_t head = 0;
+            xi[0] = start;
+            while (head >= 0) {
+                std::ptrdiff_t node = xi[head];
+                std::ptrdiff_t jcol = pinv[node];          // column of L, if pivotal
+                if (!marked[node]) {
+                    marked[node] = 1;
+                    reach_nodes.push_back(node);
+                    pstack[head] = (jcol < 0) ? 0
+                                 : static_cast<std::ptrdiff_t>(Lp[jcol]);
+                }
+                bool done = true;
+                std::ptrdiff_t pend = (jcol < 0) ? 0
+                                    : static_cast<std::ptrdiff_t>(Lp[jcol + 1]);
+                for (std::ptrdiff_t p2 = pstack[head]; p2 < pend; ++p2) {
+                    std::ptrdiff_t child = Li[p2];
+                    if (marked[child]) continue;
+                    pstack[head] = p2;                     // resume here on return
+                    xi[++head] = child;
+                    done = false;
+                    break;
+                }
+                if (done) {
+                    --head;
+                    xi[--top] = node;
                 }
             }
         }
 
-        // Store U(:,k): entries x[0..k] (upper triangular including diagonal)
-        for (size_type i = 0; i <= k; ++i) {
-            if (x[i] != Value{0}) {
-                U_rows[k].push_back(i);
-                U_vals[k].push_back(x[i]);
-            }
+        // --- scatter C(:,k) over the reach, then x = L \ C(:,k) ---
+        for (size_type p = top; p < n; ++p) x[xi[p]] = Value{0};
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
+            x[C.row_ind[p]] = C.values[p];
+
+        for (size_type px = top; px < n; ++px) {
+            std::ptrdiff_t j = xi[px];
+            std::ptrdiff_t jcol = pinv[j];
+            if (jcol < 0) continue;                        // column not yet formed
+            // L(j,j) == 1 (unit lower, stored first) -> no divide needed.
+            for (size_type p = Lp[jcol] + 1; p < Lp[jcol + 1]; ++p)
+                x[Li[p]] -= Lx[p] * x[j];
         }
 
-        // Store L(:,k): unit diagonal + entries x[k+1..n-1] / U(k,k)
-        Value ukk = x[k];
-        L_rows[k].push_back(k);
-        L_vals[k].push_back(Value{1});  // unit diagonal
-
-        for (size_type i = k + 1; i < n; ++i) {
-            if (x[i] != Value{0}) {
-                L_rows[k].push_back(i);
-                L_vals[k].push_back(x[i] / ukk);
+        // --- threshold partial pivoting + emit U(:,k) for already-pivotal rows ---
+        Value a = Value{0};
+        std::ptrdiff_t ipiv = -1;
+        bool have = false;
+        for (size_type px = top; px < n; ++px) {
+            std::ptrdiff_t i = xi[px];
+            if (pinv[i] < 0) {                             // pivot candidate / L entry
+                Value t = abs(x[i]);
+                if (!have || t > a) { a = t; ipiv = i; have = true; }
+            } else {                                       // U(pinv[i], k)
+                Ui.push_back(pinv[i]);
+                Ux.push_back(x[i]);
             }
         }
+        if (ipiv < 0 || a == Value{0}) {
+            throw std::runtime_error(
+                "sparse_lu_numeric: zero pivot at column " + std::to_string(k)
+                + " (matrix is singular)");
+        }
+        // Prefer the natural diagonal (row k) if it meets the threshold.
+        if (pinv[static_cast<std::ptrdiff_t>(k)] < 0
+            && abs(x[k]) >= threshold * a) {
+            ipiv = static_cast<std::ptrdiff_t>(k);
+        }
 
-        // Clear only touched workspace entries
-        for (size_type i : touched)
-            x[i] = Value{0};
-        // Also clear any entries in 0..k that weren't in touched
-        for (size_type i = 0; i <= k; ++i)
-            x[i] = Value{0};
+        Value pivot = x[ipiv];
+        Ui.push_back(static_cast<std::ptrdiff_t>(k));      // U(k,k) stored last
+        Ux.push_back(pivot);
+        pinv[ipiv] = static_cast<std::ptrdiff_t>(k);
+
+        Li.push_back(ipiv);                                // L(k,k) = 1 stored first
+        Lx.push_back(Value{1});
+        for (size_type px = top; px < n; ++px) {
+            std::ptrdiff_t i = xi[px];
+            if (pinv[i] < 0) {                             // remaining -> L(i,k)
+                Li.push_back(i);
+                Lx.push_back(x[i] / pivot);
+            }
+            x[i] = Value{0};                               // clear workspace (reach only)
+        }
+
+        for (std::ptrdiff_t node : reach_nodes) marked[node] = 0;  // O(reach) reset
     }
+    Lp[n] = Li.size();
+    Up[n] = Ui.size();
 
-    // Convert L and U from vectors-of-vectors to CSC
-    auto build_csc = [&](const std::vector<std::vector<size_type>>& rows,
-                         const std::vector<std::vector<Value>>& vals,
-                         size_type ncols) -> util::csc_matrix<Value> {
-        util::csc_matrix<Value> M;
-        M.nrows = n;
-        M.ncols = ncols;
-        M.col_ptr.resize(ncols + 1);
-
-        // Count nnz
-        size_type total = 0;
-        for (size_type j = 0; j < ncols; ++j) {
-            M.col_ptr[j] = total;
-            total += rows[j].size();
-        }
-        M.col_ptr[ncols] = total;
-
-        M.row_ind.resize(total);
-        M.values.resize(total);
-
-        for (size_type j = 0; j < ncols; ++j) {
-            // Sort entries by row index within each column
-            std::vector<size_type> order(rows[j].size());
-            std::iota(order.begin(), order.end(), size_type{0});
-            std::sort(order.begin(), order.end(),
-                [&](size_type a, size_type b) {
-                    return rows[j][a] < rows[j][b];
-                });
-
-            size_type pos = M.col_ptr[j];
-            for (size_type idx : order) {
-                M.row_ind[pos] = rows[j][idx];
-                M.values[pos] = vals[j][idx];
-                ++pos;
-            }
-        }
-
-        return M;
-    };
+    // Remap L row indices from original-row space to pivot positions.
+    for (size_type p = 0; p < Li.size(); ++p)
+        Li[p] = pinv[Li[p]];
 
     lu_numeric<Value> result;
-    result.L = build_csc(L_rows, L_vals, n);
-    result.U = build_csc(U_rows, U_vals, n);
-    result.row_perm = piv;
-    result.row_pinv = piv_inv;
     result.symbolic = sym;
+
+    // Row permutation: pinv[old] = position; row_perm[position] = old.
+    result.row_perm.resize(n);
+    result.row_pinv.resize(n);
+    for (size_type i = 0; i < n; ++i) {
+        size_type pos = static_cast<size_type>(pinv[i]);
+        result.row_pinv[i] = pos;
+        result.row_perm[pos] = i;
+    }
+
+    auto to_csc = [&](const std::vector<size_type>& Mp,
+                      const std::vector<std::ptrdiff_t>& Mi,
+                      const std::vector<Value>& Mx) -> util::csc_matrix<Value> {
+        util::csc_matrix<Value> M;
+        M.nrows = n;
+        M.ncols = n;
+        M.col_ptr = Mp;
+        M.row_ind.resize(Mi.size());
+        for (size_type p = 0; p < Mi.size(); ++p)
+            M.row_ind[p] = static_cast<size_type>(Mi[p]);
+        M.values = Mx;
+        return M;
+    };
+    result.L = to_csc(Lp, Li, Lx);
+    result.U = to_csc(Up, Ui, Ux);
     return result;
 }
 

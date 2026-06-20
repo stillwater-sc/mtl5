@@ -66,6 +66,24 @@ std::vector<std::ptrdiff_t> maximum_matching(
     std::vector<std::ptrdiff_t> match_col(ncols, -1);  // column -> matched row
     std::vector<std::ptrdiff_t> match_row(nrows, -1);  // row -> matched column
     std::vector<char> seen(ncols, 0);
+    std::vector<std::size_t> seen_list;  // columns marked this round (for O(visited) reset)
+    seen_list.reserve(ncols);
+
+    // Cheap matching: greedily match each row to its first free column. This
+    // resolves most of the matching in O(nnz) and keeps the augmenting phase
+    // (Kuhn's, O(V*E) worst case) from building long augmenting chains on
+    // every row -- the difference between O(nnz) and O(n^2) in practice.
+    for (std::size_t i = 0; i < nrows; ++i) {
+        for (std::size_t p = static_cast<std::size_t>(rp[i]);
+             p < static_cast<std::size_t>(rp[i + 1]); ++p) {
+            std::size_t c = static_cast<std::size_t>(ci[p]);
+            if (match_col[c] == -1) {
+                match_col[c] = static_cast<std::ptrdiff_t>(i);
+                match_row[i] = static_cast<std::ptrdiff_t>(c);
+                break;
+            }
+        }
+    }
 
     // One DFS frame per row on the current alternating path.
     struct frame { std::size_t u; std::size_t k; std::ptrdiff_t c; };
@@ -73,7 +91,12 @@ std::vector<std::ptrdiff_t> maximum_matching(
     stack.reserve(nrows);
 
     for (std::size_t s = 0; s < nrows; ++s) {
-        std::fill(seen.begin(), seen.end(), char(0));
+        if (match_row[s] != -1) continue;  // already matched by cheap matching
+        // Reset only the columns touched by the previous row's search, so the
+        // per-row cost is O(path length), not O(ncols) (which would make the
+        // whole matching O(n^2)).
+        for (std::size_t c : seen_list) seen[c] = 0;
+        seen_list.clear();
         stack.clear();
         stack.push_back({s, static_cast<std::size_t>(rp[s]), -1});
         bool child_succeeded = false;
@@ -95,6 +118,7 @@ std::vector<std::ptrdiff_t> maximum_matching(
                 std::size_t c = static_cast<std::size_t>(ci[f.k]);
                 if (seen[c]) { ++f.k; continue; }
                 seen[c] = 1;
+                seen_list.push_back(c);
                 if (match_col[c] == -1) {
                     // Free column: match it here and unwind the path.
                     match_col[c] = static_cast<std::ptrdiff_t>(f.u);
