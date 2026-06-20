@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -177,18 +178,26 @@ void print_row(const Score& s) {
 
 void write_csv(const std::string& path, const std::vector<Score>& rows) {
     std::ofstream out(path);
-    out << "matrix,n,nnz,nblocks,largest_block,native_s,native_fill,native_resid";
+    // native_status is ok|skip|fail; numeric native fields are left EMPTY when
+    // not ok, so "skipped/failed" is never confused with a real value of 0.
+    out << "matrix,n,nnz,nblocks,largest_block,native_status,native_s,native_fill,native_resid";
 #ifdef MTL5_HAS_KLU
-    out << ",ext_s,ext_resid,ratio";
+    out << ",ext_status,ext_s,ext_resid,ratio";
 #endif
     out << "\n";
     for (const auto& s : rows) {
+        const char* nstatus = s.native_ok ? "ok" : (s.native_skipped ? "skip" : "fail");
         out << s.name << ',' << s.n << ',' << s.nnz << ',' << s.nblocks << ','
-            << s.largest_block << ',' << s.native_s << ',' << s.native_fill << ','
-            << s.native_resid;
+            << s.largest_block << ',' << nstatus << ',';
+        if (s.native_ok) out << s.native_s << ',' << s.native_fill << ',' << s.native_resid;
+        else             out << ",,";   // empty native_s, native_fill, native_resid
 #ifdef MTL5_HAS_KLU
-        double ratio = (s.native_ok && s.ext_ok && s.ext_s > 0.0) ? s.native_s / s.ext_s : 0.0;
-        out << ',' << s.ext_s << ',' << s.ext_resid << ',' << ratio;
+        out << ',' << (s.ext_ok ? "ok" : "fail") << ',';
+        if (s.ext_ok) out << s.ext_s << ',' << s.ext_resid;
+        else          out << ",";       // empty ext_s, ext_resid
+        out << ',';
+        if (s.native_ok && s.ext_ok && s.ext_s > 0.0) out << (s.native_s / s.ext_s);
+        // else: empty ratio
 #endif
         out << "\n";
     }
@@ -238,12 +247,8 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "  [load failed %s: %s]\n", f.c_str(), e.what());
                 continue;
             }
-            // strip directory + extension for the label
-            std::string nm = f;
-            auto slash = nm.find_last_of("/\\");
-            if (slash != std::string::npos) nm = nm.substr(slash + 1);
-            auto dot = nm.find_last_of('.');
-            if (dot != std::string::npos) nm = nm.substr(0, dot);
+            // label = filename without directory or extension
+            std::string nm = std::filesystem::path(f).stem().string();
             std::fprintf(stderr, "  [loaded %s in %.2fs]\n", nm.c_str(), load);
             rows.push_back(score_matrix(nm, A, run_native));
             print_row(rows.back());

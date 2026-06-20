@@ -17,7 +17,10 @@ fetch() {
     local group="$1" name="$2"
     if [ -f "$DATA/$name/$name.mtx" ]; then echo "have $name"; return; fi
     echo "downloading $group/$name ..."
-    curl -L --fail -o "$DATA/$name.tar.gz" "$BASE/$group/$name.tar.gz"
+    # --retry/--connect-timeout harden against transient network failures;
+    # -C - resumes a partial download. No --max-time: some matrices are large.
+    curl -L --fail --connect-timeout 30 --retry 3 --retry-delay 5 -C - \
+        -o "$DATA/$name.tar.gz" "$BASE/$group/$name.tar.gz"
     tar -xzf "$DATA/$name.tar.gz" -C "$DATA"
     rm -f "$DATA/$name.tar.gz"
 }
