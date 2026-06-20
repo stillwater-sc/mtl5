@@ -5,6 +5,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -13,6 +14,7 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/generators/poisson.hpp>
 #include <mtl/sparse/factorization/native_klu.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
 
@@ -43,6 +45,25 @@ double residual_inf_norm(const mat::compressed2D<Value>& A,
             static_cast<double>(std::abs(ax - b(static_cast<int>(r)))));
     }
     return max_r;
+}
+
+// Relative residual ||A*x - b||_inf / ||b||_inf (scale-independent).
+double relative_residual(const mat::compressed2D<double>& A,
+                         const vec::dense_vector<double>& x,
+                         const vec::dense_vector<double>& b) {
+    double bnorm = 0.0;
+    for (std::size_t i = 0; i < b.size(); ++i)
+        bnorm = std::max(bnorm, std::abs(b(static_cast<int>(i))));
+    double r = residual_inf_norm(A, x, b);
+    return (bnorm > 0.0) ? r / bnorm : r;
+}
+
+// Total nonzeros in the L and U factors across all diagonal blocks.
+std::size_t factor_fill(const sparse::factorization::klu_numeric<double>& fac) {
+    std::size_t fill = 0;
+    for (const auto& blk : fac.block_numeric)
+        fill += blk.L.nnz() + blk.U.nnz();
+    return fill;
 }
 
 // Unsymmetric tridiagonal: A(i,i)=4, A(i,i-1)=-1, A(i,i+1)=-2 (irreducible).
@@ -167,6 +188,66 @@ TEST_CASE("native KLU rejects non-square and structurally singular matrices",
         }
         REQUIRE_THROWS_AS(native_klu_factor(A), std::runtime_error);
     }
+}
+
+TEST_CASE("native KLU on 2D Poisson scales sub-quadratically",
+          "[sparse][klu][native][scaling][poisson]") {
+    // 2D Poisson (5-point Laplacian) is the canonical fill-test matrix. With a
+    // good ordering its factorization is O(n^1.5) flops / O(n log n) fill -- not
+    // literally O(nnz), but far from the old O(n^2) blowup. As the grid refines,
+    // n quadruples per step; an O(n^2) implementation would grow time ~16x per
+    // step. We solve 32x32, 64x64, 128x128, 256x256 grids, check the relative
+    // residual, and assert both time and factor fill grow sub-quadratically.
+    struct Row { std::size_t N, n, nnz, fill; double time_ms; };
+    std::vector<Row> rows;
+
+    for (std::size_t N : {32u, 64u, 128u, 256u}) {
+        auto A = generators::poisson2d_dirichlet<double>(N, N);
+        std::size_t n = A.num_rows();
+
+        // b = A * ones, exact solution all-ones.
+        vec::dense_vector<double> ones(n, 1.0), b(n, 0.0);
+        const auto& rp = A.ref_major();
+        const auto& ci = A.ref_minor();
+        const auto& dat = A.ref_data();
+        for (std::size_t r = 0; r < n; ++r) {
+            double s = 0.0;
+            for (std::size_t k = rp[r]; k < rp[r + 1]; ++k)
+                s += dat[k] * ones(static_cast<int>(ci[k]));
+            b(static_cast<int>(r)) = s;
+        }
+
+        vec::dense_vector<double> x(n, 0.0);
+        auto t0 = std::chrono::steady_clock::now();
+        auto fac = native_klu_factor(A);
+        fac.solve(x, b);
+        auto t1 = std::chrono::steady_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+        INFO("Poisson " << N << "x" << N << ": n=" << n << " nnz=" << A.nnz()
+             << " fill=" << factor_fill(fac) << " time=" << ms << "ms");
+        REQUIRE(relative_residual(A, x, b) < 1e-8);
+        rows.push_back({N, n, A.nnz(), factor_fill(fac), ms});
+    }
+
+    // Surface the scaling table in the test log.
+    for (const auto& r : rows)
+        UNSCOPED_INFO("Poisson " << r.N << "x" << r.N << "  n=" << r.n
+            << "  nnz=" << r.nnz << "  fill=" << r.fill
+            << "  time=" << r.time_ms << " ms");
+
+    // Fill is deterministic: O(n log n)-ish, so each 4x-n refinement grows fill
+    // well under the 16x an O(n^2) factorization would require.
+    double fill_ratio = double(rows.back().fill) / double(rows[rows.size() - 2].fill);
+    REQUIRE(fill_ratio < 8.0);
+
+    // Time growth over the last refinement (n quadruples). Measured ~7-8x
+    // (O(n^1.5)); an O(n^2) factorization would be ~16x. A ratio cancels the
+    // build-dependent per-op constant, so this is stable across Debug/Release/
+    // sanitizer builds, unlike an absolute wall-clock ceiling. Both timings are
+    // large (tens-to-hundreds of ms), so jitter is small.
+    double time_ratio = rows.back().time_ms / rows[rows.size() - 2].time_ms;
+    REQUIRE(time_ratio < 13.0);
 }
 
 #ifdef MTL5_HAS_KLU
