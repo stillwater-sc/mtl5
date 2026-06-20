@@ -6,6 +6,7 @@ cmake-build-*/
 
 # Downloaded SuiteSparse matrices (fetched on demand, never committed)
 examples/phase15_sparse_direct/data/
+benchmarks/data/klu/
 
 # IDE
 .idea/
