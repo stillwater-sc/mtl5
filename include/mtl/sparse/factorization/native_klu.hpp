@@ -33,7 +33,7 @@
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
-#include <mtl/sparse/ordering/rcm.hpp>
+#include <mtl/sparse/ordering/colamd.hpp>
 #include <mtl/sparse/ordering/dulmage_mendelsohn.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 
@@ -179,13 +179,11 @@ klu_numeric<Value> native_klu_factor(
                 }
         }
 
-        // Per-block fill-reducing ordering: RCM for non-trivial blocks (it is
-        // near-linear, O(nnz), and reduces bandwidth/fill), natural ordering
-        // for tiny blocks. NOTE: COLAMD/AMD would usually reduce fill more, but
-        // MTL5's COLAMD and AMD are currently O(n^2) (#128) and would
-        // re-introduce the quadratic blowup this fix removes; switch to COLAMD
-        // here once #128 is resolved (#117).
-        lu_symbolic sym = (m > 4) ? sparse_lu_symbolic(block, ordering::rcm{})
+        // Per-block fill-reducing ordering: COLAMD for non-trivial blocks
+        // (now near-linear, #128), natural ordering for tiny blocks where the
+        // setup would be pure overhead (singletons are common in circuit
+        // matrices).
+        lu_symbolic sym = (m > 4) ? sparse_lu_symbolic(block, ordering::colamd{})
                                   : sparse_lu_symbolic(block);
         result.block_numeric.push_back(
             sparse_lu_numeric(block, sym, threshold));
