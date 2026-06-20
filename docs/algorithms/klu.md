@@ -27,7 +27,7 @@ to; matching KLU is an engineering problem, not an algorithmic one.
 
 ## The pipeline
 
-```
+```text
 A ─► [1] BTF ──────────► [2] order each ──► [3] factor each ───────► [4] solve
         permute to            diagonal block      diagonal block          block
         block triangular      (AMD on A+Aᵀ)       (left-looking GP-LU      back-
