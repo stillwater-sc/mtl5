@@ -21,6 +21,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <type_traits>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -33,9 +34,19 @@ using idx = std::ptrdiff_t;
 constexpr idx cs_flip(idx i)   { return -(i) - 2; }
 constexpr idx cs_unflip(idx i) { return (i < 0) ? cs_flip(i) : i; }
 
+// a + b in the unsigned domain (well-defined modular wraparound), then back to
+// signed (C++20: unsigned->signed conversion is modular two's complement). This
+// reproduces CSparse's deliberate wraparound-detection without signed-overflow
+// UB. With 64-bit idx the marks never actually overflow for any in-memory
+// matrix; this just makes the arithmetic well-defined.
+inline idx mark_add(idx a, idx b) {
+    using u = std::make_unsigned_t<idx>;
+    return static_cast<idx>(static_cast<u>(a) + static_cast<u>(b));
+}
+
 // Reset the working-mark array w[] when the running `mark` would overflow.
 inline idx cs_wclear(idx mark, idx lemax, std::vector<idx>& w, std::size_t n) {
-    if (mark < 2 || (mark + lemax < 0)) {
+    if (mark < 2 || mark_add(mark, lemax) < 0) {
         for (std::size_t k = 0; k < n; ++k)
             if (w[k] != 0) w[k] = 1;
         mark = 2;
@@ -76,8 +87,10 @@ inline std::vector<std::size_t> minimum_degree_core(
 
     idx cnz = Cp_in[n];
     idx nn = static_cast<idx>(n);
-    // Elbow room for fill during quotient-graph updates (CSparse: t).
-    idx t = cnz + cnz / 5 + 2 * nn;
+    // Elbow room for fill during quotient-graph updates (CSparse: t). Computed
+    // in the unsigned domain (well-defined modular arithmetic); the t < 1 clamp
+    // then catches any wrap. For any in-memory matrix t stays far below idx max.
+    idx t = mark_add(mark_add(cnz, cnz / 5), 2 * nn);
     if (t < 1) t = 1;
 
     std::vector<idx> Cp = Cp_in;                 // size n+1 (mutated)
@@ -242,7 +255,7 @@ inline std::vector<std::size_t> minimum_degree_core(
         }
         degree[k] = dk;
         lemax = (lemax > dk) ? lemax : dk;
-        mark = cs_wclear(mark + lemax, lemax, w, n);
+        mark = cs_wclear(mark_add(mark, lemax), lemax, w, n);
 
         // --- supervariable detection ---
         for (idx pk = pk1; pk < pk2; ++pk) {
