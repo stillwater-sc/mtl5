@@ -33,7 +33,7 @@
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
-#include <mtl/sparse/ordering/colamd.hpp>
+#include <mtl/sparse/ordering/amd.hpp>
 #include <mtl/sparse/ordering/dulmage_mendelsohn.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 
@@ -179,11 +179,14 @@ klu_numeric<Value> native_klu_factor(
                 }
         }
 
-        // Per-block fill-reducing ordering: COLAMD for non-trivial blocks
-        // (now near-linear, #128), natural ordering for tiny blocks where the
-        // setup would be pure overhead (singletons are common in circuit
-        // matrices).
-        lu_symbolic sym = (m > 4) ? sparse_lu_symbolic(block, ordering::colamd{})
+        // Per-block fill-reducing ordering: AMD on the block's symmetric
+        // structure A+Aᵀ for non-trivial blocks (KLU's default), natural
+        // ordering for tiny blocks where the setup would be pure overhead
+        // (singletons are common in circuit matrices). AMD-on-A+Aᵀ is used
+        // rather than COLAMD-on-AᵀA because on indefinite/unsymmetric circuit
+        // blocks threshold pivoting deviates from a column ordering and fill
+        // explodes; the symmetrized ordering keeps fill near-minimal (#133).
+        lu_symbolic sym = (m > 4) ? sparse_lu_symbolic(block, ordering::amd{})
                                   : sparse_lu_symbolic(block);
         result.block_numeric.push_back(
             sparse_lu_numeric(block, sym, threshold));
