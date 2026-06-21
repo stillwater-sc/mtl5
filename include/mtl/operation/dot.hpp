@@ -10,6 +10,7 @@
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/simd/algorithm.hpp>
@@ -19,10 +20,29 @@
 
 namespace mtl {
 
-/// Hermitian dot product: sum(conj(v1[i]) * v2[i])
-template <Vector V1, Vector V2>
+/// Hermitian dot product: sum(conj(v1[i]) * v2[i]).
+///
+/// Mixed precision: pass an explicit `Accumulator` to sum the products in a
+/// precision distinct from the element type (e.g. `dot<float>(a, b)` over
+/// bfloat16 vectors accumulates in fp32), and an optional `Result` to round the
+/// sum out to a delivery type (default = the accumulator type). With the default
+/// `Accumulator = void`, behavior is unchanged (BLAS/SIMD fast path or the
+/// common-type loop). The mixed path is scalar; a SIMD variant is a follow-up.
+template <typename Accumulator = void, typename Result = Accumulator,
+          Vector V1, Vector V2>
 auto dot(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
+    if constexpr (!std::is_void_v<Accumulator>) {
+        using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        Accumulator acc{};
+        AT::clear(acc);
+        for (typename V1::size_type i = 0; i < v1.size(); ++i)
+            AT::add_product(acc,
+                static_cast<Value>(functor::scalar::conj<typename V1::value_type>::apply(v1(i))),
+                static_cast<Value>(v2(i)));
+        return AT::template value<Result>(acc);
+    } else {
 #ifdef MTL5_HAS_BLAS
     // BlasDenseVector is real float/double, where conj is the identity, so
     // BLAS ?dot matches the Hermitian product on these types. Guard the int
@@ -47,12 +67,26 @@ auto dot(const V1& v1, const V2& v2) {
         }
         return acc;
     }
+    }
 }
 
-/// Real dot product: sum(v1[i] * v2[i]) -- no conjugation
-template <Vector V1, Vector V2>
+/// Real dot product: sum(v1[i] * v2[i]) -- no conjugation.
+///
+/// Mixed precision: see `dot` -- pass `Accumulator` (and optional `Result`) to
+/// accumulate in a precision distinct from the element type.
+template <typename Accumulator = void, typename Result = Accumulator,
+          Vector V1, Vector V2>
 auto dot_real(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
+    if constexpr (!std::is_void_v<Accumulator>) {
+        using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        Accumulator acc{};
+        AT::clear(acc);
+        for (typename V1::size_type i = 0; i < v1.size(); ++i)
+            AT::add_product(acc, static_cast<Value>(v1(i)), static_cast<Value>(v2(i)));
+        return AT::template value<Result>(acc);
+    } else {
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2>) {
         if (v1.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
@@ -71,6 +105,7 @@ auto dot_real(const V1& v1, const V2& v2) {
             acc += v1(i) * v2(i);
         }
         return acc;
+    }
     }
 }
 
