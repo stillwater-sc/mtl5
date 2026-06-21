@@ -32,8 +32,8 @@ struct accumulator_traits<wide_acc, float> {
     static void  clear(wide_acc& a)                       { a.v = 0.0; }
     static void  assign(wide_acc& a, const float& x)      { a.v = static_cast<double>(x); }
     static float value(const wide_acc& a)                 { return static_cast<float>(a.v); }
-    static void  sub_product(wide_acc& a, const float& m, const float& x) {
-        a.v -= static_cast<double>(m) * static_cast<double>(x);   // product in double
+    static void  add_product(wide_acc& a, const float& m, const float& x) {
+        a.v += static_cast<double>(m) * static_cast<double>(x);   // product in double
     }
 };
 } // namespace mtl::sparse::factorization

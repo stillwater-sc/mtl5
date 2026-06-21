@@ -172,7 +172,10 @@ struct accumulator_traits {
     static void  clear(Acc& a)                                   { a = Acc{}; }
     static void  assign(Acc& a, const Value& v)                  { a = v; }
     static Value value(const Acc& a)                             { return static_cast<Value>(a); }
-    static void  sub_product(Acc& a, const Value& m, const Value& v) { a -= m * v; }
+    // add_product(a, m, v) == a += m*v: the canonical accumulate-a-product
+    // primitive (a dot product / quire is a sum of products). The caller passes
+    // a negated multiplier for the elimination subtraction.
+    static void  add_product(Acc& a, const Value& m, const Value& v) { a += m * v; }
 };
 
 /// Perform numeric LU factorization with threshold partial pivoting.
@@ -305,9 +308,11 @@ lu_numeric<Value> sparse_lu_numeric(
             std::ptrdiff_t jcol = pinv[j];
             if (jcol < 0) continue;                        // column not yet formed
             Value xj = AT::value(x[j]);                    // round U(j,k) once (single rounding)
-            // L(j,j) == 1 (unit lower, stored first) -> no divide needed.
+            // L(j,j) == 1 (unit lower, stored first) -> no divide needed. The
+            // elimination subtraction x[i] -= L(i,j)*xj is an accumulate of the
+            // negated product (negating a Value is exact).
             for (size_type p = Lp[jcol] + 1; p < Lp[jcol + 1]; ++p)
-                AT::sub_product(x[Li[p]], Lx[p], xj);
+                AT::add_product(x[Li[p]], -Lx[p], xj);
         }
 
         // --- threshold partial pivoting + emit U(:,k) for already-pivotal rows ---
