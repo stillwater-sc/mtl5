@@ -45,9 +45,11 @@ namespace mtl::sparse::factorization {
 template <typename Value>
 struct klu_numeric {
     ordering::btf_result          btf;            ///< row/col permutations + blocks
-    mat::compressed2D<Value>      B;              ///< P*A*Q, block upper triangular
+    mat::compressed2D<Value>      B;              ///< P*(R*A)*Q, block upper triangular
     std::vector<std::size_t>      block_of;       ///< new index -> block id
     std::vector<lu_numeric<Value>> block_numeric; ///< LU of each diagonal block
+    std::vector<Value>            row_scale;      ///< r[orig row]; empty = unscaled
+                                                  ///< (factored R*A, so solve scales b)
 
     std::size_t num_rows() const { return btf.row_perm.size(); }
     std::size_t num_cols() const { return num_rows(); }
@@ -64,10 +66,16 @@ struct klu_numeric {
                 "klu_numeric::solve: vector size mismatch");
         }
 
-        // c[i] = b[p[i]]; y is updated in place to the final solution per block.
+        // c[i] = (R*b)[p[i]]; y is updated in place to the final solution per
+        // block. We factored R*A, so the RHS is row-scaled by the same R; the
+        // resulting x solves the original A*x = b unchanged (no x unscaling).
         std::vector<Value> y(n);
-        for (std::size_t i = 0; i < n; ++i)
-            y[i] = static_cast<Value>(b(btf.row_perm[i]));
+        const bool scaled = !row_scale.empty();
+        for (std::size_t i = 0; i < n; ++i) {
+            std::size_t orow = btf.row_perm[i];
+            Value bi = static_cast<Value>(b(orow));
+            y[i] = scaled ? row_scale[orow] * bi : bi;
+        }
 
         const auto& rp  = B.ref_major();
         const auto& ci  = B.ref_minor();
@@ -116,8 +124,10 @@ template <typename Value, typename Parameters>
     requires OrderedField<Value>
 klu_numeric<Value> native_klu_factor(
     const mat::compressed2D<Value, Parameters>& A,
-    Value threshold = Value{1})
+    Value threshold = Value{1},
+    bool scale = true)
 {
+    using std::abs;  // ADL for custom number types
     if (A.num_rows() != A.num_cols()) {
         throw std::invalid_argument("native_klu_factor: matrix must be square");
     }
@@ -129,13 +139,33 @@ klu_numeric<Value> native_klu_factor(
         return result;
     }
 
+    // BTF is structural; scaling does not change the pattern, so compute it on A.
     result.btf = ordering::block_triangular_form(A);
     if (result.btf.structurally_singular) {
         throw std::runtime_error(
             "native_klu_factor: matrix is structurally singular");
     }
 
-    // Build B = P*A*Q. New column of old column c is q_inv[c].
+    // Row scaling (KLU default): r[i] = 1 / max_j |A(i,j)|. Equilibrating the
+    // rows keeps threshold partial pivoting close to the fill-reducing order on
+    // badly-scaled indefinite blocks, which otherwise inflates fill. We factor
+    // R*A and row-scale the RHS in solve(); x is unchanged.
+    if (scale) {
+        const auto& rp  = A.ref_major();
+        const auto& ci  = A.ref_minor();
+        const auto& dat = A.ref_data();
+        result.row_scale.assign(n, Value{1});
+        for (std::size_t r = 0; r < n; ++r) {
+            Value m = Value{0};
+            for (std::size_t k = rp[r]; k < rp[r + 1]; ++k) {
+                Value a = abs(dat[k]);
+                if (a > m) m = a;
+            }
+            if (m > Value{0}) result.row_scale[r] = Value{1} / m;
+        }
+    }
+
+    // Build B = P*(R*A)*Q. New column of old column c is q_inv[c].
     auto q_inv = util::invert_permutation(result.btf.col_perm);
     mat::compressed2D<Value> B(n, n);
     {
@@ -145,8 +175,9 @@ klu_numeric<Value> native_klu_factor(
         mat::inserter<mat::compressed2D<Value>> ins(B);
         for (std::size_t i = 0; i < n; ++i) {
             std::size_t orow = result.btf.row_perm[i];
+            Value s = scale ? result.row_scale[orow] : Value{1};
             for (std::size_t k = rp[orow]; k < rp[orow + 1]; ++k)
-                ins[i][q_inv[ci[k]]] << dat[k];
+                ins[i][q_inv[ci[k]]] << s * dat[k];
         }
     }
     result.B = std::move(B);

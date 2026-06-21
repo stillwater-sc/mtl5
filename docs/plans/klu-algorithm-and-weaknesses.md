@@ -76,7 +76,7 @@ from the Phase 0 scoreboard and updated as phases land.
 | W2 | **Expensive reach / DFS** | Eisenstat–Liu symmetric pruning | ~~full GP-LU DFS~~ → **symmetric pruning (Phase 2)** | [2 (#134)](native-klu-performance.md) | **Phase 2 (pruning):** Poisson 256² **3.6× → 1.5×** (0.68s → 0.29s; **meets the 1.5× DoD**), 128² 3.5× → 1.7×. rajat30 43.9× → **28.7×** (309s → 204s); its constant factor 3.3× → **2.1×** (residual 28.7× = 13.5× fill × 2.1× constant). Fill unchanged (= KLU); same residuals; ASan-clean. |
 | W3 | **Heavy data structures in hot path** | raw CSC int arrays, pre-sized/chunk-grown | `compressed2D` + `inserter`, fresh `std::vector`s per block | [3 (#135)](native-klu-performance.md) | _TBD_ |
 | W4 | **Repeated symbolic + pivot search** | analyze / factor / **refactor** split | pivots re-searched every solve; no refactor | [4 (#136)](native-klu-performance.md) | _TBD (refactor/factor ratio)_ |
-| W5 | **No scaling / pivot strategy for indefinite blocks** | optional row scaling + threshold pivoting | no scaling | [5 (#137)](native-klu-performance.md) | _TBD_ |
+| W5 | **No scaling / pivot strategy for indefinite blocks** | optional row scaling + threshold pivoting | ~~no scaling~~ → **row equilibration r=1/max\|row\| (Phase 5)** | [5 (#137)](native-klu-performance.md) | **Phase 5 (scaling):** rajat30 fill **13.5× → 1.7×** (437M → 55M) and time **28.7× → 4.5×** (204s → 32s) — equilibration lets pivoting follow the AMD order. Poisson unchanged (already well-scaled). Residuals tiny; correctness preserved. |
 | W6 | **BTF constant factor** | tuned `maxtrans`/`strongcomp` | Kuhn matching + Tarjan SCC | [3 (#135)](native-klu-performance.md) | rajat30 BTF: 1.7s (of 7.4s KLU total) |
 
 ### Notes per weakness
