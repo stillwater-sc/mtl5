@@ -38,8 +38,13 @@ struct accumulator_traits {
 
     /// a += m * v : the canonical accumulate-a-product primitive (a dot product /
     /// quire is a sum of products). Callers pass a negated multiplier for a
-    /// subtraction (e.g. the LU elimination update).
-    static void add_product(Acc& a, const Value& m, const Value& v) { a += m * v; }
+    /// subtraction (e.g. the LU elimination update). The product is formed in the
+    /// accumulator precision `Acc`, so a wider `Acc` than `Value` (e.g. fp32
+    /// accumulate over bf16 elements) gains accuracy out of the box; this is a
+    /// no-op cast and byte-identical when `Acc == Value`.
+    static void add_product(Acc& a, const Value& m, const Value& v) {
+        a += static_cast<Acc>(m) * static_cast<Acc>(v);
+    }
 };
 
 } // namespace mtl::math
