@@ -213,6 +213,12 @@ lu_numeric<Value> sparse_lu_numeric(
     reach_nodes.reserve(n);
 
     std::vector<size_type>      Lp(n + 1, 0), Up(n + 1, 0);
+    // Eisenstat-Liu symmetric pruning: xprune[j] is the end of the *pruned*
+    // prefix of column j of L used by the symbolic reach DFS (the numeric update
+    // still uses the full column). It restricts the DFS to the pivotal-row
+    // prefix once a symmetric entry (j,k)+(k,j) appears, which is the dominant
+    // constant-factor win in scalar left-looking LU (SuperLU pruneL).
+    std::vector<size_type>      xprune(n, 0);
     std::vector<std::ptrdiff_t> Li;  std::vector<Value> Lx;
     std::vector<std::ptrdiff_t> Ui;  std::vector<Value> Ux;
     Li.reserve(C.values.size() * 2); Lx.reserve(C.values.size() * 2);
@@ -240,8 +246,9 @@ lu_numeric<Value> sparse_lu_numeric(
                                  : static_cast<std::ptrdiff_t>(Lp[jcol]);
                 }
                 bool done = true;
+                // Symbolic DFS traverses only the pruned prefix of column jcol.
                 std::ptrdiff_t pend = (jcol < 0) ? 0
-                                    : static_cast<std::ptrdiff_t>(Lp[jcol + 1]);
+                                    : static_cast<std::ptrdiff_t>(xprune[jcol]);
                 for (std::ptrdiff_t p2 = pstack[head]; p2 < pend; ++p2) {
                     std::ptrdiff_t child = Li[p2];
                     if (marked[child]) continue;
@@ -310,6 +317,34 @@ lu_numeric<Value> sparse_lu_numeric(
                 Lx.push_back(x[i] / pivot);
             }
             x[i] = Value{0};                               // clear workspace (reach only)
+        }
+        xprune[k] = Li.size();                             // column k initially unpruned
+
+        // --- symmetric pruning (Eisenstat-Liu / SuperLU pruneL) ---
+        // For each column j contributing to U(:,k): if the symmetric entry is
+        // present (pivot row of k appears in L(:,j)), partition L(:,j) so the
+        // already-pivotal rows form a prefix, and prune the DFS to that prefix.
+        {
+            size_type u_diag = Ui.size() - 1;              // last U entry is diag k
+            for (size_type up = Up[k]; up < u_diag; ++up) {
+                size_type j = static_cast<size_type>(Ui[up]);
+                if (xprune[j] != Lp[j + 1]) continue;      // already pruned
+                bool sym = false;                          // pivot row ipiv in L(:,j)?
+                for (size_type p = Lp[j]; p < Lp[j + 1]; ++p)
+                    if (Li[p] == ipiv) { sym = true; break; }
+                if (!sym) continue;
+                size_type kmin = Lp[j] + 1, kmax = Lp[j + 1] - 1;  // skip diagonal
+                while (kmin <= kmax) {
+                    if (pinv[Li[kmax]] < 0)            { --kmax; }
+                    else if (pinv[Li[kmin]] >= 0)      { ++kmin; }
+                    else {
+                        std::swap(Li[kmin], Li[kmax]);
+                        std::swap(Lx[kmin], Lx[kmax]);
+                        ++kmin; --kmax;
+                    }
+                }
+                xprune[j] = kmin;                          // [Lp[j], kmin) = pivotal prefix
+            }
         }
 
         for (std::ptrdiff_t node : reach_nodes) marked[node] = 0;  // O(reach) reset
