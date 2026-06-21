@@ -138,7 +138,7 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
 
-    if constexpr (!std::is_void_v<Accumulator>) {
+    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         // Custom accumulator: external BLAS / native-fast GEMM use hardware-fixed
         // accumulation, so route to the accumulator-aware generic kernel.
         detail::mult_generic<Accumulator>(A, B, C);
