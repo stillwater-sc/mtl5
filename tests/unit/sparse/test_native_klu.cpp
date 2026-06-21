@@ -28,6 +28,24 @@ using mtl::sparse::factorization::native_klu_factor;
 using mtl::sparse::factorization::native_klu_solve;
 
 namespace {
+// Extended (double-over-float) accumulator to exercise the accumulator policy
+// threaded through native KLU (#122 seam, native_klu threading).
+struct wide_acc { double v = 0.0; };
+} // namespace
+
+namespace mtl::sparse::factorization {
+template <>
+struct accumulator_traits<wide_acc, float> {
+    static void  clear(wide_acc& a)                  { a.v = 0.0; }
+    static void  assign(wide_acc& a, const float& x) { a.v = static_cast<double>(x); }
+    static float value(const wide_acc& a)            { return static_cast<float>(a.v); }
+    static void  add_product(wide_acc& a, const float& m, const float& x) {
+        a.v += static_cast<double>(m) * static_cast<double>(x);
+    }
+};
+} // namespace mtl::sparse::factorization
+
+namespace {
 
 template <typename Value>
 double residual_inf_norm(const mat::compressed2D<Value>& A,
@@ -293,6 +311,47 @@ TEST_CASE("native KLU refactor reuses structure for same-pattern matrices",
             REQUIRE_THAT(xr(static_cast<int>(i)), WithinAbs(xfresh(static_cast<int>(i)), 1e-9));
         REQUIRE(relative_residual(A2, xr, b) < 1e-9);
     }
+}
+
+TEST_CASE("native KLU threads a custom accumulator policy through the blocks",
+          "[sparse][klu][native][accumulator]") {
+    // Block-triangular float circuit matrix; factor it with the default (float)
+    // accumulator and with the extended double accumulator. The wide accumulator
+    // must thread through BTF + every block and solve at least as accurately.
+    std::size_t n = 6;
+    mat::compressed2D<float> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<float>> ins(A);
+        ins[0][0] << 3.0f;  ins[0][1] << -1.0f; ins[0][5] << -2.0f;
+        ins[1][0] << -1.0f; ins[1][1] << 3.0f;  ins[1][2] << -1.0f;
+        ins[2][1] << -1.0f; ins[2][2] << 3.0f;
+        ins[3][3] << 4.0f;  ins[3][4] << -1.0f;
+        ins[4][3] << -1.0f; ins[4][4] << 4.0f;  ins[4][5] << -1.0f;
+        ins[5][4] << -1.0f; ins[5][5] << 4.0f;
+    }
+    vec::dense_vector<float> b(n, 1.0f), xd(n, 0.0f), xw(n, 0.0f);
+
+    auto fac_default = native_klu_factor(A);                                  // Accumulator = float
+    fac_default.solve(xd, b);
+
+    auto fac_wide = native_klu_factor<float, mat::parameters<>, wide_acc>(A); // double accumulation
+    fac_wide.solve(xw, b);
+
+    // Residual ||A x - b||_inf in double for each.
+    auto resid = [&](const vec::dense_vector<float>& x) {
+        const auto& rp = A.ref_major(); const auto& ci = A.ref_minor(); const auto& dat = A.ref_data();
+        double m = 0.0;
+        for (std::size_t r = 0; r < n; ++r) {
+            double ax = 0.0;
+            for (std::size_t k = rp[r]; k < rp[r + 1]; ++k)
+                ax += static_cast<double>(dat[k]) * static_cast<double>(x(static_cast<int>(ci[k])));
+            m = std::max(m, std::abs(ax - static_cast<double>(b(static_cast<int>(r)))));
+        }
+        return m;
+    };
+    // Both solve correctly; the extended accumulator is no worse.
+    REQUIRE(resid(xd) < 1e-4);
+    REQUIRE(resid(xw) <= resid(xd) + 1e-12);
 }
 
 #ifdef MTL5_HAS_KLU

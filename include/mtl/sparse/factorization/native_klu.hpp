@@ -119,11 +119,16 @@ struct klu_numeric {
 /// Factor A using native KLU: BTF, then a left-looking LU of each diagonal
 /// block with threshold partial pivoting.
 ///
+/// The optional `Accumulator` type selects the per-block numeric accumulator
+/// policy (see sparse_lu's accumulator_traits): defaulting to `Value` gives
+/// ordinary arithmetic, while a caller can inject an exact/extended-precision
+/// accumulator (e.g. a super-accumulator) for the inner products of every block.
+///
 /// \throws std::invalid_argument if A is not square.
 /// \throws std::runtime_error    if A is structurally singular (no perfect
 ///                               matching) or a diagonal block is numerically
 ///                               singular.
-template <typename Value, typename Parameters>
+template <typename Value, typename Parameters, typename Accumulator = Value>
     requires OrderedField<Value>
 klu_numeric<Value> native_klu_factor(
     const mat::compressed2D<Value, Parameters>& A,
@@ -239,8 +244,11 @@ klu_numeric<Value> native_klu_factor(
         // fill explodes; the symmetrized ordering keeps fill near-minimal (#133).
         lu_symbolic sym = (m > 4) ? sparse_lu_symbolic(block, ordering::amd{})
                                   : sparse_lu_symbolic(block);
+        // Forward the block matrix's own parameter type so the caller-selected
+        // Accumulator policy can be specified explicitly (it is not deducible).
+        using block_params = typename decltype(block)::param_type;
         result.block_numeric.push_back(
-            sparse_lu_numeric(block, sym, threshold));
+            sparse_lu_numeric<Value, block_params, Accumulator>(block, sym, threshold));
     }
 
     return result;
