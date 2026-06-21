@@ -2,9 +2,11 @@
 // MTL5 -- Matrix multiplication: mat*vec and mat*mat into pre-allocated output
 // Optional BLAS dispatch when MTL5_HAS_BLAS is defined and types qualify.
 #include <cassert>
+#include <type_traits>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -33,17 +35,38 @@ void mult_generic(const M& A, const VIn& x, VOut& y) {
     }
 }
 
-/// Generic mat*mat: C = A * B
-template <Matrix MA, Matrix MB, Matrix MC>
+/// Generic mat*mat: C = A * B.
+///
+/// With `Accumulator = void` (default) each C element is summed in C's own value
+/// type (unchanged). With an explicit `Accumulator`, the inner product is summed
+/// in that precision via mtl::math::accumulator_traits and the result is rounded
+/// out (fused convert) to C's element type on store -- the Element -> Accumulate
+/// -> Result model, with the result type inferred from C.
+template <typename Accumulator = void, Matrix MA, Matrix MB, Matrix MC>
 void mult_generic(const MA& A, const MB& B, MC& C) {
-    using T = typename MC::value_type;
-    for (typename MC::size_type r = 0; r < C.num_rows(); ++r) {
-        for (typename MC::size_type c = 0; c < C.num_cols(); ++c) {
-            auto acc = math::zero<T>();
-            for (typename MA::size_type k = 0; k < A.num_cols(); ++k) {
-                acc += A(r, k) * B(k, c);
+    using Result = typename MC::value_type;
+    if constexpr (std::is_void_v<Accumulator>) {
+        for (typename MC::size_type r = 0; r < C.num_rows(); ++r) {
+            for (typename MC::size_type c = 0; c < C.num_cols(); ++c) {
+                auto acc = math::zero<Result>();
+                for (typename MA::size_type k = 0; k < A.num_cols(); ++k) {
+                    acc += A(r, k) * B(k, c);
+                }
+                C(r, c) = acc;
             }
-            C(r, c) = acc;
+        }
+    } else {
+        using Value = std::common_type_t<typename MA::value_type, typename MB::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        for (typename MC::size_type r = 0; r < C.num_rows(); ++r) {
+            for (typename MC::size_type c = 0; c < C.num_cols(); ++c) {
+                Accumulator acc{};
+                AT::clear(acc);
+                for (typename MA::size_type k = 0; k < A.num_cols(); ++k) {
+                    AT::add_product(acc, static_cast<Value>(A(r, k)), static_cast<Value>(B(k, c)));
+                }
+                C(r, c) = AT::template value<Result>(acc);   // fused convert to C's type
+            }
         }
     }
 }
@@ -101,12 +124,26 @@ void mult(const M& A, const VIn& x, VOut& y) {
     detail::mult_generic(A, x, y);
 }
 
-/// mat*mat multiply into pre-allocated C: C = A * B
-template <Matrix MA, Matrix MB, Matrix MC>
+/// mat*mat multiply into pre-allocated C: C = A * B.
+///
+/// Mixed precision: pass an explicit `Accumulator` to sum each C element in a
+/// precision distinct from the operand element type (e.g. `mult<float>(A, B, C)`
+/// with bfloat16 A/B accumulates in fp32); the accumulator is rounded out to C's
+/// element type on store, so C's type selects the output precision. The default
+/// `Accumulator = void` keeps the BLAS / native-fast / generic dispatch
+/// unchanged. The mixed path is the generic kernel (scalar; SIMD is #165).
+template <typename Accumulator = void, Matrix MA, Matrix MB, Matrix MC>
 void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
+
+    if constexpr (!std::is_void_v<Accumulator>) {
+        // Custom accumulator: external BLAS / native-fast GEMM use hardware-fixed
+        // accumulation, so route to the accumulator-aware generic kernel.
+        detail::mult_generic<Accumulator>(A, B, C);
+        return;
+    } else {
 
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::BlasDenseMatrix<MA> &&
@@ -169,6 +206,7 @@ void mult(const MA& A, const MB& B, MC& C) {
     }
 #endif
     detail::mult_generic(A, B, C);
+    }
 }
 
 } // namespace mtl
