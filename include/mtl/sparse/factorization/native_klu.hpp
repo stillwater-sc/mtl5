@@ -18,10 +18,13 @@
 // is <= the block of j), we solve the last block first and work upward: for
 // block b,  B_bb * y_b = c_b - sum_{b' > b} B_{b,b'} * y_{b'}.
 //
-// Out of scope for v1: row/column scaling and iterative refinement. Per-block
-// fill-reducing ordering is natural (identity); COLAMD per block is a follow-up.
+// Each diagonal block is ordered with AMD on A+A^T (KLU's default), the matrix is
+// row-equilibrated before factorization, and native_klu_refactor reuses a prior
+// factorization's structure + pivots for fast repeated solves of a fixed pattern.
+// Iterative refinement remains out of scope here.
 //
-// Reference: Davis, "Direct Methods for Sparse Linear Systems", SIAM 2006.
+// Reference: Davis, "Direct Methods for Sparse Linear Systems", SIAM 2006;
+//            Davis & Palamadai Natarajan, "Algorithm 907: KLU", ACM TOMS 2010.
 
 #include <cstddef>
 #include <stdexcept>
@@ -238,6 +241,110 @@ klu_numeric<Value> native_klu_factor(
                                   : sparse_lu_symbolic(block);
         result.block_numeric.push_back(
             sparse_lu_numeric(block, sym, threshold));
+    }
+
+    return result;
+}
+
+/// Refactorize a matrix with the SAME sparsity pattern as a prior native KLU
+/// factorization, reusing its BTF permutation, per-block orderings, and per-block
+/// pivot sequences -- recomputing only the numeric values. This is the analyze-
+/// once / factor-many fast path: BTF, the per-block fill-reducing orderings, the
+/// reach DFS, and per-block pivot search are all skipped (each block goes through
+/// sparse_lu_refactor). Row scaling is recomputed for the new values.
+///
+/// Intended for repeated solves of a fixed circuit-matrix pattern with changing
+/// values (SPICE transient analysis; the mp-spice mixed-precision study).
+///
+/// \throws std::invalid_argument if A's dimensions do not match `prev`.
+/// \throws std::runtime_error    if a reused pivot is numerically zero for the
+///                               new values (prior pivot sequence invalid).
+template <typename Value, typename Parameters>
+    requires OrderedField<Value>
+klu_numeric<Value> native_klu_refactor(
+    const mat::compressed2D<Value, Parameters>& A,
+    const klu_numeric<Value>& prev)
+{
+    using std::abs;
+    const std::size_t n = prev.num_rows();
+    if (A.num_rows() != n || A.num_cols() != n) {
+        throw std::invalid_argument(
+            "native_klu_refactor: matrix dimensions do not match prior factorization");
+    }
+
+    klu_numeric<Value> result;
+    if (n == 0) { result.btf.blocks = {0}; return result; }
+
+    // Reuse the symbolic structure from the prior factorization.
+    result.btf      = prev.btf;
+    result.block_of = prev.block_of;
+    const bool scale = !prev.row_scale.empty();
+
+    // Recompute row scaling for the new values (structural choice unchanged).
+    if (scale) {
+        const auto& rp  = A.ref_major();
+        const auto& dat = A.ref_data();
+        result.row_scale.assign(n, Value{1});
+        for (std::size_t r = 0; r < n; ++r) {
+            Value m = Value{0};
+            for (std::size_t k = rp[r]; k < rp[r + 1]; ++k) {
+                Value a = abs(dat[k]);
+                if (a > m) m = a;
+            }
+            if (m > Value{0}) result.row_scale[r] = Value{1} / m;
+        }
+    }
+
+    // Rebuild B = P*(R*A)*Q (same pattern, new values).
+    auto q_inv = util::invert_permutation(result.btf.col_perm);
+    mat::compressed2D<Value> B(n, n);
+    {
+        const auto& rp  = A.ref_major();
+        const auto& ci  = A.ref_minor();
+        const auto& dat = A.ref_data();
+        mat::inserter<mat::compressed2D<Value>> ins(B);
+        for (std::size_t i = 0; i < n; ++i) {
+            std::size_t orow = result.btf.row_perm[i];
+            Value s = scale ? result.row_scale[orow] : Value{1};
+            for (std::size_t k = rp[orow]; k < rp[orow + 1]; ++k)
+                ins[i][q_inv[ci[k]]] << s * dat[k];
+        }
+    }
+    result.B = std::move(B);
+
+    // Refactor each diagonal block, reusing the prior block's pattern + pivots.
+    const auto& Brp  = result.B.ref_major();
+    const auto& Bci  = result.B.ref_minor();
+    const auto& Bdat = result.B.ref_data();
+    result.block_numeric.reserve(result.btf.nblocks());
+    std::vector<std::size_t> bstart, bind;
+    std::vector<Value>       bval;
+    for (std::size_t blk = 0; blk < result.btf.nblocks(); ++blk) {
+        const std::size_t r0 = result.btf.blocks[blk];
+        const std::size_t r1 = result.btf.blocks[blk + 1];
+        const std::size_t m  = r1 - r0;
+
+        bstart.assign(m + 1, 0);
+        for (std::size_t i = r0; i < r1; ++i)
+            for (std::size_t k = Brp[i]; k < Brp[i + 1]; ++k) {
+                std::size_t j = Bci[k];
+                if (j >= r0 && j < r1) ++bstart[(i - r0) + 1];
+            }
+        for (std::size_t t = 0; t < m; ++t) bstart[t + 1] += bstart[t];
+        std::size_t bnnz = bstart[m];
+        bind.resize(bnnz);
+        bval.resize(bnnz);
+        for (std::size_t i = r0; i < r1; ++i) {
+            std::size_t d = bstart[i - r0];
+            for (std::size_t k = Brp[i]; k < Brp[i + 1]; ++k) {
+                std::size_t j = Bci[k];
+                if (j >= r0 && j < r1) { bind[d] = j - r0; bval[d] = Bdat[k]; ++d; }
+            }
+        }
+        mat::compressed2D<Value> block(m, m, bnnz, bstart.data(), bind.data(), bval.data());
+
+        result.block_numeric.push_back(
+            sparse_lu_refactor(block, prev.block_numeric[blk]));
     }
 
     return result;

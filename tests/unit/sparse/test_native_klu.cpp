@@ -250,6 +250,51 @@ TEST_CASE("native KLU on 2D Poisson scales sub-quadratically",
     REQUIRE(time_ratio < 13.0);
 }
 
+TEST_CASE("native KLU refactor reuses structure for same-pattern matrices",
+          "[sparse][klu][native][refactor]") {
+    using sparse::factorization::native_klu_refactor;
+
+    // A1 and A2 share the sparsity pattern (block-triangular circuit shape) but
+    // differ in values; refactor must reuse A1's symbolic structure and produce
+    // the correct solve for A2.
+    auto build = [](double d) {
+        std::size_t n = 6;
+        mat::compressed2D<double> A(n, n);
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][0] << d;   ins[0][1] << 1.0;  ins[0][3] << 5.0;
+        ins[1][0] << 1.0; ins[1][1] << d;
+        ins[2][2] << d;   ins[2][3] << 1.0;
+        ins[3][2] << 2.0; ins[3][3] << d;
+        ins[4][4] << d;   ins[4][5] << -1.0;
+        ins[5][4] << -1.0; ins[5][5] << d;
+        return A;
+    };
+
+    auto A1 = build(4.0);
+    auto fac = native_klu_factor(A1);
+
+    SECTION("refactor on the same matrix reproduces factor") {
+        auto re = native_klu_refactor(A1, fac);
+        vec::dense_vector<double> b(6, 1.0), xf(6, 0.0), xr(6, 0.0);
+        fac.solve(xf, b);
+        re.solve(xr, b);
+        for (std::size_t i = 0; i < 6; ++i)
+            REQUIRE_THAT(xr(static_cast<int>(i)), WithinAbs(xf(static_cast<int>(i)), 1e-12));
+    }
+
+    SECTION("refactor solves a same-pattern matrix with new values") {
+        auto A2 = build(9.0);
+        auto re = native_klu_refactor(A2, fac);
+        vec::dense_vector<double> b = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+        vec::dense_vector<double> xr(6, 0.0), xfresh(6, 0.0);
+        re.solve(xr, b);
+        native_klu_solve(A2, xfresh, b);
+        for (std::size_t i = 0; i < 6; ++i)
+            REQUIRE_THAT(xr(static_cast<int>(i)), WithinAbs(xfresh(static_cast<int>(i)), 1e-9));
+        REQUIRE(relative_residual(A2, xr, b) < 1e-9);
+    }
+}
+
 #ifdef MTL5_HAS_KLU
 TEST_CASE("native KLU agrees with the external SuiteSparse KLU binding",
           "[sparse][klu][native][interface]") {
