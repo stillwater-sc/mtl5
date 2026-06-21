@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -204,12 +205,19 @@ lu_numeric<Value> sparse_lu_numeric(
     // at the end. L is unit lower (diagonal stored first per column, value 1);
     // U has its diagonal stored last per column -- the layouts dense_lower_solve
     // / dense_upper_solve expect.
-    std::vector<std::ptrdiff_t> pinv(n, -1);
+    // Row-index / node arrays use 32-bit indices to halve memory bandwidth in
+    // the (memory-bound) numeric gather/scatter -- all values are node/row ids
+    // in [0, n) with a -1 sentinel, and any in-memory block has n < 2^31 (KLU
+    // uses int32 here too). Column pointers (Lp/Up/xprune) and the DFS resume
+    // stack (pstack, which holds positions into Li up to the fill count) stay
+    // 64-bit.
+    using idx32 = std::int32_t;
+    std::vector<idx32>          pinv(n, -1);
     std::vector<Value>          x(n, Value{0});   // dense numeric workspace
-    std::vector<std::ptrdiff_t> xi(n);            // DFS stack + reach output
-    std::vector<std::ptrdiff_t> pstack(n);        // DFS resume-pointer stack
+    std::vector<idx32>          xi(n);            // DFS stack + reach output
+    std::vector<std::ptrdiff_t> pstack(n);        // DFS resume-pointer stack (Li positions)
     std::vector<char>           marked(n, 0);     // reach marks
-    std::vector<std::ptrdiff_t> reach_nodes;      // marked nodes, for O(reach) reset
+    std::vector<idx32>          reach_nodes;      // marked nodes, for O(reach) reset
     reach_nodes.reserve(n);
 
     std::vector<size_type>      Lp(n + 1, 0), Up(n + 1, 0);
@@ -219,8 +227,8 @@ lu_numeric<Value> sparse_lu_numeric(
     // prefix once a symmetric entry (j,k)+(k,j) appears, which is the dominant
     // constant-factor win in scalar left-looking LU (SuperLU pruneL).
     std::vector<size_type>      xprune(n, 0);
-    std::vector<std::ptrdiff_t> Li;  std::vector<Value> Lx;
-    std::vector<std::ptrdiff_t> Ui;  std::vector<Value> Ux;
+    std::vector<idx32> Li;  std::vector<Value> Lx;
+    std::vector<idx32> Ui;  std::vector<Value> Ux;
     Li.reserve(C.values.size() * 2); Lx.reserve(C.values.size() * 2);
     Ui.reserve(C.values.size() * 2); Ux.reserve(C.values.size() * 2);
 
@@ -369,7 +377,7 @@ lu_numeric<Value> sparse_lu_numeric(
     }
 
     auto to_csc = [&](const std::vector<size_type>& Mp,
-                      const std::vector<std::ptrdiff_t>& Mi,
+                      const std::vector<idx32>& Mi,
                       const std::vector<Value>& Mx) -> util::csc_matrix<Value> {
         util::csc_matrix<Value> M;
         M.nrows = n;
