@@ -376,6 +376,13 @@ lu_numeric<Value> sparse_lu_numeric(
         result.row_perm[pos] = i;
     }
 
+    // Build CSC, sorting each column by row index (ascending). Sorting keeps the
+    // diagonal first in L (rows >= k, min = k) and last in U (rows <= k, max = k)
+    // -- the layout the triangular solves expect -- and gives each column a
+    // topological order so sparse_lu_refactor() can replay the numeric values
+    // without a reach DFS. The cost is O(fill * log(col_len)), negligible vs the
+    // numeric flops.
+    std::vector<size_type> ord;
     auto to_csc = [&](const std::vector<size_type>& Mp,
                       const std::vector<idx32>& Mi,
                       const std::vector<Value>& Mx) -> util::csc_matrix<Value> {
@@ -384,13 +391,101 @@ lu_numeric<Value> sparse_lu_numeric(
         M.ncols = n;
         M.col_ptr = Mp;
         M.row_ind.resize(Mi.size());
-        for (size_type p = 0; p < Mi.size(); ++p)
-            M.row_ind[p] = static_cast<size_type>(Mi[p]);
-        M.values = Mx;
+        M.values.resize(Mx.size());
+        for (size_type c = 0; c < n; ++c) {
+            size_type b = Mp[c], e = Mp[c + 1];
+            ord.resize(e - b);
+            for (size_type t = 0; t < e - b; ++t) ord[t] = b + t;
+            std::sort(ord.begin(), ord.end(),
+                      [&](size_type a, size_type c2) { return Mi[a] < Mi[c2]; });
+            for (size_type t = 0; t < e - b; ++t) {
+                M.row_ind[b + t] = static_cast<size_type>(Mi[ord[t]]);
+                M.values[b + t]  = Mx[ord[t]];
+            }
+        }
         return M;
     };
     result.L = to_csc(Lp, Li, Lx);
     result.U = to_csc(Up, Ui, Ux);
+    return result;
+}
+
+/// Refactorize a matrix with the SAME sparsity pattern as a prior factorization,
+/// reusing that factorization's symbolic structure and pivot sequence. Only the
+/// numeric values are recomputed -- no BTF/ordering, no reach DFS, and no pivot
+/// search -- which is the fast path for repeated solves of a fixed pattern with
+/// changing values (e.g. SPICE transient analysis: one factor, many refactor).
+///
+/// Preconditions: A has the same column ordering (prev.symbolic) and the same
+/// nonzero pattern that produced prev. Relies on prev.L / prev.U columns being
+/// stored in ascending row order (as sparse_lu_numeric produces).
+///
+/// \throws std::runtime_error if a reused pivot is numerically zero for the new
+///         values (the prior pivot sequence is no longer valid).
+template <typename Value, typename Parameters>
+    requires OrderedField<Value>
+lu_numeric<Value> sparse_lu_refactor(
+    const mat::compressed2D<Value, Parameters>& A,
+    const lu_numeric<Value>& prev)
+{
+    using size_type = std::size_t;
+    size_type n = prev.symbolic.n;
+    if (A.num_rows() != n || A.num_cols() != n) {
+        throw std::invalid_argument(
+            "sparse_lu_refactor: matrix dimensions do not match prior factorization");
+    }
+
+    auto AQ = util::column_permute(A, prev.symbolic.col_perm);
+    auto C  = util::crs_to_csc(AQ);
+
+    const auto& pinv = prev.row_pinv;    // original row -> pivot position (fixed)
+    lu_numeric<Value> result = prev;     // reuse pattern + perms + symbolic
+    auto& L = result.L;                  // overwrite values in place
+    auto& U = result.U;
+
+    std::vector<Value> x(n, Value{0});
+
+    for (size_type k = 0; k < n; ++k) {
+        // Scatter column k of the (column-permuted) A into the pivot-space
+        // workspace.
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
+            x[pinv[C.row_ind[p]]] = C.values[p];
+
+        // Left-looking updates from contributing columns j < k. U(:,k) is sorted
+        // ascending with the diagonal (row k) last, so the strict-upper entries
+        // are exactly the contributing columns in topological order.
+        size_type ubeg = U.col_ptr[k], uend = U.col_ptr[k + 1];
+        for (size_type p = ubeg; p + 1 < uend; ++p) {   // exclude diagonal (last)
+            size_type j = U.row_ind[p];
+            Value xj = x[j];
+            if (xj == Value{0}) continue;
+            // L(:,j): diagonal (row j, value 1) is first -> skip it.
+            for (size_type q = L.col_ptr[j] + 1; q < L.col_ptr[j + 1]; ++q)
+                x[L.row_ind[q]] -= L.values[q] * xj;
+        }
+
+        Value pivot = x[k];
+        if (pivot == Value{0}) {
+            throw std::runtime_error(
+                "sparse_lu_refactor: zero pivot at column " + std::to_string(k)
+                + " (prior pivot sequence invalid for the new values)");
+        }
+
+        // Write U(:,k) values (all rows <= k, including the diagonal = pivot).
+        for (size_type p = ubeg; p < uend; ++p)
+            U.values[p] = x[U.row_ind[p]];
+
+        // Write L(:,k): unit diagonal first, then x[row]/pivot below.
+        for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) {
+            size_type r = L.row_ind[p];
+            L.values[p] = (r == k) ? Value{1} : x[r] / pivot;
+        }
+
+        // Clear the workspace over column k's pattern only.
+        for (size_type p = ubeg; p < uend; ++p)               x[U.row_ind[p]] = Value{0};
+        for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) x[L.row_ind[p]] = Value{0};
+    }
+
     return result;
 }
 
