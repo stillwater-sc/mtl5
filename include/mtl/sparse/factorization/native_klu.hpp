@@ -194,21 +194,38 @@ klu_numeric<Value> native_klu_factor(
     const auto& Bci  = result.B.ref_minor();
     const auto& Bdat = result.B.ref_data();
     result.block_numeric.reserve(result.btf.nblocks());
+    // Reusable raw-CSR workspace for block extraction. Building each block
+    // directly with a two-pass counting sort avoids the inserter's per-entry
+    // hashing/sorting/finalization and the per-block allocation churn (notable
+    // over the many blocks of a reducible matrix).
+    std::vector<std::size_t> bstart, bind;
+    std::vector<Value>       bval;
     for (std::size_t blk = 0; blk < result.btf.nblocks(); ++blk) {
         const std::size_t r0 = result.btf.blocks[blk];
         const std::size_t r1 = result.btf.blocks[blk + 1];
         const std::size_t m  = r1 - r0;
 
-        mat::compressed2D<Value> block(m, m);
-        {
-            mat::inserter<mat::compressed2D<Value>> ins(block);
-            for (std::size_t i = r0; i < r1; ++i)
-                for (std::size_t k = Brp[i]; k < Brp[i + 1]; ++k) {
-                    std::size_t j = Bci[k];
-                    if (j >= r0 && j < r1)
-                        ins[i - r0][j - r0] << Bdat[k];
-                }
+        // pass 1: count diagonal-block entries per local row
+        bstart.assign(m + 1, 0);
+        for (std::size_t i = r0; i < r1; ++i)
+            for (std::size_t k = Brp[i]; k < Brp[i + 1]; ++k) {
+                std::size_t j = Bci[k];
+                if (j >= r0 && j < r1) ++bstart[(i - r0) + 1];
+            }
+        for (std::size_t t = 0; t < m; ++t) bstart[t + 1] += bstart[t];
+        std::size_t bnnz = bstart[m];
+        bind.resize(bnnz);
+        bval.resize(bnnz);
+        // pass 2: scatter. B's rows are column-sorted (built sorted), so each
+        // block row's slot fills in ascending block-column order.
+        for (std::size_t i = r0; i < r1; ++i) {
+            std::size_t d = bstart[i - r0];
+            for (std::size_t k = Brp[i]; k < Brp[i + 1]; ++k) {
+                std::size_t j = Bci[k];
+                if (j >= r0 && j < r1) { bind[d] = j - r0; bval[d] = Bdat[k]; ++d; }
+            }
         }
+        mat::compressed2D<Value> block(m, m, bnnz, bstart.data(), bind.data(), bval.data());
 
         // Per-block fill-reducing ordering: AMD on the block's symmetric
         // structure A+A^T for non-trivial blocks (KLU's default), natural
