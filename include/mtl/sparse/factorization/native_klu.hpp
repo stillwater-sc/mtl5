@@ -271,6 +271,11 @@ klu_numeric<Value> native_klu_refactor(
         throw std::invalid_argument(
             "native_klu_refactor: matrix dimensions do not match prior factorization");
     }
+    if (prev.btf.col_perm.size() != n || prev.block_of.size() != n ||
+        prev.block_numeric.size() != prev.btf.nblocks()) {
+        throw std::invalid_argument(
+            "native_klu_refactor: prior factorization is internally inconsistent");
+    }
 
     klu_numeric<Value> result;
     if (n == 0) { result.btf.blocks = {0}; return result; }
