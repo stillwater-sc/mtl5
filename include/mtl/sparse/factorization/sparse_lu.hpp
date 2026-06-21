@@ -153,6 +153,28 @@ lu_symbolic sparse_lu_symbolic(
     return sym;
 }
 
+/// Accumulator policy for the numeric workspace of the left-looking solve.
+///
+/// The dense workspace column is held as `Acc` and the algorithm touches it only
+/// through this trait, so the accumulation can be made exact/extended-precision
+/// without MTL5 depending on any external number library: a caller supplies a
+/// custom `Acc` (e.g. a Kahan/compensated accumulator, or a Universal `quire`
+/// super-accumulator) by specializing `accumulator_traits<Acc, Value>`.
+///
+/// The default specialization makes `Acc == Value` (plain arithmetic, zero
+/// overhead, identical results) -- the behavior unless a caller opts in.
+///
+/// `value()` rounds the accumulator to `Value` once, at the point the column
+/// entry is consumed -- giving single-rounding ("exact dot product") semantics
+/// when `Acc` is exact.
+template <typename Acc, typename Value>
+struct accumulator_traits {
+    static void  clear(Acc& a)                                   { a = Acc{}; }
+    static void  assign(Acc& a, const Value& v)                  { a = v; }
+    static Value value(const Acc& a)                             { return static_cast<Value>(a); }
+    static void  sub_product(Acc& a, const Value& m, const Value& v) { a -= m * v; }
+};
+
 /// Perform numeric LU factorization with threshold partial pivoting.
 ///
 /// Uses the left-looking algorithm: for each column k, performs a sparse
@@ -168,7 +190,7 @@ lu_symbolic sparse_lu_symbolic(
 /// \return          Numeric factorization result containing L, U, and permutations
 ///
 /// \throws std::runtime_error if a zero pivot is encountered (singular matrix)
-template <typename Value, typename Parameters>
+template <typename Value, typename Parameters, typename Accumulator = Value>
     requires OrderedField<Value>
 lu_numeric<Value> sparse_lu_numeric(
     const mat::compressed2D<Value, Parameters>& A,
@@ -177,6 +199,7 @@ lu_numeric<Value> sparse_lu_numeric(
 {
     using size_type = std::size_t;
     using std::abs;  // ADL: also find abs() for custom number types (e.g. posit/cfloat)
+    using AT = accumulator_traits<Accumulator, Value>;  // numeric workspace policy
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -213,7 +236,7 @@ lu_numeric<Value> sparse_lu_numeric(
     // 64-bit.
     using idx32 = std::int32_t;
     std::vector<idx32>          pinv(n, -1);
-    std::vector<Value>          x(n, Value{0});   // dense numeric workspace
+    std::vector<Accumulator>    x(n);             // dense numeric workspace (accumulator policy)
     std::vector<idx32>          xi(n);            // DFS stack + reach output
     std::vector<std::ptrdiff_t> pstack(n);        // DFS resume-pointer stack (Li positions)
     std::vector<char>           marked(n, 0);     // reach marks
@@ -273,17 +296,18 @@ lu_numeric<Value> sparse_lu_numeric(
         }
 
         // --- scatter C(:,k) over the reach, then x = L \ C(:,k) ---
-        for (size_type p = top; p < n; ++p) x[xi[p]] = Value{0};
+        for (size_type p = top; p < n; ++p) AT::clear(x[xi[p]]);
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
-            x[C.row_ind[p]] = C.values[p];
+            AT::assign(x[C.row_ind[p]], C.values[p]);
 
         for (size_type px = top; px < n; ++px) {
             std::ptrdiff_t j = xi[px];
             std::ptrdiff_t jcol = pinv[j];
             if (jcol < 0) continue;                        // column not yet formed
+            Value xj = AT::value(x[j]);                    // round U(j,k) once (single rounding)
             // L(j,j) == 1 (unit lower, stored first) -> no divide needed.
             for (size_type p = Lp[jcol] + 1; p < Lp[jcol + 1]; ++p)
-                x[Li[p]] -= Lx[p] * x[j];
+                AT::sub_product(x[Li[p]], Lx[p], xj);
         }
 
         // --- threshold partial pivoting + emit U(:,k) for already-pivotal rows ---
@@ -293,11 +317,11 @@ lu_numeric<Value> sparse_lu_numeric(
         for (size_type px = top; px < n; ++px) {
             std::ptrdiff_t i = xi[px];
             if (pinv[i] < 0) {                             // pivot candidate / L entry
-                Value t = abs(x[i]);
+                Value t = abs(AT::value(x[i]));
                 if (!have || t > a) { a = t; ipiv = i; have = true; }
             } else {                                       // U(pinv[i], k)
                 Ui.push_back(pinv[i]);
-                Ux.push_back(x[i]);
+                Ux.push_back(AT::value(x[i]));
             }
         }
         if (ipiv < 0 || a == Value{0}) {
@@ -307,11 +331,11 @@ lu_numeric<Value> sparse_lu_numeric(
         }
         // Prefer the natural diagonal (row k) if it meets the threshold.
         if (pinv[static_cast<std::ptrdiff_t>(k)] < 0
-            && abs(x[k]) >= threshold * a) {
+            && abs(AT::value(x[k])) >= threshold * a) {
             ipiv = static_cast<std::ptrdiff_t>(k);
         }
 
-        Value pivot = x[ipiv];
+        Value pivot = AT::value(x[ipiv]);
         Ui.push_back(static_cast<std::ptrdiff_t>(k));      // U(k,k) stored last
         Ux.push_back(pivot);
         pinv[ipiv] = static_cast<std::ptrdiff_t>(k);
@@ -322,9 +346,9 @@ lu_numeric<Value> sparse_lu_numeric(
             std::ptrdiff_t i = xi[px];
             if (pinv[i] < 0) {                             // remaining -> L(i,k)
                 Li.push_back(i);
-                Lx.push_back(x[i] / pivot);
+                Lx.push_back(AT::value(x[i]) / pivot);
             }
-            x[i] = Value{0};                               // clear workspace (reach only)
+            AT::clear(x[i]);                               // clear workspace (reach only)
         }
         xprune[k] = Li.size();                             // column k initially unpruned
 
