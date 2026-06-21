@@ -481,9 +481,14 @@ lu_numeric<Value> sparse_lu_refactor(
             L.values[p] = (r == k) ? Value{1} : x[r] / pivot;
         }
 
-        // Clear the workspace over column k's pattern only.
+        // Clear the workspace. Clear the U/L pattern AND the scattered A column:
+        // for an exact same-pattern refactor these coincide, but if A carries an
+        // entry outside the prior pattern (a pattern mismatch) it is scattered
+        // here yet never consumed by the replay -- clearing the scatter positions
+        // too keeps such an entry from polluting later columns.
         for (size_type p = ubeg; p < uend; ++p)               x[U.row_ind[p]] = Value{0};
         for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) x[L.row_ind[p]] = Value{0};
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) x[pinv[C.row_ind[p]]] = Value{0};
     }
 
     return result;
