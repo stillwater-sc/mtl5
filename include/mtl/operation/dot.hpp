@@ -32,7 +32,7 @@ template <typename Accumulator = void, typename Result = Accumulator,
           Vector V1, Vector V2>
 auto dot(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
-    if constexpr (!std::is_void_v<Accumulator>) {
+    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
         using AT = math::accumulator_traits<Accumulator, Value>;
         Accumulator acc{};
@@ -78,7 +78,7 @@ template <typename Accumulator = void, typename Result = Accumulator,
           Vector V1, Vector V2>
 auto dot_real(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
-    if constexpr (!std::is_void_v<Accumulator>) {
+    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
         using AT = math::accumulator_traits<Accumulator, Value>;
         Accumulator acc{};

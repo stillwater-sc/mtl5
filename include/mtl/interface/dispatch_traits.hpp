@@ -13,6 +13,17 @@ template <typename T>
 inline constexpr bool is_blas_scalar_v =
     std::is_same_v<T, float> || std::is_same_v<T, double>;
 
+/// Whether the requested accumulator policy permits a hardware-fixed BLAS /
+/// native-fast path. External BLAS/LAPACK (and the blocked native GEMM)
+/// accumulate inner products in a fixed precision and cannot honor a
+/// caller-selected accumulator or result type, so ANY non-default accumulator
+/// (`Accumulator != void`) MUST fall to the native (generic) kernel -- even for
+/// float/double operands (e.g. a double accumulator over float storage). The
+/// default `void` selects today's accelerated dispatch. Operations gate their
+/// BLAS path on this predicate.
+template <typename Accumulator>
+inline constexpr bool accumulator_allows_blas_v = std::is_void_v<Accumulator>;
+
 /// Concept satisfied by dense matrix types eligible for BLAS/LAPACK dispatch.
 /// Requires: float/double value_type, contiguous data() pointer, num_rows/num_cols.
 template <typename M>
