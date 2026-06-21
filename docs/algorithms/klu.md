@@ -121,6 +121,49 @@ one block of ≈632k plus ~11.7k singletons. There, performance rests entirely o
 the per-block ordering (pitfall 2) and factorization quality (pitfalls 1, 3),
 not on BTF.
 
+## Characterizing an implementation against KLU
+
+When a from-scratch solver is slower than KLU, the first question is *which*
+pitfall dominates. The durable technique is to **measure fill and time as two
+separate axes** against the reference, because they have different cures:
+
+- **fill** = nnz(L) + nnz(U) of the factors (the structural cost),
+- **time** = factor + solve wall-clock (the structural cost × per-flop cost).
+
+They compose multiplicatively:
+
+```text
+time_ratio  ≈  fill_ratio  ×  constant_factor
+            (ordering/scaling)   (kernels: pruning, data structures)
+```
+
+So the two ratios localize the bottleneck:
+
+- **fill_ratio ≈ 1 but time_ratio > 1** → the ordering is already good; the gap
+  is **constant factor** — missing symmetric pruning and/or heavyweight data
+  structures (pitfalls 3, and the reach cost of no pruning).
+- **fill_ratio ≫ 1** → an **ordering/scaling** problem (pitfalls 2, 6): the
+  factorization is doing genuinely more arithmetic. Fix fill *before* chasing
+  the constant factor, since it multiplies everything.
+
+### Worked example
+
+Measuring a native left-looking implementation (AMD-per-block, no symmetric
+pruning yet) against SuiteSparse KLU:
+
+| matrix | fill_ratio | time_ratio | reading |
+|--------|-----------:|-----------:|---------|
+| `add32` (well-scaled circuit block) | **1.0×** (identical) | 3.5× | ordering already optimal → the 3.5× is **pure constant factor** (pruning + kernels) |
+| `rajat30` (large indefinite block) | **13.5×** | 43.9× | 43.9 ≈ **13.5 (fill) × 3.3 (constant)** → *both* a fill problem (scaling/pivoting) and the same constant factor |
+
+The conclusion is actionable and ordered: because `add32`'s fill already equals
+KLU's, the ordering is correct and the universal lever is the **constant factor**
+(symmetric pruning, then CSC kernels). `rajat30` additionally needs **scaling**
+to stop partial pivoting from inflating fill on the unscaled indefinite block —
+and that fill fix is worth ~13×, so it precedes constant-factor work for that
+matrix class. Measuring the two axes separately is what turns "it's 44× slower"
+into a precise, prioritized work list.
+
 ## References
 
 - Davis, T. A. & Palamadai Natarajan, E. "Algorithm 907: KLU, A Direct Sparse
