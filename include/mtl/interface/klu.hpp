@@ -117,6 +117,10 @@ public:
     /// coupling (Numeric->nzoff) -- matching the native fill convention so the
     /// two are directly comparable.
     std::size_t factor_nnz() const {
+        if (!numeric_) {
+            throw std::logic_error(
+                "klu_solver::factor_nnz: called on a moved-from solver");
+        }
         return static_cast<std::size_t>(numeric_->lnz)
              + static_cast<std::size_t>(numeric_->unz);
     }
