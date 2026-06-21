@@ -103,6 +103,17 @@ from the Phase 0 scoreboard and updated as phases land.
 - **W5 (scaling/pivoting).** Circuit matrices are badly scaled and indefinite;
   scaling reduces off-diagonal pivoting, which in turn reduces fill (couples back
   to W1).
+- **Residual fill is ordering-intrinsic, not pivot-induced (negative result).**
+  After Phase 5 row scaling, rajat30 still shows ~1.7× fill vs KLU. Hypothesis:
+  loosen the partial-pivoting threshold (KLU default 0.001) to keep pivoting on
+  the AMD order. *Measured: it did not help* — fill stayed ~55M (even rose
+  slightly), and Poisson fill rose ~3%. Because row scaling already equilibrated
+  the matrix, pivoting was already following the order; the threshold has little
+  effect. So the residual 1.7× fill is **intrinsic to our AMD ordering vs KLU's
+  AMD tuning** on this matrix, not a pivoting artifact. Closing it requires
+  ordering-quality work (matching KLU's AMD parameters / aggressive absorption),
+  a deeper investigation — not the threshold. Default kept at full partial
+  pivoting (threshold 1) for stability.
 - **W6 (BTF).** Smaller, but our BTF at 1.7s is a sizable fraction of KLU's
   entire 7.4s on rajat30, so it has room.
 
