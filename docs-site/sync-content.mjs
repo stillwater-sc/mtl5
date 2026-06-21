@@ -50,6 +50,7 @@ const FILE_MAP = {
 
   // ── Linear Algebra Algorithms ───────────────────────────────────
   'algorithms/overview.md':                     'algorithms/overview.md',
+  'algorithms/measuring-solver-accuracy.md':    'algorithms/measuring-solver-accuracy.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
 
   // ── Design ──────────────────────────────────────────────────────

@@ -11,6 +11,10 @@ implementation-independent; MTL5 ships its own native KLU
 (`mtl::sparse::factorization::native_klu`) and an external SuiteSparse binding
 (`mtl::interface::klu_solver`).
 
+> Accuracy of a solve is judged by the **residual** `‖A x̂ − b‖`; see
+> [Measuring Solver Accuracy](measuring-solver-accuracy.md) for residuals, norms,
+> and the residual–vs–forward-error distinction used throughout these pages.
+
 ## What kind of solver it is
 
 KLU is a **scalar, non-supernodal, left-looking Gilbert–Peierls LU** with
