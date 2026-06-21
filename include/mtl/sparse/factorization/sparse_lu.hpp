@@ -40,6 +40,7 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
@@ -155,28 +156,13 @@ lu_symbolic sparse_lu_symbolic(
 
 /// Accumulator policy for the numeric workspace of the left-looking solve.
 ///
-/// The dense workspace column is held as `Acc` and the algorithm touches it only
-/// through this trait, so the accumulation can be made exact/extended-precision
-/// without MTL5 depending on any external number library: a caller supplies a
-/// custom `Acc` (e.g. a Kahan/compensated accumulator, or a Universal `quire`
-/// super-accumulator) by specializing `accumulator_traits<Acc, Value>`.
-///
-/// The default specialization makes `Acc == Value` (plain arithmetic, zero
-/// overhead, identical results) -- the behavior unless a caller opts in.
-///
-/// `value()` rounds the accumulator to `Value` once, at the point the column
-/// entry is consumed -- giving single-rounding ("exact dot product") semantics
-/// when `Acc` is exact.
+/// The canonical, cross-cutting trait lives in `mtl::math::accumulator_traits`
+/// (#158); this name inherits it for the sparse kernels and source compatibility.
+/// Specialize `mtl::math::accumulator_traits<Acc, Value>` to affect both the
+/// sparse factorizations and the dense BLAS ops at once (it propagates here via
+/// the base); specialize this one for a sparse-only customization.
 template <typename Acc, typename Value>
-struct accumulator_traits {
-    static void  clear(Acc& a)                                   { a = Acc{}; }
-    static void  assign(Acc& a, const Value& v)                  { a = v; }
-    static Value value(const Acc& a)                             { return static_cast<Value>(a); }
-    // add_product(a, m, v) == a += m*v: the canonical accumulate-a-product
-    // primitive (a dot product / quire is a sum of products). The caller passes
-    // a negated multiplier for the elimination subtraction.
-    static void  add_product(Acc& a, const Value& m, const Value& v) { a += m * v; }
-};
+struct accumulator_traits : mtl::math::accumulator_traits<Acc, Value> {};
 
 /// Perform numeric LU factorization with threshold partial pivoting.
 ///
