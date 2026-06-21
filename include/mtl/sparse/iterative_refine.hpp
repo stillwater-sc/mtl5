@@ -25,9 +25,11 @@
 // narrow-exponent factor types whose corrections would otherwise underflow when
 // cast into the factorization's solve.
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <stdexcept>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -66,6 +68,10 @@ refine_result iterative_refine(
 {
     using std::abs;
     const std::size_t n = A.num_rows();
+    if (A.num_cols() != n)
+        throw std::invalid_argument("iterative_refine: matrix must be square");
+    if (static_cast<std::size_t>(b.size()) != n || static_cast<std::size_t>(x.size()) != n)
+        throw std::invalid_argument("iterative_refine: b/x size does not match A");
 
     const auto& rp  = A.ref_major();
     const auto& ci  = A.ref_minor();
@@ -115,6 +121,19 @@ refine_result iterative_refine(
                 x(static_cast<int>(i)) += dx(static_cast<int>(i));
         }
         ++res.iters;
+    }
+
+    // If the loop never ran (max_iter <= 0), best_rn is still infinity; report
+    // the residual of the supplied x instead of an invalid inf.
+    if (!std::isfinite(best_rn)) {
+        double rn = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            Residual ax{0};
+            for (std::size_t k = rp[i]; k < rp[i + 1]; ++k)
+                ax += dat[k] * x(static_cast<int>(ci[k]));
+            rn = std::max(rn, static_cast<double>(abs(b(static_cast<int>(i)) - ax)));
+        }
+        best_rn = rn;
     }
 
     x = best_x;                              // keep the best iterate
