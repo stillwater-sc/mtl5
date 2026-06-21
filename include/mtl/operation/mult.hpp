@@ -22,16 +22,30 @@ namespace mtl {
 
 namespace detail {
 
-/// Generic mat*vec: y = A * x
-template <Matrix M, Vector VIn, Vector VOut>
+/// Generic mat*vec: y = A * x. With an explicit `Accumulator`, each y element is
+/// summed in that precision and rounded out (fused convert) to y's element type.
+template <typename Accumulator = void, Matrix M, Vector VIn, Vector VOut>
 void mult_generic(const M& A, const VIn& x, VOut& y) {
-    using T = typename VOut::value_type;
-    for (typename M::size_type r = 0; r < A.num_rows(); ++r) {
-        auto acc = math::zero<T>();
-        for (typename M::size_type c = 0; c < A.num_cols(); ++c) {
-            acc += A(r, c) * x(c);
+    using Result = typename VOut::value_type;
+    if constexpr (std::is_void_v<Accumulator>) {
+        for (typename M::size_type r = 0; r < A.num_rows(); ++r) {
+            auto acc = math::zero<Result>();
+            for (typename M::size_type c = 0; c < A.num_cols(); ++c) {
+                acc += A(r, c) * x(c);
+            }
+            y(r) = acc;
         }
-        y(r) = acc;
+    } else {
+        using Value = std::common_type_t<typename M::value_type, typename VIn::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        for (typename M::size_type r = 0; r < A.num_rows(); ++r) {
+            Accumulator acc{};
+            AT::clear(acc);
+            for (typename M::size_type c = 0; c < A.num_cols(); ++c) {
+                AT::add_product(acc, static_cast<Value>(A(r, c)), static_cast<Value>(x(c)));
+            }
+            y(r) = AT::template value<Result>(acc);
+        }
     }
 }
 
@@ -73,11 +87,21 @@ void mult_generic(const MA& A, const MB& B, MC& C) {
 
 } // namespace detail
 
-/// mat*vec multiply into pre-allocated y: y = A * x
-template <Matrix M, Vector VIn, Vector VOut>
+/// mat*vec multiply into pre-allocated y: y = A * x.
+///
+/// Mixed precision: pass an explicit `Accumulator` to sum each y element in a
+/// precision distinct from the operand element type; the result is rounded out to
+/// y's element type. Default `Accumulator = void` keeps the BLAS / native-fast /
+/// generic dispatch unchanged.
+template <typename Accumulator = void, Matrix M, Vector VIn, Vector VOut>
 void mult(const M& A, const VIn& x, VOut& y) {
     assert(A.num_cols() == x.size());
     assert(A.num_rows() == y.size());
+
+    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
+        detail::mult_generic<Accumulator>(A, x, y);
+        return;
+    } else {
 
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::BlasDenseMatrix<M> &&
@@ -122,6 +146,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
     }
 #endif
     detail::mult_generic(A, x, y);
+    }
 }
 
 /// mat*mat multiply into pre-allocated C: C = A * B.

@@ -10,7 +10,9 @@
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <type_traits>
 #include <mtl/simd/algorithm.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -32,9 +34,28 @@ auto one_norm(const V& v) {
     return acc;
 }
 
-/// two_norm(v) = sqrt(sum(|v[i]|^2))
-template <Vector V>
+/// two_norm(v) = sqrt(sum(|v[i]|^2)).
+///
+/// Mixed precision: pass an explicit `Accumulator` to sum the squares in a wider
+/// precision than the element magnitude (e.g. `two_norm<double>(v)` over a
+/// bfloat16/float vector), guarding the long reduction against overflow and
+/// precision loss; the result is returned as the element magnitude type. Default
+/// `Accumulator = void` keeps the BLAS / SIMD / loop dispatch unchanged.
+template <typename Accumulator = void, Vector V>
 auto two_norm(const V& v) {
+    using mag_t = magnitude_t<typename V::value_type>;
+    if constexpr (!std::is_void_v<Accumulator>) {
+        using AT = math::accumulator_traits<Accumulator, mag_t>;
+        Accumulator acc{};
+        AT::clear(acc);
+        for (typename V::size_type i = 0; i < v.size(); ++i) {
+            using std::abs;
+            mag_t a = abs(v(i));
+            AT::add_product(acc, a, a);               // acc += a*a in Accumulator
+        }
+        using std::sqrt;
+        return static_cast<mag_t>(sqrt(AT::template value<Accumulator>(acc)));
+    } else {
 #ifdef MTL5_HAS_BLAS
     // BLAS takes int; fall back to the loop for vectors larger than INT_MAX.
     if constexpr (interface::BlasDenseVector<V>) {
@@ -48,7 +69,6 @@ auto two_norm(const V& v) {
         using std::sqrt;
         return sqrt(simd::reduce_sum_squares<typename V::value_type>(v.data(), v.size()));
     } else {
-        using mag_t = magnitude_t<typename V::value_type>;
         auto acc = math::zero<mag_t>();
         for (typename V::size_type i = 0; i < v.size(); ++i) {
             using std::abs;
@@ -57,6 +77,7 @@ auto two_norm(const V& v) {
         }
         using std::sqrt;
         return sqrt(acc);
+    }
     }
 }
 
@@ -75,20 +96,39 @@ auto infinity_norm(const V& v) {
 
 // -- Matrix norms --------------------------------------------------------
 
-/// frobenius_norm(m) = sqrt(sum(|m[i,j]|^2))
-template <Matrix M>
+/// frobenius_norm(m) = sqrt(sum(|m[i,j]|^2)).
+///
+/// Mixed precision: pass an explicit `Accumulator` to sum the squares in a wider
+/// precision than the element magnitude; the result is returned as the element
+/// magnitude type. Default `Accumulator = void` is unchanged.
+template <typename Accumulator = void, Matrix M>
 auto frobenius_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
-    auto acc = math::zero<mag_t>();
-    for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
-        for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-            using std::abs;
-            auto a = abs(m(r, c));
-            acc += a * a;
+    if constexpr (!std::is_void_v<Accumulator>) {
+        using AT = math::accumulator_traits<Accumulator, mag_t>;
+        Accumulator acc{};
+        AT::clear(acc);
+        for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
+            for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
+                using std::abs;
+                mag_t a = abs(m(r, c));
+                AT::add_product(acc, a, a);
+            }
         }
+        using std::sqrt;
+        return static_cast<mag_t>(sqrt(AT::template value<Accumulator>(acc)));
+    } else {
+        auto acc = math::zero<mag_t>();
+        for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
+            for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
+                using std::abs;
+                auto a = abs(m(r, c));
+                acc += a * a;
+            }
+        }
+        using std::sqrt;
+        return sqrt(acc);
     }
-    using std::sqrt;
-    return sqrt(acc);
 }
 
 /// one_norm(m) = max column sum of |m[i,j]|
