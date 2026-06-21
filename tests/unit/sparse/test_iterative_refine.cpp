@@ -120,3 +120,25 @@ TEST_CASE("scaled iterative_refine matches unscaled for a wide-range factor type
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE_THAT(xs(static_cast<int>(i)), WithinAbs(xu(static_cast<int>(i)), 1e-9));
 }
+
+TEST_CASE("iterative_refine patience never degrades the result",
+          "[sparse][iterative_refine]") {
+    // Patience tolerates non-improving steps so noisy low-precision IR reaches its
+    // floor (validated with posit/cfloat in mp-spice). The invariant testable here:
+    // since the best iterate is always returned, varying patience never worsens the
+    // result, and a larger patience reaches at least as good a residual.
+    std::size_t n = 50;
+    auto Ad = dense_mixed<double>(n);
+    auto fac = sparse::factorization::native_klu_factor(dense_mixed<float>(n));
+    auto b  = rhs_ones(Ad);
+
+    vec::dense_vector<double> x1(n, 0.0), x5(n, 0.0);
+    sparse::refine_options o1; o1.max_iter = 50; o1.patience = 1;
+    sparse::refine_options o5; o5.max_iter = 50; o5.patience = 5;
+    auto r1 = sparse::iterative_refine<double>(Ad, fac, b, x1, o1);
+    auto r5 = sparse::iterative_refine<double>(Ad, fac, b, x5, o5);
+
+    REQUIRE(forward_error(x1) < 1e-10);
+    REQUIRE(forward_error(x5) < 1e-10);
+    REQUIRE(r5.rel_residual <= r1.rel_residual);   // more patience never worse
+}
