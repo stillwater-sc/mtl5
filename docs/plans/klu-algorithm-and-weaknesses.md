@@ -72,7 +72,7 @@ from the Phase 0 scoreboard and updated as phases land.
 
 | # | Weakness | KLU's technique | Native today | Phase | Quantified (native ÷ KLU) |
 |---|----------|-----------------|--------------|-------|---------------------------|
-| W1 | **Fill explosion on unsymmetric blocks** | AMD on A+Aᵀ per block | COLAMD on AᵀA; pivoting deviates from the column order → fill blows up | [1 (#133)](native-klu-performance.md) | rajat30: did not finish in 600s vs KLU 7.4s |
+| W1 | **Fill explosion on unsymmetric blocks** | AMD on A+Aᵀ per block | ~~COLAMD on AᵀA~~ → **AMD on A+Aᵀ (Phase 1)**; pivoting still inflates fill on the unscaled indefinite block | [1 (#133)](native-klu-performance.md) | **Measured fill (native ÷ KLU):** add32 **1.0×** (28902 = 28902), rajat14 1.1×, rajat30 **13.5×** (437M vs 32.3M). On benign blocks AMD fill *matches* KLU — explosion is specific to rajat30's indefinite block (→ scaling, Phase 5). rajat30 time 43.9× ≈ **13.5× fill × 3.3× constant** (→ pruning Phase 2 + kernels Phase 3). |
 | W2 | **Expensive reach / DFS** | Eisenstat–Liu symmetric pruning | full GP-LU DFS over un-pruned L columns | [2 (#134)](native-klu-performance.md) | 2D Poisson 256²: 3.6× (factor+solve) |
 | W3 | **Heavy data structures in hot path** | raw CSC int arrays, pre-sized/chunk-grown | `compressed2D` + `inserter`, fresh `std::vector`s per block | [3 (#135)](native-klu-performance.md) | _TBD_ |
 | W4 | **Repeated symbolic + pivot search** | analyze / factor / **refactor** split | pivots re-searched every solve; no refactor | [4 (#136)](native-klu-performance.md) | _TBD (refactor/factor ratio)_ |
@@ -84,7 +84,13 @@ from the Phase 0 scoreboard and updated as phases land.
 - **W1 (fill).** The single biggest one-shot problem. Verified: on the SPD 2D
   Poisson block (where pivoting follows the order) native is only 3.6× slower
   (W2 territory), but on rajat30's indefinite 632k block the actual fill
-  explodes far beyond that. AMD on A+Aᵀ is KLU's answer.
+  explodes far beyond that. **Phase 1 result:** switching to AMD on A+Aᵀ made
+  rajat30 *complete* (309s, 437M fill) where it previously did not finish, and
+  cut circuit fill 12–15%. But its fill is still ~10× KLU's and time 43× —
+  because partial pivoting on the **unscaled, indefinite** block deviates from
+  AMD's prediction. So AMD is *necessary but not sufficient*: closing the
+  remaining fill needs **scaling (W5 / Phase 5)**, and the constant factor needs
+  **symmetric pruning (W2 / Phase 2)**. rajat30 parity is genuinely multi-phase.
 - **W2 (pruning).** Applies to *every* matrix, including symmetric ones; it is
   what makes the scalar left-looking solve competitive. Most of the benign-block
   3.6× is expected to live here.
