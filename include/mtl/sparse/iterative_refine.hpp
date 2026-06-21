@@ -41,6 +41,9 @@ struct refine_options {
     int    max_iter = 20;     ///< maximum correction steps
     double rel_tol  = 0.0;    ///< stop when ||r||inf/||b||inf <= rel_tol (0 = disabled)
     bool   scaled   = false;  ///< normalize the residual before each correction solve
+    int    patience = 3;      ///< stop after this many consecutive non-improving steps
+                              ///< (>=1; tolerates a noisy low-precision residual so IR
+                              ///< reaches its floor instead of quitting on one bad step)
 };
 
 /// Outcome of iterative_refine.
@@ -88,7 +91,8 @@ refine_result iterative_refine(
     vec::dense_vector<Residual> r(n), dx(n, Residual{0});
     vec::dense_vector<Residual> best_x = x;
     double best_rn = std::numeric_limits<double>::infinity();
-    double prev_rn = std::numeric_limits<double>::infinity();
+    const int patience = std::max(1, opt.patience);
+    int stalls = 0;                          // consecutive non-improving steps
 
     refine_result res;
     for (int it = 0; it < opt.max_iter; ++it) {
@@ -100,12 +104,15 @@ refine_result iterative_refine(
             r(static_cast<int>(i)) = b(static_cast<int>(i)) - ax;
         }
         double rn = norm_inf(r);
-        if (rn < best_rn) { best_rn = rn; best_x = x; }
+        // Track the best iterate; a low-precision residual is noisy, so allow up
+        // to `patience` consecutive non-improving steps before giving up (the
+        // returned x is always the best seen, so extra steps never degrade it).
+        if (rn < best_rn) { best_rn = rn; best_x = x; stalls = 0; }
+        else              { ++stalls; }
 
         double rel = (bnorm > 0.0) ? rn / bnorm : rn;
         if (opt.rel_tol > 0.0 && rel <= opt.rel_tol) { res.converged = true; break; }
-        if (rn >= prev_rn) break;            // stopped improving (or diverging)
-        prev_rn = rn;
+        if (stalls >= patience) break;       // plateaued / diverging
 
         // Correction solve through the factorization (in its own precision).
         if (opt.scaled) {
