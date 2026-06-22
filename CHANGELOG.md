@@ -7,6 +7,20 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+#### Mixed-precision tensor operations (epic #157)
+- **`mtl::math::accumulator_traits<Acc, Value>`** — a shared, cross-cutting accumulator policy with a generalized `value<Result>` round-out, expressing the three independent precisions of a mixed-precision op: element (storage), accumulator (compute), result (serialize). The accumulate→output conversion is fused into the final store (#158)
+- **Accumulator/result policy on the dense operations**: `dot`/`dot_real` (#159), `gemm`/`mult` with the result type inferred from `C` (#161), `gemv` (#160), and the sum-of-squares norms `two_norm`/`frobenius_norm` (#162). E.g. `mult<float>(A_bf16, B_bf16, C_bf16)` accumulates in fp32 and writes bf16 once. Default `Accumulator = void` is byte-identical to prior behavior
+- **Dispatch guarantee** `interface::accumulator_allows_blas_v` — any non-default accumulator forces the native kernel even for float/double (external BLAS cannot honor a custom accumulator); proven via a counting accumulator (#163)
+- **`mtl::convert`** — standalone element-wise tensor re-quantization for non-fused re-typing (distinct from the fused accumulate→store epilogue) (#164)
+- **SIMD widening dot** — `batch::load_widen` (Highway `Rebind`+`PromoteTo`) + `simd::reduce_dot_widen` for float→double; `dot` routes its mixed path to it (~2.6× over scalar) (#165)
+
+#### Sparse direct solvers
+- **`sparse_lu_refactor` + `native_klu_refactor`** — analyze/factor/refactor: refactorize a same-pattern matrix by reusing the symbolic structure + pivot sequence (no BTF/ordering/reach/pivot-search), ~2.2× faster than a full factor; the SPICE-transient path (#153, #154)
+- **`mtl::sparse::iterative_refine`** — generic, Universal-free iterative refinement through any factorization, with a templated residual precision, an optional scaled variant (rescues narrow-exponent low-precision factors), patience-based termination, and best-iterate return (#119, #167)
+
+#### Documentation
+- **"Measuring Solver Accuracy"** algorithm page — residuals, norms, absolute vs relative error, and backward-vs-forward error / conditioning (#152)
+
 #### Benchmark suite
 - **Size-N sweep** (`--sweep START:STOP:STEP` and `:xFACTOR`) plus BLAS-level suite groups `l1`/`l2`/`l3`/`blas`; default sizes now bracket powers of two with odd/1.5x neighbours to expose padding overhead (#77)
 - **GFLOP/s-vs-N plotting** (`benchmarks/plot_results.py`, matplotlib) and committed example data + rendered plots under `benchmarks/data/` with provenance (#78, #79, #80)
