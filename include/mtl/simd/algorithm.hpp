@@ -43,6 +43,35 @@ T reduce_dot(const T* a, const T* b, std::size_t n) {
     return s;
 }
 
+/// Widening dot product: sum_i a[i]*b[i] with `Narrow` elements (e.g. float)
+/// accumulated in a wider `Wide` (e.g. double). Each load widens `Wide`-lane-
+/// count narrow values to `Wide` lanes, then FMAs into `Wide` accumulators -- so
+/// mixed-precision dot keeps the wide accumulator's accuracy at SIMD speed,
+/// instead of the scalar policy fallback. (On the scalar batch backend this is
+/// the correct scalar widening loop.)
+template <typename Wide, typename Narrow>
+Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
+    static_assert(std::is_floating_point_v<Wide> && std::is_floating_point_v<Narrow>);
+    static_assert(sizeof(Narrow) < sizeof(Wide), "reduce_dot_widen requires Narrow < Wide");
+    using B = batch<Wide>;
+    constexpr std::size_t W = B::size;
+    constexpr std::size_t U = 4;             // independent accumulators
+    constexpr std::size_t step = W * U;
+    B a0{}, a1{}, a2{}, a3{};
+    std::size_t i = 0;
+    for (; i + step <= n; i += step) {
+        a0 = fma(B::load_widen(a + i),           B::load_widen(b + i),           a0);
+        a1 = fma(B::load_widen(a + i + W),       B::load_widen(b + i + W),       a1);
+        a2 = fma(B::load_widen(a + i + 2 * W),   B::load_widen(b + i + 2 * W),   a2);
+        a3 = fma(B::load_widen(a + i + 3 * W),   B::load_widen(b + i + 3 * W),   a3);
+    }
+    for (; i + W <= n; i += W)
+        a0 = fma(B::load_widen(a + i), B::load_widen(b + i), a0);
+    Wide s = reduce_add((a0 + a1) + (a2 + a3));
+    for (; i < n; ++i) s += static_cast<Wide>(a[i]) * static_cast<Wide>(b[i]);  // tail
+    return s;
+}
+
 /// sum of squares: sum_i a[i]*a[i]  (two_norm computes sqrt of this).
 template <typename T>
 T reduce_sum_squares(const T* a, std::size_t n) {

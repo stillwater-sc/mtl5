@@ -68,6 +68,17 @@ public:
     void store_aligned(T* p)   const { hn::Store(v_, d_, p); }
     void store_unaligned(T* p) const { hn::StoreU(v_, d_, p); }
 
+    /// Load `size` values of a NARROWER type `Src` and widen each lane to `T`
+    /// (e.g. load float, accumulate in double). The float descriptor is rebound
+    /// to the same lane count as `T`'s, so exactly `size` source values are read.
+    template <typename Src>
+    static batch load_widen(const Src* p) {
+        static_assert(sizeof(Src) < sizeof(T),
+                      "load_widen widens; use load_unaligned for equal-width types");
+        const hn::Rebind<Src, D> ds;
+        return batch(hn::PromoteTo(d_, hn::LoadU(ds, p)));
+    }
+
     friend batch operator+(batch a, batch b) { return batch(hn::Add(a.v_, b.v_)); }
     friend batch operator-(batch a, batch b) { return batch(hn::Sub(a.v_, b.v_)); }
     friend batch operator*(batch a, batch b) { return batch(hn::Mul(a.v_, b.v_)); }
@@ -103,6 +114,15 @@ public:
     static batch load_unaligned(const T* p) { return batch(p[0]); }
     void store_aligned(T* p)   const { p[0] = v_; }
     void store_unaligned(T* p) const { p[0] = v_; }
+
+    /// Load one narrower value and widen to T (scalar fallback of the SIMD
+    /// widening load; see the Highway variant).
+    template <typename Src>
+    static batch load_widen(const Src* p) {
+        static_assert(sizeof(Src) < sizeof(T),
+                      "load_widen widens; use load_unaligned for equal-width types");
+        return batch(static_cast<T>(p[0]));
+    }
 
     friend batch operator+(batch a, batch b) { return batch(a.v_ + b.v_); }
     friend batch operator-(batch a, batch b) { return batch(a.v_ - b.v_); }
