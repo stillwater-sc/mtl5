@@ -33,15 +33,26 @@ template <typename Accumulator = void, typename Result = Accumulator,
 auto dot(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
-        using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
-        using AT = math::accumulator_traits<Accumulator, Value>;
-        Accumulator acc{};
-        AT::clear(acc);
-        for (typename V1::size_type i = 0; i < v1.size(); ++i)
-            AT::add_product(acc,
-                static_cast<Value>(functor::scalar::conj<typename V1::value_type>::apply(v1(i))),
-                static_cast<Value>(v2(i)));
-        return AT::template value<Result>(acc);
+        // SIMD widening fast path: real float elements, fp64 accumulate/result.
+        // (float is real, so conj is the identity and reduce_dot_widen matches
+        // the Hermitian product.) The default accumulator_traits adds the same
+        // promoted products, so the result matches the scalar policy path.
+        if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2> &&
+                      std::is_same_v<typename V1::value_type, float> &&
+                      std::is_same_v<typename V2::value_type, float> &&
+                      std::is_same_v<Accumulator, double> && std::is_same_v<Result, double>) {
+            return simd::reduce_dot_widen<double, float>(v1.data(), v2.data(), v1.size());
+        } else {
+            using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
+            using AT = math::accumulator_traits<Accumulator, Value>;
+            Accumulator acc{};
+            AT::clear(acc);
+            for (typename V1::size_type i = 0; i < v1.size(); ++i)
+                AT::add_product(acc,
+                    static_cast<Value>(functor::scalar::conj<typename V1::value_type>::apply(v1(i))),
+                    static_cast<Value>(v2(i)));
+            return AT::template value<Result>(acc);
+        }
     } else {
 #ifdef MTL5_HAS_BLAS
     // BlasDenseVector is real float/double, where conj is the identity, so
@@ -79,13 +90,21 @@ template <typename Accumulator = void, typename Result = Accumulator,
 auto dot_real(const V1& v1, const V2& v2) {
     assert(v1.size() == v2.size());
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
-        using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
-        using AT = math::accumulator_traits<Accumulator, Value>;
-        Accumulator acc{};
-        AT::clear(acc);
-        for (typename V1::size_type i = 0; i < v1.size(); ++i)
-            AT::add_product(acc, static_cast<Value>(v1(i)), static_cast<Value>(v2(i)));
-        return AT::template value<Result>(acc);
+        // SIMD widening fast path: real float elements, fp64 accumulate/result.
+        if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2> &&
+                      std::is_same_v<typename V1::value_type, float> &&
+                      std::is_same_v<typename V2::value_type, float> &&
+                      std::is_same_v<Accumulator, double> && std::is_same_v<Result, double>) {
+            return simd::reduce_dot_widen<double, float>(v1.data(), v2.data(), v1.size());
+        } else {
+            using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
+            using AT = math::accumulator_traits<Accumulator, Value>;
+            Accumulator acc{};
+            AT::clear(acc);
+            for (typename V1::size_type i = 0; i < v1.size(); ++i)
+                AT::add_product(acc, static_cast<Value>(v1(i)), static_cast<Value>(v2(i)));
+            return AT::template value<Result>(acc);
+        }
     } else {
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2>) {
