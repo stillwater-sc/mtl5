@@ -52,6 +52,7 @@ const FILE_MAP = {
   'algorithms/overview.md':                     'algorithms/overview.md',
   'algorithms/measuring-solver-accuracy.md':    'algorithms/measuring-solver-accuracy.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
+  'algorithms/supernodal-ldlt.md':              'algorithms/supernodal-ldlt.md',
 
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',
