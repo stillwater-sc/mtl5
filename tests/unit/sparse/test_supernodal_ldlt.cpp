@@ -214,36 +214,36 @@ TEST_CASE("Supernodal LDL^T edge cases", "[sparse][ldlt][supernodal]") {
 }
 
 // ---------------------------------------------------------------------------
-// Mixed precision: wider accumulator is no worse (usually better)
+// Mixed precision: the accumulator precision drives factor accuracy
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Supernodal LDL^T: double accumulator >= float accumulator accuracy",
+TEST_CASE("Supernodal LDL^T: accumulator precision drives factor accuracy",
           "[sparse][ldlt][supernodal][accumulator]") {
-    auto A = make_dense_spd(24);              // one big panel => lots of accumulation
+    // Keep the *storage* in double so the triangular solve is accurate and the
+    // residual reflects FACTOR quality -- isolating the effect of the
+    // accumulation precision. Float accumulation over the panel updates (which
+    // cancel) caps the factor at ~float epsilon; double accumulation is near
+    // exact. This gives a robust, platform-independent separation rather than
+    // comparing two residuals at the float-solve noise floor.
+    auto A = make_dense_spd(24);              // one dense panel, real cancellation
     std::size_t n = A.num_rows();
     vec::dense_vector<double> b(n);
     for (std::size_t i = 0; i < n; ++i) b(static_cast<int>(i)) = 1.0 + 0.1 * static_cast<double>(i);
 
-    auto Af = to_float(A);
-    vec::dense_vector<float> bf(n);
-    for (std::size_t i = 0; i < n; ++i) bf(static_cast<int>(i)) = static_cast<float>(b(static_cast<int>(i)));
+    auto sym = factorization::supernodal_ldlt_symbolic(A, ordering::amd{});
+    auto fac_f = factorization::supernodal_ldlt_numeric<double, decltype(A)::param_type, float>(A, sym);
+    auto fac_d = factorization::supernodal_ldlt_numeric<double, decltype(A)::param_type, double>(A, sym);
 
-    auto symf = factorization::supernodal_ldlt_symbolic(Af, ordering::amd{});
-
-    // Storage = float; accumulate in float vs double.
-    auto fac_f = factorization::supernodal_ldlt_numeric<float, decltype(Af)::param_type, float>(Af, symf);
-    auto fac_d = factorization::supernodal_ldlt_numeric<float, decltype(Af)::param_type, double>(Af, symf);
-
-    vec::dense_vector<float> xf(n, 0.0f), xd(n, 0.0f);
-    fac_f.solve(xf, bf);
-    fac_d.solve(xd, bf);
+    vec::dense_vector<double> xf(n, 0.0), xd(n, 0.0);
+    fac_f.solve(xf, b);
+    fac_d.solve(xd, b);
 
     double res_f = rel_residual(A, xf, b);
     double res_d = rel_residual(A, xd, b);
 
     REQUIRE(std::isfinite(res_f));
-    REQUIRE(std::isfinite(res_d));
-    REQUIRE(res_d <= res_f);                  // wider accumulator never less accurate
+    REQUIRE(res_d < 1e-10);                   // double accumulation -> accurate factor
+    REQUIRE(res_d < res_f);                   // wider accumulator decisively better
 }
 
 // ---------------------------------------------------------------------------
