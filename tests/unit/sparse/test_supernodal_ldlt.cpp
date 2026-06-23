@@ -242,8 +242,9 @@ TEST_CASE("Supernodal LDL^T: accumulator precision drives factor accuracy",
     double res_d = rel_residual(A, xd, b);
 
     REQUIRE(std::isfinite(res_f));
-    REQUIRE(res_d < 1e-10);                   // double accumulation -> accurate factor
-    REQUIRE(res_d < res_f);                   // wider accumulator decisively better
+    REQUIRE(res_d < 1e-12);                   // double accumulation -> near-exact factor
+    REQUIRE(res_f > 1e-9);                    // float accumulation measurably worse
+    REQUIRE(res_d < res_f);                   // ... decisive (>=3-order) separation
 }
 
 // ---------------------------------------------------------------------------

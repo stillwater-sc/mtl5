@@ -251,6 +251,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
                 const std::size_t tc = rowsK[bi] - f;       // target column in [0,w)
                 for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
                     const std::size_t tr = rel[rowsK[ui]];
+                    assert(tr != NPOS && "update row must lie in the target panel");
                     Accumulator* dst = &P[tc * m + tr];
                     for (std::size_t kk = 0; kk < wK; ++kk) {
                         // coefficient D(k)*L(row_b,k) formed in Value; product with
@@ -268,10 +269,16 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
         panel_off[J].assign((m - w) * w, Value{0});
         for (std::size_t c = 0; c < w; ++c) {
             const Value dcc = AT::template value<Value>(P[c * m + c]);
-            if (dcc == Value{0}) {
+            // Reject a singular (exact-zero) or non-finite (NaN/Inf) pivot: either
+            // would silently propagate garbage through the divisions below. LDL^T
+            // does no pivoting and targets indefinite / custom number types, so we
+            // do NOT reject merely small pivots (those can be legitimate). The
+            // (dcc - dcc != 0) test is true for NaN and Inf and false for any
+            // finite value, staying dependency-free for custom types.
+            if (dcc == Value{0} || dcc - dcc != Value{0}) {
                 for (std::size_t t = 0; t < m; ++t) rel[rows[t]] = NPOS;
                 throw std::runtime_error(
-                    "supernodal_ldlt_numeric: zero pivot at column "
+                    "supernodal_ldlt_numeric: zero or non-finite pivot at column "
                     + std::to_string(f + c));
             }
             D[f + c] = dcc;
