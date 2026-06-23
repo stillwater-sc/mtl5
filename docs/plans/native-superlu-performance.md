@@ -111,9 +111,9 @@ structure) recorded.
 
 ### Phase 1 — Column elimination tree + unsymmetric supernode symbolic
 Build the column elimination tree and unsymmetric (column-etree) supernode
-detection, extending `analysis/supernodes.hpp` beyond the symmetric case from
-#178. Produce the supernode partition, per-supernode row structure, and an L/U
-nnz prediction.
+detection, extending `analysis/supernodes.hpp` beyond the symmetric case
+(#178). Produce the supernode partition, per-supernode row structure, and an
+L/U nnz prediction.
 *Gate:* supernode partition and predicted fill validated against a symbolic
 reference and SuperLU's reported fill on the suite.
 
