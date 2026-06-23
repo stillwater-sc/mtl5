@@ -12,14 +12,19 @@
 // Analysis
 #include <mtl/sparse/analysis/elimination_tree.hpp>
 #include <mtl/sparse/analysis/postorder.hpp>
+#include <mtl/sparse/analysis/supernodes.hpp>
 
 // Factorization infrastructure
 #include <mtl/sparse/factorization/triangular_solve.hpp>
 #include <mtl/sparse/factorization/sparse_cholesky.hpp>
 #include <mtl/sparse/factorization/sparse_ldlt.hpp>
+#include <mtl/sparse/factorization/supernodal_ldlt.hpp>
 #include <mtl/sparse/factorization/sparse_qr.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
 #include <mtl/sparse/factorization/native_klu.hpp>
+
+// Iterative refinement
+#include <mtl/sparse/iterative_refine.hpp>
 
 // Orderings
 #include <mtl/sparse/ordering/rcm.hpp>
