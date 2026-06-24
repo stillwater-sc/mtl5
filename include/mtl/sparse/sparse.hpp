@@ -13,6 +13,7 @@
 #include <mtl/sparse/analysis/elimination_tree.hpp>
 #include <mtl/sparse/analysis/postorder.hpp>
 #include <mtl/sparse/analysis/supernodes.hpp>
+#include <mtl/sparse/analysis/column_etree.hpp>
 
 // Factorization infrastructure
 #include <mtl/sparse/factorization/triangular_solve.hpp>
