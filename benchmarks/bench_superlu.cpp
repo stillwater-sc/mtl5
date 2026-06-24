@@ -273,7 +273,13 @@ int main(int argc, char** argv) {
     std::vector<std::string> mtx_files;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        if (a == "--csv" && i + 1 < argc) { csv_path = argv[++i]; }
+        if (a == "--csv") {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "bench_superlu: --csv requires a file path\n");
+                return 2;
+            }
+            csv_path = argv[++i];
+        }
         else { mtx_files.push_back(a); }
     }
 

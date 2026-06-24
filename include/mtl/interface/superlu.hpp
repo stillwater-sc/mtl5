@@ -81,6 +81,7 @@ public:
         StatInit(&stat);
 
         int info = 0;
+        factor_nnz_ = 0;  // clear stale fill so a failed solve never reports it
         dgssv(&options, &A_slu, perm_c.data(), perm_r.data(),
               &L_slu, &U_slu, &B_slu, &stat, &info);
 
