@@ -29,6 +29,7 @@
 //                                       #   slow to finish on a huge dense block)
 //   bench_superlu --csv out.csv [mtx]   # also write a CSV scoreboard
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -223,8 +224,14 @@ void print_row(const Score& s) {
     std::printf("\n");
 }
 
-void write_csv(const std::string& path, const std::vector<Score>& rows) {
+// Returns false (with a message on stderr) if the CSV could not be written, so
+// the caller never reports a CSV artifact that was silently dropped.
+bool write_csv(const std::string& path, const std::vector<Score>& rows) {
     std::ofstream out(path);
+    if (!out) {
+        std::fprintf(stderr, "  [failed to open CSV output: %s]\n", path.c_str());
+        return false;
+    }
     // native_status is ok|skip|fail; numeric native fields are left EMPTY when
     // not ok, so "skipped/failed" is never confused with a real value of 0.
     out << "matrix,n,nnz,nblocks,largest_block,native_status,native_s,native_fill,native_resid";
@@ -251,6 +258,12 @@ void write_csv(const std::string& path, const std::vector<Score>& rows) {
 #endif
         out << "\n";
     }
+    out.flush();
+    if (!out) {
+        std::fprintf(stderr, "  [failed while writing CSV output: %s]\n", path.c_str());
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -304,6 +317,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (!csv_path.empty()) { write_csv(csv_path, rows); std::printf("\nCSV: %s\n", csv_path.c_str()); }
+    if (!csv_path.empty()) {
+        if (!write_csv(csv_path, rows)) return 1;
+        std::printf("\nCSV: %s\n", csv_path.c_str());
+    }
     return 0;
 }
