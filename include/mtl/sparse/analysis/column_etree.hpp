@@ -16,8 +16,10 @@
 //     Partial Pivoting", SIAM J. Matrix Anal. Appl. 20(3), 1999 (SuperLU).
 //   - Gilbert, Ng, Peyton, column/row count algorithm.
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -238,8 +240,11 @@ template <typename Value, typename Parameters>
 inline lu_symbolic_analysis analyze_unsymmetric(
     const mat::compressed2D<Value, Parameters>& A)
 {
+    if (A.num_rows() != A.num_cols())
+        throw std::invalid_argument("analyze_unsymmetric: matrix must be square");
+
     lu_symbolic_analysis r;
-    r.n = A.num_rows();
+    r.n = A.num_cols();
 
     // 1. Column etree + postorder of the matrix as given.
     auto parent0 = column_elimination_tree(util::crs_to_csc(A));

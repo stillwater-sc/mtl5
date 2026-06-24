@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -135,6 +136,11 @@ TEST_CASE("Unsymmetric supernode partition: structural extremes",
         REQUIRE(sa.nsuper == 6);
         REQUIRE(sa.sn_first.size() == 7);
         REQUIRE(sa.fill_lu_bound == 6);   // diagonal only: nnz(L)=nnz(U)=n, bound=2n-n
+    }
+    SECTION("rectangular matrix is rejected") {
+        mat::compressed2D<double> A(3, 5);
+        { mat::inserter<mat::compressed2D<double>> ins(A); ins[0][0] << 1.0; }
+        REQUIRE_THROWS_AS(analysis::analyze_unsymmetric(A), std::invalid_argument);
     }
     SECTION("dense => single supernode") {
         std::size_t n = 8;
