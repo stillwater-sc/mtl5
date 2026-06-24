@@ -84,6 +84,17 @@ public:
         dgssv(&options, &A_slu, perm_c.data(), perm_r.data(),
               &L_slu, &U_slu, &B_slu, &stat, &info);
 
+        if (info == 0) {
+            // Record the factor fill (nnz of L + U). SuperLU stores L
+            // supernodally, so its nnz includes the structural zeros inside the
+            // supernodes -- i.e. SuperLU's actual factor storage footprint, the
+            // honest quantity to compare against a scalar factor's nnz.
+            factor_nnz_ = static_cast<std::size_t>(
+                              static_cast<SCformat*>(L_slu.Store)->nnz)
+                        + static_cast<std::size_t>(
+                              static_cast<NCformat*>(U_slu.Store)->nnz);
+        }
+
         StatFree(&stat);
         Destroy_SuperMatrix_Store(&A_slu);
         Destroy_SuperMatrix_Store(&B_slu);
@@ -99,10 +110,15 @@ public:
     std::size_t num_rows() const { return static_cast<std::size_t>(n_); }
     std::size_t num_cols() const { return static_cast<std::size_t>(n_); }
 
+    /// Fill of the most recent factorization: nnz(L) + nnz(U) (L counted
+    /// supernodally, as SuperLU stores it). Zero until solve() has run.
+    std::size_t factor_nnz() const { return factor_nnz_; }
+
 private:
     int n_;
     std::vector<int> col_ptr_, row_ind_;
     std::vector<double> values_;
+    mutable std::size_t factor_nnz_ = 0;
 
     template <typename Parameters>
     void convert_to_ccs(const mat::compressed2D<double, Parameters>& A) {

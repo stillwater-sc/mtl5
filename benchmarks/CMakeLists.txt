@@ -20,6 +20,15 @@ target_link_libraries(bench_klu PRIVATE MTL5::mtl5)
 target_include_directories(bench_klu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(bench_klu PROPERTIES FOLDER "Benchmarks")
 
+# SuperLU performance scoreboard: native LU vs SuiteSparse SuperLU (epic #186,
+# Phase 0 / #180). Links MTL5::mtl5, which propagates MTL5_HAS_SUPERLU + the
+# SuperLU library when the build is configured with -DMTL5_WITH_SUPERLU=ON;
+# otherwise it builds native-only.
+add_executable(bench_superlu bench_superlu.cpp)
+target_link_libraries(bench_superlu PRIVATE MTL5::mtl5)
+target_include_directories(bench_superlu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_target_properties(bench_superlu PROPERTIES FOLDER "Benchmarks")
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)
