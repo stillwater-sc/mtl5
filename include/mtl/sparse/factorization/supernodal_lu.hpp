@@ -66,6 +66,7 @@ struct supernodal_lu_factor {
     std::vector<std::size_t> row_perm;     // pivoting row order (p[new]=old)
     std::vector<std::size_t> row_pinv;     // inverse
     std::vector<std::size_t> lsuper_first; // dynamic L-supernode boundaries (size nsuper+1)
+    std::vector<Value>       row_scale;    // r[orig row]; empty = unscaled (factored R*A)
     supernodal_lu_symbolic   symbolic;
 
     std::size_t num_rows() const { return symbolic.n; }
@@ -82,9 +83,15 @@ struct supernodal_lu_factor {
                 "supernodal_lu_factor::solve: vector size mismatch (expected "
                 + std::to_string(n) + ")");
         }
+        // If R*A was factored (row equilibration), the RHS is row-scaled by the
+        // same R; x is unchanged.
         std::vector<Value> w(n);
-        for (std::size_t i = 0; i < n; ++i) w[i] = static_cast<Value>(b(row_perm[i]));
-        dense_lower_solve(L, w);                               // L z = P b
+        const bool scaled = !row_scale.empty();
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t orow = row_perm[i];
+            w[i] = static_cast<Value>(b(orow)) * (scaled ? row_scale[orow] : Value{1});
+        }
+        dense_lower_solve(L, w);                               // L z = P (R b)
         dense_upper_solve(U, w);                               // U y = z
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.col_perm[i]) = static_cast<typename VecX::value_type>(w[i]);
@@ -139,7 +146,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const supernodal_lu_symbolic& sym,
     Value threshold = Value{1},
-    std::size_t max_super = 64)
+    std::size_t max_super = 64,
+    bool scale = false)
 {
     using size_type = std::size_t;
     using std::abs;
@@ -158,6 +166,23 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         throw std::invalid_argument("supernodal_lu_numeric: dimension exceeds 32-bit index range");
 
     auto C = util::crs_to_csc(util::column_permute(A, sym.col_perm));
+
+    // Optional row equilibration: factor R*A with r[row] = 1/max|A(row,:)|.
+    // Improves pivot stability (notably for low-precision factorization); the
+    // RHS is row-scaled by the same R in solve(), so x is unchanged.
+    std::vector<Value> row_scale;
+    if (scale) {
+        std::vector<Value> rmax(n, Value{0});
+        for (size_type p = 0; p < C.values.size(); ++p) {
+            Value a = abs(C.values[p]);
+            if (a > rmax[C.row_ind[p]]) rmax[C.row_ind[p]] = a;
+        }
+        row_scale.assign(n, Value{1});
+        for (size_type r = 0; r < n; ++r)
+            if (rmax[r] > Value{0}) row_scale[r] = Value{1} / rmax[r];
+        for (size_type p = 0; p < C.values.size(); ++p)
+            C.values[p] *= row_scale[C.row_ind[p]];
+    }
 
     using idx32 = std::int32_t;
     std::vector<idx32>          pinv(n, -1);
@@ -395,6 +420,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
 
     supernodal_lu_factor<Value> result;
     result.symbolic = sym;
+    result.row_scale = std::move(row_scale);
     result.lsuper_first.assign(lsuper_first.begin(), lsuper_first.end());
     result.row_perm.resize(n); result.row_pinv.resize(n);
     for (size_type i = 0; i < n; ++i) {
@@ -421,6 +447,91 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     };
     result.L = to_csc(Lp, Li, Lx);
     result.U = to_csc(Up, Ui, Ux);
+    return result;
+}
+
+/// Refactorize a matrix with the SAME sparsity pattern as a prior factorization,
+/// reusing its analyze + pivot/supernode pattern. Only numeric values are
+/// recomputed: no ordering, no reach DFS, no pivot search, no supernode
+/// detection -- the fast path for repeated solves of a fixed pattern with
+/// changing values (transient SPICE: one analyze+factor, many refactors). The
+/// stored L/U columns are in topological (ascending-row) order, so the values
+/// replay directly. Mirrors sparse_lu_refactor.
+///
+/// Preconditions: A uses prev's column ordering and the same nonzero pattern.
+/// \throws std::runtime_error if a reused pivot is numerically zero for the new
+///         values (the prior pivot sequence is no longer valid).
+template <typename Value, typename Parameters>
+    requires OrderedField<Value>
+supernodal_lu_factor<Value> supernodal_lu_refactor(
+    const mat::compressed2D<Value, Parameters>& A,
+    const supernodal_lu_factor<Value>& prev)
+{
+    using size_type = std::size_t;
+    const size_type n = prev.symbolic.n;
+    if (A.num_rows() != n || A.num_cols() != n)
+        throw std::invalid_argument(
+            "supernodal_lu_refactor: matrix dimensions do not match prior factorization");
+
+    using std::abs;
+    auto C = util::crs_to_csc(util::column_permute(A, prev.symbolic.col_perm));
+    const auto& pinv = prev.row_pinv;        // original row -> pivot position (fixed)
+    supernodal_lu_factor<Value> result = prev;   // reuse pattern + perms + symbolic + supernodes
+
+    // If the prior factorization was row-equilibrated, re-equilibrate the new
+    // values (same pattern) and factor R*A; solve() row-scales the RHS by R.
+    if (!prev.row_scale.empty()) {
+        std::vector<Value> rmax(n, Value{0});
+        for (size_type p = 0; p < C.values.size(); ++p) {
+            Value a = abs(C.values[p]);
+            if (a > rmax[C.row_ind[p]]) rmax[C.row_ind[p]] = a;
+        }
+        result.row_scale.assign(n, Value{1});
+        for (size_type r = 0; r < n; ++r)
+            if (rmax[r] > Value{0}) result.row_scale[r] = Value{1} / rmax[r];
+        for (size_type p = 0; p < C.values.size(); ++p)
+            C.values[p] *= result.row_scale[C.row_ind[p]];
+    }
+
+    auto& L = result.L;                      // overwrite values in place
+    auto& U = result.U;
+
+    std::vector<Value> x(n, Value{0});
+    for (size_type k = 0; k < n; ++k) {
+        // Scatter column k of the column-permuted A into the pivot-space workspace.
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
+            x[pinv[C.row_ind[p]]] = C.values[p];
+
+        // Left-looking updates from contributing columns j < k (U(:,k) is sorted
+        // ascending with the diagonal last -> strict-upper entries are the
+        // contributing columns in topological order).
+        const size_type ubeg = U.col_ptr[k], uend = U.col_ptr[k + 1];
+        for (size_type p = ubeg; p + 1 < uend; ++p) {
+            const size_type j = U.row_ind[p];
+            const Value xj = x[j];
+            if (xj == Value{0}) continue;
+            for (size_type q = L.col_ptr[j] + 1; q < L.col_ptr[j + 1]; ++q)  // skip unit diagonal
+                x[L.row_ind[q]] -= L.values[q] * xj;
+        }
+
+        const Value pivot = x[k];
+        if (pivot == Value{0})
+            throw std::runtime_error(
+                "supernodal_lu_refactor: zero pivot at column " + std::to_string(k)
+                + " (prior pivot sequence invalid for the new values)");
+
+        for (size_type p = ubeg; p < uend; ++p) U.values[p] = x[U.row_ind[p]];
+        for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) {
+            const size_type r = L.row_ind[p];
+            L.values[p] = (r == k) ? Value{1} : x[r] / pivot;
+        }
+
+        // Clear the workspace over the touched positions (U/L pattern and the
+        // scattered A column, in case A has an entry outside the prior pattern).
+        for (size_type p = ubeg; p < uend; ++p)                 x[U.row_ind[p]] = Value{0};
+        for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) x[L.row_ind[p]] = Value{0};
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) x[pinv[C.row_ind[p]]] = Value{0};
+    }
     return result;
 }
 

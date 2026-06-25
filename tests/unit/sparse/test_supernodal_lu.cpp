@@ -91,6 +91,93 @@ TEST_CASE("Supernodal LU matches scalar LU", "[sparse][lu][supernodal]") {
     }
 }
 
+// ---- analyze/factor/refactor split (#184) ---------------------------------
+TEST_CASE("Supernodal LU refactor reuses the pattern", "[sparse][lu][supernodal][refactor]") {
+    // Same sparsity pattern, different values (the transient-SPICE scenario):
+    // factor once, then refactor (numeric only, no reach/pivot search).
+    auto A1 = random_unsym(40, 0.10, 3);
+    auto sym = factorization::supernodal_lu_symbolic_analyze(A1, ordering::colamd{});
+    auto fac = factorization::supernodal_lu_numeric(A1, sym);
+
+    // A2: identical pattern, perturbed values (reuse A1's structure).
+    auto A2 = A1;
+    {
+        auto& d = const_cast<std::vector<double>&>(A2.ref_data());
+        for (std::size_t k = 0; k < d.size(); ++k) d[k] *= (1.0 + 0.1 * std::sin(0.3 * k));
+    }
+    std::size_t n = A2.num_rows();
+    vec::dense_vector<double> b(n);
+    for (std::size_t i = 0; i < n; ++i) b(static_cast<int>(i)) = 1.0 + 0.2 * static_cast<double>(i);
+
+    auto re = factorization::supernodal_lu_refactor(A2, fac);
+    vec::dense_vector<double> xr(n, 0.0); re.solve(xr, b);
+    REQUIRE(rel_residual(A2, xr, b) < 1e-11);
+
+    // Pattern preserved and result matches a fresh factor of A2.
+    REQUIRE(re.L.col_ptr == fac.L.col_ptr);
+    REQUIRE(re.U.col_ptr == fac.U.col_ptr);
+    auto fresh = factorization::supernodal_lu_numeric(A2, sym);
+    vec::dense_vector<double> xf(n, 0.0); fresh.solve(xf, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE_THAT(xr(static_cast<int>(i)),
+                     Catch::Matchers::WithinAbs(xf(static_cast<int>(i)), 1e-9));
+
+    // Several refactors in a row (the SPICE loop) stay correct.
+    for (int it = 0; it < 3; ++it) {
+        re = factorization::supernodal_lu_refactor(A2, re);
+        vec::dense_vector<double> x(n, 0.0); re.solve(x, b);
+        REQUIRE(rel_residual(A2, x, b) < 1e-11);
+    }
+}
+
+// ---- row equilibration / scaling (#185) -----------------------------------
+TEST_CASE("Supernodal LU row scaling", "[sparse][lu][supernodal][scale]") {
+    // Badly row-scaled SPD-ish matrix: rows multiplied by a large dynamic range.
+    auto make_badscaled = [](std::size_t n) {
+        std::mt19937 rng(9);
+        std::uniform_real_distribution<double> v(-1.0, 1.0);
+        mat::compressed2D<double> A(n, n);
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            double s = std::pow(10.0, static_cast<double>(static_cast<int>(i % 9) - 4)); // 1e-4..1e4
+            ins[i][i] << s * (static_cast<double>(n) + 1.0);
+            for (std::size_t j = 0; j < n; ++j)
+                if (i != j && (i + 3 * j) % 5 == 0) ins[i][j] << s * v(rng);
+        }
+        return A;
+    };
+    auto A = make_badscaled(60);
+    std::size_t n = A.num_rows();
+    vec::dense_vector<double> b(n);
+    for (std::size_t i = 0; i < n; ++i) b(static_cast<int>(i)) = 1.0 + 0.1 * static_cast<double>(i);
+
+    auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+
+    // Scaled (factor R*A) is correct and mathematically equivalent to unscaled;
+    // row_scale = 1/max|row| is populated and positive. (Equilibration improves
+    // worst-case pivot stability; it is not a per-instance monotonic win, so we
+    // assert correctness + equivalence rather than "scaled is always smaller".)
+    auto fs = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, /*scale=*/true);
+    auto fu = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, /*scale=*/false);
+    REQUIRE(fs.row_scale.size() == n);
+    REQUIRE(fu.row_scale.empty());
+    for (double s : fs.row_scale) REQUIRE(s > 0.0);
+
+    vec::dense_vector<double> xs(n, 0.0), xu(n, 0.0);
+    fs.solve(xs, b); fu.solve(xu, b);
+    REQUIRE(rel_residual(A, xs, b) < 1e-10);   // scaled solve correct
+    REQUIRE(rel_residual(A, xu, b) < 1e-10);   // unscaled solve correct
+    for (std::size_t i = 0; i < n; ++i)        // mathematically equivalent
+        REQUIRE_THAT(xs(static_cast<int>(i)),
+                     Catch::Matchers::WithinAbs(xu(static_cast<int>(i)), 1e-7));
+
+    // Scaling survives refactor (recomputed for the new values).
+    auto re = factorization::supernodal_lu_refactor(A, fs);
+    REQUIRE(re.row_scale.size() == n);
+    vec::dense_vector<double> xr(n, 0.0); re.solve(xr, b);
+    REQUIRE(rel_residual(A, xr, b) < 1e-10);
+}
+
 // ---- pivoting -------------------------------------------------------------
 TEST_CASE("Supernodal LU pivots on a zero diagonal", "[sparse][lu][supernodal]") {
     // [[0 1],[1 1]] requires a row swap.
