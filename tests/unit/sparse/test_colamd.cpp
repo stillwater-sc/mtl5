@@ -107,6 +107,42 @@ TEST_CASE("COLAMD ordering works with LU solve", "[sparse][colamd]") {
     REQUIRE(relative_residual(A, x, b) < 1e-12);
 }
 
+// Regression for #189: the quotient-graph garbage-collection compaction in
+// minimum_degree_core mis-restored each object's first entry, corrupting the
+// Cp pointers. It only triggers once fill exhausts the elbow room -- e.g. the
+// A^T*A pattern of a 2-D 5-point grid at n >= 64 -- so dense/small inputs never
+// hit it. This orders (and factors) progressively larger grids, which segfaulted
+// before the fix.
+TEST_CASE("COLAMD on 2-D grids triggers garbage collection (#189)", "[sparse][colamd]") {
+    auto grid = [](std::size_t N) {
+        std::size_t n = N * N;
+        mat::compressed2D<double> A(n, n);
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        auto id = [N](std::size_t r, std::size_t c) { return r * N + c; };
+        for (std::size_t r = 0; r < N; ++r)
+            for (std::size_t c = 0; c < N; ++c) {
+                std::size_t i = id(r, c);
+                ins[i][i] << 6.0;
+                if (c > 0)     ins[i][id(r, c - 1)] << -2.0;
+                if (c + 1 < N) ins[i][id(r, c + 1)] << -1.0;
+                if (r > 0)     ins[i][id(r - 1, c)] << -2.0;
+                if (r + 1 < N) ins[i][id(r + 1, c)] << -1.0;
+            }
+        return A;
+    };
+    for (std::size_t N : {8u, 16u, 24u}) {       // n = 64, 256, 576 (all trigger GC)
+        auto A = grid(N);
+        std::size_t n = A.num_rows();
+        auto perm = ordering::colamd{}(A);
+        REQUIRE(perm.size() == n);
+        REQUIRE(util::is_valid_permutation(perm));
+
+        vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
+        factorization::sparse_lu_solve(A, x, b, ordering::colamd{});
+        REQUIRE(relative_residual(A, x, b) < 1e-10);
+    }
+}
+
 TEST_CASE("COLAMD satisfies FillReducingOrdering concept", "[sparse][colamd][concept]") {
     constexpr bool is_ordering = FillReducingOrdering<ordering::colamd, mat::compressed2D<double>>;
     STATIC_REQUIRE(is_ordering);
