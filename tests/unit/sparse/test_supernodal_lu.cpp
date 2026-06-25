@@ -91,6 +91,29 @@ TEST_CASE("Supernodal LU matches scalar LU", "[sparse][lu][supernodal]") {
     }
 }
 
+// ---- multi-panel: exercises the batched cross-panel GEMM update -----------
+TEST_CASE("Supernodal LU matches scalar across panel boundaries",
+          "[sparse][lu][supernodal]") {
+    // These span several 16-column panels, so the batched closed-supernode update
+    // is the dominant path; results must still match the scalar oracle exactly.
+    std::vector<mat::compressed2D<double>> mats;
+    mats.push_back(dense_unsym(48));        // 3 panels, wide supernodes
+    mats.push_back(random_unsym(80, 0.06, 7));
+    mats.push_back(convdiff(10));           // 100x100, multi-panel
+    for (auto& A : mats) {
+        std::size_t n = A.num_rows();
+        vec::dense_vector<double> b(n);
+        for (std::size_t i = 0; i < n; ++i) b(static_cast<int>(i)) = 1.0 - 0.2 * static_cast<double>(i % 7);
+        vec::dense_vector<double> xs(n, 0.0), xn(n, 0.0);
+        factorization::sparse_lu_solve(A, xs, b, ordering::colamd{});
+        factorization::supernodal_lu_solve(A, xn, b, ordering::colamd{});
+        REQUIRE(rel_residual(A, xn, b) < 1e-11);
+        for (std::size_t i = 0; i < n; ++i)
+            REQUIRE_THAT(xn(static_cast<int>(i)),
+                         Catch::Matchers::WithinAbs(xs(static_cast<int>(i)), 1e-9));
+    }
+}
+
 // ---- pivoting -------------------------------------------------------------
 TEST_CASE("Supernodal LU pivots on a zero diagonal", "[sparse][lu][supernodal]") {
     // [[0 1],[1 1]] requires a row swap.

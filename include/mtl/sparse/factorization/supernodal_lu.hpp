@@ -43,6 +43,11 @@
 #include <mtl/sparse/analysis/column_etree.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>   // lu_symbolic conventions, accumulator_traits
+#include <mtl/interface/blas.hpp>                    // blas::gemv / blas::trsv (MTL5_HAS_BLAS)
+#include <mtl/interface/dispatch_traits.hpp>         // is_blas_scalar_v
+#ifdef MTL5_NATIVE_FAST_GEMM
+#include <mtl/detail/gemm_blocked.hpp>                // native-SIMD blocked GEMM (panel update)
+#endif
 #include <mtl/sparse/iterative_refine.hpp>
 
 namespace mtl::sparse::factorization {
@@ -161,7 +166,6 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
 
     using idx32 = std::int32_t;
     std::vector<idx32>          pinv(n, -1);
-    std::vector<Accumulator>    x(n);
     std::vector<idx32>          xi(n);
     std::vector<std::ptrdiff_t> pstack(n);
     std::vector<char>           marked(n, 0);
@@ -183,8 +187,26 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
 
     std::vector<idx32> contrib_super;              // closed supernodes hitting column k (dedup)
     std::vector<char>  super_seen;                 // marker per closed supernode
-    std::vector<Accumulator> segacc;               // supernode segment, accumulator precision
-    std::vector<Value>       segval;               // pivots rounded to Value (multipliers)
+    std::vector<Accumulator> segacc;               // supernode segment, accumulator precision (generic path)
+    std::vector<Value>       segval;               // segment / pivots in Value (generic path)
+
+    // Fast dense block update when no custom accumulator is requested and the
+    // value type is BLAS-eligible (float/double): route the supernode TRSV+GEMV
+    // through BLAS-2 / native-SIMD instead of the generic accumulator loops.
+    constexpr bool fast_block =
+        std::is_same_v<Accumulator, Value> && interface::is_blas_scalar_v<Value>;
+
+    // Panel width: columns are processed in panels of `panelW`, and supernodes
+    // are aligned to panel boundaries so that, at each panel start, every earlier
+    // column lives in a *closed* supernode (enables the batched BLAS-3 update).
+    constexpr size_type panelW = 16;
+
+    // Panel workspace: n x panelW dense columns (column-major), reused across
+    // panels. `x` is repointed to column j of this within the per-column body, so
+    // the per-column code keeps its `x[...]` syntax unchanged.
+    std::vector<Accumulator> Xpanel(static_cast<std::size_t>(n) * panelW);
+    std::vector<Value>       pseg, pY;             // batched TRSM/GEMM buffers (fast path)
+    std::vector<idx32>       panel_supers;         // closed supernodes contributing to the panel
 
     // Close the open supernode [open_sf, sl): build its dense block from the CSC
     // columns (pivots now known), using `offdiag` (orig rows below the diagonal
@@ -217,11 +239,10 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         lsuper_first.push_back(sf);
     };
 
-    for (size_type k = 0; k < n; ++k) {
-        Lp[k] = Li.size();
-        Up[k] = Ui.size();
-
-        // --- reach(C(:,k)) in L: iterative DFS, topological order in xi[top..n) ---
+    // Gilbert-Peierls reach of column k over the current L (EL-pruned DFS). Fills
+    // xi[top..n) in topological order and records visited nodes in reach_nodes
+    // (caller resets marked[] via reach_nodes). Returns top.
+    auto compute_reach = [&](size_type k) -> size_type {
         reach_nodes.clear();
         size_type top = n;
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) {
@@ -245,56 +266,163 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
                 if (done) { --head; xi[--top] = node; }
             }
         }
+        return top;
+    };
 
-        // --- scatter C(:,k) ---
-        for (size_type p = top; p < n; ++p) AT::clear(x[xi[p]]);
-        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
-            AT::assign(x[C.row_ind[p]], C.values[p]);
+    for (size_type kp = 0; kp < n; kp += panelW) {
+        const size_type wpan = std::min(panelW, n - kp);
 
-        // --- supernodal solve x = L \ C(:,k) ---
-        // (a) closed supernodes (cols < open_sf): dense block update, in increasing
-        //     supernode order. Collect distinct contributing supernodes first.
-        contrib_super.clear();
-        for (size_type px = top; px < n; ++px) {
-            std::ptrdiff_t j = xi[px];
-            std::ptrdiff_t jcol = pinv[j];
-            if (jcol < 0) continue;
-            idx32 sid = col_csuper[jcol];
-            if (sid >= 0 && !super_seen[sid]) { super_seen[sid] = 1; contrib_super.push_back(sid); }
-        }
-        std::sort(contrib_super.begin(), contrib_super.end(),
-                  [&](idx32 a, idx32 b) { return snodes[a].sf < snodes[b].sf; });
-        for (idx32 sid : contrib_super) {
-            const auto& S = snodes[sid];
-            const size_type w = S.w, m = S.m;
-            segacc.resize(w); segval.resize(w);
-            for (size_type c = 0; c < w; ++c) segacc[c] = x[S.rows[c]];   // copy accumulator state
-            // TRSV against the unit-lower diagonal block, accumulating in Acc;
-            // each pivot is rounded to Value once (it then serves as a multiplier,
-            // which is what accumulator_traits::add_product consumes).
-            for (size_type c = 0; c < w; ++c) {
-                segval[c] = AT::template value<Value>(segacc[c]);
-                for (size_type r = c + 1; r < w; ++r)
-                    AT::add_product(segacc[r], S.block[c * m + r], -segval[c]);
+        // Close any supernode straddling the panel boundary, so every column < kp
+        // is in a CLOSED supernode (precondition for the batched update below).
+        // Lp[kp] must be set first: close_supernode reads Lp[kp] as the end of the
+        // last column's L entries when building the supernode's dense block.
+        if (open_sf < kp) { Lp[kp] = Li.size(); close_supernode(kp, prev_cand); open_sf = kp; }
+
+        // ===== panel start: scatter each panel column into X, and (fast path)
+        //       collect the closed supernodes contributing to the panel =====
+        panel_supers.clear();
+        for (size_type j = 0; j < wpan; ++j) {
+            const size_type kk = kp + j;
+            Accumulator* xj = &Xpanel[j * n];          // X(:,j), clean from the prior panel
+            for (size_type p = C.col_ptr[kk]; p < C.col_ptr[kk + 1]; ++p)
+                AT::assign(xj[C.row_ind[p]], C.values[p]);
+            if constexpr (fast_block) {
+                size_type top = compute_reach(kk);     // reach over current L (cols < kp)
+                for (size_type px = top; px < n; ++px) {
+                    std::ptrdiff_t jc = pinv[xi[px]];
+                    if (jc < 0) continue;
+                    idx32 sid = col_csuper[jc];
+                    if (sid >= 0 && !super_seen[sid]) { super_seen[sid] = 1; panel_supers.push_back(sid); }
+                }
+                for (std::ptrdiff_t node : reach_nodes) marked[node] = 0;
             }
-            for (size_type c = 0; c < w; ++c) x[S.rows[c]] = segacc[c];   // write back (still Acc)
-            // GEMV: off-diagonal rows (the dominant work, accumulated in Accumulator).
-            for (size_type r = w; r < m; ++r) {
-                Accumulator& dst = x[S.rows[r]];
-                for (size_type c = 0; c < w; ++c)
-                    AT::add_product(dst, -S.block[c * m + r], segval[c]);
+        }
+
+        // ===== batched closed-supernode update: each contributing supernode is
+        //       applied to all wpan columns as one TRSM + GEMM (BLAS-3). A column
+        //       a supernode does not reach gathers a zero segment -> no-op. =====
+        if constexpr (fast_block) {
+            std::sort(panel_supers.begin(), panel_supers.end(),
+                      [&](idx32 a, idx32 b) { return snodes[a].sf < snodes[b].sf; });
+            for (idx32 sid : panel_supers) {
+                super_seen[sid] = 0;
+                const auto& S = snodes[sid];
+                const size_type w = S.w, m = S.m, mo = m - w;
+                pseg.assign(w * wpan, Value{0});
+                for (size_type jj = 0; jj < wpan; ++jj) {           // gather segments
+                    const Accumulator* xj = &Xpanel[jj * n];
+                    for (size_type c = 0; c < w; ++c) pseg[jj * w + c] = xj[S.rows[c]];
+                }
+                for (size_type jj = 0; jj < wpan; ++jj) {           // TRSM (per-column trsv)
+#ifdef MTL5_HAS_BLAS
+                    interface::blas::trsv('L', 'N', 'U', static_cast<int>(w),
+                                          S.block.data(), static_cast<int>(m), pseg.data() + jj * w, 1);
+#else
+                    for (size_type c = 0; c < w; ++c)
+                        for (size_type r = c + 1; r < w; ++r)
+                            pseg[jj * w + r] -= S.block[c * m + r] * pseg[jj * w + c];
+#endif
+                }
+                for (size_type jj = 0; jj < wpan; ++jj) {           // write back diagonal rows
+                    Accumulator* xj = &Xpanel[jj * n];
+                    for (size_type c = 0; c < w; ++c) xj[S.rows[c]] = pseg[jj * w + c];
+                }
+                if (mo > 0) {                                       // GEMM: Y = Loff * seg
+                    pY.assign(mo * wpan, Value{0});
+                    const Value* Loff = S.block.data() + w;          // off-diagonal block (mo x w, lda=m)
+#ifdef MTL5_HAS_BLAS
+                    interface::blas::gemm('N', 'N', static_cast<int>(mo), static_cast<int>(wpan),
+                                          static_cast<int>(w), Value{1}, Loff, static_cast<int>(m),
+                                          pseg.data(), static_cast<int>(w), Value{0},
+                                          pY.data(), static_cast<int>(mo));
+#elif defined(MTL5_NATIVE_FAST_GEMM)
+                    mtl::detail::gemm_blocked<Value>(mo, wpan, w, Value{1},
+                        Loff, 1, static_cast<std::ptrdiff_t>(m),
+                        pseg.data(), 1, static_cast<std::ptrdiff_t>(w),
+                        Value{0}, pY.data(), mo);
+#else
+                    for (size_type jj = 0; jj < wpan; ++jj)
+                        for (size_type r = 0; r < mo; ++r) {
+                            Value s = Value{0};
+                            for (size_type c = 0; c < w; ++c) s += Loff[c * m + r] * pseg[jj * w + c];
+                            pY[jj * mo + r] = s;
+                        }
+#endif
+                    for (size_type jj = 0; jj < wpan; ++jj) {       // scatter-subtract
+                        Accumulator* xj = &Xpanel[jj * n];
+                        for (size_type r = 0; r < mo; ++r) xj[S.rows[w + r]] -= pY[jj * mo + r];
+                    }
+                }
             }
-            super_seen[sid] = 0;
         }
-        // (b) open supernode columns [open_sf, k): proven scalar SAXPY, reach order.
-        for (size_type px = top; px < n; ++px) {
-            std::ptrdiff_t j = xi[px];
-            std::ptrdiff_t jcol = pinv[j];
-            if (jcol < 0 || static_cast<size_type>(jcol) < open_sf) continue;  // closed -> handled above
-            Value xj = AT::value(x[j]);
-            for (size_type p = Lp[jcol] + 1; p < Lp[jcol + 1]; ++p)
-                AT::add_product(x[Li[p]], -Lx[p], xj);
-        }
+
+        // ===== per-column inner factorization =====
+        for (size_type j = 0; j < wpan; ++j) {
+            const size_type k = kp + j;
+            Accumulator* x = &Xpanel[j * n];           // C(:,k) already scattered into X(:,j)
+            Lp[k] = Li.size();
+            Up[k] = Ui.size();
+
+            size_type top = compute_reach(k);          // full reach (closed + intra-panel)
+
+            // --- apply updates from earlier columns ---
+            if constexpr (fast_block) {
+                // Closed supernodes (cols < kp) were applied by the batched GEMM at
+                // panel start; apply intra-panel columns [kp, k) as scalar SAXPY.
+                for (size_type px = top; px < n; ++px) {
+                    std::ptrdiff_t jn = xi[px];
+                    std::ptrdiff_t jcol = pinv[jn];
+                    if (jcol < 0 || static_cast<size_type>(jcol) < kp) continue;
+                    Value xj = x[jn];
+                    for (size_type p = Lp[jcol] + 1; p < Lp[jcol + 1]; ++p)
+                        x[Li[p]] -= Lx[p] * xj;
+                }
+            } else {
+                // Generic accumulator path: Phase-2 per-column closed block update +
+                // open scalar update (no panel batching for custom accumulators).
+                contrib_super.clear();
+                for (size_type px = top; px < n; ++px) {
+                    std::ptrdiff_t jn = xi[px];
+                    std::ptrdiff_t jcol = pinv[jn];
+                    if (jcol < 0) continue;
+                    idx32 sid = col_csuper[jcol];
+                    if (sid >= 0 && !super_seen[sid]) { super_seen[sid] = 1; contrib_super.push_back(sid); }
+                }
+                std::sort(contrib_super.begin(), contrib_super.end(),
+                          [&](idx32 a, idx32 b) { return snodes[a].sf < snodes[b].sf; });
+                for (idx32 sid : contrib_super) {
+                    const auto& S = snodes[sid];
+                    const size_type w = S.w, m = S.m;
+                    if (w == 1) {
+                        const Value xv = static_cast<Value>(AT::value(x[S.rows[0]]));
+                        for (size_type r = 1; r < m; ++r)
+                            AT::add_product(x[S.rows[r]], S.block[r], -xv);
+                    } else {
+                        segacc.resize(w); segval.resize(w);
+                        for (size_type c = 0; c < w; ++c) segacc[c] = x[S.rows[c]];
+                        for (size_type c = 0; c < w; ++c) {
+                            segval[c] = AT::template value<Value>(segacc[c]);
+                            for (size_type r = c + 1; r < w; ++r)
+                                AT::add_product(segacc[r], S.block[c * m + r], -segval[c]);
+                        }
+                        for (size_type c = 0; c < w; ++c) x[S.rows[c]] = segacc[c];
+                        for (size_type r = w; r < m; ++r) {
+                            Accumulator& dst = x[S.rows[r]];
+                            for (size_type c = 0; c < w; ++c)
+                                AT::add_product(dst, -S.block[c * m + r], segval[c]);
+                        }
+                    }
+                    super_seen[sid] = 0;
+                }
+                for (size_type px = top; px < n; ++px) {
+                    std::ptrdiff_t jn = xi[px];
+                    std::ptrdiff_t jcol = pinv[jn];
+                    if (jcol < 0 || static_cast<size_type>(jcol) < open_sf) continue;
+                    Value xj = AT::value(x[jn]);
+                    for (size_type p = Lp[jcol] + 1; p < Lp[jcol + 1]; ++p)
+                        AT::add_product(x[Li[p]], -Lx[p], xj);
+                }
+            }
 
         // --- threshold partial pivoting + emit U(:,k) for pivotal rows ---
         Value a = Value{0}; std::ptrdiff_t ipiv = -1; bool have = false;
@@ -365,6 +493,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         const size_type cur_pivot = static_cast<size_type>(ipiv);
         if (k > open_sf) {
             bool join =
+                (k % panelW != 0) &&                  // supernodes don't cross panel boundaries
                 (k - open_sf) < max_super &&
                 sym.col_super[k] == sym.col_super[k - 1] &&
                 prev_cand.size() == cand.size() + 1;
@@ -380,7 +509,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
             if (!join) { close_supernode(k, prev_cand); open_sf = k; }
         }
         prev_cand = std::move(cand);
-    }
+        }   // per-column loop
+    }       // panel loop
     Lp[n] = Li.size();
     Up[n] = Ui.size();
     if (n > 0) {
