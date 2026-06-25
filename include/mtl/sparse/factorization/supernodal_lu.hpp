@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -146,6 +147,15 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     const size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n)
         throw std::invalid_argument("supernodal_lu_numeric: dimensions do not match symbolic analysis");
+    if (!(threshold > Value{0} && threshold <= Value{1}))
+        throw std::invalid_argument("supernodal_lu_numeric: threshold must be in (0,1]");
+    if (sym.col_perm.size() != n || sym.col_pinv.size() != n ||
+        sym.col_super.size() != n || !util::is_valid_permutation(sym.col_perm))
+        throw std::invalid_argument("supernodal_lu_numeric: invalid symbolic analysis");
+    // Row/node indices are stored as int32 (memory-bandwidth choice inherited
+    // from sparse_lu); fail safely rather than silently overflow on huge inputs.
+    if (n > static_cast<size_type>(std::numeric_limits<std::int32_t>::max()))
+        throw std::invalid_argument("supernodal_lu_numeric: dimension exceeds 32-bit index range");
 
     auto C = util::crs_to_csc(util::column_permute(A, sym.col_perm));
 
@@ -173,7 +183,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
 
     std::vector<idx32> contrib_super;              // closed supernodes hitting column k (dedup)
     std::vector<char>  super_seen;                 // marker per closed supernode
-    std::vector<Value> seg;                        // dense supernode segment workspace
+    std::vector<Accumulator> segacc;               // supernode segment, accumulator precision
+    std::vector<Value>       segval;               // pivots rounded to Value (multipliers)
 
     // Close the open supernode [open_sf, sl): build its dense block from the CSC
     // columns (pivots now known), using `offdiag` (orig rows below the diagonal
@@ -256,18 +267,22 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         for (idx32 sid : contrib_super) {
             const auto& S = snodes[sid];
             const size_type w = S.w, m = S.m;
-            seg.resize(w);
-            for (size_type c = 0; c < w; ++c) seg[c] = AT::value(x[S.rows[c]]);
-            // TRSV: unit-lower diagonal block (intra-supernode, small).
-            for (size_type c = 0; c < w; ++c)
+            segacc.resize(w); segval.resize(w);
+            for (size_type c = 0; c < w; ++c) segacc[c] = x[S.rows[c]];   // copy accumulator state
+            // TRSV against the unit-lower diagonal block, accumulating in Acc;
+            // each pivot is rounded to Value once (it then serves as a multiplier,
+            // which is what accumulator_traits::add_product consumes).
+            for (size_type c = 0; c < w; ++c) {
+                segval[c] = AT::template value<Value>(segacc[c]);
                 for (size_type r = c + 1; r < w; ++r)
-                    seg[r] -= S.block[c * m + r] * seg[c];
-            for (size_type c = 0; c < w; ++c) AT::assign(x[S.rows[c]], seg[c]);
+                    AT::add_product(segacc[r], S.block[c * m + r], -segval[c]);
+            }
+            for (size_type c = 0; c < w; ++c) x[S.rows[c]] = segacc[c];   // write back (still Acc)
             // GEMV: off-diagonal rows (the dominant work, accumulated in Accumulator).
             for (size_type r = w; r < m; ++r) {
                 Accumulator& dst = x[S.rows[r]];
                 for (size_type c = 0; c < w; ++c)
-                    AT::add_product(dst, -S.block[c * m + r], seg[c]);
+                    AT::add_product(dst, -S.block[c * m + r], segval[c]);
             }
             super_seen[sid] = 0;
         }
@@ -368,8 +383,12 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     }
     Lp[n] = Li.size();
     Up[n] = Ui.size();
-    close_supernode(n, prev_cand);                 // close the final open supernode
-    lsuper_first.push_back(n);
+    if (n > 0) {
+        close_supernode(n, prev_cand);             // close the final open supernode
+        lsuper_first.push_back(n);
+    } else {
+        lsuper_first.push_back(0);                 // empty matrix: zero supernodes
+    }
 
     // Remap L row indices to pivot positions.
     for (size_type p = 0; p < Li.size(); ++p) Li[p] = pinv[Li[p]];
@@ -439,12 +458,11 @@ refine_result supernodal_lu_solve_refined(
     std::vector<FactorValue> dat(nnz);
     const auto& src = A.ref_data();
     for (std::size_t kk = 0; kk < nnz; ++kk) dat[kk] = static_cast<FactorValue>(src[kk]);
-    mat::compressed2D<FactorValue> Af(A.num_rows(), A.num_cols(), nnz,
-                                      starts.data(), idx.data(), dat.data());
+    mat::compressed2D<FactorValue, Parameters> Af(A.num_rows(), A.num_cols(), nnz,
+                                                  starts.data(), idx.data(), dat.data());
 
     auto sym = supernodal_lu_symbolic_analyze(Af, ordering);
-    auto fac = supernodal_lu_numeric<FactorValue, typename decltype(Af)::param_type,
-                                     Accumulator>(Af, sym);
+    auto fac = supernodal_lu_numeric<FactorValue, Parameters, Accumulator>(Af, sym);
     for (std::size_t i = 0; i < static_cast<std::size_t>(x.size()); ++i)
         x(static_cast<int>(i)) = Residual{0};
     return iterative_refine(A, fac, b, x, opt);

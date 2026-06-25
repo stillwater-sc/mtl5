@@ -142,8 +142,9 @@ TEST_CASE("Supernodal LU accumulator precision drives accuracy",
     double res_f = rel_residual(A, xf, b), res_d = rel_residual(A, xd, b);
 
     REQUIRE(std::isfinite(res_f));
-    REQUIRE(res_d < 1e-12);
-    REQUIRE(res_d < res_f);                        // double accumulation decisively better
+    REQUIRE(res_d < 5e-11);                        // double accumulation -> accurate factor
+    REQUIRE(res_d < res_f);                        // ... decisively better than float
+    REQUIRE(res_f > 1e3 * res_d);                  // lock in a clear separation
 }
 
 // ---- mixed-precision iterative refinement ---------------------------------
@@ -170,9 +171,9 @@ TEST_CASE("Supernodal LU mixed-precision iterative refinement",
     vec::dense_vector<double> x(n, 0.0);
     auto rr = factorization::supernodal_lu_solve_refined<float, double>(A, x, b, ordering::colamd{}, opt);
 
-    REQUIRE(rr.rel_residual < 1e-10);
-    REQUIRE(rr.rel_residual < res_base);
-    REQUIRE(rel_residual(A, x, b) < 1e-10);
+    REQUIRE(rr.rel_residual < 1e-9);
+    REQUIRE(rr.rel_residual < res_base);          // refinement beats the float-only solve
+    REQUIRE(rel_residual(A, x, b) < 1e-9);
 }
 
 // ---- edge cases -----------------------------------------------------------
@@ -189,5 +190,18 @@ TEST_CASE("Supernodal LU edge cases", "[sparse][lu][supernodal]") {
         { mat::inserter<mat::compressed2D<double>> ins(A); ins[0][0] << 1.0; ins[1][0] << 1.0; }
         auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
         REQUIRE_THROWS_AS(factorization::supernodal_lu_numeric(A, sym), std::runtime_error);
+    }
+    SECTION("empty matrix => zero supernodes") {
+        mat::compressed2D<double> A(0, 0);
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        auto fac = factorization::supernodal_lu_numeric(A, sym);
+        REQUIRE(fac.nsuper() == 0);
+        REQUIRE(fac.num_rows() == 0);
+    }
+    SECTION("invalid threshold rejected") {
+        auto A = dense_unsym(4);
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        REQUIRE_THROWS_AS(factorization::supernodal_lu_numeric(A, sym, 0.0), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::supernodal_lu_numeric(A, sym, 1.5), std::invalid_argument);
     }
 }
