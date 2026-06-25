@@ -18,6 +18,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 - **`sparse_lu_refactor` + `native_klu_refactor`** — analyze/factor/refactor: refactorize a same-pattern matrix by reusing the symbolic structure + pivot sequence (no BTF/ordering/reach/pivot-search), ~2.2× faster than a full factor; the SPICE-transient path (#153, #154)
 - **`mtl::sparse::iterative_refine`** — generic, Universal-free iterative refinement through any factorization, with a templated residual precision, an optional scaled variant (rescues narrow-exponent low-precision factors), patience-based termination, and best-iterate return (#119, #167)
 
+#### Native supernodal LU (SuperLU epic #186)
+- **`mtl::sparse::analysis::analyze_unsymmetric`** — column elimination tree (etree of AᵀA without forming AᵀA), column counts, and the unsymmetric supernode partition + LU fill bound, in the postorder that makes supernode columns contiguous (#181)
+- **`supernodal_lu_numeric`** — native left-looking Gilbert–Peierls LU that groups columns into **supernodes** and applies each as a dense block update, with **threshold partial pivoting**, Eisenstat–Liu symmetric pruning, and dynamic supernode formation. Generic over the **`accumulator_traits` accumulator**, so a low-precision factor can accumulate in higher precision — the mixed-precision capability the fixed-precision SuiteSparse library cannot offer. Matches scalar `sparse_lu` to machine precision (#182)
+- **`supernodal_lu_refactor`** — numeric-only recompute that reuses a prior factorization's order + pivot sequence + L/U pattern; **1.9–3.2× faster** than a full factor (the transient-SPICE / mp-spice path) (#184)
+- **Row equilibration** — opt-in `scale=true` factors `R·A` (`r=1/max|row|`) for pivot stability in low/mixed precision; RHS row-scaled in `solve()`, `x` unchanged (#185)
+- **`bench_superlu`** — native-vs-SuiteSparse-SuperLU scoreboard on an unsymmetric suite (#180)
+- Mixed-precision iterative refinement integrates end-to-end via `iterative_refine` (low-precision supernodal factor + high-precision residual)
+- **Note:** FP64 single-factor speed parity with SuiteSparse SuperLU is **out of scope / not planned** (#183). Profiling showed the panel GEMM is only ~14% of factor time (the bottleneck is scalar/serial work), so parity would require a full SuperLU-style reimplementation; MTL5's differentiator is mixed precision, which is delivered
+
 #### Documentation
 - **"Measuring Solver Accuracy"** algorithm page — residuals, norms, absolute vs relative error, and backward-vs-forward error / conditioning (#152)
 
@@ -41,6 +50,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 - `.gitignore`: ignore Claude Code per-user/runtime files (#76)
 
 ### Fixed
+- AMD/COLAMD minimum-degree garbage-collection compaction mis-restored each element's first entry, corrupting the quotient-graph pointers once fill exhausted the elbow room (e.g. the AᵀA pattern of a 2-D 5-point grid at n ≥ 64); it now follows the CSparse compaction order. Surfaced while validating the supernodal-LU column ordering; regression test added (#189, #191)
 - `antisymmetric_tensor::set` wrote out of bounds for diagonal indices (`i == j`) under `NDEBUG`, where the guarding `assert` is compiled out; now a safe no-op (#63)
 - Benchmark `native` eigenvalue backend was silently dispatching to LAPACK; it now uses the generic C++ solver so `native` vs `lapack` is a genuine comparison (#78)
 
