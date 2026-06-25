@@ -53,6 +53,7 @@ struct klu_numeric {
     std::vector<lu_numeric<Value>> block_numeric; ///< LU of each diagonal block
     std::vector<Value>            row_scale;      ///< r[orig row]; empty = unscaled
                                                   ///< (factored R*A, so solve scales b)
+    std::size_t                   num_perturbed = 0; ///< total perturbed pivots across blocks (0 = clean)
 
     std::size_t num_rows() const { return btf.row_perm.size(); }
     std::size_t num_cols() const { return num_rows(); }
@@ -124,16 +125,25 @@ struct klu_numeric {
 /// ordinary arithmetic, while a caller can inject an exact/extended-precision
 /// accumulator (e.g. a super-accumulator) for the inner products of every block.
 ///
+/// The optional `pivot_perturb` (default 0 = off) enables opt-in zero-pivot
+/// perturbation in each block's LU (see sparse_lu_numeric): a pivot that
+/// cancellation has driven below `pivot_perturb * ||column||` is replaced by that
+/// floor instead of failing. This keeps a low-precision factorization going on
+/// stiff blocks; `klu_numeric::num_perturbed` reports how many pivots were
+/// perturbed, and the result is meant to be cleaned up by iterative refinement.
+///
 /// \throws std::invalid_argument if A is not square.
 /// \throws std::runtime_error    if A is structurally singular (no perfect
 ///                               matching) or a diagonal block is numerically
-///                               singular.
+///                               singular and perturbation is off (or the block's
+///                               pivot column is numerically zero).
 template <typename Value, typename Parameters, typename Accumulator = Value>
     requires OrderedField<Value>
 klu_numeric<Value> native_klu_factor(
     const mat::compressed2D<Value, Parameters>& A,
     Value threshold = Value{1},
-    bool scale = true)
+    bool scale = true,
+    Value pivot_perturb = Value{0})
 {
     using std::abs;  // ADL for custom number types
     if (A.num_rows() != A.num_cols()) {
@@ -248,7 +258,8 @@ klu_numeric<Value> native_klu_factor(
         // Accumulator policy can be specified explicitly (it is not deducible).
         using block_params = typename decltype(block)::param_type;
         result.block_numeric.push_back(
-            sparse_lu_numeric<Value, block_params, Accumulator>(block, sym, threshold));
+            sparse_lu_numeric<Value, block_params, Accumulator>(block, sym, threshold, pivot_perturb));
+        result.num_perturbed += result.block_numeric.back().num_perturbed;
     }
 
     return result;

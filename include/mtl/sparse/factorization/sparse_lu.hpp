@@ -66,6 +66,7 @@ struct lu_numeric {
     util::csc_matrix<Value> U;           // upper triangular factor (CSC)
     std::vector<std::size_t> row_perm;   // row permutation from pivoting (p[new]=old)
     std::vector<std::size_t> row_pinv;   // inverse row permutation
+    std::size_t num_perturbed = 0;       // pivots replaced by perturbation (0 = clean factor)
     lu_symbolic symbolic;                // symbolic analysis used
 
     std::size_t num_rows() const { return symbolic.n; }
@@ -176,15 +177,27 @@ struct accumulator_traits : mtl::math::accumulator_traits<Acc, Value> {};
 ///                  is acceptable if |a(i,k)| >= threshold * max|a(j,k)| for j>=k.
 ///                  Default 1.0 = full partial pivoting. Smaller values trade
 ///                  stability for sparsity preservation.
+/// \param pivot_perturb Opt-in zero-pivot perturbation (default 0 = off). When
+///                  > 0, a chosen pivot whose magnitude is below
+///                  `pivot_perturb * ||column||_inf` is replaced (sign-preserving)
+///                  by that floor and `num_perturbed` is incremented, instead of
+///                  throwing. This keeps a low-precision factorization going when
+///                  cancellation drives a structurally-nonzero pivot numerically
+///                  to zero; the result is meant to be cleaned up by iterative
+///                  refinement (see mtl::sparse::iterative_refine). With the
+///                  default 0, behavior is byte-identical to before (hard throw).
 /// \return          Numeric factorization result containing L, U, and permutations
 ///
-/// \throws std::runtime_error if a zero pivot is encountered (singular matrix)
+/// \throws std::runtime_error if a zero pivot is encountered and perturbation is
+///                  off, or the whole pivot column is numerically zero (truly
+///                  singular: nothing to perturb).
 template <typename Value, typename Parameters, typename Accumulator = Value>
     requires OrderedField<Value>
 lu_numeric<Value> sparse_lu_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const lu_symbolic& sym,
-    Value threshold = Value{1})
+    Value threshold = Value{1},
+    Value pivot_perturb = Value{0})
 {
     using size_type = std::size_t;
     using std::abs;  // ADL: also find abs() for custom number types (e.g. posit/cfloat)
@@ -243,6 +256,7 @@ lu_numeric<Value> sparse_lu_numeric(
     std::vector<idx32> Ui;  std::vector<Value> Ux;
     Li.reserve(C.values.size() * 2); Lx.reserve(C.values.size() * 2);
     Ui.reserve(C.values.size() * 2); Ux.reserve(C.values.size() * 2);
+    std::size_t num_perturbed = 0;     // count of perturbed pivots (pivot_perturb > 0)
 
     for (size_type k = 0; k < n; ++k) {
         Lp[k] = Li.size();
@@ -302,20 +316,28 @@ lu_numeric<Value> sparse_lu_numeric(
         }
 
         // --- threshold partial pivoting + emit U(:,k) for already-pivotal rows ---
-        Value a = Value{0};
+        Value a = Value{0};                                // max |candidate|
+        Value colnorm = Value{0};                          // ||column k||_inf over the reach
         std::ptrdiff_t ipiv = -1;
         bool have = false;
         for (size_type px = top; px < n; ++px) {
             std::ptrdiff_t i = xi[px];
+            Value mag = abs(AT::value(x[i]));
+            if (mag > colnorm) colnorm = mag;
             if (pinv[i] < 0) {                             // pivot candidate / L entry
-                Value t = abs(AT::value(x[i]));
-                if (!have || t > a) { a = t; ipiv = i; have = true; }
+                if (!have || mag > a) { a = mag; ipiv = i; have = true; }
             } else {                                       // U(pinv[i], k)
                 Ui.push_back(pinv[i]);
                 Ux.push_back(AT::value(x[i]));
             }
         }
-        if (ipiv < 0 || a == Value{0}) {
+        const bool perturb = pivot_perturb > Value{0};
+        if (ipiv < 0) {                                    // no candidate row at all
+            throw std::runtime_error(
+                "sparse_lu_numeric: zero pivot at column " + std::to_string(k)
+                + " (matrix is singular)");
+        }
+        if (!perturb && a == Value{0}) {                   // default: hard throw, unchanged
             throw std::runtime_error(
                 "sparse_lu_numeric: zero pivot at column " + std::to_string(k)
                 + " (matrix is singular)");
@@ -327,6 +349,21 @@ lu_numeric<Value> sparse_lu_numeric(
         }
 
         Value pivot = AT::value(x[ipiv]);
+        // Opt-in zero-pivot perturbation: if the chosen pivot has collapsed below
+        // pivot_perturb * ||column||, replace it (sign-preserving) by that floor
+        // rather than failing. A truly zero column (colnorm == 0) cannot be
+        // perturbed -- it is genuinely singular, so still throw.
+        if (perturb) {
+            const Value floor = pivot_perturb * colnorm;
+            if (abs(pivot) < floor) {
+                pivot = (pivot < Value{0}) ? -floor : floor;
+                ++num_perturbed;
+            } else if (abs(pivot) == Value{0}) {           // colnorm == 0 too
+                throw std::runtime_error(
+                    "sparse_lu_numeric: zero pivot at column " + std::to_string(k)
+                    + " (matrix is singular; pivot column is numerically zero)");
+            }
+        }
         Ui.push_back(static_cast<std::ptrdiff_t>(k));      // U(k,k) stored last
         Ux.push_back(pivot);
         pinv[ipiv] = static_cast<std::ptrdiff_t>(k);
@@ -381,6 +418,7 @@ lu_numeric<Value> sparse_lu_numeric(
 
     lu_numeric<Value> result;
     result.symbolic = sym;
+    result.num_perturbed = num_perturbed;
 
     // Row permutation: pinv[old] = position; row_perm[position] = old.
     result.row_perm.resize(n);
