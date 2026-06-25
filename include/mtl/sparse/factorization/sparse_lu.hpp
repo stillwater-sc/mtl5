@@ -493,6 +493,7 @@ lu_numeric<Value> sparse_lu_refactor(
 
     const auto& pinv = prev.row_pinv;    // original row -> pivot position (fixed)
     lu_numeric<Value> result = prev;     // reuse pattern + perms + symbolic
+    result.num_perturbed = 0;            // refactor recomputes values without perturbing (throws on zero pivot)
     auto& L = result.L;                  // overwrite values in place
     auto& U = result.U;
 

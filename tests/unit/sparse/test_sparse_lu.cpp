@@ -327,6 +327,41 @@ TEST_CASE("Sparse LU zero-pivot perturbation (#123)", "[sparse][lu][perturb]") {
         REQUIRE(std::isfinite(x(1)));
     }
 
+    SECTION("truly empty pivot column still throws even with perturbation on") {
+        // Column 1 has no entries -> no pivot row to perturb (nothing to perturb):
+        // perturbation must not paper over a genuine singularity.
+        mat::compressed2D<double> A(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(A);
+          ins[0][0] << 1.0; }
+        auto sym = factorization::sparse_lu_symbolic(A);
+        REQUIRE_THROWS_AS(
+            factorization::sparse_lu_numeric(A, sym, /*threshold=*/1.0, /*pivot_perturb=*/1e-8),
+            std::runtime_error);
+    }
+
+    SECTION("refactor reports a clean perturbation count (no stale carry-over)") {
+        // Factor a singular matrix WITH perturbation (num_perturbed >= 1), then
+        // refactor a well-conditioned same-pattern matrix: the refactor path does
+        // not perturb, so its count must reset to 0 rather than carrying prev's.
+        mat::compressed2D<double> A1(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(A1);
+          ins[0][0] << 1.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 1.0; }
+        auto sym = factorization::sparse_lu_symbolic(A1);
+        auto prev = factorization::sparse_lu_numeric(A1, sym, 1.0, 1e-8);
+        REQUIRE(prev.num_perturbed >= 1);
+
+        mat::compressed2D<double> A2(2, 2);   // same pattern, well-conditioned
+        { mat::inserter<mat::compressed2D<double>> ins(A2);
+          ins[0][0] << 2.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 3.0; }
+        auto re = factorization::sparse_lu_refactor(A2, prev);
+        REQUIRE(re.num_perturbed == 0);       // refactor count is clean
+        vec::dense_vector<double> b = {1.0, 2.0}, x(2, 0.0);
+        re.solve(x, b);
+        REQUIRE(relative_residual(A2, x, b) < 1e-12);
+    }
+
     SECTION("nonsingular: perturbation never fires (clean factor, same accuracy)") {
         mat::compressed2D<double> A(3, 3);
         { mat::inserter<mat::compressed2D<double>> ins(A);
