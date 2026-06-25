@@ -91,6 +91,45 @@ TEST_CASE("Supernodal LU matches scalar LU", "[sparse][lu][supernodal]") {
     }
 }
 
+// ---- analyze/factor/refactor split (#184) ---------------------------------
+TEST_CASE("Supernodal LU refactor reuses the pattern", "[sparse][lu][supernodal][refactor]") {
+    // Same sparsity pattern, different values (the transient-SPICE scenario):
+    // factor once, then refactor (numeric only, no reach/pivot search).
+    auto A1 = random_unsym(40, 0.10, 3);
+    auto sym = factorization::supernodal_lu_symbolic_analyze(A1, ordering::colamd{});
+    auto fac = factorization::supernodal_lu_numeric(A1, sym);
+
+    // A2: identical pattern, perturbed values (reuse A1's structure).
+    auto A2 = A1;
+    {
+        auto& d = const_cast<std::vector<double>&>(A2.ref_data());
+        for (std::size_t k = 0; k < d.size(); ++k) d[k] *= (1.0 + 0.1 * std::sin(0.3 * k));
+    }
+    std::size_t n = A2.num_rows();
+    vec::dense_vector<double> b(n);
+    for (std::size_t i = 0; i < n; ++i) b(static_cast<int>(i)) = 1.0 + 0.2 * static_cast<double>(i);
+
+    auto re = factorization::supernodal_lu_refactor(A2, fac);
+    vec::dense_vector<double> xr(n, 0.0); re.solve(xr, b);
+    REQUIRE(rel_residual(A2, xr, b) < 1e-11);
+
+    // Pattern preserved and result matches a fresh factor of A2.
+    REQUIRE(re.L.col_ptr == fac.L.col_ptr);
+    REQUIRE(re.U.col_ptr == fac.U.col_ptr);
+    auto fresh = factorization::supernodal_lu_numeric(A2, sym);
+    vec::dense_vector<double> xf(n, 0.0); fresh.solve(xf, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE_THAT(xr(static_cast<int>(i)),
+                     Catch::Matchers::WithinAbs(xf(static_cast<int>(i)), 1e-9));
+
+    // Several refactors in a row (the SPICE loop) stay correct.
+    for (int it = 0; it < 3; ++it) {
+        re = factorization::supernodal_lu_refactor(A2, re);
+        vec::dense_vector<double> x(n, 0.0); re.solve(x, b);
+        REQUIRE(rel_residual(A2, x, b) < 1e-11);
+    }
+}
+
 // ---- pivoting -------------------------------------------------------------
 TEST_CASE("Supernodal LU pivots on a zero diagonal", "[sparse][lu][supernodal]") {
     // [[0 1],[1 1]] requires a row swap.
