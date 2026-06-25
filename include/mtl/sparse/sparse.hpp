@@ -22,6 +22,7 @@
 #include <mtl/sparse/factorization/supernodal_ldlt.hpp>
 #include <mtl/sparse/factorization/sparse_qr.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
+#include <mtl/sparse/factorization/supernodal_lu.hpp>
 #include <mtl/sparse/factorization/native_klu.hpp>
 
 // Iterative refinement
