@@ -206,7 +206,9 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     // the per-column code keeps its `x[...]` syntax unchanged.
     std::vector<Accumulator> Xpanel(static_cast<std::size_t>(n) * panelW);
     std::vector<Value>       pseg, pY;             // batched TRSM/GEMM buffers (fast path)
-    std::vector<idx32>       panel_supers;         // closed supernodes contributing to the panel
+    // (closed supernode id, panel column) pairs: which columns each closed
+    // supernode contributes to (subset tracking -> GEMM only over reached cols).
+    std::vector<std::pair<idx32, idx32>> panel_contrib;
 
     // Close the open supernode [open_sf, sl): build its dense block from the CSC
     // columns (pivots now known), using `offdiag` (orig rows below the diagonal
@@ -279,8 +281,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         if (open_sf < kp) { Lp[kp] = Li.size(); close_supernode(kp, prev_cand); open_sf = kp; }
 
         // ===== panel start: scatter each panel column into X, and (fast path)
-        //       collect the closed supernodes contributing to the panel =====
-        panel_supers.clear();
+        //       record (closed supernode, column) pairs for the panel =====
+        panel_contrib.clear();
         for (size_type j = 0; j < wpan; ++j) {
             const size_type kk = kp + j;
             Accumulator* xj = &Xpanel[j * n];          // X(:,j), clean from the prior panel
@@ -292,67 +294,82 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
                     std::ptrdiff_t jc = pinv[xi[px]];
                     if (jc < 0) continue;
                     idx32 sid = col_csuper[jc];
-                    if (sid >= 0 && !super_seen[sid]) { super_seen[sid] = 1; panel_supers.push_back(sid); }
+                    if (sid >= 0)
+                        panel_contrib.emplace_back(sid, static_cast<idx32>(j));
                 }
                 for (std::ptrdiff_t node : reach_nodes) marked[node] = 0;
             }
         }
 
         // ===== batched closed-supernode update: each contributing supernode is
-        //       applied to all wpan columns as one TRSM + GEMM (BLAS-3). A column
-        //       a supernode does not reach gathers a zero segment -> no-op. =====
+        //       applied ONLY to the columns that reach it (subset), in increasing
+        //       supernode order, as one TRSM + GEMM (BLAS-3). =====
         if constexpr (fast_block) {
-            std::sort(panel_supers.begin(), panel_supers.end(),
-                      [&](idx32 a, idx32 b) { return snodes[a].sf < snodes[b].sf; });
-            for (idx32 sid : panel_supers) {
-                super_seen[sid] = 0;
+            // Sort by (supernode sf, column); dedup (sid,col) pairs from a column
+            // reaching a supernode through several of its pivotal rows.
+            std::sort(panel_contrib.begin(), panel_contrib.end(),
+                      [&](const auto& a, const auto& b) {
+                          if (snodes[a.first].sf != snodes[b.first].sf)
+                              return snodes[a.first].sf < snodes[b.first].sf;
+                          if (a.first != b.first) return a.first < b.first;
+                          return a.second < b.second;
+                      });
+            panel_contrib.erase(std::unique(panel_contrib.begin(), panel_contrib.end()),
+                                panel_contrib.end());
+            size_type gi = 0;
+            while (gi < panel_contrib.size()) {
+                const idx32 sid = panel_contrib[gi].first;
+                size_type ge = gi;
+                while (ge < panel_contrib.size() && panel_contrib[ge].first == sid) ++ge;
+                const size_type ns = ge - gi;                  // reached columns in this panel
                 const auto& S = snodes[sid];
                 const size_type w = S.w, m = S.m, mo = m - w;
-                pseg.assign(w * wpan, Value{0});
-                for (size_type jj = 0; jj < wpan; ++jj) {           // gather segments
-                    const Accumulator* xj = &Xpanel[jj * n];
-                    for (size_type c = 0; c < w; ++c) pseg[jj * w + c] = xj[S.rows[c]];
+                pseg.assign(w * ns, Value{0});
+                for (size_type t = 0; t < ns; ++t) {           // gather segments
+                    const Accumulator* xj = &Xpanel[panel_contrib[gi + t].second * n];
+                    for (size_type c = 0; c < w; ++c) pseg[t * w + c] = xj[S.rows[c]];
                 }
-                for (size_type jj = 0; jj < wpan; ++jj) {           // TRSM (per-column trsv)
+                for (size_type t = 0; t < ns; ++t) {           // TRSM (per-column trsv)
 #ifdef MTL5_HAS_BLAS
                     interface::blas::trsv('L', 'N', 'U', static_cast<int>(w),
-                                          S.block.data(), static_cast<int>(m), pseg.data() + jj * w, 1);
+                                          S.block.data(), static_cast<int>(m), pseg.data() + t * w, 1);
 #else
                     for (size_type c = 0; c < w; ++c)
                         for (size_type r = c + 1; r < w; ++r)
-                            pseg[jj * w + r] -= S.block[c * m + r] * pseg[jj * w + c];
+                            pseg[t * w + r] -= S.block[c * m + r] * pseg[t * w + c];
 #endif
                 }
-                for (size_type jj = 0; jj < wpan; ++jj) {           // write back diagonal rows
-                    Accumulator* xj = &Xpanel[jj * n];
-                    for (size_type c = 0; c < w; ++c) xj[S.rows[c]] = pseg[jj * w + c];
+                for (size_type t = 0; t < ns; ++t) {           // write back diagonal rows
+                    Accumulator* xj = &Xpanel[panel_contrib[gi + t].second * n];
+                    for (size_type c = 0; c < w; ++c) xj[S.rows[c]] = pseg[t * w + c];
                 }
-                if (mo > 0) {                                       // GEMM: Y = Loff * seg
-                    pY.assign(mo * wpan, Value{0});
-                    const Value* Loff = S.block.data() + w;          // off-diagonal block (mo x w, lda=m)
+                if (mo > 0) {                                  // GEMM: Y = Loff * seg
+                    pY.assign(mo * ns, Value{0});
+                    const Value* Loff = S.block.data() + w;    // off-diagonal block (mo x w, lda=m)
 #ifdef MTL5_HAS_BLAS
-                    interface::blas::gemm('N', 'N', static_cast<int>(mo), static_cast<int>(wpan),
+                    interface::blas::gemm('N', 'N', static_cast<int>(mo), static_cast<int>(ns),
                                           static_cast<int>(w), Value{1}, Loff, static_cast<int>(m),
                                           pseg.data(), static_cast<int>(w), Value{0},
                                           pY.data(), static_cast<int>(mo));
 #elif defined(MTL5_NATIVE_FAST_GEMM)
-                    mtl::detail::gemm_blocked<Value>(mo, wpan, w, Value{1},
+                    mtl::detail::gemm_blocked<Value>(mo, ns, w, Value{1},
                         Loff, 1, static_cast<std::ptrdiff_t>(m),
                         pseg.data(), 1, static_cast<std::ptrdiff_t>(w),
                         Value{0}, pY.data(), mo);
 #else
-                    for (size_type jj = 0; jj < wpan; ++jj)
+                    for (size_type t = 0; t < ns; ++t)
                         for (size_type r = 0; r < mo; ++r) {
                             Value s = Value{0};
-                            for (size_type c = 0; c < w; ++c) s += Loff[c * m + r] * pseg[jj * w + c];
-                            pY[jj * mo + r] = s;
+                            for (size_type c = 0; c < w; ++c) s += Loff[c * m + r] * pseg[t * w + c];
+                            pY[t * mo + r] = s;
                         }
 #endif
-                    for (size_type jj = 0; jj < wpan; ++jj) {       // scatter-subtract
-                        Accumulator* xj = &Xpanel[jj * n];
-                        for (size_type r = 0; r < mo; ++r) xj[S.rows[w + r]] -= pY[jj * mo + r];
+                    for (size_type t = 0; t < ns; ++t) {       // scatter-subtract
+                        Accumulator* xj = &Xpanel[panel_contrib[gi + t].second * n];
+                        for (size_type r = 0; r < mo; ++r) xj[S.rows[w + r]] -= pY[t * mo + r];
                     }
                 }
+                gi = ge;
             }
         }
 
