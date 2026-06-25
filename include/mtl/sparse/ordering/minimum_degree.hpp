@@ -156,8 +156,8 @@ inline std::vector<std::size_t> minimum_degree_core(
             while (p < cnz) {
                 idx j = cs_flip(Ci[p++]);
                 if (j >= 0) {                      // found object j
-                    Cp[j] = q;
-                    Ci[q++] = Ci[p++];
+                    Ci[q] = Cp[j];                 // restore first entry of object
+                    Cp[j] = q++;                   // new pointer to object j
                     for (idx k3 = 0; k3 < len[j] - 1; ++k3) Ci[q++] = Ci[p++];
                 }
             }
