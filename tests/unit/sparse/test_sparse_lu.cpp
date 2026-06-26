@@ -307,3 +307,92 @@ TEST_CASE("Sparse LU symbolic reuse for same pattern", "[sparse][lu]") {
     num2.solve(x2, b);
     REQUIRE(relative_residual(A2, x2, b) < 1e-12);
 }
+
+// Issue #123: opt-in zero-pivot perturbation for low-precision robustness.
+TEST_CASE("Sparse LU zero-pivot perturbation (#123)", "[sparse][lu][perturb]") {
+    SECTION("exactly singular: default throws; perturbation completes") {
+        mat::compressed2D<double> A(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(A);
+          ins[0][0] << 1.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 1.0; }
+        auto sym = factorization::sparse_lu_symbolic(A);
+
+        REQUIRE_THROWS_AS(factorization::sparse_lu_numeric(A, sym), std::runtime_error);
+
+        auto num = factorization::sparse_lu_numeric(A, sym, /*threshold=*/1.0, /*pivot_perturb=*/1e-8);
+        REQUIRE(num.num_perturbed >= 1);                 // the collapsed pivot was perturbed
+        vec::dense_vector<double> b = {1.0, 2.0}, x(2, 0.0);
+        num.solve(x, b);                                 // no throw; finite (if inexact) result
+        REQUIRE(std::isfinite(x(0)));
+        REQUIRE(std::isfinite(x(1)));
+    }
+
+    SECTION("truly empty pivot column still throws even with perturbation on") {
+        // Column 1 has no entries -> no pivot row to perturb (nothing to perturb):
+        // perturbation must not paper over a genuine singularity.
+        mat::compressed2D<double> A(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(A);
+          ins[0][0] << 1.0; }
+        auto sym = factorization::sparse_lu_symbolic(A);
+        REQUIRE_THROWS_AS(
+            factorization::sparse_lu_numeric(A, sym, /*threshold=*/1.0, /*pivot_perturb=*/1e-8),
+            std::runtime_error);
+    }
+
+    SECTION("refactor reports a clean perturbation count (no stale carry-over)") {
+        // Factor a singular matrix WITH perturbation (num_perturbed >= 1), then
+        // refactor a well-conditioned same-pattern matrix: the refactor path does
+        // not perturb, so its count must reset to 0 rather than carrying prev's.
+        mat::compressed2D<double> A1(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(A1);
+          ins[0][0] << 1.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 1.0; }
+        auto sym = factorization::sparse_lu_symbolic(A1);
+        auto prev = factorization::sparse_lu_numeric(A1, sym, 1.0, 1e-8);
+        REQUIRE(prev.num_perturbed >= 1);
+
+        mat::compressed2D<double> A2(2, 2);   // same pattern, well-conditioned
+        { mat::inserter<mat::compressed2D<double>> ins(A2);
+          ins[0][0] << 2.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 3.0; }
+        auto re = factorization::sparse_lu_refactor(A2, prev);
+        REQUIRE(re.num_perturbed == 0);       // refactor count is clean
+        vec::dense_vector<double> b = {1.0, 2.0}, x(2, 0.0);
+        re.solve(x, b);
+        REQUIRE(relative_residual(A2, x, b) < 1e-12);
+    }
+
+    SECTION("nonsingular: perturbation never fires (clean factor, same accuracy)") {
+        mat::compressed2D<double> A(3, 3);
+        { mat::inserter<mat::compressed2D<double>> ins(A);
+          ins[0][0] << 4.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 5.0; ins[1][2] << 2.0;
+          ins[2][1] << 1.0; ins[2][2] << 6.0; }
+        auto sym = factorization::sparse_lu_symbolic(A);
+        auto num = factorization::sparse_lu_numeric(A, sym, /*threshold=*/1.0, /*pivot_perturb=*/1e-8);
+        REQUIRE(num.num_perturbed == 0);                 // well-conditioned -> no perturbation
+        vec::dense_vector<double> b = {1.0, 2.0, 3.0}, x(3, 0.0);
+        num.solve(x, b);
+        REQUIRE(relative_residual(A, x, b) < 1e-12);     // accuracy unaffected
+    }
+
+    SECTION("low precision (float) that throws completes when perturbed") {
+        // [[1,1],[1,1+d]] is nonsingular in double, but d = 5e-8 is below float
+        // epsilon so 1+d rounds to 1.0f and the column-1 pivot cancels to zero.
+        const double d = 5e-8;
+        mat::compressed2D<float> Af(2, 2);
+        { mat::inserter<mat::compressed2D<float>> ins(Af);
+          ins[0][0] << 1.0f; ins[0][1] << 1.0f;
+          ins[1][0] << 1.0f; ins[1][1] << static_cast<float>(1.0 + d); }
+        auto symf = factorization::sparse_lu_symbolic(Af);
+
+        REQUIRE_THROWS_AS(factorization::sparse_lu_numeric(Af, symf), std::runtime_error);
+
+        auto numf = factorization::sparse_lu_numeric(Af, symf, /*threshold=*/1.0f, /*pivot_perturb=*/1e-6f);
+        REQUIRE(numf.num_perturbed >= 1);
+        vec::dense_vector<float> bf = {2.0f, 2.0f}, xf(2, 0.0f);
+        numf.solve(xf, bf);                              // completes instead of throwing
+        REQUIRE(std::isfinite(xf(0)));
+        REQUIRE(std::isfinite(xf(1)));
+    }
+}

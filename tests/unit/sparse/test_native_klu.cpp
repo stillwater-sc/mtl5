@@ -375,3 +375,35 @@ TEST_CASE("native KLU agrees with the external SuiteSparse KLU binding",
     }
 }
 #endif
+
+// Issue #123: opt-in zero-pivot perturbation threaded through the native-KLU driver.
+TEST_CASE("native KLU zero-pivot perturbation (#123)", "[sparse][klu][native][perturb]") {
+    // A numerically singular diagonal block (structurally fine: BTF matches it).
+    mtl::mat::compressed2D<double> A(2, 2);
+    { mtl::mat::inserter<mtl::mat::compressed2D<double>> ins(A);
+      ins[0][0] << 1.0; ins[0][1] << 1.0;
+      ins[1][0] << 1.0; ins[1][1] << 1.0; }
+
+    // Default (perturbation off): hard throw on the singular block.
+    REQUIRE_THROWS_AS(native_klu_factor(A), std::runtime_error);
+
+    // Perturbation on: completes; the perturbed pivots are reported.
+    auto fac = native_klu_factor(A, /*threshold=*/1.0, /*scale=*/true, /*pivot_perturb=*/1e-8);
+    REQUIRE(fac.num_perturbed >= 1);
+    mtl::vec::dense_vector<double> b = {1.0, 2.0}, x(2, 0.0);
+    fac.solve(x, b);
+    REQUIRE(std::isfinite(x(0)));
+    REQUIRE(std::isfinite(x(1)));
+
+    // A well-conditioned matrix never perturbs, even with perturbation enabled.
+    mtl::mat::compressed2D<double> G(3, 3);
+    { mtl::mat::inserter<mtl::mat::compressed2D<double>> ins(G);
+      ins[0][0] << 4.0; ins[0][1] << 1.0;
+      ins[1][0] << 1.0; ins[1][1] << 5.0; ins[1][2] << 2.0;
+      ins[2][1] << 1.0; ins[2][2] << 6.0; }
+    auto gfac = native_klu_factor(G, 1.0, true, 1e-8);
+    REQUIRE(gfac.num_perturbed == 0);
+    mtl::vec::dense_vector<double> gb = {1.0, 2.0, 3.0}, gx(3, 0.0);
+    gfac.solve(gx, gb);
+    REQUIRE(relative_residual(G, gx, gb) < 1e-12);
+}
