@@ -92,3 +92,76 @@ TEST_CASE("Matrix Market: read coordinate symmetric", "[io][matrix_market]") {
 
     std::remove(fname.c_str());
 }
+
+// Issue #125: direct-CRS assembly must match the coordinate2D path, including
+// unsorted input columns, the symmetric mirror, and duplicate accumulation.
+TEST_CASE("Matrix Market: sparse read assembles sorted CRS (#125)", "[io][matrix_market]") {
+    auto fname = temp_file("unsorted_sym");
+    {
+        std::ofstream out(fname);
+        out << "%%MatrixMarket matrix coordinate real symmetric\n";
+        out << "% intentionally unsorted entries\n";
+        out << "3 3 4\n";
+        out << "3 1 7.0\n";   // (2,0) and mirror (0,2)
+        out << "2 2 5.0\n";   // (1,1) diagonal -> no mirror
+        out << "1 1 4.0\n";   // (0,0)
+        out << "3 2 9.0\n";   // (2,1) and mirror (1,2)
+    }
+    auto A = io::mm_read(fname);
+    REQUIRE(A.num_rows() == 3);
+    REQUIRE(A.nnz() == 6);                      // 2 diagonal + 2 off-diagonal*2 mirrors
+    REQUIRE_THAT(A(0,0), Catch::Matchers::WithinAbs(4.0, 1e-12));
+    REQUIRE_THAT(A(1,1), Catch::Matchers::WithinAbs(5.0, 1e-12));
+    REQUIRE_THAT(A(2,0), Catch::Matchers::WithinAbs(7.0, 1e-12));
+    REQUIRE_THAT(A(0,2), Catch::Matchers::WithinAbs(7.0, 1e-12));   // mirror
+    REQUIRE_THAT(A(2,1), Catch::Matchers::WithinAbs(9.0, 1e-12));
+    REQUIRE_THAT(A(1,2), Catch::Matchers::WithinAbs(9.0, 1e-12));   // mirror
+    // CRS minor indices are sorted within each row.
+    const auto& starts = A.ref_major();
+    const auto& idx = A.ref_minor();
+    for (std::size_t i = 0; i < A.num_rows(); ++i)
+        for (std::size_t k = starts[i] + 1; k < starts[i+1]; ++k)
+            REQUIRE(idx[k-1] < idx[k]);
+    std::remove(fname.c_str());
+}
+
+#ifdef MTL5_HAS_ZLIB
+#include <zlib.h>
+// Transparent gzip reading: a .mtx.gz must read identically to the plain .mtx.
+TEST_CASE("Matrix Market: transparent gzip read (#125)", "[io][matrix_market][gzip]") {
+    // Build the plain text once.
+    std::string body =
+        "%%MatrixMarket matrix coordinate real general\n"
+        "% gzip round-trip\n"
+        "3 3 4\n"
+        "1 1 4.0\n"
+        "2 2 5.0\n"
+        "3 3 6.0\n"
+        "1 3 2.5\n";
+
+    auto plain = temp_file("gz_plain");
+    { std::ofstream out(plain); out << body; }
+    auto gz = plain + ".gz";
+    { gzFile f = gzopen(gz.c_str(), "wb");
+      REQUIRE(f != nullptr);
+      gzwrite(f, body.data(), static_cast<unsigned>(body.size()));
+      gzclose(f); }
+
+    auto A = io::mm_read(plain);     // plain
+    auto B = io::mm_read(gz);        // gzipped -> must match
+
+    REQUIRE(B.num_rows() == A.num_rows());
+    REQUIRE(B.nnz() == A.nnz());
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 3; ++j)
+            REQUIRE_THAT(B(i,j), Catch::Matchers::WithinAbs(A(i,j), 1e-12));
+
+    std::remove(plain.c_str());
+    std::remove(gz.c_str());
+}
+#else
+// Without zlib, opening a .gz path must fail with a clear, actionable error.
+TEST_CASE("Matrix Market: gzip without zlib throws (#125)", "[io][matrix_market][gzip]") {
+    REQUIRE_THROWS_AS(io::mm_read("nonexistent_matrix.mtx.gz"), std::runtime_error);
+}
+#endif

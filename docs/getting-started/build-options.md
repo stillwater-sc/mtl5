@@ -17,11 +17,41 @@ These options link optional external libraries for hardware-accelerated or speci
 |---|---|---|
 | `MTL5_WITH_BLAS` | OFF | Link BLAS library for dense acceleration |
 | `MTL5_WITH_LAPACK` | OFF | Link LAPACK library for factorizations |
+| `MTL5_WITH_ZLIB` | OFF | Link zlib for transparent gzip (`.mtx.gz`) Matrix Market reading |
 | `MTL5_WITH_UMFPACK` | OFF | Link UMFPACK library (SuiteSparse) |
 | `MTL5_WITH_SUPERLU` | OFF | Link SuperLU library |
 | `MTL5_WITH_SUITESPARSE_KLU` | OFF | Link KLU sparse solver (SuiteSparse) |
 | `MTL5_WITH_SUITESPARSE_CHOLMOD` | OFF | Link CHOLMOD Cholesky (SuiteSparse) |
 | `MTL5_WITH_SUITESPARSE_SPQR` | OFF | Link SuiteSparseQR (SuiteSparse) |
+
+### Matrix Market I/O: gzip and large files
+
+`mtl::io::mm_read` / `mm_read_dense` read SuiteSparse `.mtx` files. Two features
+support circuit5M-scale workloads:
+
+**Transparent gzip.** Built with `-DMTL5_WITH_ZLIB=ON` (defines `MTL5_HAS_ZLIB`),
+`mm_read("matrix.mtx.gz")` decompresses on the fly — no need to pre-extract a
+downloaded `.tar.gz`. Without the flag, passing a `.gz` path throws a clear error
+pointing at the option. Plain `.mtx` reading is unaffected and needs no zlib.
+
+```bash
+cmake -B build -DCMAKE_CXX_STANDARD=20 -DMTL5_WITH_ZLIB=ON
+```
+
+**Large-file load path.** The sparse coordinate reader assembles CRS directly from
+a single triplet buffer sized from the header `nnz` and sorts it in place,
+avoiding the extra full-size copy that the generic `coordinate2D::compress()`
+makes. This roughly halves transient peak memory on very large matrices while
+producing identical output (same `(row, col)` order, same duplicate
+accumulation).
+
+**circuit5M (`Freescale/circuit5M`, ~5.56M × 5.56M, ~59.5M nnz).** The loader is
+built to handle this scale, but it is an opt-in large run (multi-GB file and RAM):
+the matrix is not downloaded or factored in CI. To validate locally, fetch the
+matrix, then load and factor it with native KLU in `double`, recording wall-clock
+load/factor time and peak RSS. Expect the load to be dominated by I/O and the
+single triplet buffer (~`nnz × 24` bytes) plus the CRS output; factor cost is
+governed by the per-block ordering (see the native-KLU notes).
 
 ## Native Performance & Development
 
