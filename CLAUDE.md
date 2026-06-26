@@ -33,6 +33,7 @@ ctest --test-dir build -R <test_name>   # e.g. -R test_concepts
 - `-DMTL5_BUILD_EXAMPLES=ON` (default ON) — build examples
 - `-DMTL5_WITH_BLAS=ON` — link BLAS library for dense acceleration
 - `-DMTL5_WITH_LAPACK=ON` — link LAPACK library for factorizations
+- `-DMTL5_WITH_ZLIB=ON` — link zlib for transparent gzip (`.mtx.gz`) Matrix Market reading
 - `-DMTL5_WITH_UMFPACK=ON` — link UMFPACK library (SuiteSparse)
 - `-DMTL5_WITH_SUPERLU=ON` — link SuperLU library
 - `-DMTL5_WITH_SUITESPARSE_KLU=ON` — link KLU sparse solver (SuiteSparse)
