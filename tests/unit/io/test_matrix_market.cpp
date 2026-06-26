@@ -160,9 +160,20 @@ TEST_CASE("Matrix Market: transparent gzip read (#125)", "[io][matrix_market][gz
     std::remove(gz.c_str());
 }
 #else
-// Without zlib, opening a .gz path must fail with a clear, actionable error.
+// Without zlib, opening a .gz path must fail with the gzip-gate error (pointing
+// at MTL5_WITH_ZLIB), not a generic "cannot open file" -- so use a real .gz file.
 TEST_CASE("Matrix Market: gzip without zlib throws (#125)", "[io][matrix_market][gzip]") {
-    REQUIRE_THROWS_AS(io::mm_read("nonexistent_matrix.mtx.gz"), std::runtime_error);
+    auto gz = temp_file("no_zlib") + ".gz";
+    { std::ofstream out(gz); out << "not actually compressed\n"; }
+
+    bool saw_zlib_error = false;
+    try {
+        (void)io::mm_read(gz);
+    } catch (const std::runtime_error& e) {
+        saw_zlib_error = std::string(e.what()).find("MTL5_WITH_ZLIB") != std::string::npos;
+    }
+    std::remove(gz.c_str());
+    REQUIRE(saw_zlib_error);
 }
 #endif
 
