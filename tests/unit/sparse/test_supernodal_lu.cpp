@@ -292,3 +292,57 @@ TEST_CASE("Supernodal LU edge cases", "[sparse][lu][supernodal]") {
         REQUIRE_THROWS_AS(factorization::supernodal_lu_numeric(A, sym, 1.5), std::invalid_argument);
     }
 }
+
+// Issue #185 (pivot robustness): opt-in zero-pivot perturbation, mirroring #123
+// for sparse_lu / native_klu. Default off => byte-identical hard-throw behavior.
+TEST_CASE("Supernodal LU zero-pivot perturbation (#185)", "[sparse][lu][supernodal][perturb]") {
+    SECTION("exactly singular: default throws; perturbation completes") {
+        mat::compressed2D<double> A(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(A);
+          ins[0][0] << 1.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 1.0; }
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+
+        REQUIRE_THROWS_AS(factorization::supernodal_lu_numeric(A, sym), std::runtime_error);
+
+        auto num = factorization::supernodal_lu_numeric(
+            A, sym, /*threshold=*/1.0, /*max_super=*/64, /*scale=*/false, /*pivot_perturb=*/1e-8);
+        REQUIRE(num.num_perturbed >= 1);
+        vec::dense_vector<double> b = {1.0, 2.0}, x(2, 0.0);
+        num.solve(x, b);
+        REQUIRE(std::isfinite(x(0)));
+        REQUIRE(std::isfinite(x(1)));
+    }
+
+    SECTION("nonsingular: perturbation never fires (clean factor, same accuracy)") {
+        auto A = dense_unsym(12);
+        std::size_t n = A.num_rows();
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        auto num = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, false, 1e-8);
+        REQUIRE(num.num_perturbed == 0);
+        vec::dense_vector<double> b(n), x(n, 0.0);
+        for (std::size_t i = 0; i < n; ++i) b(static_cast<int>(i)) = 1.0 + 0.3 * static_cast<double>(i);
+        num.solve(x, b);
+        REQUIRE(rel_residual(A, x, b) < 1e-12);
+    }
+
+    SECTION("refactor reports a clean perturbation count (no stale carry-over)") {
+        mat::compressed2D<double> A1(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(A1);
+          ins[0][0] << 1.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 1.0; }
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A1, ordering::colamd{});
+        auto prev = factorization::supernodal_lu_numeric(A1, sym, 1.0, 64, false, 1e-8);
+        REQUIRE(prev.num_perturbed >= 1);
+
+        mat::compressed2D<double> A2(2, 2);                  // same pattern, well-conditioned
+        { mat::inserter<mat::compressed2D<double>> ins(A2);
+          ins[0][0] << 2.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 3.0; }
+        auto re = factorization::supernodal_lu_refactor(A2, prev);
+        REQUIRE(re.num_perturbed == 0);
+        vec::dense_vector<double> b = {1.0, 2.0}, x(2, 0.0);
+        re.solve(x, b);
+        REQUIRE(rel_residual(A2, x, b) < 1e-12);
+    }
+}
