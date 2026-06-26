@@ -67,6 +67,7 @@ struct supernodal_lu_factor {
     std::vector<std::size_t> row_pinv;     // inverse
     std::vector<std::size_t> lsuper_first; // dynamic L-supernode boundaries (size nsuper+1)
     std::vector<Value>       row_scale;    // r[orig row]; empty = unscaled (factored R*A)
+    std::size_t              num_perturbed = 0; // pivots replaced by perturbation (0 = clean factor)
     supernodal_lu_symbolic   symbolic;
 
     std::size_t num_rows() const { return symbolic.n; }
@@ -139,7 +140,17 @@ struct lu_snode {
 ///
 /// \param threshold pivoting threshold in (0,1]; 1 = full partial pivoting.
 /// \param max_super maximum supernode width (relaxation cap).
-/// \throws std::runtime_error on a singular (zero) pivot.
+/// \param scale     opt-in row equilibration (factor R*A; RHS scaled in solve()).
+/// \param pivot_perturb opt-in zero-pivot perturbation (default 0 = off). When
+///                  > 0, a chosen pivot whose magnitude is below
+///                  `pivot_perturb * ||column||_inf` is replaced (sign-preserving)
+///                  by that floor and `num_perturbed` is incremented, instead of
+///                  throwing -- keeping a low-precision factorization going when
+///                  cancellation drives a structurally-nonzero pivot numerically
+///                  to zero (clean up with iterative_refine). Default 0 is
+///                  byte-identical to before (hard throw). Mirrors sparse_lu.
+/// \throws std::runtime_error on a singular (zero) pivot when perturbation is off,
+///                  or when the whole pivot column is numerically zero.
 template <typename Value, typename Parameters, typename Accumulator = Value>
     requires OrderedField<Value>
 supernodal_lu_factor<Value> supernodal_lu_numeric(
@@ -147,7 +158,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     const supernodal_lu_symbolic& sym,
     Value threshold = Value{1},
     std::size_t max_super = 64,
-    bool scale = false)
+    bool scale = false,
+    Value pivot_perturb = Value{0})
 {
     using size_type = std::size_t;
     using std::abs;
@@ -203,6 +215,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     std::vector<detail::lu_snode<Value>> snodes;   // closed supernodes
     std::vector<idx32> col_csuper(n, -1);          // col -> closed supernode id (or -1 if open/unset)
     std::vector<size_type> lsuper_first;           // boundaries, recorded as supernodes close
+    std::size_t num_perturbed = 0;                 // count of perturbed pivots (pivot_perturb > 0)
     size_type open_sf = 0;                         // first column of the currently-open supernode
     std::vector<size_type> prev_cand;              // sorted orig candidate rows of column k-1
 
@@ -322,17 +335,24 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         }
 
         // --- threshold partial pivoting + emit U(:,k) for pivotal rows ---
-        Value a = Value{0}; std::ptrdiff_t ipiv = -1; bool have = false;
+        Value a = Value{0};                          // max |candidate|
+        Value colnorm = Value{0};                    // ||column k||_inf over the reach
+        std::ptrdiff_t ipiv = -1; bool have = false;
         for (size_type px = top; px < n; ++px) {
             std::ptrdiff_t i = xi[px];
+            Value mag = abs(AT::value(x[i]));
+            if (mag > colnorm) colnorm = mag;
             if (pinv[i] < 0) {
-                Value t = abs(AT::value(x[i]));
-                if (!have || t > a) { a = t; ipiv = i; have = true; }
+                if (!have || mag > a) { a = mag; ipiv = i; have = true; }
             } else {
                 Ui.push_back(pinv[i]); Ux.push_back(AT::value(x[i]));
             }
         }
-        if (ipiv < 0 || a == Value{0})
+        const bool perturb = pivot_perturb > Value{0};
+        if (ipiv < 0)                                // no candidate row: nothing to perturb
+            throw std::runtime_error(
+                "supernodal_lu_numeric: zero pivot at column " + std::to_string(k) + " (singular)");
+        if (!perturb && a == Value{0})               // default: hard throw, unchanged
             throw std::runtime_error(
                 "supernodal_lu_numeric: zero pivot at column " + std::to_string(k) + " (singular)");
         if (pinv[static_cast<std::ptrdiff_t>(k)] < 0
@@ -340,6 +360,20 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
             ipiv = static_cast<std::ptrdiff_t>(k);
 
         Value pivot = AT::value(x[ipiv]);
+        // Opt-in zero-pivot perturbation: replace a collapsed pivot (below
+        // pivot_perturb * ||column||) sign-preservingly rather than failing. A
+        // wholly-zero column (colnorm == 0) is genuinely singular -> still throw.
+        if (perturb) {
+            const Value floor = pivot_perturb * colnorm;
+            if (abs(pivot) < floor) {
+                pivot = (pivot < Value{0}) ? -floor : floor;
+                ++num_perturbed;
+            } else if (abs(pivot) == Value{0}) {
+                throw std::runtime_error(
+                    "supernodal_lu_numeric: zero pivot at column " + std::to_string(k)
+                    + " (pivot column is numerically zero)");
+            }
+        }
         Ui.push_back(static_cast<idx32>(k)); Ux.push_back(pivot);
         pinv[ipiv] = static_cast<idx32>(k);
         piv_row[k] = static_cast<size_type>(ipiv);
@@ -421,6 +455,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     supernodal_lu_factor<Value> result;
     result.symbolic = sym;
     result.row_scale = std::move(row_scale);
+    result.num_perturbed = num_perturbed;
     result.lsuper_first.assign(lsuper_first.begin(), lsuper_first.end());
     result.row_perm.resize(n); result.row_pinv.resize(n);
     for (size_type i = 0; i < n; ++i) {
@@ -477,6 +512,7 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
     auto C = util::crs_to_csc(util::column_permute(A, prev.symbolic.col_perm));
     const auto& pinv = prev.row_pinv;        // original row -> pivot position (fixed)
     supernodal_lu_factor<Value> result = prev;   // reuse pattern + perms + symbolic + supernodes
+    result.num_perturbed = 0;                    // refactor replays values without perturbing (throws on zero pivot)
 
     // If the prior factorization was row-equilibrated, re-equilibrate the new
     // values (same pattern) and factor R*A; solve() row-scales the RHS by R.
