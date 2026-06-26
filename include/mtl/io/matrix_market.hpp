@@ -99,6 +99,39 @@ private:
     bool use_gz_ = false;
 };
 
+/// Parse the Matrix Market banner into (coordinate?, symmetric?), rejecting
+/// storage modes this reader does not implement. The banner is
+/// `%%MatrixMarket matrix <coordinate|array> <real|integer|complex|pattern>
+/// <general|symmetric|skew-symmetric|hermitian>`. Substring matching is unsafe
+/// (`symmetric` is a substring of `skew-symmetric`), so tokens are matched
+/// exactly. Only real/integer + general/symmetric are supported; complex,
+/// pattern, skew-symmetric and hermitian are rejected with a clear error rather
+/// than silently mis-read.
+inline void parse_mm_banner(const std::string& banner_line,
+                            bool& is_coordinate, bool& is_symmetric) {
+    std::string b = banner_line;
+    std::transform(b.begin(), b.end(), b.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+    std::istringstream ss(b);
+    std::string tag, object, format, field, symmetry;
+    ss >> tag >> object >> format >> field >> symmetry;
+
+    if (format == "coordinate")  is_coordinate = true;
+    else if (format == "array")  is_coordinate = false;
+    else throw std::runtime_error(
+        "mm_read: unrecognized Matrix Market format in banner: '" + banner_line + "'");
+
+    if (!(field.empty() || field == "real" || field == "integer"))
+        throw std::runtime_error(
+            "mm_read: unsupported Matrix Market field '" + field + "' (only real/integer)");
+
+    if (symmetry.empty() || symmetry == "general") is_symmetric = false;
+    else if (symmetry == "symmetric")              is_symmetric = true;
+    else throw std::runtime_error(
+        "mm_read: unsupported Matrix Market symmetry '" + symmetry
+        + "' (only general/symmetric)");
+}
+
 } // namespace detail
 
 /// Read a Matrix Market file into a compressed2D (for coordinate format)
@@ -111,28 +144,35 @@ mat::compressed2D<Value, Parameters> mm_read(const std::string& filename) {
     if (!in.next_line(line))                       // banner line
         throw std::runtime_error("mm_read: empty file: " + filename);
 
-    // Parse banner: %%MatrixMarket matrix coordinate|array real|... general|symmetric|...
     bool is_coordinate = true;
     bool is_symmetric = false;
-    std::string banner = line;
-    std::transform(banner.begin(), banner.end(), banner.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
-    if (banner.find("array") != std::string::npos)     is_coordinate = false;
-    if (banner.find("symmetric") != std::string::npos) is_symmetric = true;
+    detail::parse_mm_banner(line, is_coordinate, is_symmetric);
 
     // Skip comment / blank lines to the dimension line.
+    bool have_dimensions = false;
     while (in.next_line(line)) {
         if (line.empty() || line[0] == '%') continue;
+        have_dimensions = true;
         break;
     }
+    if (!have_dimensions)
+        throw std::runtime_error("mm_read: missing dimension line: " + filename);
 
     using size_type = typename Parameters::size_type;
     size_type nrows = 0, ncols = 0, nnz_entries = 0;
     {
         std::istringstream dim_stream(line);
-        if (is_coordinate) dim_stream >> nrows >> ncols >> nnz_entries;
-        else             { dim_stream >> nrows >> ncols; nnz_entries = nrows * ncols; }
+        if (is_coordinate) {
+            if (!(dim_stream >> nrows >> ncols >> nnz_entries))
+                throw std::runtime_error("mm_read: malformed dimension line: '" + line + "'");
+        } else {
+            if (!(dim_stream >> nrows >> ncols))
+                throw std::runtime_error("mm_read: malformed dimension line: '" + line + "'");
+            nnz_entries = nrows * ncols;
+        }
     }
+    if (is_symmetric && nrows != ncols)
+        throw std::runtime_error("mm_read: symmetric matrix must be square");
 
     if (is_coordinate) {
         // Direct CRS assembly: gather triplets into one buffer (sized from the
@@ -150,11 +190,13 @@ mat::compressed2D<Value, Parameters> mm_read(const std::string& filename) {
                                          + std::to_string(nnz_entries) + ")");
             if (line.empty()) { --k; continue; }   // tolerate stray blank lines
             ss.clear(); ss.str(line);
-            size_type r, c; Value v;
-            ss >> r >> c >> v;
+            size_type r1, c1; Value v;
+            ss >> r1 >> c1 >> v;
             if (ss.fail())
                 throw std::runtime_error("mm_read: malformed coordinate entry: '" + line + "'");
-            --r; --c;                              // 1-based -> 0-based
+            if (r1 == 0 || r1 > nrows || c1 == 0 || c1 > ncols)
+                throw std::runtime_error("mm_read: coordinate index out of range: '" + line + "'");
+            const size_type r = r1 - 1, c = c1 - 1;   // 1-based -> 0-based
             ents.emplace_back(r, c, v);
             if (is_symmetric && r != c) ents.emplace_back(c, r, v);
         }
@@ -217,24 +259,32 @@ mat::dense2D<Value> mm_read_dense(const std::string& filename) {
     if (!in.next_line(line))
         throw std::runtime_error("mm_read_dense: empty file: " + filename);
 
-    std::string banner = line;
-    std::transform(banner.begin(), banner.end(), banner.begin(),
-                   [](unsigned char c){ return std::tolower(c); });
+    bool is_coordinate = true;
+    bool is_symmetric = false;
+    detail::parse_mm_banner(line, is_coordinate, is_symmetric);
 
-    bool is_coordinate = (banner.find("array") == std::string::npos);
-    bool is_symmetric = (banner.find("symmetric") != std::string::npos);
-
+    bool have_dimensions = false;
     while (in.next_line(line)) {
         if (line.empty() || line[0] == '%') continue;
+        have_dimensions = true;
         break;
     }
+    if (!have_dimensions)
+        throw std::runtime_error("mm_read_dense: missing dimension line: " + filename);
 
     std::size_t nrows = 0, ncols = 0, nnz_entries = 0;
     {
         std::istringstream dim_stream(line);
-        if (is_coordinate) dim_stream >> nrows >> ncols >> nnz_entries;
-        else               dim_stream >> nrows >> ncols;
+        if (is_coordinate) {
+            if (!(dim_stream >> nrows >> ncols >> nnz_entries))
+                throw std::runtime_error("mm_read_dense: malformed dimension line: '" + line + "'");
+        } else {
+            if (!(dim_stream >> nrows >> ncols))
+                throw std::runtime_error("mm_read_dense: malformed dimension line: '" + line + "'");
+        }
     }
+    if (is_symmetric && nrows != ncols)
+        throw std::runtime_error("mm_read_dense: symmetric matrix must be square");
 
     mat::dense2D<Value> A(nrows, ncols);
     for (std::size_t i = 0; i < nrows; ++i)
@@ -248,11 +298,13 @@ mat::dense2D<Value> mm_read_dense(const std::string& filename) {
                 throw std::runtime_error("mm_read_dense: unexpected EOF in entries");
             if (line.empty()) { --k; continue; }
             ss.clear(); ss.str(line);
-            std::size_t r, c; Value v;
-            ss >> r >> c >> v;
+            std::size_t r1, c1; Value v;
+            ss >> r1 >> c1 >> v;
             if (ss.fail())
                 throw std::runtime_error("mm_read_dense: malformed entry: '" + line + "'");
-            r--; c--;
+            if (r1 == 0 || r1 > nrows || c1 == 0 || c1 > ncols)
+                throw std::runtime_error("mm_read_dense: coordinate index out of range: '" + line + "'");
+            const std::size_t r = r1 - 1, c = c1 - 1;
             A(r, c) = v;
             if (is_symmetric && r != c) A(c, r) = v;
         }

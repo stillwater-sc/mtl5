@@ -165,3 +165,44 @@ TEST_CASE("Matrix Market: gzip without zlib throws (#125)", "[io][matrix_market]
     REQUIRE_THROWS_AS(io::mm_read("nonexistent_matrix.mtx.gz"), std::runtime_error);
 }
 #endif
+
+// Issue #125 (review hardening): the reader must reject malformed / unsupported
+// input instead of silently producing wrong or out-of-bounds results.
+TEST_CASE("Matrix Market: reader input validation (#125)", "[io][matrix_market]") {
+    auto write = [](const std::string& name, const std::string& body) {
+        auto fn = temp_file(name);
+        std::ofstream out(fn); out << body;
+        return fn;
+    };
+
+    SECTION("coordinate index out of range throws (no OOB write)") {
+        auto fn = write("oob", "%%MatrixMarket matrix coordinate real general\n3 3 1\n4 1 1.0\n");
+        REQUIRE_THROWS_AS(io::mm_read(fn), std::runtime_error);
+        std::remove(fn.c_str());
+    }
+    SECTION("zero index throws (would underflow)") {
+        auto fn = write("zero", "%%MatrixMarket matrix coordinate real general\n3 3 1\n0 1 1.0\n");
+        REQUIRE_THROWS_AS(io::mm_read(fn), std::runtime_error);
+        std::remove(fn.c_str());
+    }
+    SECTION("skew-symmetric banner is rejected (not mis-mirrored)") {
+        auto fn = write("skew", "%%MatrixMarket matrix coordinate real skew-symmetric\n2 2 1\n2 1 1.0\n");
+        REQUIRE_THROWS_AS(io::mm_read(fn), std::runtime_error);
+        std::remove(fn.c_str());
+    }
+    SECTION("complex field is rejected") {
+        auto fn = write("cplx", "%%MatrixMarket matrix coordinate complex general\n1 1 1\n1 1 1.0 0.0\n");
+        REQUIRE_THROWS_AS(io::mm_read(fn), std::runtime_error);
+        std::remove(fn.c_str());
+    }
+    SECTION("missing dimension line throws") {
+        auto fn = write("nodim", "%%MatrixMarket matrix coordinate real general\n% only comments\n");
+        REQUIRE_THROWS_AS(io::mm_read(fn), std::runtime_error);
+        std::remove(fn.c_str());
+    }
+    SECTION("non-square symmetric throws") {
+        auto fn = write("nonsq", "%%MatrixMarket matrix coordinate real symmetric\n2 3 1\n1 1 1.0\n");
+        REQUIRE_THROWS_AS(io::mm_read(fn), std::runtime_error);
+        std::remove(fn.c_str());
+    }
+}
