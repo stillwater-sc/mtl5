@@ -41,7 +41,7 @@ worse, if the terms have mixed signs (**catastrophic cancellation**) the relativ
 error can blow up to `O(n · ε)` or far more. The fix is not to store wider — it is
 to **accumulate** wider:
 
-```
+```text
 sum stored in float  :  error grows with n, cancellation amplifies it
 sum stored in double :  ~16 digits of headroom — the rounding noise floor drops
                         by ~10 orders of magnitude, at almost no storage cost
@@ -118,7 +118,7 @@ residual computed in a high precision. The low-precision factor is "wrong" by a
 controlled amount; a few high-precision residual corrections recover full
 accuracy. MTL5's `sparse::iterative_refine` is the reusable, dependency-free core
 of exactly this loop, and the supernodal/KLU solvers expose a low-precision factor
-+ high-precision refine path on top of it.
+with a high-precision refine path on top of it.
 
 ---
 
@@ -173,18 +173,24 @@ template <typename TC, typename TAB, std::size_t MR, std::size_t NR>
 void gemm_microkernel(std::size_t kc, const TAB* Ap, const TAB* Bp,
                       TC* C, std::size_t ldc) {
     using B = simd::batch<TC>;                 // accumulate in TC-wide registers
+    constexpr std::size_t W  = B::size;        // SIMD lanes per batch
+    constexpr std::size_t NB = NR / W;         // batches spanning the NR columns
     constexpr bool widen = sizeof(TAB) < sizeof(TC);
+
     B c[MR][NB] /* = 0 */;
     for (std::size_t p = 0; p < kc; ++p) {
-        B b[NB];
-        for (jb) b[jb] = widen ? B::load_widen<TAB>(Bp + ...)  // float -> double, one op
-                               : B::load_unaligned(Bp + ...);
-        for (i) {
-            const B a_i(static_cast<TC>(ap[i]));               // broadcast, widened
-            for (jb) c[i][jb] = fma(a_i, b[jb], c[i][jb]);     // FMA in TC
+        B b[NB];                               // load one B row, widening on the way in
+        for (std::size_t jb = 0; jb < NB; ++jb)
+            b[jb] = widen ? B::load_widen<TAB>(Bp + p * NR + jb * W)   // float -> double, one op
+                          : B::load_unaligned (Bp + p * NR + jb * W);
+        const TAB* ap = Ap + p * MR;
+        for (std::size_t i = 0; i < MR; ++i) {
+            const B a_i(static_cast<TC>(ap[i]));                       // broadcast, widened
+            for (std::size_t jb = 0; jb < NB; ++jb)
+                c[i][jb] = fma(a_i, b[jb], c[i][jb]);                  // FMA in TC
         }
     }
-    /* flush c[][] into C */
+    /* flush c[i][jb] into C */
 }
 ```
 
