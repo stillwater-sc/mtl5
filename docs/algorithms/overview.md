@@ -24,6 +24,10 @@ effort tracking its performance, but the characterization stands on its own.
 
 ## Pages
 
+- **[Mixed-Precision Kernels: Why, What, and How](mixed-precision-kernels.md)** —
+  the entry point to MTL5's reason for existing: storing narrow while accumulating
+  wide, the Element → Accumulate → Result model, and the SIMD *widening* GEMM as a
+  worked example of how a mixed-precision kernel is made fast.
 - **[Measuring Solver Accuracy](measuring-solver-accuracy.md)** — the residual,
   norms, absolute vs relative error, and backward vs forward error linked by the
   condition number. The foundation for how every solver's correctness is judged.
