@@ -13,6 +13,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 - **Dispatch guarantee** `interface::accumulator_allows_blas_v` — any non-default accumulator forces the native kernel even for float/double (external BLAS cannot honor a custom accumulator); proven via a counting accumulator (#163)
 - **`mtl::convert`** — standalone element-wise tensor re-quantization for non-fused re-typing (distinct from the fused accumulate→store epilogue) (#164)
 - **SIMD widening dot** — `batch::load_widen` (Highway `Rebind`+`PromoteTo`) + `simd::reduce_dot_widen` for float→double; `dot` routes its mixed path to it (~2.6× over scalar) (#165)
+- **SIMD widening GEMM** — the blocked GEMM generalized to `<TC accumulator, TAB operand>` (default `TAB = TC` ⇒ same-type path byte-identical): the micro-kernel widens narrow operands on load (`batch<TC>::load_widen<TAB>`) into `TC` accumulator registers. `mult<double>(A_float, B_float, C_double)` routes to it; **10–16× over the scalar generic kernel** (Highway), matching the wide-accumulator reference to rounding (#176)
 
 #### Sparse direct solvers
 - **`sparse_lu_refactor` + `native_klu_refactor`** — analyze/factor/refactor: refactorize a same-pattern matrix by reusing the symbolic structure + pivot sequence (no BTF/ordering/reach/pivot-search), ~2.2× faster than a full factor; the SPICE-transient path (#153, #154)
@@ -29,6 +30,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 #### Documentation
 - **"Measuring Solver Accuracy"** algorithm page — residuals, norms, absolute vs relative error, and backward-vs-forward error / conditioning (#152)
+- **"Mixed-Precision Kernels: Why, What, and How"** algorithm page — an introduction to mixed-precision algorithm design: store-narrow/accumulate-wide, the Element → Accumulate → Result model, and the SIMD widening GEMM as a worked optimization example (#200)
 
 #### Benchmark suite
 - **Size-N sweep** (`--sweep START:STOP:STEP` and `:xFACTOR`) plus BLAS-level suite groups `l1`/`l2`/`l3`/`blas`; default sizes now bracket powers of two with odd/1.5x neighbours to expose padding overhead (#77)
