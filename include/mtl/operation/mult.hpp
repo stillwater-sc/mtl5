@@ -164,6 +164,40 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(B.num_cols() == C.num_cols());
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
+#ifdef MTL5_NATIVE_FAST_GEMM
+        // SIMD widening fast path (#176): float operands accumulated in fp64
+        // through the blocked GEMM, reusing the micro-kernel's widening load.
+        // Restricted to the float->double case on dense contiguous matrices;
+        // every other custom accumulator uses the generic scalar kernel below.
+        if constexpr (std::is_same_v<Accumulator, double> &&
+                      std::is_same_v<typename MA::value_type, float> &&
+                      std::is_same_v<typename MB::value_type, float> &&
+                      std::is_same_v<typename MC::value_type, double> &&
+                      interface::BlasDenseMatrix<MA> &&
+                      interface::BlasDenseMatrix<MB> &&
+                      interface::BlasDenseMatrix<MC>) {
+            const std::size_t M = A.num_rows();
+            const std::size_t N = B.num_cols();
+            const std::size_t K = A.num_cols();
+            const std::ptrdiff_t a_rs = interface::is_row_major_v<MA> ? static_cast<std::ptrdiff_t>(A.num_cols()) : 1;
+            const std::ptrdiff_t a_cs = interface::is_row_major_v<MA> ? 1 : static_cast<std::ptrdiff_t>(A.num_rows());
+            const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
+            const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
+            const unsigned nthreads = detail::gemm_default_threads();
+            if constexpr (interface::is_row_major_v<MC>) {
+                detail::gemm_blocked<double, float>(M, N, K, math::one<double>(),
+                                                    A.data(), a_rs, a_cs,
+                                                    B.data(), b_rs, b_cs,
+                                                    math::zero<double>(), C.data(), N, nthreads);
+            } else {
+                detail::gemm_blocked<double, float>(N, M, K, math::one<double>(),
+                                                    B.data(), b_cs, b_rs,
+                                                    A.data(), a_cs, a_rs,
+                                                    math::zero<double>(), C.data(), M, nthreads);
+            }
+            return;
+        }
+#endif
         // Custom accumulator: external BLAS / native-fast GEMM use hardware-fixed
         // accumulation, so route to the accumulator-aware generic kernel.
         detail::mult_generic<Accumulator>(A, B, C);

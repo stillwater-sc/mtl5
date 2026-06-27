@@ -47,19 +47,19 @@ TEMPLATE_TEST_CASE("gemm_microkernel: C += A*B for a packed MRxNR tile", "[detai
 
         SECTION("into zeroed C (ldc == NR)") {
             std::vector<TestType> C(MR * NR, TestType(0));
-            mtl::detail::gemm_microkernel<TestType, MR, NR>(kc, Ap.data(), Bm.data(), C.data(), NR);
+            mtl::detail::gemm_microkernel<TestType, TestType, MR, NR>(kc, Ap.data(), Bm.data(), C.data(), NR);
             for (std::size_t k = 0; k < MR * NR; ++k) CHECK(C[k] == ref[k]);
         }
         SECTION("accumulate into preset C") {
             std::vector<TestType> C(MR * NR), pre(MR * NR);
             for (std::size_t k = 0; k < MR * NR; ++k) { C[k] = TestType(k % 5) - 2; pre[k] = C[k]; }
-            mtl::detail::gemm_microkernel<TestType, MR, NR>(kc, Ap.data(), Bm.data(), C.data(), NR);
+            mtl::detail::gemm_microkernel<TestType, TestType, MR, NR>(kc, Ap.data(), Bm.data(), C.data(), NR);
             for (std::size_t k = 0; k < MR * NR; ++k) CHECK(C[k] == pre[k] + ref[k]);
         }
         SECTION("non-trivial leading dimension (tile embedded in a wider C)") {
             const std::size_t ldc = NR + 5;
             std::vector<TestType> C(MR * ldc, TestType(0));
-            mtl::detail::gemm_microkernel<TestType, MR, NR>(kc, Ap.data(), Bm.data(), C.data(), ldc);
+            mtl::detail::gemm_microkernel<TestType, TestType, MR, NR>(kc, Ap.data(), Bm.data(), C.data(), ldc);
             for (std::size_t i = 0; i < MR; ++i) {
                 for (std::size_t j = 0; j < NR; ++j) CHECK(C[i * ldc + j] == ref[i * NR + j]);
                 for (std::size_t j = NR; j < ldc; ++j) CHECK(C[i * ldc + j] == TestType(0)); // padding untouched
