@@ -23,27 +23,37 @@
 
 namespace mtl::detail {
 
-template <typename T, std::size_t MR, std::size_t NR>
-void gemm_microkernel(std::size_t kc, const T* Ap, const T* Bp,
-                      T* C, std::size_t ldc) {
-    using B = simd::batch<T>;
+// TC = accumulator/C element type; TAB = A/B (operand) element type. When
+// TAB is narrower than TC the operands are loaded with the widening SIMD load
+// (batch<TC>::load_widen<TAB>, #165) so e.g. float panels accumulate in fp64
+// registers. With TAB == TC (the default) this compiles to the original
+// same-type kernel: load_unaligned and an identity broadcast cast.
+template <typename TC, typename TAB, std::size_t MR, std::size_t NR>
+void gemm_microkernel(std::size_t kc, const TAB* Ap, const TAB* Bp,
+                      TC* C, std::size_t ldc) {
+    using B = simd::batch<TC>;           // accumulate in TC-wide registers
     constexpr std::size_t W = B::size;
     static_assert(NR % W == 0, "NR (the vectorized dimension) must be a multiple of the SIMD width");
     constexpr std::size_t NB = NR / W;   // batch-columns spanning the NR lanes
+    constexpr bool widen = sizeof(TAB) < sizeof(TC);
 
     // C microtile: MR rows x NB batch-columns, register-resident, zeroed.
     B c[MR][NB];
 
     for (std::size_t p = 0; p < kc; ++p) {
-        // Load this depth's B micro-panel row (NR values = NB batches).
+        // Load this depth's B micro-panel row (NR values = NB batches), widening
+        // narrow operands to TC on the way in.
         B b[NB];
-        for (std::size_t jb = 0; jb < NB; ++jb)
-            b[jb] = B::load_unaligned(Bp + p * NR + jb * W);
+        for (std::size_t jb = 0; jb < NB; ++jb) {
+            const TAB* bptr = Bp + p * NR + jb * W;
+            if constexpr (widen) b[jb] = B::template load_widen<TAB>(bptr);
+            else                 b[jb] = B::load_unaligned(bptr);
+        }
 
-        // Rank-1 update: each A(i,p) (broadcast) times the B row, into C.
-        const T* ap = Ap + p * MR;
+        // Rank-1 update: each A(i,p) (broadcast, widened) times the B row, into C.
+        const TAB* ap = Ap + p * MR;
         for (std::size_t i = 0; i < MR; ++i) {
-            const B a_i(ap[i]);
+            const B a_i(static_cast<TC>(ap[i]));
             for (std::size_t jb = 0; jb < NB; ++jb)
                 c[i][jb] = fma(a_i, b[jb], c[i][jb]);
         }
@@ -52,7 +62,7 @@ void gemm_microkernel(std::size_t kc, const T* Ap, const T* Bp,
     // Flush the microtile into C (C += tile).
     for (std::size_t i = 0; i < MR; ++i)
         for (std::size_t jb = 0; jb < NB; ++jb) {
-            T* cptr = C + i * ldc + jb * W;
+            TC* cptr = C + i * ldc + jb * W;
             (B::load_unaligned(cptr) + c[i][jb]).store_unaligned(cptr);
         }
 }

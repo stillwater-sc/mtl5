@@ -75,25 +75,30 @@ inline unsigned gemm_default_threads() {
 
 /// C[m x n] (row-major, leading dim ldc) := beta*C + alpha * A[m x k] * B[k x n].
 /// A,B addressed by generic strides (see file header). ldc must be >= n.
-template <typename T>
-    requires mtl::Scalar<T>
+// TC = accumulator / C element type; TAB = A,B (operand) element type. With the
+// default TAB == TC this is the original same-type blocked GEMM. When TAB is
+// narrower (e.g. TAB=float, TC=double) the operands are packed in TAB and the
+// micro-kernel widens them into TC accumulators -- the mixed-precision fast path
+// (#176). Blocking is chosen for TC so the C microtile maps to TC registers.
+template <typename TC, typename TAB = TC>
+    requires (mtl::Scalar<TC> && mtl::Scalar<TAB>)
 void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
-                  T alpha,
-                  const T* A, std::ptrdiff_t a_rs, std::ptrdiff_t a_cs,
-                  const T* B, std::ptrdiff_t b_rs, std::ptrdiff_t b_cs,
-                  T beta,
-                  T* C, std::size_t ldc,
+                  TC alpha,
+                  const TAB* A, std::ptrdiff_t a_rs, std::ptrdiff_t a_cs,
+                  const TAB* B, std::ptrdiff_t b_rs, std::ptrdiff_t b_cs,
+                  TC beta,
+                  TC* C, std::size_t ldc,
                   unsigned nthreads = 1) {
-    constexpr simd::blocking_params bp = simd::default_blocking<T>;
+    constexpr simd::blocking_params bp = simd::default_blocking<TC>;
     constexpr std::size_t MR = bp.mr;
     constexpr std::size_t NR = bp.nr;
     const std::size_t KC = bp.kc, MC = bp.mc, NC = bp.nc;
 
     // beta: scale (or zero) C once up front; the nest then purely accumulates.
-    if (beta == T(0)) {
+    if (beta == TC(0)) {
         for (std::size_t i = 0; i < m; ++i)
-            for (std::size_t j = 0; j < n; ++j) C[i * ldc + j] = T(0);
-    } else if (!(beta == T(1))) {
+            for (std::size_t j = 0; j < n; ++j) C[i * ldc + j] = TC(0);
+    } else if (!(beta == TC(1))) {
         for (std::size_t i = 0; i < m; ++i)
             for (std::size_t j = 0; j < n; ++j) C[i * ldc + j] = beta * C[i * ldc + j];
     }
@@ -106,52 +111,53 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     const std::size_t kc_max = std::min(KC, k);
     const std::size_t mc_max = std::min(MC, m);
     const std::size_t nc_max = std::min(NC, n);
-    packed_buffer<T> Ac(packed_A_size(mc_max, kc_max, MR));
-    packed_buffer<T> Bc(packed_B_size(kc_max, nc_max, NR));
+    packed_buffer<TAB> Ac(packed_A_size(mc_max, kc_max, MR));
+    packed_buffer<TAB> Bc(packed_B_size(kc_max, nc_max, NR));
 
     for (std::size_t jc = 0; jc < n; jc += NC) {
         const std::size_t nci = std::min(NC, n - jc);
         const std::size_t npanels = (nci + NR - 1) / NR;
         for (std::size_t pc = 0; pc < k; pc += KC) {
             const std::size_t kci = std::min(KC, k - pc);
-            pack_B<T, NR>(B + static_cast<std::ptrdiff_t>(pc) * b_rs
-                            + static_cast<std::ptrdiff_t>(jc) * b_cs,
-                          b_rs, b_cs, kci, nci, Bc.data());
+            pack_B<TAB, NR>(B + static_cast<std::ptrdiff_t>(pc) * b_rs
+                              + static_cast<std::ptrdiff_t>(jc) * b_cs,
+                            b_rs, b_cs, kci, nci, Bc.data());
 
             // One ic-block: pack A(ic,pc) into `Acbuf`, then run the jr/ir macro
             // over the shared Bc into this block's (disjoint) C rows. `Acbuf` is
             // caller-owned so each thread can pass its own buffer.
-            auto do_ic_block = [&](std::size_t ic, T* Acbuf) {
+            auto do_ic_block = [&](std::size_t ic, TAB* Acbuf) {
                 const std::size_t mci = std::min(MC, m - ic);
-                pack_A<T, MR>(A + static_cast<std::ptrdiff_t>(ic) * a_rs
-                                + static_cast<std::ptrdiff_t>(pc) * a_cs,
-                              a_rs, a_cs, mci, kci, Acbuf);
-                if (!(alpha == T(1))) {                       // fold alpha into A panel
+                pack_A<TAB, MR>(A + static_cast<std::ptrdiff_t>(ic) * a_rs
+                                  + static_cast<std::ptrdiff_t>(pc) * a_cs,
+                                a_rs, a_cs, mci, kci, Acbuf);
+                if (!(alpha == TC(1))) {                      // fold alpha into A panel (operand precision)
                     const std::size_t na = packed_A_size(mci, kci, MR);
-                    for (std::size_t t = 0; t < na; ++t) Acbuf[t] = alpha * Acbuf[t];
+                    for (std::size_t t = 0; t < na; ++t)
+                        Acbuf[t] = static_cast<TAB>(alpha * static_cast<TC>(Acbuf[t]));
                 }
 
                 const std::size_t mpanels = (mci + MR - 1) / MR;
-                T* Cmacro = C + static_cast<std::ptrdiff_t>(ic) * static_cast<std::ptrdiff_t>(ldc)
-                              + static_cast<std::ptrdiff_t>(jc);
+                TC* Cmacro = C + static_cast<std::ptrdiff_t>(ic) * static_cast<std::ptrdiff_t>(ldc)
+                               + static_cast<std::ptrdiff_t>(jc);
                 for (std::size_t jr = 0; jr < npanels; ++jr) {
                     const std::size_t nr_eff = std::min(NR, nci - jr * NR);
-                    const T* Bpanel = Bc.data() + jr * (NR * kci);
+                    const TAB* Bpanel = Bc.data() + jr * (NR * kci);
                     for (std::size_t ir = 0; ir < mpanels; ++ir) {
                         const std::size_t mr_eff = std::min(MR, mci - ir * MR);
-                        const T* Apanel = Acbuf + ir * (MR * kci);
-                        T* Cblock = Cmacro + (ir * MR) * ldc + jr * NR;
+                        const TAB* Apanel = Acbuf + ir * (MR * kci);
+                        TC* Cblock = Cmacro + (ir * MR) * ldc + jr * NR;
                         if (mr_eff == MR && nr_eff == NR) {
-                            gemm_microkernel<T, MR, NR>(kci, Apanel, Bpanel, Cblock, ldc);
+                            gemm_microkernel<TC, TAB, MR, NR>(kci, Apanel, Bpanel, Cblock, ldc);
                         } else {
                             // Edge: accumulate through a zeroed full mr x nr tile so
                             // the micro-kernel's full-tile load/store stays in bounds.
-                            T tile[MR * NR];
-                            for (std::size_t t = 0; t < MR * NR; ++t) tile[t] = T(0);
+                            TC tile[MR * NR];
+                            for (std::size_t t = 0; t < MR * NR; ++t) tile[t] = TC(0);
                             for (std::size_t i = 0; i < mr_eff; ++i)
                                 for (std::size_t j = 0; j < nr_eff; ++j)
                                     tile[i * NR + j] = Cblock[i * ldc + j];
-                            gemm_microkernel<T, MR, NR>(kci, Apanel, Bpanel, tile, NR);
+                            gemm_microkernel<TC, TAB, MR, NR>(kci, Apanel, Bpanel, tile, NR);
                             for (std::size_t i = 0; i < mr_eff; ++i)
                                 for (std::size_t j = 0; j < nr_eff; ++j)
                                     Cblock[i * ldc + j] = tile[i * NR + j];
@@ -171,7 +177,7 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                 const unsigned team = static_cast<unsigned>(
                     std::min<std::size_t>(nthreads, ic_starts.size()));
                 auto worker = [&](unsigned tid) {
-                    packed_buffer<T> Aloc(packed_A_size(mc_max, kc_max, MR));
+                    packed_buffer<TAB> Aloc(packed_A_size(mc_max, kc_max, MR));
                     for (std::size_t b = tid; b < ic_starts.size(); b += team)
                         do_ic_block(ic_starts[b], Aloc.data());
                 };
