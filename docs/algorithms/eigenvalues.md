@@ -9,11 +9,17 @@ iterative and sparse eigensolvers land.
 
 | Function | Matrix | Output | Backend |
 |---|---|---|---|
-| `eigenvalue(A)` | general (non-symmetric) | eigenvalues only, `dense_vector<complex>` | pure C++ Francis QR |
-| `eigen(A)` | general (non-symmetric) | eigenvalues **and** right eigenvectors (`complex`) | C++ QR + inverse iteration |
+| `eigenvalue(A)` | general (non-symmetric) | eigenvalues only, `dense_vector<complex>` | LAPACK `geev` if available, else C++ Francis QR |
+| `eigen(A)` | general (non-symmetric) | eigenvalues **and** right eigenvectors (`complex`) | LAPACK `geev` if available, else C++ QR + inverse iteration |
 | `eigenvalue_symmetric(A)` | symmetric | eigenvalues, ascending | LAPACK `syev` if available, else C++ |
 | `eigenvalue_symmetric_generic(A)` | symmetric | eigenvalues, ascending | pure C++ |
 | `eigen_symmetric(A)` | symmetric | eigenvalues **and** eigenvectors | pure C++ |
+
+The LAPACK `geev` fast path for the general problem engages when built with
+`-DMTL5_WITH_LAPACK=ON` and the matrix is a **column-major** `dense2D<float/double>`
+(mirroring the symmetric `syev` dispatch). Row-major matrices and custom number
+types use the in-house path, which is always available and numerically identical
+up to sign/phase conventions.
 
 All routines take an optional `tol` and `max_iter`; the pure-C++ paths also work
 with custom number types (posits, LNS, ...) since they do not depend on LAPACK.
