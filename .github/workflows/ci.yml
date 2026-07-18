@@ -161,6 +161,59 @@ jobs:
         if: runner.os == 'Windows'
         run: ctest --test-dir build -C Release --output-on-failure
 
+  # -- LAPACK/BLAS-enabled build: exercises the geev/syev dispatch -----
+  # Linux GCC + Clang with -DMTL5_WITH_LAPACK=ON so the external-library
+  # dispatch paths (general geev, symmetric syev) are compiled and run; the
+  # default matrix above builds without LAPACK and takes the in-house paths.
+  lapack:
+    name: Linux x64 LAPACK (${{ matrix.cxx }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc: gcc-13
+            cxx: g++-13
+          - cc: clang-18
+            cxx: clang++-18
+
+    # Same trusted-run gate as the build job: forked PRs skip sccache so they
+    # cannot poison the shared GHA cache.
+    env:
+      SCCACHE_LAUNCHER: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'sccache' || '' }}
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up sccache
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Install LAPACK/BLAS
+        run: sudo apt-get update && sudo apt-get install -y liblapack-dev libopenblas-dev
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DMTL5_WITH_LAPACK=ON
+          -DMTL5_WITH_BLAS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   # ── Tier 2: Regression tests on Linux (~10 min) ─────────────────────
   # Runs only on non-draft PRs, after Tier 1 passes.
   # Exercises dense, sparse, and iterative solvers at 100–50K DOF.
