@@ -58,9 +58,9 @@ computed `lambda_k`. For symmetric matrices and for general matrices whose
 complex-conjugate pairs deflate cleanly in the QR iteration, results are
 accurate to near machine precision. Strongly non-normal matrices whose complex
 eigenvalues require a **double-shift (Francis)** step are not yet resolved by the
-current single-shift `eigenvalue` path and are correspondingly inaccurate; a
-LAPACK `geev` acceleration and/or a double-shift QR improvement are tracked
-separately for the general eigenproblem.
+current single-shift `eigenvalue` path and are correspondingly inaccurate. A
+double-shift QR fix and a LAPACK `geev` acceleration are tracked separately for
+the general eigenproblem.
 
 ## Symmetric problems
 

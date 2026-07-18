@@ -237,8 +237,8 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 /// recovers the eigenvector of the true eigenvalue nearest each computed
 /// lambda_k. Strongly non-normal matrices whose complex eigenvalues require a
 /// double-shift (Francis) QR step are not yet resolved by the single-shift
-/// `eigenvalue` path and are correspondingly inaccurate here (tracked with the
-/// general-eigenproblem LAPACK/double-shift work).
+/// `eigenvalue` path and are correspondingly inaccurate here (tracked in the
+/// Francis double-shift issue #209 / general-eigenproblem LAPACK work #204).
 template <Matrix M>
 auto eigen(const M& A, typename M::value_type tol = 1e-10,
            typename M::size_type max_iter = 0) {
