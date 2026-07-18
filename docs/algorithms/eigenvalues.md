@@ -54,13 +54,10 @@ is exactly the regime inverse iteration exploits.
 
 `eigen`'s accuracy is bounded by the eigenvalues that `eigenvalue` produces:
 inverse iteration recovers the eigenvector of the true eigenvalue nearest each
-computed `lambda_k`. For symmetric matrices and for general matrices whose
-complex-conjugate pairs deflate cleanly in the QR iteration, results are
-accurate to near machine precision. Strongly non-normal matrices whose complex
-eigenvalues require a **double-shift (Francis)** step are not yet resolved by the
-current single-shift `eigenvalue` path and are correspondingly inaccurate. A
-double-shift QR fix and a LAPACK `geev` acceleration are tracked separately for
-the general eigenproblem.
+computed `lambda_k`. `eigenvalue` uses a **Francis double-shift** QR, so complex
+spectra of strongly non-normal matrices (e.g. companion / Forsythe matrices) are
+resolved accurately, and the eigenvectors follow to near machine precision. A
+LAPACK `geev` acceleration for the general eigenproblem is tracked separately.
 
 ## Symmetric problems
 

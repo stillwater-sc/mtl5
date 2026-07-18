@@ -5,6 +5,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/eigenvalue.hpp>
 #include <mtl/generators/frank.hpp>
+#include <mtl/generators/forsythe.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -210,6 +211,20 @@ TEST_CASE("General eigen: partial multiplicity (2,2,5)", "[operation][eigen]") {
         dot += std::conj(V(i, two_cols[0])) * V(i, two_cols[1]);
     // Independent (here orthogonalized) -> inner product well below 1.
     REQUIRE(std::abs(dot) < 1e-6);
+}
+
+TEST_CASE("General eigen: Forsythe eigenpairs (strongly non-normal)", "[operation][eigen][generator]") {
+    // Forsythe is a companion matrix with a fully complex spectrum on a circle.
+    // Before the Francis double-shift fix (#209) eigenvalue() stalled and these
+    // residuals were O(1); now the eigenvectors are recovered to tolerance.
+    for (std::size_t n : {5u, 6u}) {
+        auto F = generators::forsythe<double>(n, 0.5, 3.0);
+        auto [eigs, V] = eigen(F);
+        REQUIRE(eigs.size() == n);
+        REQUIRE(max_eigen_residual(F, eigs, V) < 1e-8);
+        for (std::size_t k = 0; k < n; ++k)
+            REQUIRE_THAT(col_norm(V, k), Catch::Matchers::WithinAbs(1.0, 1e-10));
+    }
 }
 
 TEST_CASE("General eigen: eigenvalues match eigenvalue()", "[operation][eigen]") {
