@@ -26,9 +26,12 @@ promoted to its own issue (#209).
 ### General eigenvectors + `eigen` API (#203 → PR #208, merged)
 `mtl::eigen(A)` returns eigenvalues **and right eigenvectors** as a
 structured-bindable `{ eigenvalues, eigenvectors }` (complex), mirroring
-`eigen_symmetric`. Eigenvalues come from the general QR path; each eigenvector is
-recovered by **inverse iteration** on `A - lambda_k*I` (partial-pivot complex LU
-with a pivot floor — the near-singular regime inverse iteration exploits).
+`eigen_symmetric`. In the in-house path, eigenvalues come from the general QR
+path and each eigenvector is recovered by **inverse iteration** on
+`A - lambda_k*I` (partial-pivot complex LU with a pivot floor — the near-singular
+regime inverse iteration exploits). When LAPACK is available and the type
+qualifies, `eigen` instead dispatches to `geev` (added in #204), which returns the
+eigenvectors directly.
 
 - **CodeRabbit finding (Major), fixed and verified:** the first cut used an
   identical seed and factorization for every equal eigenvalue, so `eigen(I)`
