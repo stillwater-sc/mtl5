@@ -120,6 +120,38 @@ auto g = mtl::itl::arnoldi(A, v0, 4, mtl::itl::eigen_which::largest_magnitude);
 ```
 
 These are single-shot (non-restarted) builds with full reorthogonalization —
-robust and simple. Implicit/thick restarting and shift-invert for interior
-eigenvalues (which turns "smallest" into "largest of `(A - sigma I)^{-1}`" using
-the sparse direct solvers) are planned follow-ups for the sparse eigensolver.
+robust and simple. Implicit/thick restarting is a planned follow-up.
+
+## Sparse eigensolver (shift-invert)
+
+For sparse matrices (`compressed2D`), `mtl::sparse` builds on the iterative
+solvers above:
+
+| Function | Returns |
+|---|---|
+| `sparse::sparse_eigs(A, k, which)` | k eigenpairs by Arnoldi applied directly to the sparse operator (best for largest-magnitude) |
+| `sparse::sparse_eigs_shift_invert(A, sigma, k)` | k eigenpairs **nearest `sigma`** (interior / smallest) |
+
+Largest-magnitude eigenvalues come from running Arnoldi directly on `A` (a sparse
+matrix is already a `LinearOperator`). Interior or smallest eigenvalues use
+**shift-invert**: `(A - sigma*I)` is factored once with the sparse LU direct
+solver, and its inverse is applied inside Arnoldi. An eigenpair `(theta, y)` of
+`(A - sigma*I)^{-1}` maps to `(lambda, y)` of `A` with `lambda = sigma + 1/theta`
+and the *same* eigenvector, so "nearest `sigma`" becomes "largest `|theta|`" —
+which Arnoldi converges to quickly.
+
+```cpp
+#include <mtl/sparse/eigen/shift_invert.hpp>
+
+// The 4 eigenvalues of A closest to sigma = 2.5, with eigenvectors.
+auto near = mtl::sparse::sparse_eigs_shift_invert(A, 2.5, 4);
+// near.values (complex, = sigma + 1/theta), near.vectors, near.converged
+
+// The reusable operator, if you want to drive the Krylov solver yourself:
+mtl::sparse::shift_invert_operator<double> op(A, 2.5);   // factor once
+auto y = op * x;                                         // apply (A - 2.5 I)^{-1}
+```
+
+The factorization is computed once and applied on every Arnoldi step; tiny
+pivots are perturbed so a shift landing (near-)exactly on an eigenvalue stays
+solvable. Generalized problems `A x = lambda B x` are a future extension.
