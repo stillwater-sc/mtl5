@@ -1,9 +1,13 @@
 # Eigenvalues and Eigenvectors
 
-MTL5 provides a dense eigen suite in namespace `mtl` (headers under
-`include/mtl/operation/`). This page covers the routines available today and how
-to choose between them. It is the seed of a fuller guide that will grow as the
-iterative and sparse eigensolvers land.
+MTL5 provides a **dense** eigen suite in namespace `mtl` (headers under
+`include/mtl/operation/`) and a set of **matrix-free iterative** eigensolvers in
+namespace `mtl::itl` (headers under `include/mtl/itl/eigen/`). This page covers
+the routines available today and how to choose between them.
+
+Use the dense suite for small/medium matrices where you want the whole spectrum;
+use the iterative solvers for large or matrix-free operators where you want a few
+eigenpairs and can only apply `A * x`.
 
 ## Which routine do I call?
 
@@ -78,3 +82,44 @@ matrix is a column-major `dense2D<float/double>`.
 auto s = mtl::eigenvalue_symmetric(S);       // ascending eigenvalues
 auto [eigs, Q] = mtl::eigen_symmetric(S);     // A = Q * diag(eigs) * Q^T
 ```
+
+## Iterative (matrix-free) eigensolvers
+
+For large matrices where a full dense factorization is infeasible, use the
+Krylov eigensolvers in `mtl::itl`. They operate through the `LinearOperator`
+concept — only `A * x` is required — so they apply to `dense2D`, `compressed2D`,
+and user-supplied matrix-free operators alike.
+
+| Function | Operator | Returns |
+|---|---|---|
+| `itl::power_iteration(A, v0)` | any (real dominant) | dominant eigenpair (`eigenpair<T>`) |
+| `itl::lanczos(A, v0, k, which)` | **symmetric** | k extremal Ritz pairs (`ritz_pairs<T>`) |
+| `itl::arnoldi(A, v0, k, which)` | general | k Ritz pairs (`ritz_pairs<complex<T>>`) |
+
+`which` is an `itl::eigen_which` selector — `largest_magnitude`,
+`smallest_magnitude`, `largest_algebraic`, `smallest_algebraic`. The optional
+`subspace` argument sets the Krylov dimension (default: a modest multiple of `k`,
+capped at `n`); a larger subspace converges more eigenpairs to tighter residuals.
+Each solver projects onto its Krylov subspace and solves the small projected
+problem (tridiagonal for Lanczos, Hessenberg for Arnoldi) with the dense
+routines above — so accuracy of the projected solve rides on the same code.
+
+```cpp
+#include <mtl/itl/eigen/eigensolvers.hpp>
+
+// Dominant eigenpair of a symmetric/SPD operator.
+auto p = mtl::itl::power_iteration(A, v0);
+// p.value, p.vector, p.converged
+
+// The 5 largest eigenpairs of a large symmetric operator (matrix-free ok).
+auto r = mtl::itl::lanczos(A, v0, 5, mtl::itl::eigen_which::largest_algebraic);
+// r.values (dense_vector), r.vectors (columns), r.converged
+
+// A few eigenpairs of a nonsymmetric operator (complex Ritz values).
+auto g = mtl::itl::arnoldi(A, v0, 4, mtl::itl::eigen_which::largest_magnitude);
+```
+
+These are single-shot (non-restarted) builds with full reorthogonalization —
+robust and simple. Implicit/thick restarting and shift-invert for interior
+eigenvalues (which turns "smallest" into "largest of `(A - sigma I)^{-1}`" using
+the sparse direct solvers) are planned follow-ups for the sparse eigensolver.

@@ -30,6 +30,9 @@
 #include <mtl/itl/pc/ssor.hpp>
 #include <mtl/itl/pc/solver.hpp>
 
+// Iterative (Krylov) eigensolvers
+#include <mtl/itl/eigen/eigensolvers.hpp>
+
 // Smoothers
 #include <mtl/itl/smoother/gauss_seidel.hpp>
 #include <mtl/itl/smoother/jacobi.hpp>
