@@ -1,11 +1,12 @@
 #pragma once
 // MTL5 -- General eigenvalue computation via QR algorithm on Hessenberg form
-// Reduce to upper Hessenberg, then apply implicit QR with single/double shifts.
+// Reduce to upper Hessenberg, then apply the Francis implicit double-shift QR.
 #include <cmath>
 #include <complex>
 #include <algorithm>
 #include <cassert>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -72,8 +73,11 @@ void eig_lu_solve(const std::vector<Complex>& M, const std::vector<std::size_t>&
 
 } // namespace detail
 
-/// Compute eigenvalues of a general (non-symmetric) square matrix.
-/// Returns eigenvalues as dense_vector of complex values.
+/// Compute eigenvalues of a general (non-symmetric) square matrix via the
+/// Francis implicit double-shift QR algorithm on the upper Hessenberg form.
+/// Returns eigenvalues as a dense_vector of complex values (real and
+/// complex-conjugate pairs read from the 1x1/2x2 blocks of the real Schur form).
+/// Throws std::runtime_error if the QR iteration fails to converge.
 template <Matrix M>
 auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
                 typename M::size_type max_iter = 0) {
@@ -85,139 +89,167 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     const size_type n = A.num_rows();
     assert(n == A.num_cols());
 
-    if (max_iter == 0) max_iter = 30 * n * n;
-
-    // Reduce to upper Hessenberg form
-    mat::dense2D<value_type> H = hessenberg(A);
-
     vec::dense_vector<complex_type> eigs(n);
+    if (n == 0) return eigs;
 
-    // Francis QR iteration with single/double shifts
-    size_type nn = n;
+    // Reduce to upper Hessenberg form.
+    mat::dense2D<value_type> H = hessenberg(A);
+    if (n == 1) { eigs(0) = complex_type(H(0, 0)); return eigs; }
 
-    for (size_type iter = 0; iter < max_iter && nn > 0; ++iter) {
-        // Check for convergence of last subdiagonal element
-        if (nn == 1) {
-            eigs(nn - 1) = complex_type(H(0, 0));
-            nn = 0;
-            break;
-        }
+    // Francis implicit double-shift QR on the real Hessenberg form (EISPACK
+    // hqr). Converges to real Schur form and reads 1x1 (real) and 2x2 (complex
+    // conjugate) diagonal blocks. Unlike a single real shift, the double shift
+    // uses the trailing 2x2 block's complex-conjugate pair, so complex spectra
+    // of strongly non-normal matrices are handled without stalling. Exceptional
+    // shifts break stagnation; non-convergence is reported, never returned as a
+    // silently-wrong diagonal read.
+    using idx = long long;
+    // Per-block iteration cap before an exceptional shift / bailout.
+    const int max_its = (max_iter > 0) ? static_cast<int>(max_iter) : 100;
 
-        // Deflation: check if H(nn-1, nn-2) is small enough
-        value_type threshold = tol * (abs(H(nn - 2, nn - 2)) + abs(H(nn - 1, nn - 1)));
-        if (threshold == value_type(0)) threshold = tol;
+    // sign(a,b): magnitude of a with the sign of b.
+    auto sign = [](value_type a, value_type b) {
+        return (b >= value_type(0)) ? abs(a) : -abs(a);
+    };
 
-        if (abs(H(nn - 1, nn - 2)) <= threshold) {
-            // Single eigenvalue converged
-            eigs(nn - 1) = complex_type(H(nn - 1, nn - 1));
-            nn--;
-            continue;
-        }
+    std::vector<value_type> wr(n), wi(n);
 
-        if (nn == 2) {
-            // Extract eigenvalues of 2x2 block
-            value_type a = H(0, 0), b = H(0, 1);
-            value_type c = H(1, 0), d = H(1, 1);
-            value_type tr = a + d;
-            value_type det = a * d - b * c;
-            value_type disc = tr * tr - value_type(4) * det;
-            if (disc >= value_type(0)) {
-                value_type sq = sqrt(disc);
-                eigs(0) = complex_type((tr + sq) / value_type(2));
-                eigs(1) = complex_type((tr - sq) / value_type(2));
+    // Norm of the Hessenberg matrix (fallback scale for the deflation test).
+    value_type anorm = value_type(0);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = (i >= 1 ? i - 1 : size_type(0)); j < n; ++j)
+            anorm += abs(H(i, j));
+
+    idx nn = static_cast<idx>(n) - 1;  // bottom index of the active block
+    value_type t = value_type(0);      // accumulated exceptional shift
+
+    while (nn >= 0) {
+        int its = 0;
+        idx l;
+        do {
+            // Look for a single small subdiagonal element.
+            for (l = nn; l >= 1; --l) {
+                value_type s = abs(H(l - 1, l - 1)) + abs(H(l, l));
+                if (s == value_type(0)) s = anorm;
+                if (abs(H(l, l - 1)) <= tol * s) { H(l, l - 1) = value_type(0); break; }
+            }
+            if (l < 0) l = 0;
+
+            value_type x = H(nn, nn);
+            if (l == nn) {
+                // One real root.
+                wr[static_cast<size_type>(nn)] = x + t;
+                wi[static_cast<size_type>(nn)] = value_type(0);
+                nn -= 1;
             } else {
-                value_type sq = sqrt(-disc);
-                eigs(0) = complex_type(tr / value_type(2), sq / value_type(2));
-                eigs(1) = complex_type(tr / value_type(2), -sq / value_type(2));
-            }
-            nn = 0;
-            break;
-        }
-
-        // Also check for 2x2 block deflation at bottom
-        if (nn >= 3) {
-            value_type thr2 = tol * (abs(H(nn - 3, nn - 3)) + abs(H(nn - 2, nn - 2)));
-            if (thr2 == value_type(0)) thr2 = tol;
-            if (abs(H(nn - 2, nn - 3)) <= thr2) {
-                // 2x2 block at bottom has decoupled
-                value_type a = H(nn - 2, nn - 2), b = H(nn - 2, nn - 1);
-                value_type c = H(nn - 1, nn - 2), d = H(nn - 1, nn - 1);
-                value_type tr = a + d;
-                value_type det = a * d - b * c;
-                value_type disc = tr * tr - value_type(4) * det;
-                if (disc >= value_type(0)) {
-                    value_type sq = sqrt(disc);
-                    eigs(nn - 2) = complex_type((tr + sq) / value_type(2));
-                    eigs(nn - 1) = complex_type((tr - sq) / value_type(2));
+                value_type y = H(nn - 1, nn - 1);
+                value_type w = H(nn, nn - 1) * H(nn - 1, nn);
+                if (l == nn - 1) {
+                    // Two roots: eigenvalues of the trailing 2x2 block.
+                    value_type p = value_type(0.5) * (y - x);
+                    value_type q = p * p + w;
+                    value_type z = sqrt(abs(q));
+                    x += t;
+                    if (q >= value_type(0)) {
+                        z = p + sign(z, p);
+                        wr[static_cast<size_type>(nn - 1)] = wr[static_cast<size_type>(nn)] = x + z;
+                        if (z != value_type(0)) wr[static_cast<size_type>(nn)] = x - w / z;
+                        wi[static_cast<size_type>(nn - 1)] = wi[static_cast<size_type>(nn)] = value_type(0);
+                    } else {
+                        wr[static_cast<size_type>(nn - 1)] = wr[static_cast<size_type>(nn)] = x + p;
+                        wi[static_cast<size_type>(nn)]     = z;
+                        wi[static_cast<size_type>(nn - 1)] = -z;
+                    }
+                    nn -= 2;
                 } else {
-                    value_type sq = sqrt(-disc);
-                    eigs(nn - 2) = complex_type(tr / value_type(2), sq / value_type(2));
-                    eigs(nn - 1) = complex_type(tr / value_type(2), -sq / value_type(2));
+                    // No root yet: perform a Francis double-shift QR sweep.
+                    if (its == max_its)
+                        throw std::runtime_error(
+                            "mtl::eigenvalue: QR iteration failed to converge");
+                    value_type p = value_type(0), q = value_type(0), r = value_type(0);
+                    value_type z = value_type(0);
+                    if (its == 10 || its == 20) {
+                        // Exceptional (ad-hoc Wilkinson) shift to break stagnation.
+                        t += x;
+                        for (idx i = 0; i <= nn; ++i) H(i, i) -= x;
+                        value_type s = abs(H(nn, nn - 1)) + abs(H(nn - 1, nn - 2));
+                        y = x = value_type(0.75) * s;
+                        w = value_type(-0.4375) * s * s;
+                    }
+                    ++its;
+
+                    // Look for two consecutive small subdiagonal elements.
+                    idx m;
+                    for (m = nn - 2; m >= l; --m) {
+                        z = H(m, m);
+                        r = x - z;
+                        value_type s = y - z;
+                        p = (r * s - w) / H(m + 1, m) + H(m, m + 1);
+                        q = H(m + 1, m + 1) - z - r - s;
+                        r = H(m + 2, m + 1);
+                        s = abs(p) + abs(q) + abs(r);
+                        p /= s; q /= s; r /= s;
+                        if (m == l) break;
+                        value_type u = abs(H(m, m - 1)) * (abs(q) + abs(r));
+                        value_type v = abs(p) * (abs(H(m - 1, m - 1)) + abs(z) + abs(H(m + 1, m + 1)));
+                        if (u <= tol * v) break;
+                    }
+
+                    for (idx i = m + 2; i <= nn; ++i) {
+                        H(i, i - 2) = value_type(0);
+                        if (i != m + 2) H(i, i - 3) = value_type(0);
+                    }
+
+                    // Chase the bulge with Householder(3)/(2) transforms.
+                    for (idx k = m; k <= nn - 1; ++k) {
+                        if (k != m) {
+                            p = H(k, k - 1);
+                            q = H(k + 1, k - 1);
+                            r = value_type(0);
+                            if (k != nn - 1) r = H(k + 2, k - 1);
+                            x = abs(p) + abs(q) + abs(r);
+                            if (x != value_type(0)) { p /= x; q /= x; r /= x; }
+                        }
+                        value_type s = sign(sqrt(p * p + q * q + r * r), p);
+                        if (s != value_type(0)) {
+                            if (k == m) {
+                                if (l != m) H(k, k - 1) = -H(k, k - 1);
+                            } else {
+                                H(k, k - 1) = -s * x;
+                            }
+                            p += s;
+                            x = p / s; y = q / s; z = r / s;
+                            q /= p; r /= p;
+                            // Row transformation.
+                            for (idx j = k; j <= nn; ++j) {
+                                p = H(k, j) + q * H(k + 1, j);
+                                if (k != nn - 1) {
+                                    p += r * H(k + 2, j);
+                                    H(k + 2, j) -= p * z;
+                                }
+                                H(k + 1, j) -= p * y;
+                                H(k, j)     -= p * x;
+                            }
+                            idx mmin = (nn < k + 3) ? nn : k + 3;
+                            // Column transformation.
+                            for (idx i = l; i <= mmin; ++i) {
+                                p = x * H(i, k) + y * H(i, k + 1);
+                                if (k != nn - 1) {
+                                    p += z * H(i, k + 2);
+                                    H(i, k + 2) -= p * r;
+                                }
+                                H(i, k + 1) -= p * q;
+                                H(i, k)     -= p;
+                            }
+                        }
+                    }
                 }
-                nn -= 2;
-                continue;
             }
-        }
-
-        // Single-shift QR step using Wilkinson shift
-        value_type a = H(nn - 2, nn - 2), b = H(nn - 2, nn - 1);
-        value_type c = H(nn - 1, nn - 2), d = H(nn - 1, nn - 1);
-        value_type tr = a + d;
-        value_type det = a * d - b * c;
-        value_type disc = tr * tr - value_type(4) * det;
-
-        value_type shift;
-        if (disc >= value_type(0)) {
-            // Real eigenvalues -- pick shift closest to H(nn-1,nn-1)
-            value_type sq = sqrt(disc);
-            value_type e1 = (tr + sq) / value_type(2);
-            value_type e2 = (tr - sq) / value_type(2);
-            shift = (abs(e1 - d) < abs(e2 - d)) ? e1 : e2;
-        } else {
-            // Complex eigenvalues -- use d as shift
-            shift = d;
-        }
-
-        // Apply shifted QR step via Givens rotations
-        value_type x = H(0, 0) - shift;
-        value_type z = H(1, 0);
-
-        for (size_type k = 0; k + 1 < nn; ++k) {
-            // Compute Givens rotation
-            value_type r = sqrt(x * x + z * z);
-            if (r == value_type(0)) { r = tol; }
-            value_type cs = x / r;
-            value_type sn = z / r;
-
-            // Apply rotation from left: rows k, k+1
-            for (size_type j = 0; j < nn; ++j) {
-                value_type t1 = H(k, j);
-                value_type t2 = H(k + 1, j);
-                H(k, j)     = cs * t1 + sn * t2;
-                H(k + 1, j) = -sn * t1 + cs * t2;
-            }
-
-            // Apply rotation from right: cols k, k+1
-            size_type limit = std::min(k + 3, nn);
-            for (size_type i = 0; i < limit; ++i) {
-                value_type t1 = H(i, k);
-                value_type t2 = H(i, k + 1);
-                H(i, k)     = cs * t1 + sn * t2;
-                H(i, k + 1) = -sn * t1 + cs * t2;
-            }
-
-            // Update bulge chase
-            if (k + 2 < nn) {
-                x = H(k + 1, k);
-                z = H(k + 2, k);
-            }
-        }
+        } while (l < nn - 1);
     }
 
-    // Any remaining eigenvalues on the diagonal
-    for (size_type i = 0; i < nn; ++i)
-        eigs(i) = complex_type(H(i, i));
-
+    for (size_type i = 0; i < n; ++i)
+        eigs(i) = complex_type(wr[i], wi[i]);
     return eigs;
 }
 
@@ -235,10 +267,8 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 ///
 /// Accuracy is bounded by the eigenvalues from `eigenvalue`: inverse iteration
 /// recovers the eigenvector of the true eigenvalue nearest each computed
-/// lambda_k. Strongly non-normal matrices whose complex eigenvalues require a
-/// double-shift (Francis) QR step are not yet resolved by the single-shift
-/// `eigenvalue` path and are correspondingly inaccurate here (tracked in the
-/// Francis double-shift issue #209 / general-eigenproblem LAPACK work #204).
+/// lambda_k. Since `eigenvalue` now uses a Francis double-shift QR, complex
+/// spectra of strongly non-normal matrices are resolved accurately here too.
 template <Matrix M>
 auto eigen(const M& A, typename M::value_type tol = 1e-10,
            typename M::size_type max_iter = 0) {

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <vector>
 
 using namespace mtl;
@@ -233,25 +234,56 @@ TEST_CASE("General eigenvalues of Frank matrix", "[operation][eigenvalue][genera
     REQUIRE_THAT(eig_sum, Catch::Matchers::WithinAbs(trace, 1e-8));
 }
 
-TEST_CASE("General eigenvalues of Forsythe matrix", "[operation][eigenvalue][generator]") {
-    // Forsythe matrix with shift lambda=3 and corner perturbation alpha=0.5
-    // Eigenvalues are lambda + alpha^{1/n} * exp(2*pi*i*k/n) for k=0..n-1
-    constexpr std::size_t n = 5;
-    auto F = generators::forsythe<double>(n, 0.5, 3.0);
+namespace {
 
-    auto eigs = eigenvalue(F);
-    REQUIRE(eigs.size() == n);
+// Greedy multiset comparison of two complex spectra within `tol`.
+// Returns true iff every expected eigenvalue is matched to a distinct computed
+// one. Guards against the single-shift QR regression where all eigenvalues
+// collapsed to the shift value while trace/sum-based checks still passed.
+bool spectra_match(std::vector<std::complex<double>> computed,
+                   std::vector<std::complex<double>> expected, double tol) {
+    if (computed.size() != expected.size()) return false;
+    for (const auto& e : expected) {
+        std::size_t best = computed.size();
+        double bestd = tol;
+        for (std::size_t j = 0; j < computed.size(); ++j) {
+            double d = std::abs(computed[j] - e);
+            if (d <= bestd) { bestd = d; best = j; }
+        }
+        if (best == computed.size()) return false;
+        computed.erase(computed.begin() + best);
+    }
+    return true;
+}
 
-    // Sum of eigenvalue real parts = trace = n * lambda = 15
-    double trace_real = 0.0;
-    for (std::size_t i = 0; i < n; ++i)
-        trace_real += eigs(i).real();
-    REQUIRE_THAT(trace_real, Catch::Matchers::WithinAbs(15.0, 1e-6));
+// Closed-form Forsythe spectrum: lambda + alpha^{1/n} * exp(2*pi*i*k/n).
+std::vector<std::complex<double>> forsythe_spectrum(std::size_t n, double alpha, double lambda) {
+    std::vector<std::complex<double>> s(n);
+    const double r = std::pow(alpha, 1.0 / static_cast<double>(n));
+    for (std::size_t k = 0; k < n; ++k) {
+        double th = 2.0 * std::numbers::pi * static_cast<double>(k) / static_cast<double>(n);
+        s[k] = std::complex<double>(lambda + r * std::cos(th), r * std::sin(th));
+    }
+    return s;
+}
 
-    // All eigenvalues should be centered near lambda=3
-    for (std::size_t i = 0; i < n; ++i) {
-        double dist_from_lambda = std::abs(eigs(i) - std::complex<double>(3.0, 0.0));
-        // Should be approximately alpha^{1/n} = 0.5^{1/5} ~= 0.87
-        REQUIRE(dist_from_lambda < 1.0);
+} // namespace
+
+TEST_CASE("General eigenvalues of Forsythe matrix (full spectrum)", "[operation][eigenvalue][generator]") {
+    // Forsythe is a strongly non-normal companion matrix whose eigenvalues lie
+    // on a circle of radius alpha^{1/n} around lambda. This is the regression
+    // for the Francis double-shift fix (#209): the old single-shift QR returned
+    // all eigenvalues equal to the shift (e.g. {3,3,3,3,3}), which slipped the
+    // previous trace/distance-only checks. Compare the whole spectrum.
+    for (std::size_t n : {4u, 5u, 6u, 8u}) {
+        auto F = generators::forsythe<double>(n, 0.5, 3.0);
+        auto eigs = eigenvalue(F);
+        REQUIRE(eigs.size() == n);
+
+        std::vector<std::complex<double>> computed(n);
+        for (std::size_t i = 0; i < n; ++i) computed[i] = eigs(i);
+
+        auto expected = forsythe_spectrum(n, 0.5, 3.0);
+        REQUIRE(spectra_match(computed, expected, 1e-8));
     }
 }
