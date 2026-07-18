@@ -13,10 +13,112 @@
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/hessenberg.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
+#ifdef MTL5_HAS_LAPACK
+#include <mtl/interface/lapack.hpp>
+#endif
 
 namespace mtl {
 
 namespace detail {
+
+#ifdef MTL5_HAS_LAPACK
+/// LAPACK geev on a real float/double dense matrix. Fills `eigs` (size n) with
+/// the eigenvalues; if `V != nullptr`, also fills right eigenvectors (column k
+/// pairs with eigs(k)) into *V, unpacking LAPACK's real/complex-conjugate
+/// column packing into complex columns, unit-normalized with a canonical phase
+/// (largest-magnitude entry real-positive) to match the in-house path.
+template <typename M>
+void lapack_geev(const M& A,
+                 vec::dense_vector<std::complex<typename M::value_type>>& eigs,
+                 mat::dense2D<std::complex<typename M::value_type>>* V) {
+    using value_type   = typename M::value_type;
+    using complex_type = std::complex<value_type>;
+    using size_type    = typename M::size_type;
+    using std::abs;
+    using std::sqrt;
+    const size_type n  = A.num_rows();
+    const int ni = static_cast<int>(n);
+
+    // Column-major working copy (LAPACK is Fortran/column-major); built through
+    // the (i,j) accessor so it is correct regardless of M's own orientation.
+    std::vector<value_type> a(static_cast<std::size_t>(n) * n);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j)
+            a[static_cast<std::size_t>(j) * n + i] = A(i, j);
+
+    std::vector<value_type> wr(n), wi(n);
+    std::vector<value_type> vr;
+    value_type vl_dummy[1] = {value_type(0)};
+    char jobvr = 'N';
+    value_type* vrp = vl_dummy;   // unreferenced when jobvr == 'N'
+    int ldvr = 1;
+    if (V != nullptr) {
+        jobvr = 'V';
+        vr.resize(static_cast<std::size_t>(n) * n);
+        vrp = vr.data();
+        ldvr = ni;
+    }
+
+    // Workspace query, then compute.
+    value_type wq = value_type(0);
+    interface::lapack::geev('N', jobvr, ni, a.data(), ni, wr.data(), wi.data(),
+                            vl_dummy, 1, vrp, ldvr, &wq, -1);
+    int lwork = static_cast<int>(wq);
+    if (lwork < 4 * ni) lwork = 4 * ni;   // LAPACK minimum for jobvr='V'
+    std::vector<value_type> work(static_cast<std::size_t>(lwork));
+    int info = interface::lapack::geev('N', jobvr, ni, a.data(), ni,
+                                       wr.data(), wi.data(),
+                                       vl_dummy, 1, vrp, ldvr,
+                                       work.data(), lwork);
+    if (info != 0)
+        throw std::runtime_error("mtl::eigenvalue: LAPACK geev failed to converge");
+
+    for (size_type i = 0; i < n; ++i)
+        eigs(i) = complex_type(wr[i], wi[i]);
+
+    if (V == nullptr) return;
+
+    // Unpack right eigenvectors from the column-major vr buffer. A real
+    // eigenvalue j uses column j; a complex-conjugate pair (j, j+1) with
+    // wi[j] > 0 uses vr[:,j] +/- i*vr[:,j+1].
+    auto vrc = [&](size_type c, size_type row) -> value_type {
+        return vr[static_cast<std::size_t>(c) * n + row];
+    };
+    for (size_type j = 0; j < n; ) {
+        if (wi[j] == value_type(0)) {
+            for (size_type i = 0; i < n; ++i)
+                (*V)(i, j) = complex_type(vrc(j, i), value_type(0));
+            ++j;
+        } else {
+            for (size_type i = 0; i < n; ++i) {
+                value_type re = vrc(j, i), im = vrc(j + 1, i);
+                (*V)(i, j)     = complex_type(re,  im);
+                (*V)(i, j + 1) = complex_type(re, -im);
+            }
+            j += 2;
+        }
+    }
+    // Unit-normalize and fix a canonical phase, matching the in-house path.
+    for (size_type k = 0; k < n; ++k) {
+        value_type nrm = value_type(0);
+        for (size_type i = 0; i < n; ++i) nrm += std::norm((*V)(i, k));
+        nrm = sqrt(nrm);
+        if (nrm > value_type(0))
+            for (size_type i = 0; i < n; ++i) (*V)(i, k) /= nrm;
+        size_type imax = 0;
+        value_type mmax = value_type(0);
+        for (size_type i = 0; i < n; ++i) {
+            value_type m = abs((*V)(i, k));
+            if (m > mmax) { mmax = m; imax = i; }
+        }
+        if (mmax > value_type(0)) {
+            complex_type phase = (*V)(imax, k) / abs((*V)(imax, k));
+            for (size_type i = 0; i < n; ++i) (*V)(i, k) /= phase;
+        }
+    }
+}
+#endif // MTL5_HAS_LAPACK
 
 /// In-place LU factorization of an n x n complex matrix (row-major, `M[i*n+j]`)
 /// with partial pivoting. Tiny pivots are floored to `pivot_floor` so that a
@@ -78,6 +180,10 @@ void eig_lu_solve(const std::vector<Complex>& M, const std::vector<std::size_t>&
 /// Returns eigenvalues as a dense_vector of complex values (real and
 /// complex-conjugate pairs read from the 1x1/2x2 blocks of the real Schur form).
 /// Throws std::runtime_error if the QR iteration fails to converge.
+///
+/// Dispatches to LAPACK geev when MTL5_HAS_LAPACK is defined and the type
+/// qualifies (column-major dense2D<float/double>); otherwise uses the in-house
+/// path above, which also serves custom number types (posits, LNS, ...).
 template <Matrix M>
 auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
                 typename M::size_type max_iter = 0) {
@@ -91,6 +197,16 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 
     vec::dense_vector<complex_type> eigs(n);
     if (n == 0) return eigs;
+
+#ifdef MTL5_HAS_LAPACK
+    // Accelerate real float/double column-major dense matrices via LAPACK geev
+    // (mirrors the symmetric syev dispatch). Custom number types and other
+    // orientations fall through to the in-house double-shift QR below.
+    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+        detail::lapack_geev(A, eigs, static_cast<mat::dense2D<complex_type>*>(nullptr));
+        return eigs;
+    }
+#endif
 
     // Reduce to upper Hessenberg form.
     mat::dense2D<value_type> H = hessenberg(A);
@@ -269,6 +385,10 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 /// recovers the eigenvector of the true eigenvalue nearest each computed
 /// lambda_k. Since `eigenvalue` now uses a Francis double-shift QR, complex
 /// spectra of strongly non-normal matrices are resolved accurately here too.
+///
+/// Dispatches to LAPACK geev (eigenvalues + right eigenvectors) when
+/// MTL5_HAS_LAPACK is defined and the type qualifies (column-major
+/// dense2D<float/double>); otherwise uses the in-house path above.
 template <Matrix M>
 auto eigen(const M& A, typename M::value_type tol = 1e-10,
            typename M::size_type max_iter = 0) {
@@ -288,6 +408,17 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     if (n == 0)
         return EigenResult{vec::dense_vector<complex_type>(0),
                            mat::dense2D<complex_type>(0, 0)};
+
+#ifdef MTL5_HAS_LAPACK
+    // LAPACK geev computes eigenvalues and right eigenvectors together for real
+    // float/double column-major dense matrices (mirrors the eigenvalue dispatch).
+    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+        vec::dense_vector<complex_type> eigs_l(n);
+        mat::dense2D<complex_type> V_l(n, n);
+        detail::lapack_geev(A, eigs_l, &V_l);
+        return EigenResult{eigs_l, V_l};
+    }
+#endif
 
     // Eigenvalues via the general QR iteration.
     vec::dense_vector<complex_type> eigs = eigenvalue(A, tol, max_iter);

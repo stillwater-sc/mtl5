@@ -44,6 +44,16 @@ void dsyev_(const char* jobz, const char* uplo, const int* n,
             double* A, const int* lda, double* W,
             double* work, const int* lwork, int* info);
 
+// General (non-symmetric) eigenvalue + optional left/right eigenvectors
+void sgeev_(const char* jobvl, const char* jobvr, const int* n,
+            float* A, const int* lda, float* wr, float* wi,
+            float* vl, const int* ldvl, float* vr, const int* ldvr,
+            float* work, const int* lwork, int* info);
+void dgeev_(const char* jobvl, const char* jobvr, const int* n,
+            double* A, const int* lda, double* wr, double* wi,
+            double* vl, const int* ldvl, double* vr, const int* ldvr,
+            double* work, const int* lwork, int* info);
+
 // Solve using LU factorization (after getrf)
 void sgetrs_(const char* trans, const int* n, const int* nrhs,
              const float* A, const int* lda, const int* ipiv,
@@ -156,6 +166,25 @@ inline int syev(char jobz, char uplo, int n, double* A, int lda,
                 double* W, double* work, int lwork) {
     int info = 0;
     dsyev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, &info);
+    return info;
+}
+
+// -- General (non-symmetric) eigenvalue ---------------------------------
+
+inline int geev(char jobvl, char jobvr, int n, float* A, int lda,
+                float* wr, float* wi, float* vl, int ldvl,
+                float* vr, int ldvr, float* work, int lwork) {
+    int info = 0;
+    sgeev_(&jobvl, &jobvr, &n, A, &lda, wr, wi, vl, &ldvl, vr, &ldvr,
+           work, &lwork, &info);
+    return info;
+}
+inline int geev(char jobvl, char jobvr, int n, double* A, int lda,
+                double* wr, double* wi, double* vl, int ldvl,
+                double* vr, int ldvr, double* work, int lwork) {
+    int info = 0;
+    dgeev_(&jobvl, &jobvr, &n, A, &lda, wr, wi, vl, &ldvl, vr, &ldvr,
+           work, &lwork, &info);
     return info;
 }
 
