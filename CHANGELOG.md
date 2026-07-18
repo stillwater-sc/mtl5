@@ -44,14 +44,23 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 #### Tooling / CI
 - `.github/dependabot.yml` for the `github-actions` ecosystem (#64)
 
+#### Eigenvalue/eigenvector solvers (epic #202)
+- **`mtl::eigen`** — general (non-symmetric) eigenvalues **and right eigenvectors**, returned as a structured-bindable `{ eigenvalues, eigenvectors }` (complex), mirroring `eigen_symmetric`. Eigenvalues come from the general QR path; each eigenvector is recovered by **inverse iteration** on `A - lambda_k*I` (partial-pivot complex LU with a pivot floor). Cluster-aware Gram-Schmidt deflation yields an **independent basis for repeated eigenvalues**; eigenvectors are unit-norm with a canonical phase (#203)
+- **LAPACK `geev` dispatch** for the general eigenproblem — `eigenvalue`/`eigen` route to `sgeev_`/`dgeev_` when `MTL5_HAS_LAPACK` is defined and the matrix is a column-major `dense2D<float/double>` (mirrors the symmetric `syev` dispatch); custom number types and other orientations use the in-house path (#204)
+- **Matrix-free iterative eigensolvers** in `mtl::itl` (`include/mtl/itl/eigen/`), operating through the `LinearOperator` concept (`A * x`) so they apply to `dense2D`, `compressed2D`, and user matrix-free operators: `power_iteration` (dominant pair), `lanczos` (symmetric, k extremal Ritz pairs via a tridiagonal projection), `arnoldi` (general, k Ritz pairs via a Hessenberg projection). Each solves the small projected problem with the dense eigensolvers; an `eigen_which` selector picks the wanted end of the spectrum (#205)
+- **Sparse eigensolver with shift-invert** in `mtl::sparse` — `sparse_eigs` (largest-magnitude, Arnoldi directly on the sparse operator), `sparse_eigs_shift_invert` (k eigenpairs nearest `sigma` via `(A - sigma*I)^{-1}` applied inside Arnoldi, mapping `lambda = sigma + 1/theta`), and the reusable `shift_invert_operator` (factor once with sparse LU, apply many; tiny pivots perturbed so a shift on an eigenvalue stays solvable) (#206)
+- **Eigenvalue/eigenvector solver guide** — `docs/algorithms/eigenvalues.md`: a decision guide plus a runnable snippet for every public eigen API across dense/iterative/sparse, the LAPACK dispatch conditions, and the custom-number-type story (#203, #207)
+
 ### Changed
 - **`mtl::dot` / `dot_real` now dispatch to BLAS `?dot`** when types qualify (consistency with `two_norm`); both `dot` and `two_norm` BLAS paths guard the `int` length cast against overflow (#81)
 - **Benchmarks rewritten** to the single-path public-API model; deleted the `Native/Blas/Lapack` policy-tag harness (#81)
 - **CI hardening**: all GitHub Actions pinned to commit SHAs with `persist-credentials: false` (#64); sccache gated to trusted runs to prevent GHA cache poisoning (#74); Dependabot action bumps (#66–#71)
 - Benchmark README: corrected CMake option names (`MTL5_WITH_BLAS/LAPACK`) and added Intel MKL (`BLA_VENDOR=Intel10_64lp`) instructions (#75)
 - `.gitignore`: ignore Claude Code per-user/runtime files (#76)
+- **CI now exercises the LAPACK dispatch paths** — a `lapack` job (Linux GCC + Clang, `-DMTL5_WITH_LAPACK=ON`) builds and runs the external-library `geev`/`syev` paths, which the default LAPACK-free matrix never compiled (#212)
 
 ### Fixed
+- **`mtl::eigenvalue` single-shift QR stalled on strongly non-normal matrices** whose complex eigenvalues need a double-shift (Francis) step — it fell through to reading the diagonal and **silently returned wrong eigenvalues** (e.g. the Forsythe companion matrix returned all shift value, which the old trace-only test accepted). Replaced with the **Francis implicit double-shift QR** (EISPACK `hqr`): real Schur form via 1×1/2×2 block deflation, exceptional shifts to break stagnation, and a `std::runtime_error` on non-convergence instead of a wrong result. Discovered while implementing the eigenvector generator (#203); tightened the Forsythe test to compare the full spectrum (#209)
 - AMD/COLAMD minimum-degree garbage-collection compaction mis-restored each element's first entry, corrupting the quotient-graph pointers once fill exhausted the elbow room (e.g. the AᵀA pattern of a 2-D 5-point grid at n ≥ 64); it now follows the CSparse compaction order. Surfaced while validating the supernodal-LU column ordering; regression test added (#189, #191)
 - `antisymmetric_tensor::set` wrote out of bounds for diagonal indices (`i == j`) under `NDEBUG`, where the guarding `assert` is compiled out; now a safe no-op (#63)
 - Benchmark `native` eigenvalue backend was silently dispatching to LAPACK; it now uses the generic C++ solver so `native` vs `lapack` is a genuine comparison (#78)
