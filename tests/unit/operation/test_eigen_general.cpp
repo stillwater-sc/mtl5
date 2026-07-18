@@ -157,6 +157,61 @@ TEST_CASE("General eigen: mixed real + complex-conjugate spectrum", "[operation]
     REQUIRE(complex_pair == 2);
 }
 
+TEST_CASE("General eigen: repeated eigenvalue yields an independent basis", "[operation][eigen]") {
+    // Identity: eigenvalue 1 with multiplicity 4. A correct result returns four
+    // *independent* eigenvectors spanning R^4, not four copies of one vector.
+    constexpr std::size_t n = 4;
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = (i == j) ? 1.0 : 0.0;
+
+    auto [eigs, V] = eigen(A);
+    REQUIRE(eigs.size() == n);
+
+    // Every column is an eigenvector (trivially, for I) and unit norm.
+    REQUIRE(max_eigen_residual(A, eigs, V) < 1e-12);
+    for (std::size_t k = 0; k < n; ++k)
+        REQUIRE_THAT(col_norm(V, k), Catch::Matchers::WithinAbs(1.0, 1e-10));
+
+    // Columns must be mutually orthogonal (an orthonormal basis of the
+    // eigenspace) -- off-diagonal Gram entries near zero.
+    for (std::size_t a = 0; a < n; ++a) {
+        for (std::size_t b = a + 1; b < n; ++b) {
+            cplx dot(0.0, 0.0);
+            for (std::size_t i = 0; i < n; ++i)
+                dot += std::conj(V(i, a)) * V(i, b);
+            REQUIRE(std::abs(dot) < 1e-9);
+        }
+    }
+}
+
+TEST_CASE("General eigen: partial multiplicity (2,2,5)", "[operation][eigen]") {
+    // Diagonal diag(2,2,5): eigenvalue 2 has multiplicity 2, 5 is simple.
+    // The two lambda=2 columns must be independent eigenvectors of that space.
+    mat::dense2D<double> A(3, 3);
+    A(0,0) = 2; A(0,1) = 0; A(0,2) = 0;
+    A(1,0) = 0; A(1,1) = 2; A(1,2) = 0;
+    A(2,0) = 0; A(2,1) = 0; A(2,2) = 5;
+
+    auto [eigs, V] = eigen(A);
+    REQUIRE(max_eigen_residual(A, eigs, V) < 1e-10);
+
+    // Identify the two columns belonging to eigenvalue 2 and check independence
+    // via the magnitude of their normalized cross product being non-degenerate.
+    std::vector<std::size_t> two_cols;
+    for (std::size_t k = 0; k < 3; ++k)
+        if (std::abs(eigs(k).real() - 2.0) < 1e-9 && std::abs(eigs(k).imag()) < 1e-9)
+            two_cols.push_back(k);
+    REQUIRE(two_cols.size() == 2);
+
+    cplx dot(0.0, 0.0);
+    for (std::size_t i = 0; i < 3; ++i)
+        dot += std::conj(V(i, two_cols[0])) * V(i, two_cols[1]);
+    // Independent (here orthogonalized) -> inner product well below 1.
+    REQUIRE(std::abs(dot) < 1e-6);
+}
+
 TEST_CASE("General eigen: eigenvalues match eigenvalue()", "[operation][eigen]") {
     mat::dense2D<double> A(3, 3);
     A(0,0) = 4; A(0,1) = 1; A(0,2) = -1;

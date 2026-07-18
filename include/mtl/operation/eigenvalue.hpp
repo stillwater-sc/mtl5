@@ -281,8 +281,14 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     const std::size_t nn = static_cast<std::size_t>(n);
     const int max_inv_iter = 5;
 
+    // Two eigenvalues are treated as one cluster (a repeated eigenvalue) when
+    // they agree to within this scale. Kept tiny so genuinely distinct
+    // eigenvalues -- including complex-conjugate partners -- are never merged.
+    const value_type cluster_scale = sqrt(eps);
+
     for (size_type k = 0; k < n; ++k) {
         const complex_type lambda = eigs(k);
+        const value_type cluster_tol = cluster_scale * (anorm + std::abs(lambda));
 
         // Build M = A - lambda*I (row-major complex) and factor once.
         std::vector<complex_type> Mc(nn * nn);
@@ -294,18 +300,51 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
         std::vector<std::size_t> piv(nn);
         detail::eig_lu_factor(Mc, piv, nn, pivot_floor);
 
-        // Start vector: entries varied by index so that repeated/clustered
-        // eigenvalues are seeded with non-parallel starts.
+        // Modified Gram-Schmidt deflation of v against previously computed
+        // eigenvectors that share this eigenvalue. For a repeated eigenvalue the
+        // whole eigenspace is (near-)null for M, so plain inverse iteration would
+        // return the same vector each time; deflating keeps successive iterates
+        // in the orthogonal complement of what is already found, yielding an
+        // independent basis of the eigenspace. (Orthonormal combinations within
+        // one eigenspace are still eigenvectors.)
+        auto deflate = [&](std::vector<complex_type>& v) {
+            for (size_type m = 0; m < k; ++m) {
+                if (std::abs(eigs(m) - lambda) > cluster_tol) continue;
+                complex_type proj(0);
+                for (size_type i = 0; i < n; ++i)
+                    proj += std::conj(V(i, m)) * v[static_cast<std::size_t>(i)];
+                for (size_type i = 0; i < n; ++i)
+                    v[static_cast<std::size_t>(i)] -= proj * V(i, m);
+            }
+        };
+        auto norm2 = [&](const std::vector<complex_type>& v) {
+            value_type s = value_type(0);
+            for (std::size_t i = 0; i < nn; ++i) s += std::norm(v[i]);
+            return sqrt(s);
+        };
+
+        // Seed: index-varied base plus a k-dependent emphasis, so repeated
+        // eigenvalues start from non-parallel vectors. Reseed if a seed happens
+        // to lie in the span of the already-found cluster vectors.
         std::vector<complex_type> x(nn);
-        for (size_type i = 0; i < n; ++i)
-            x[static_cast<std::size_t>(i)] =
-                complex_type(value_type(1) + value_type(i) / value_type(n));
+        for (int attempt = 0; attempt <= static_cast<int>(nn); ++attempt) {
+            for (size_type i = 0; i < n; ++i)
+                x[static_cast<std::size_t>(i)] =
+                    complex_type(value_type(1) + value_type(i) / value_type(n));
+            x[(static_cast<std::size_t>(k) + static_cast<std::size_t>(attempt)) % nn]
+                += complex_type(value_type(1));
+            deflate(x);
+            value_type s = norm2(x);
+            if (s > pivot_floor) {
+                for (std::size_t i = 0; i < nn; ++i) x[i] /= s;
+                break;
+            }
+        }
 
         for (int it = 0; it < max_inv_iter; ++it) {
             detail::eig_lu_solve(Mc, piv, nn, x);
-            value_type nrm = value_type(0);
-            for (std::size_t i = 0; i < nn; ++i) nrm += std::norm(x[i]);
-            nrm = sqrt(nrm);
+            deflate(x);
+            value_type nrm = norm2(x);
             if (nrm == value_type(0)) break;
             for (std::size_t i = 0; i < nn; ++i) x[i] /= nrm;
 
