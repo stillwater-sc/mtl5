@@ -23,7 +23,7 @@ $$A = \begin{bmatrix} 0 & 2 & 0 & -1 \\ 1 & 0 & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 0 & 0 
 
 ### The Fix
 
-To patch this inherent mathematical trap, linear algebra libraries like **LAPACK** (and by extension, MATLAB, Python's NumPy/SciPy, and Julia) use **ad hoc (exceptional) shifts**. If the algorithm detects that it has performed a certain number of iterations (e.g., 10 or 20) without deflating an eigenvalue, it artificially injects a random or heuristically chosen "exceptional shift" to break the symmetry, kick the matrix out of the fixed point, and force convergence.
+To patch this inherent mathematical trap, linear algebra libraries like **LAPACK** (and by extension, MATLAB, Python's NumPy/SciPy, and Julia) use **ad hoc (exceptional) shifts**. If the algorithm detects that it has performed a certain number of iterations (e.g., 10 or 20) without deflating an eigenvalue, it artificially injects a heuristically chosen (deterministic, not random) "exceptional shift" to break the symmetry, kick the matrix out of the fixed point, and force convergence. The classic EISPACK/LAPACK `hqr` choice is $s = 0.75\,(|h_{n,n-1}| + |h_{n-1,n-2}|)$ — and MTL5's own in-house `eigenvalue()` uses exactly this deterministic exceptional shift at iterations 10 and 20 (see the Francis double-shift fix, #209). This is independent of the optional LAPACK `geev` dispatch, which simply hands the whole problem to LAPACK when it is available.
 
 ---
 
