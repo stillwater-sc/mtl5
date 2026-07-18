@@ -9,6 +9,23 @@ Use the dense suite for small/medium matrices where you want the whole spectrum;
 use the iterative solvers for large or matrix-free operators where you want a few
 eigenpairs and can only apply `A * x`.
 
+## Choosing a solver
+
+Answer four questions:
+
+1. **Dense or sparse/large?** Small/medium and you want all (or most)
+   eigenvalues → the **dense suite** below. Large, sparse, or matrix-free and you
+   want a few → the **iterative** (`mtl::itl`) or **sparse** (`mtl::sparse`)
+   solvers.
+2. **Symmetric or general?** Symmetric → the `*_symmetric` dense routines or
+   `itl::lanczos`; general (non-symmetric) → `eigenvalue`/`eigen` or
+   `itl::arnoldi` (expect complex eigenvalues).
+3. **Values only, or values + vectors?** Value-only routines are cheaper; the
+   `eigen*` routines and the iterative solvers also return eigenvectors.
+4. **Which eigenvalues?** All → dense. Largest → iterative directly on the
+   operator. Smallest / interior / nearest a target `sigma` →
+   `sparse::sparse_eigs_shift_invert`.
+
 ## Which routine do I call?
 
 | Function | Matrix | Output | Backend |
@@ -66,8 +83,9 @@ is exactly the regime inverse iteration exploits.
 inverse iteration recovers the eigenvector of the true eigenvalue nearest each
 computed `lambda_k`. `eigenvalue` uses a **Francis double-shift** QR, so complex
 spectra of strongly non-normal matrices (e.g. companion / Forsythe matrices) are
-resolved accurately, and the eigenvectors follow to near machine precision. A
-LAPACK `geev` acceleration for the general eigenproblem is tracked separately.
+resolved accurately, and the eigenvectors follow to near machine precision. When
+LAPACK is available and the matrix qualifies, both routines dispatch to `geev`
+instead (see the table above).
 
 ## Symmetric problems
 
@@ -82,6 +100,12 @@ matrix is a column-major `dense2D<float/double>`.
 auto s = mtl::eigenvalue_symmetric(S);       // ascending eigenvalues
 auto [eigs, Q] = mtl::eigen_symmetric(S);     // A = Q * diag(eigs) * Q^T
 ```
+
+`eigenvalue_symmetric_generic` is the LAPACK-free reference path (Householder
+tridiagonalization + implicit-QR with Wilkinson shifts); `eigenvalue_symmetric`
+calls it when LAPACK is unavailable or the type does not qualify. Call it
+directly to exercise the pure-C++ algorithm regardless of build flags, or for
+custom number types.
 
 ## Iterative (matrix-free) eigensolvers
 
@@ -155,3 +179,21 @@ auto y = op * x;                                         // apply (A - 2.5 I)^{-
 The factorization is computed once and applied on every Arnoldi step; tiny
 pivots are perturbed so a shift landing (near-)exactly on an eigenvalue stays
 solvable. Generalized problems `A x = lambda B x` are a future extension.
+
+## Worked examples
+
+The `examples/phase06_eigenvalue_svd/` directory has runnable programs:
+
+- `vibrating_string.cpp` — eigenvalues of discrete 1D/2D Laplacians as vibration
+  modes; uses `eigenvalue_symmetric` and contrasts it with the general
+  `eigenvalue` on a non-symmetric perturbation.
+- `pca_svd.cpp` — relates the SVD to the symmetric eigenproblem (`singular
+  values = |eigenvalues|` for a symmetric matrix).
+
+## Custom number types
+
+Every pure-C++ path (`eigenvalue`, `eigen`, `eigenvalue_symmetric_generic`,
+`eigen_symmetric`, and the iterative solvers) works with custom scalar types
+such as posits and LNS — they depend only on standard arithmetic and `mtl`
+primitives, not on LAPACK. LAPACK dispatch is a `float`/`double`-only
+accelerator that is bypassed automatically for other types.
