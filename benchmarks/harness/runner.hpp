@@ -30,6 +30,9 @@
 #include <mtl/operation/trsv.hpp>
 #include <mtl/operation/trmm.hpp>
 #include <mtl/operation/trsm.hpp>
+#include <mtl/operation/symm.hpp>
+#include <mtl/operation/syrk.hpp>
+#include <mtl/operation/syr2k.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/qr.hpp>
 #include <mtl/operation/cholesky.hpp>
@@ -211,6 +214,47 @@ inline void bench_trsm(reporter& rep, const std::string& label,
     }
 }
 
+inline void bench_symm(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);   // treated as symmetric
+        auto B = make_random_matrix<double>(n, n, 99);
+        mat::dense2D<double> C(n, n);
+        double flops = static_cast<double>(2 * n) * n * n;
+        auto t = measure([&]{ mtl::symm(1.0, A, B, 0.0, C); },
+                         "symm", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_syrk(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);
+        mat::dense2D<double> C(n, n);
+        double flops = static_cast<double>(n) * n * n;   // ~n^3 (half of a full gemm)
+        auto t = measure([&]{ mtl::syrk(1.0, A, 0.0, C); },
+                         "syrk", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_syr2k(reporter& rep, const std::string& label,
+                        const std::vector<std::size_t>& sizes,
+                        std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);
+        auto B = make_random_matrix<double>(n, n, 99);
+        mat::dense2D<double> C(n, n);
+        double flops = static_cast<double>(2 * n) * n * n;
+        auto t = measure([&]{ mtl::syr2k(1.0, A, B, 0.0, C); },
+                         "syr2k", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
 // ── LAPACK-level suites ─────────────────────────────────────────────────────
 // Column-major inputs so the BLAS/LAPACK dispatch is eligible (matches a
 // real app that stores factorization operands column-major).
@@ -297,6 +341,9 @@ inline void run_all(reporter& rep, const std::string& label,
     bench_gemm(rep, label, blas_sizes);
     bench_trmm(rep, label, blas_sizes);
     bench_trsm(rep, label, blas_sizes);
+    bench_symm(rep, label, blas_sizes);
+    bench_syrk(rep, label, blas_sizes);
+    bench_syr2k(rep, label, blas_sizes);
 
     std::cout << "=== LAPACK Factorizations ===" << std::endl;
     bench_lu(rep, label, lapack_sizes);

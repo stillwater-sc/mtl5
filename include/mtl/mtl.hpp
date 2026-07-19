@@ -174,6 +174,9 @@
 #include <mtl/operation/trsv.hpp>
 #include <mtl/operation/trmm.hpp>
 #include <mtl/operation/trsm.hpp>
+#include <mtl/operation/symm.hpp>
+#include <mtl/operation/syrk.hpp>
+#include <mtl/operation/syr2k.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/householder.hpp>
 #include <mtl/operation/qr.hpp>
