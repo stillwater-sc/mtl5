@@ -105,6 +105,16 @@ TEST_CASE("trsm inverts trmm (lower, round-trip)", "[operation][blas][trsm]") {
     REQUIRE(max_abs_diff(B, B0, m, n) < 1e-10);
 }
 
+TEST_CASE("trmm/trsm: empty matrices (BLAS leading-dimension edge)", "[operation][blas][trmm][trsm]") {
+    // Column-major 0x0 is BLAS-eligible; the BLAS path must pass lda,ldb >= 1
+    // (max(1,m)) rather than 0. Both ops are a no-op and must not crash.
+    colmat A0(0, 0), B0(0, 0);
+    REQUIRE_NOTHROW(trmm(1.0, A0, B0, /*upper=*/true));
+    REQUIRE_NOTHROW(trsm(1.0, A0, B0, /*upper=*/true));
+    REQUIRE(B0.num_rows() == 0);
+    REQUIRE(B0.num_cols() == 0);
+}
+
 TEST_CASE("trmm/trsm: unit diagonal", "[operation][blas][trmm][trsm]") {
     // Unit-diagonal lower triangular (diagonal ignored, treated as 1).
     dmat<> A(3, 3);

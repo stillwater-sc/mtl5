@@ -4,6 +4,7 @@
 // overwritten with the solution X. unit_diag treats A's diagonal as all ones.
 // Left side, no transpose in this variant. BLAS dispatch for column-major dense
 // float/double when available.
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -34,10 +35,11 @@ void trsm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
         using T = value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m <= imax && n <= imax) {
+            // BLAS requires lda,ldb >= max(1,m) even for empty (m==0) matrices.
+            const int ld = std::max(1, static_cast<int>(m));
             interface::blas::trsm('L', upper ? 'U' : 'L', 'N', unit_diag ? 'U' : 'N',
                                   static_cast<int>(m), static_cast<int>(n),
-                                  static_cast<T>(alpha), A.data(), static_cast<int>(m),
-                                  B.data(), static_cast<int>(m));
+                                  static_cast<T>(alpha), A.data(), ld, B.data(), ld);
             return;
         }
     }
