@@ -36,8 +36,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 - **Size-N sweep** (`--sweep START:STOP:STEP` and `:xFACTOR`) plus BLAS-level suite groups `l1`/`l2`/`l3`/`blas`; default sizes now bracket powers of two with odd/1.5x neighbours to expose padding overhead (#77)
 - **GFLOP/s-vs-N plotting** (`benchmarks/plot_results.py`, matplotlib) and committed example data + rendered plots under `benchmarks/data/` with provenance (#78, #79, #80)
 - **One-executable-per-backend methodology** — `bench_all` calls only the public `mtl::` API; the build flags choose the backend (native / OpenBLAS / MKL); `run_sweeps.sh` builds all variants, pins to a P-core, and emits one CSV per backend (#81)
+- **BLIS backend + expanded BLAS routine coverage** — `run_sweeps.sh`/`run_scaling.sh` gain a `blis` variant (CMake `BLA_VENDOR=FLAME`, auto-skipped if absent); the harness now benchmarks all core BLAS routines MTL5 implements (adds `axpy`/`scal` at L1, and L2/L3 as they land); `analyze_gate.py --reference` baselines against OpenBLAS, BLIS, or MKL (#227, #228)
 
 #### Documentation & API
+- **Capability assessment & expansion analysis** — `docs/design/capability-assessment-and-expansion.md`: a source-grounded assessment across functionality, performance (single/multi-thread), distributed-memory and hardware-accelerator readiness, with a maturity scorecard and a prioritized expansion roadmap (seeded the roadmap epic #220 and issues #221–#227) (#219)
 - **Doxygen C++ API reference** generated into the docs site (`docs-site/Doxyfile`, `npm run api`, sidebar link, CI step) (#73)
 - Public `eigenvalue_symmetric_generic()` — the generic (LAPACK-free) symmetric eigensolver, extracted so it can be called regardless of `MTL5_HAS_LAPACK` (#78)
 
@@ -50,6 +52,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 - **Matrix-free iterative eigensolvers** in `mtl::itl` (`include/mtl/itl/eigen/`), operating through the `LinearOperator` concept (`A * x`) so they apply to `dense2D`, `compressed2D`, and user matrix-free operators: `power_iteration` (dominant pair), `lanczos` (symmetric, k extremal Ritz pairs via a tridiagonal projection), `arnoldi` (general, k Ritz pairs via a Hessenberg projection). Each solves the small projected problem with the dense eigensolvers; an `eigen_which` selector picks the wanted end of the spectrum (#205)
 - **Sparse eigensolver with shift-invert** in `mtl::sparse` — `sparse_eigs` (largest-magnitude, Arnoldi directly on the sparse operator), `sparse_eigs_shift_invert` (k eigenpairs nearest `sigma` via `(A - sigma*I)^{-1}` applied inside Arnoldi, mapping `lambda = sigma + 1/theta`), and the reusable `shift_invert_operator` (factor once with sparse LU, apply many; tiny pivots perturbed so a shift on an eigenvalue stays solvable) (#206)
 - **Eigenvalue/eigenvector solver guide** — `docs/algorithms/eigenvalues.md`: a decision guide plus a runnable snippet for every public eigen API across dense/iterative/sparse, the LAPACK dispatch conditions, and the custom-number-type story (#203, #207)
+
+#### Core BLAS Level-2 / Level-3 operators (#229)
+- **Level 2**: `ger` (rank-1 update), `symv` (symmetric matrix-vector), `trmv` (triangular matrix-vector), `trsv` (triangular solve) (#230)
+- **Level 3 triangular**: `trmm` (`B = alpha*A*B`), `trsm` (solve `A*X = alpha*B`) — left side, no transpose (#231)
+- **Level 3 symmetric**: `symm` (`C = alpha*A*B + beta*C`, A symmetric), `syrk` (`C = alpha*A*Aᵀ + beta*C`), `syr2k` (`C = alpha*(A*Bᵀ + B*Aᵀ) + beta*C`); `syrk`/`syr2k` produce the full symmetric result (both triangles) (#232)
+- Each is a generic templated function (any Matrix/Vector type and orientation, and custom number types) with optional external-BLAS dispatch for **column-major dense float/double**, mirroring the existing `gemv`/`gemm` gating. New `s/d` bindings added to `interface/blas.hpp` (`ger`, `symv`, `trmv`, `trmm`, `trsm`, `symm`, `syrk`, `syr2k`). BLAS leading dimensions are clamped to `max(1,m)` for empty inputs
+- With this, MTL5 covers the core BLAS surface: **L1** dot/nrm2/axpy/scal, **L2** gemv/ger/symv/trmv/trsv, **L3** gemm/trmm/trsm/symm/syrk/syr2k
 
 ### Changed
 - **`mtl::dot` / `dot_real` now dispatch to BLAS `?dot`** when types qualify (consistency with `two_norm`); both `dot` and `two_norm` BLAS paths guard the `int` length cast against overflow (#81)
