@@ -24,6 +24,10 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/axpy.hpp>
 #include <mtl/operation/scale.hpp>
+#include <mtl/operation/ger.hpp>
+#include <mtl/operation/symv.hpp>
+#include <mtl/operation/trmv.hpp>
+#include <mtl/operation/trsv.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/qr.hpp>
 #include <mtl/operation/cholesky.hpp>
@@ -99,6 +103,64 @@ inline void bench_gemv(reporter& rep, const std::string& label,
         double flops = static_cast<double>(2 * n * n);
         auto t = measure([&]{ mtl::mult(A, x, y); },
                          "gemv", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_ger(reporter& rep, const std::string& label,
+                      const std::vector<std::size_t>& sizes,
+                      std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);
+        auto x = make_random_vector<double>(n);
+        auto y = make_random_vector<double>(n, 77);
+        const double alpha = 1.0000001;
+        double flops = static_cast<double>(2 * n * n);
+        auto t = measure([&]{ mtl::ger(alpha, x, y, A); },
+                         "ger", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_symv(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);   // treated as symmetric
+        auto x = make_random_vector<double>(n);
+        vec::dense_vector<double> y(n, 0.0);
+        double flops = static_cast<double>(2 * n * n);
+        auto t = measure([&]{ mtl::symv(1.0, A, x, 0.0, y); },
+                         "symv", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_trmv(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);   // upper triangle used
+        auto x = make_random_vector<double>(n);
+        double flops = static_cast<double>(n * n);
+        auto t = measure([&]{ mtl::trmv(A, x, /*upper=*/true); },
+                         "trmv", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_trsv(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);
+        for (std::size_t i = 0; i < n; ++i)     // strengthen the diagonal for a stable solve
+            A(i, i) += static_cast<double>(n);
+        auto b = make_random_vector<double>(n);
+        vec::dense_vector<double> x(n);
+        double flops = static_cast<double>(n * n);
+        auto t = measure([&]{ mtl::trsv(A, x, b, /*upper=*/true); },
+                         "trsv", label, n, flops, warmup, iterations);
         rep.add(t);
     }
 }
@@ -194,6 +256,10 @@ inline void run_all(reporter& rep, const std::string& label,
 
     std::cout << "=== BLAS Level 2 ===" << std::endl;
     bench_gemv(rep, label, blas_sizes);
+    bench_ger(rep, label, blas_sizes);
+    bench_symv(rep, label, blas_sizes);
+    bench_trmv(rep, label, blas_sizes);
+    bench_trsv(rep, label, blas_sizes);
 
     std::cout << "=== BLAS Level 3 ===" << std::endl;
     bench_gemm(rep, label, blas_sizes);

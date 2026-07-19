@@ -55,6 +55,27 @@ void dtrsv_(const char* uplo, const char* trans, const char* diag,
             const int* n, const double* A, const int* lda,
             double* x, const int* incx);
 
+void sger_(const int* m, const int* n, const float* alpha,
+           const float* x, const int* incx, const float* y, const int* incy,
+           float* A, const int* lda);
+void dger_(const int* m, const int* n, const double* alpha,
+           const double* x, const int* incx, const double* y, const int* incy,
+           double* A, const int* lda);
+
+void ssymv_(const char* uplo, const int* n, const float* alpha,
+            const float* A, const int* lda, const float* x, const int* incx,
+            const float* beta, float* y, const int* incy);
+void dsymv_(const char* uplo, const int* n, const double* alpha,
+            const double* A, const int* lda, const double* x, const int* incx,
+            const double* beta, double* y, const int* incy);
+
+void strmv_(const char* uplo, const char* trans, const char* diag,
+            const int* n, const float* A, const int* lda,
+            float* x, const int* incx);
+void dtrmv_(const char* uplo, const char* trans, const char* diag,
+            const int* n, const double* A, const int* lda,
+            double* x, const int* incx);
+
 // Level 3 -- matrix-matrix operations
 void sgemm_(const char* transa, const char* transb,
             const int* m, const int* n, const int* k,
@@ -130,6 +151,33 @@ inline void trsv(char uplo, char trans, char diag, int n,
 inline void trsv(char uplo, char trans, char diag, int n,
                  const double* A, int lda, double* x, int incx) {
     dtrsv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
+}
+
+inline void ger(int m, int n, float alpha, const float* x, int incx,
+                const float* y, int incy, float* A, int lda) {
+    sger_(&m, &n, &alpha, x, &incx, y, &incy, A, &lda);
+}
+inline void ger(int m, int n, double alpha, const double* x, int incx,
+                const double* y, int incy, double* A, int lda) {
+    dger_(&m, &n, &alpha, x, &incx, y, &incy, A, &lda);
+}
+
+inline void symv(char uplo, int n, float alpha, const float* A, int lda,
+                 const float* x, int incx, float beta, float* y, int incy) {
+    ssymv_(&uplo, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy);
+}
+inline void symv(char uplo, int n, double alpha, const double* A, int lda,
+                 const double* x, int incx, double beta, double* y, int incy) {
+    dsymv_(&uplo, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy);
+}
+
+inline void trmv(char uplo, char trans, char diag, int n,
+                 const float* A, int lda, float* x, int incx) {
+    strmv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
+}
+inline void trmv(char uplo, char trans, char diag, int n,
+                 const double* A, int lda, double* x, int incx) {
+    dtrmv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
 }
 
 // -- Level 3 ------------------------------------------------------------

@@ -168,6 +168,10 @@
 #include <mtl/operation/random.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/upper_trisolve.hpp>
+#include <mtl/operation/ger.hpp>
+#include <mtl/operation/symv.hpp>
+#include <mtl/operation/trmv.hpp>
+#include <mtl/operation/trsv.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/householder.hpp>
 #include <mtl/operation/qr.hpp>
