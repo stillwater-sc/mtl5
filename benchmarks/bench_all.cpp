@@ -129,8 +129,9 @@ static void print_usage() {
         "    250:1030:x1.01   -> dense sweep bracketing the 256/512/1024 cliffs\n"
         "\n"
         "Suites: all, blas (=l1+l2+l3), lapack,\n"
-        "        l1 (dot+nrm2+axpy+scal), l2 (gemv), l3 (gemm),\n"
-        "        dot, nrm2, axpy, scal, gemv, gemm, lu, qr, cholesky, eig\n";
+        "        l1 (dot+nrm2+axpy+scal), l2 (gemv+ger+symv+trmv+trsv), l3 (gemm),\n"
+        "        dot, nrm2, axpy, scal, gemv, ger, symv, trmv, trsv, gemm,\n"
+        "        lu, qr, cholesky, eig\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -192,6 +193,10 @@ int main(int argc, char* argv[]) {
         b::bench_scal(rep, label, blas_sizes);
         std::cout << "=== BLAS Level 2 ===" << std::endl;
         b::bench_gemv(rep, label, blas_sizes);
+        b::bench_ger(rep, label, blas_sizes);
+        b::bench_symv(rep, label, blas_sizes);
+        b::bench_trmv(rep, label, blas_sizes);
+        b::bench_trsv(rep, label, blas_sizes);
         std::cout << "=== BLAS Level 3 ===" << std::endl;
         b::bench_gemm(rep, label, blas_sizes);
     } else if (suite == "l1") {
@@ -203,6 +208,10 @@ int main(int argc, char* argv[]) {
     } else if (suite == "l2") {
         std::cout << "=== BLAS Level 2 ===" << std::endl;
         b::bench_gemv(rep, label, blas_sizes);
+        b::bench_ger(rep, label, blas_sizes);
+        b::bench_symv(rep, label, blas_sizes);
+        b::bench_trmv(rep, label, blas_sizes);
+        b::bench_trsv(rep, label, blas_sizes);
     } else if (suite == "l3") {
         std::cout << "=== BLAS Level 3 ===" << std::endl;
         b::bench_gemm(rep, label, blas_sizes);
@@ -222,6 +231,14 @@ int main(int argc, char* argv[]) {
         b::bench_scal(rep, label, blas_sizes);
     } else if (suite == "gemv") {
         b::bench_gemv(rep, label, blas_sizes);
+    } else if (suite == "ger") {
+        b::bench_ger(rep, label, blas_sizes);
+    } else if (suite == "symv") {
+        b::bench_symv(rep, label, blas_sizes);
+    } else if (suite == "trmv") {
+        b::bench_trmv(rep, label, blas_sizes);
+    } else if (suite == "trsv") {
+        b::bench_trsv(rep, label, blas_sizes);
     } else if (suite == "gemm") {
         b::bench_gemm(rep, label, blas_sizes);
     } else if (suite == "lu") {
