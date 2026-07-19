@@ -88,6 +88,24 @@ void dgemm_(const char* transa, const char* transb,
             const double* B, const int* ldb,
             const double* beta, double* C, const int* ldc);
 
+void strmm_(const char* side, const char* uplo, const char* transa,
+            const char* diag, const int* m, const int* n,
+            const float* alpha, const float* A, const int* lda,
+            float* B, const int* ldb);
+void dtrmm_(const char* side, const char* uplo, const char* transa,
+            const char* diag, const int* m, const int* n,
+            const double* alpha, const double* A, const int* lda,
+            double* B, const int* ldb);
+
+void strsm_(const char* side, const char* uplo, const char* transa,
+            const char* diag, const int* m, const int* n,
+            const float* alpha, const float* A, const int* lda,
+            float* B, const int* ldb);
+void dtrsm_(const char* side, const char* uplo, const char* transa,
+            const char* diag, const int* m, const int* n,
+            const double* alpha, const double* A, const int* lda,
+            double* B, const int* ldb);
+
 } // extern "C"
 
 // -- C++ wrapper functions ----------------------------------------------
@@ -193,6 +211,24 @@ inline void gemm(char transa, char transb, int m, int n, int k,
                  const double* B, int ldb,
                  double beta, double* C, int ldc) {
     dgemm_(&transa, &transb, &m, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
+}
+
+inline void trmm(char side, char uplo, char transa, char diag, int m, int n,
+                 float alpha, const float* A, int lda, float* B, int ldb) {
+    strmm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
+}
+inline void trmm(char side, char uplo, char transa, char diag, int m, int n,
+                 double alpha, const double* A, int lda, double* B, int ldb) {
+    dtrmm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
+}
+
+inline void trsm(char side, char uplo, char transa, char diag, int m, int n,
+                 float alpha, const float* A, int lda, float* B, int ldb) {
+    strsm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
+}
+inline void trsm(char side, char uplo, char transa, char diag, int m, int n,
+                 double alpha, const double* A, int lda, double* B, int ldb) {
+    dtrsm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
 }
 
 } // namespace mtl::interface::blas

@@ -28,6 +28,8 @@
 #include <mtl/operation/symv.hpp>
 #include <mtl/operation/trmv.hpp>
 #include <mtl/operation/trsv.hpp>
+#include <mtl/operation/trmm.hpp>
+#include <mtl/operation/trsm.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/qr.hpp>
 #include <mtl/operation/cholesky.hpp>
@@ -179,6 +181,36 @@ inline void bench_gemm(reporter& rep, const std::string& label,
     }
 }
 
+inline void bench_trmm(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);   // upper triangle used
+        auto B = make_random_matrix<double>(n, n, 99);
+        double flops = static_cast<double>(n) * n * n;   // ~n^3 for square triangular*full
+        auto t = measure([&]{ mtl::trmm(1.0, A, B, /*upper=*/true); },
+                         "trmm", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_trsm(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 10) {
+    for (auto n : sizes) {
+        auto A = make_random_matrix<double>(n, n);
+        for (std::size_t i = 0; i < n; ++i)     // strengthen diagonal for stability
+            A(i, i) += static_cast<double>(n);
+        auto B_template = make_random_matrix<double>(n, n, 99);
+        double flops = static_cast<double>(n) * n * n;
+        auto t = measure([&]{
+                    auto B = B_template;
+                    mtl::trsm(1.0, A, B, /*upper=*/true);
+                 }, "trsm", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
 // ── LAPACK-level suites ─────────────────────────────────────────────────────
 // Column-major inputs so the BLAS/LAPACK dispatch is eligible (matches a
 // real app that stores factorization operands column-major).
@@ -263,6 +295,8 @@ inline void run_all(reporter& rep, const std::string& label,
 
     std::cout << "=== BLAS Level 3 ===" << std::endl;
     bench_gemm(rep, label, blas_sizes);
+    bench_trmm(rep, label, blas_sizes);
+    bench_trsm(rep, label, blas_sizes);
 
     std::cout << "=== LAPACK Factorizations ===" << std::endl;
     bench_lu(rep, label, lapack_sizes);
