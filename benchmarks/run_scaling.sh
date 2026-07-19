@@ -5,6 +5,7 @@
 # Threading is a RUNTIME axis of the same per-backend binary:
 #   native-fast : MTL5_NUM_THREADS=T
 #   openblas    : OPENBLAS_NUM_THREADS=T
+#   blis        : BLIS_NUM_THREADS=T   (if a BLIS BLAS is found)
 #   mkl         : MKL_NUM_THREADS=T
 # For T threads we pin to the first T physical performance cores (one logical id
 # per core -- HT siblings excluded) so scaling reflects cores, not SMT.
@@ -85,6 +86,18 @@ run_scaling_for build-scaling-native-fast native-fast MTL5_NUM_THREADS
 echo "=== openblas (OPENBLAS_NUM_THREADS) ==="
 configure_build build-scaling-openblas -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON
 run_scaling_for build-scaling-openblas openblas OPENBLAS_NUM_THREADS
+
+# BLIS (BLA_VENDOR=FLAME, BLIS_NUM_THREADS); skipped if not found at configure.
+if cmake -B build-scaling-blis-probe -DMTL5_BUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release \
+        -DMTL5_WITH_BLAS=ON -DBLA_VENDOR=FLAME >/dev/null 2>&1; then
+    rm -rf build-scaling-blis-probe
+    echo "=== blis (BLIS_NUM_THREADS) ==="
+    configure_build build-scaling-blis -DMTL5_WITH_BLAS=ON -DBLA_VENDOR=FLAME
+    run_scaling_for build-scaling-blis blis BLIS_NUM_THREADS
+else
+    rm -rf build-scaling-blis-probe
+    echo "=== blis: SKIPPED (no FLAME/BLIS BLAS found) ==="
+fi
 
 if [[ -f "$MKL_SETVARS" ]]; then
     echo "=== mkl (MKL_NUM_THREADS) ==="

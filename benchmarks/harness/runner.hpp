@@ -22,6 +22,8 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
+#include <mtl/operation/axpy.hpp>
+#include <mtl/operation/scale.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/qr.hpp>
 #include <mtl/operation/cholesky.hpp>
@@ -56,6 +58,33 @@ inline void bench_nrm2(reporter& rep, const std::string& label,
         auto t = measure([&]{ sink = mtl::two_norm(v); },
                          "nrm2", label, n, flops, warmup, iterations);
         (void)sink;
+        rep.add(t);
+    }
+}
+
+inline void bench_axpy(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 20) {
+    for (auto n : sizes) {
+        auto x = make_random_vector<double>(n);
+        auto y = make_random_vector<double>(n, 456);
+        const double alpha = 1.0000001;   // near 1 so repeated y += alpha*x stays bounded
+        double flops = static_cast<double>(2 * n);
+        auto t = measure([&]{ mtl::axpy(alpha, x, y); },
+                         "axpy", label, n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
+inline void bench_scal(reporter& rep, const std::string& label,
+                       const std::vector<std::size_t>& sizes,
+                       std::size_t warmup = 3, std::size_t iterations = 20) {
+    for (auto n : sizes) {
+        auto x = make_random_vector<double>(n);
+        const double alpha = 1.0000001;   // near 1 so repeated x *= alpha stays bounded
+        double flops = static_cast<double>(n);
+        auto t = measure([&]{ mtl::scale(alpha, x); },
+                         "scal", label, n, flops, warmup, iterations);
         rep.add(t);
     }
 }
@@ -160,6 +189,8 @@ inline void run_all(reporter& rep, const std::string& label,
     std::cout << "=== BLAS Level 1 ===" << std::endl;
     bench_dot(rep, label, blas_sizes);
     bench_nrm2(rep, label, blas_sizes);
+    bench_axpy(rep, label, blas_sizes);
+    bench_scal(rep, label, blas_sizes);
 
     std::cout << "=== BLAS Level 2 ===" << std::endl;
     bench_gemv(rep, label, blas_sizes);

@@ -17,7 +17,15 @@ backend:
 | `native`   | *(none)* | generic C++ |
 | `native-fast` | `-DMTL5_NATIVE_FAST_GEMM=ON -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON` | MTL5's own SIMD GEMM/GEMV (no external BLAS) |
 | `openblas` | `-DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON` | system BLAS/LAPACK (OpenBLAS) |
+| `blis`     | `-DMTL5_WITH_BLAS=ON -DBLA_VENDOR=FLAME` | BLIS (BLAS-only; `libblis`) |
 | `mkl`      | `… -DBLA_VENDOR=Intel10_64lp` (oneAPI sourced) | Intel MKL |
+
+BLIS is selected through CMake's `FindBLAS` `BLA_VENDOR=FLAME` and requires a
+BLIS BLAS on the system (e.g. `apt install libblis-dev`, or build BLIS and point
+CMake at it). It is a **BLAS-only** library, so the `blis` variant runs the BLAS
+L1/L2/L3 suites (LAPACK factorizations would need libFLAME, not wired here). Set
+thread count with `BLIS_NUM_THREADS`. Both `run_sweeps.sh` and `run_scaling.sh`
+skip the `blis` variant automatically if a BLIS BLAS cannot be located.
 
 `native-fast` is the epic #82 path: `mult()` routes through the blocked GEMM
 (`detail/gemm_blocked.hpp`) and SIMD GEMV (`detail/gemv.hpp`), built over Google
@@ -40,9 +48,9 @@ the numbers are what a real app compiled that way would get.
 ```
 benchmarks/
   bench_all.cpp          CLI driver (sizes/sweeps/suites + --label)
-  run_sweeps.sh          builds native/native-fast/openblas/mkl variants and runs the sweeps
+  run_sweeps.sh          builds native/native-fast/openblas/blis/mkl variants and runs the sweeps
   plot_results.py        GFLOP/s-vs-N plots from the CSVs
-  analyze_gate.py        % of OpenBLAS / % of FMA peak + the pass/fail perf gate
+  analyze_gate.py        % of a reference backend (--reference, default openblas) / % of FMA peak + the pass/fail perf gate
   harness/
     timer.hpp            high-resolution timing + statistics
     reporter.hpp         console table + CSV output
@@ -98,9 +106,18 @@ to `native` or `blas`; `run_sweeps.sh` passes `native`/`openblas`/`mkl`).
 
 ### Suites
 
-`all`, `blas` (= l1 + l2 + l3), `lapack`, the level groups `l1` (dot + nrm2),
-`l2` (gemv), `l3` (gemm), and the individual ops `dot`, `nrm2`, `gemv`, `gemm`,
+`all`, `blas` (= l1 + l2 + l3), `lapack`, the level groups `l1` (dot + nrm2 +
+axpy + scal), `l2` (gemv), `l3` (gemm), and the individual ops `dot`, `nrm2`,
+`axpy`, `scal`, `gemv`, `gemm`,
 `lu`, `qr`, `cholesky`, `eig`.
+
+### BLAS routine coverage
+
+Benchmarked (the core BLAS routines MTL5 implements): **L1** `dot`, `nrm2`,
+`axpy`, `scal`; **L2** `gemv`; **L3** `gemm`. Standard BLAS routines MTL5 does
+**not** implement yet — and therefore cannot benchmark — are, for reference:
+L1 `asum`, `iamax`, `copy`, `swap`, `rot`; L2 `ger`, `symv`, `trmv`, `trsv`;
+L3 `symm`, `syrk`, `syr2k`, `trmm`, `trsm` (tracked in #227).
 
 ### Sweeping size N (padding / odd-size overhead)
 
