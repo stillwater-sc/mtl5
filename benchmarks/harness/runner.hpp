@@ -116,7 +116,7 @@ inline void bench_ger(reporter& rep, const std::string& label,
                       const std::vector<std::size_t>& sizes,
                       std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);
+        auto A = make_random_matrix_colmaj<double>(n, n);   // col-major -> BLAS ger
         auto x = make_random_vector<double>(n);
         auto y = make_random_vector<double>(n, 77);
         const double alpha = 1.0000001;
@@ -131,7 +131,7 @@ inline void bench_symv(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);   // treated as symmetric
+        auto A = make_random_matrix_colmaj<double>(n, n);   // symmetric; col-major -> BLAS symv
         auto x = make_random_vector<double>(n);
         vec::dense_vector<double> y(n, 0.0);
         double flops = static_cast<double>(2 * n * n);
@@ -145,7 +145,7 @@ inline void bench_trmv(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);   // upper triangle used
+        auto A = make_random_matrix_colmaj<double>(n, n);   // col-major -> BLAS trmv
         auto x = make_random_vector<double>(n);
         double flops = static_cast<double>(n * n);
         auto t = measure([&]{ mtl::trmv(A, x, /*upper=*/true); },
@@ -158,7 +158,7 @@ inline void bench_trsv(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);
+        auto A = make_random_matrix_colmaj<double>(n, n);   // col-major -> BLAS trsv
         for (std::size_t i = 0; i < n; ++i)     // strengthen the diagonal for a stable solve
             A(i, i) += static_cast<double>(n);
         auto b = make_random_vector<double>(n);
@@ -188,8 +188,8 @@ inline void bench_trmm(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);   // upper triangle used
-        auto B = make_random_matrix<double>(n, n, 99);
+        auto A = make_random_matrix_colmaj<double>(n, n);       // col-major -> BLAS trmm
+        auto B = make_random_matrix_colmaj<double>(n, n, 99);
         double flops = static_cast<double>(n) * n * n;   // ~n^3 for square triangular*full
         auto t = measure([&]{ mtl::trmm(1.0, A, B, /*upper=*/true); },
                          "trmm", label, n, flops, warmup, iterations);
@@ -201,10 +201,10 @@ inline void bench_trsm(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);
+        auto A = make_random_matrix_colmaj<double>(n, n);       // col-major -> BLAS trsm
         for (std::size_t i = 0; i < n; ++i)     // strengthen diagonal for stability
             A(i, i) += static_cast<double>(n);
-        auto B_template = make_random_matrix<double>(n, n, 99);
+        auto B_template = make_random_matrix_colmaj<double>(n, n, 99);
         double flops = static_cast<double>(n) * n * n;
         auto t = measure([&]{
                     auto B = B_template;
@@ -218,9 +218,9 @@ inline void bench_symm(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);   // treated as symmetric
-        auto B = make_random_matrix<double>(n, n, 99);
-        mat::dense2D<double> C(n, n);
+        auto A = make_random_matrix_colmaj<double>(n, n);       // symmetric; col-major -> BLAS symm
+        auto B = make_random_matrix_colmaj<double>(n, n, 99);
+        mat::dense2D<double, col_major_params> C(n, n);
         double flops = static_cast<double>(2 * n) * n * n;
         auto t = measure([&]{ mtl::symm(1.0, A, B, 0.0, C); },
                          "symm", label, n, flops, warmup, iterations);
@@ -232,8 +232,8 @@ inline void bench_syrk(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);
-        mat::dense2D<double> C(n, n);
+        auto A = make_random_matrix_colmaj<double>(n, n);       // col-major -> BLAS syrk
+        mat::dense2D<double, col_major_params> C(n, n);
         double flops = static_cast<double>(n) * n * n;   // ~n^3 (half of a full gemm)
         auto t = measure([&]{ mtl::syrk(1.0, A, 0.0, C); },
                          "syrk", label, n, flops, warmup, iterations);
@@ -245,9 +245,9 @@ inline void bench_syr2k(reporter& rep, const std::string& label,
                         const std::vector<std::size_t>& sizes,
                         std::size_t warmup = 3, std::size_t iterations = 10) {
     for (auto n : sizes) {
-        auto A = make_random_matrix<double>(n, n);
-        auto B = make_random_matrix<double>(n, n, 99);
-        mat::dense2D<double> C(n, n);
+        auto A = make_random_matrix_colmaj<double>(n, n);       // col-major -> BLAS syr2k
+        auto B = make_random_matrix_colmaj<double>(n, n, 99);
+        mat::dense2D<double, col_major_params> C(n, n);
         double flops = static_cast<double>(2 * n) * n * n;
         auto t = measure([&]{ mtl::syr2k(1.0, A, B, 0.0, C); },
                          "syr2k", label, n, flops, warmup, iterations);
