@@ -106,6 +106,31 @@ void dtrsm_(const char* side, const char* uplo, const char* transa,
             const double* alpha, const double* A, const int* lda,
             double* B, const int* ldb);
 
+void ssymm_(const char* side, const char* uplo, const int* m, const int* n,
+            const float* alpha, const float* A, const int* lda,
+            const float* B, const int* ldb,
+            const float* beta, float* C, const int* ldc);
+void dsymm_(const char* side, const char* uplo, const int* m, const int* n,
+            const double* alpha, const double* A, const int* lda,
+            const double* B, const int* ldb,
+            const double* beta, double* C, const int* ldc);
+
+void ssyrk_(const char* uplo, const char* trans, const int* n, const int* k,
+            const float* alpha, const float* A, const int* lda,
+            const float* beta, float* C, const int* ldc);
+void dsyrk_(const char* uplo, const char* trans, const int* n, const int* k,
+            const double* alpha, const double* A, const int* lda,
+            const double* beta, double* C, const int* ldc);
+
+void ssyr2k_(const char* uplo, const char* trans, const int* n, const int* k,
+             const float* alpha, const float* A, const int* lda,
+             const float* B, const int* ldb,
+             const float* beta, float* C, const int* ldc);
+void dsyr2k_(const char* uplo, const char* trans, const int* n, const int* k,
+             const double* alpha, const double* A, const int* lda,
+             const double* B, const int* ldb,
+             const double* beta, double* C, const int* ldc);
+
 } // extern "C"
 
 // -- C++ wrapper functions ----------------------------------------------
@@ -229,6 +254,37 @@ inline void trsm(char side, char uplo, char transa, char diag, int m, int n,
 inline void trsm(char side, char uplo, char transa, char diag, int m, int n,
                  double alpha, const double* A, int lda, double* B, int ldb) {
     dtrsm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
+}
+
+inline void symm(char side, char uplo, int m, int n, float alpha,
+                 const float* A, int lda, const float* B, int ldb,
+                 float beta, float* C, int ldc) {
+    ssymm_(&side, &uplo, &m, &n, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
+}
+inline void symm(char side, char uplo, int m, int n, double alpha,
+                 const double* A, int lda, const double* B, int ldb,
+                 double beta, double* C, int ldc) {
+    dsymm_(&side, &uplo, &m, &n, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
+}
+
+inline void syrk(char uplo, char trans, int n, int k, float alpha,
+                 const float* A, int lda, float beta, float* C, int ldc) {
+    ssyrk_(&uplo, &trans, &n, &k, &alpha, A, &lda, &beta, C, &ldc);
+}
+inline void syrk(char uplo, char trans, int n, int k, double alpha,
+                 const double* A, int lda, double beta, double* C, int ldc) {
+    dsyrk_(&uplo, &trans, &n, &k, &alpha, A, &lda, &beta, C, &ldc);
+}
+
+inline void syr2k(char uplo, char trans, int n, int k, float alpha,
+                  const float* A, int lda, const float* B, int ldb,
+                  float beta, float* C, int ldc) {
+    ssyr2k_(&uplo, &trans, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
+}
+inline void syr2k(char uplo, char trans, int n, int k, double alpha,
+                  const double* A, int lda, const double* B, int ldb,
+                  double beta, double* C, int ldc) {
+    dsyr2k_(&uplo, &trans, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
 
 } // namespace mtl::interface::blas
