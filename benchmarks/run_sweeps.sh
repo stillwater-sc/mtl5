@@ -21,7 +21,8 @@
 #
 # Variants: native (generic-only), native-fast (the blocked GEMM / SIMD GEMV
 # path: -DMTL5_NATIVE_FAST_GEMM + Highway + -march=native, no external BLAS),
-# openblas, and mkl (if oneAPI is present).
+# openblas, blis (BLA_VENDOR=FLAME, if a BLIS BLAS is found), and mkl (if oneAPI
+# is present).
 #
 # Example (P-core 4, GEMM/GEMV/L1 gate only):
 #   BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sweeps.sh
@@ -66,12 +67,12 @@ run_variant() {
         case "$s" in
             blas)
                 echo ">> $label: BLAS L1/L2/L3 sweep"
-                OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+                OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 \
                     "${PIN[@]}" "$bin" --suite blas --blas-sweep "$SWEEP" \
                     --label "$label" --csv "$DATA/blas_sweep_${label}.csv" ;;
             lapack)
                 echo ">> $label: LAPACK factorization sweep"
-                OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+                OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1 \
                     "${PIN[@]}" "$bin" --suite lapack --lapack-sweep "$SWEEP" \
                     --label "$label" --csv "$DATA/lapack_sweep_${label}.csv" ;;
             *) echo "  (unknown suite '$s' in BENCH_SUITES, skipping)" ;;
@@ -91,6 +92,22 @@ run_variant build-native-fast native-fast
 echo "=== openblas ==="
 configure_build build-openblas -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON
 run_variant build-openblas openblas
+
+# BLIS (BLAS-compatible; selected via CMake FindBLAS BLA_VENDOR=FLAME). BLIS is a
+# BLAS-only library (LAPACK would come from libflame, not wired here), so it is
+# configured with BLAS only -- the BLAS L1/L2/L3 suites are the point of the
+# comparison. Threads via BLIS_NUM_THREADS (pinned to 1 in run_variant's env).
+# Skipped if a FLAME/BLIS BLAS cannot be located at configure time.
+echo "=== blis ==="
+if cmake -B build-blis-probe -DMTL5_BUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release \
+        -DMTL5_WITH_BLAS=ON -DBLA_VENDOR=FLAME >/dev/null 2>&1; then
+    rm -rf build-blis-probe
+    configure_build build-blis -DMTL5_WITH_BLAS=ON -DBLA_VENDOR=FLAME
+    run_variant build-blis blis
+else
+    rm -rf build-blis-probe
+    echo "=== blis: SKIPPED (no FLAME/BLIS BLAS found; install libblis-dev or set BLA_VENDOR) ==="
+fi
 
 if [[ -f "$MKL_SETVARS" ]]; then
     echo "=== mkl ==="

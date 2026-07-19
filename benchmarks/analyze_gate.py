@@ -23,6 +23,9 @@ Examples:
     ./analyze_gate.py data/blas_sweep_native-fast.csv data/blas_sweep_openblas.csv \\
         --gate --op gemm --threshold 0.80 --min-size 256
 
+    # Compare against BLIS instead of OpenBLAS (table or gate)
+    ./analyze_gate.py data/blas_sweep_*.csv --reference blis
+
 Standard library only (no pandas). Benchmark tooling, not part of the library.
 """
 
@@ -63,59 +66,61 @@ def pick(backends, *candidates):
     return None
 
 
-def print_table(data, peak):
+def print_table(data, peak, reference):
     for op in sorted(data):
         backends = data[op]
         nf = pick(backends, "native-fast", "native_fast")
-        ob = pick(backends, "openblas", "blas")
+        ref = pick(backends, reference, "openblas", "blas")
+        ref_name = ref if ref else reference
         if nf is None:
             continue
         print(f"\n== {op} ==")
         hdr = f"{'N':>6} {'native-fast':>12}"
-        if ob:
-            hdr += f" {'openblas':>12} {'% OpenBLAS':>11}"
+        if ref:
+            hdr += f" {ref_name:>12} {('% ' + ref_name):>11}"
         if peak:
             hdr += f" {'% FMA peak':>11}"
         print(hdr)
         for n in sorted(backends[nf]):
             g = backends[nf][n]
             line = f"{n:>6} {g:>12.2f}"
-            if ob and n in backends[ob] and backends[ob][n] > 0:
-                line += f" {backends[ob][n]:>12.2f} {100.0 * g / backends[ob][n]:>10.1f}%"
-            elif ob:
+            if ref and n in backends[ref] and backends[ref][n] > 0:
+                line += f" {backends[ref][n]:>12.2f} {100.0 * g / backends[ref][n]:>10.1f}%"
+            elif ref:
                 line += f" {'--':>12} {'--':>11}"
             if peak:
                 line += f" {100.0 * g / peak:>10.1f}%"
             print(line)
 
 
-def run_gate(data, op, threshold, min_size):
+def run_gate(data, op, threshold, min_size, reference):
     backends = data.get(op, {})
     nf = pick(backends, "native-fast", "native_fast")
-    ob = pick(backends, "openblas", "blas")
-    if nf is None or ob is None:
-        sys.exit(f"gate: need both native-fast and openblas data for '{op}' "
+    ref = pick(backends, reference, "openblas", "blas")
+    ref_name = ref if ref else reference
+    if nf is None or ref is None:
+        sys.exit(f"gate: need both native-fast and {reference} data for '{op}' "
                  f"(have: {sorted(backends)})")
     failures = []
     checked = 0
     for n in sorted(backends[nf]):
-        if n < min_size or n not in backends[ob] or backends[ob][n] <= 0:
+        if n < min_size or n not in backends[ref] or backends[ref][n] <= 0:
             continue
         checked += 1
-        frac = backends[nf][n] / backends[ob][n]
+        frac = backends[nf][n] / backends[ref][n]
         status = "ok" if frac >= threshold else "LOW"
         print(f"  N={n:>5}  native-fast={backends[nf][n]:8.2f}  "
-              f"openblas={backends[ob][n]:8.2f}  {100*frac:5.1f}%  [{status}]")
+              f"{ref_name}={backends[ref][n]:8.2f}  {100*frac:5.1f}%  [{status}]")
         if frac < threshold:
             failures.append((n, frac))
     if checked == 0:
         sys.exit(f"gate: no comparable sizes >= {min_size} for '{op}'")
     if failures:
         worst = min(f for _, f in failures)
-        print(f"\nGATE FAIL: {op} below {threshold*100:.0f}% of OpenBLAS at "
+        print(f"\nGATE FAIL: {op} below {threshold*100:.0f}% of {ref_name} at "
               f"{len(failures)}/{checked} sizes (worst {worst*100:.1f}%).")
         return 1
-    print(f"\nGATE PASS: {op} >= {threshold*100:.0f}% of OpenBLAS at all "
+    print(f"\nGATE PASS: {op} >= {threshold*100:.0f}% of {ref_name} at all "
           f"{checked} sizes (N >= {min_size}).")
     return 0
 
@@ -127,8 +132,11 @@ def main():
                     help="machine FMA peak (GFLOP/s) for the %% FMA peak column")
     ap.add_argument("--gate", action="store_true", help="run the pass/fail perf gate")
     ap.add_argument("--op", default="gemm", help="operation to gate (default: gemm)")
+    ap.add_argument("--reference", default="openblas",
+                    help="reference backend to compare against (default: openblas; "
+                         "e.g. blis, mkl)")
     ap.add_argument("--threshold", type=float, default=0.80,
-                    help="min native-fast/openblas fraction (default: 0.80)")
+                    help="min native-fast/reference fraction (default: 0.80)")
     ap.add_argument("--min-size", type=int, default=256,
                     help="only gate sizes >= this (default: 256)")
     args = ap.parse_args()
@@ -138,9 +146,9 @@ def main():
     data = load(args.csv)
     if args.gate:
         print(f"Gate: {args.op} native-fast >= {args.threshold*100:.0f}% of "
-              f"OpenBLAS for N >= {args.min_size}")
-        sys.exit(run_gate(data, args.op, args.threshold, args.min_size))
-    print_table(data, args.peak_gflops)
+              f"{args.reference} for N >= {args.min_size}")
+        sys.exit(run_gate(data, args.op, args.threshold, args.min_size, args.reference))
+    print_table(data, args.peak_gflops, args.reference)
 
 
 if __name__ == "__main__":

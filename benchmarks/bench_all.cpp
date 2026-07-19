@@ -129,8 +129,8 @@ static void print_usage() {
         "    250:1030:x1.01   -> dense sweep bracketing the 256/512/1024 cliffs\n"
         "\n"
         "Suites: all, blas (=l1+l2+l3), lapack,\n"
-        "        l1 (dot+nrm2), l2 (gemv), l3 (gemm),\n"
-        "        dot, nrm2, gemv, gemm, lu, qr, cholesky, eig\n";
+        "        l1 (dot+nrm2+axpy+scal), l2 (gemv), l3 (gemm),\n"
+        "        dot, nrm2, axpy, scal, gemv, gemm, lu, qr, cholesky, eig\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -188,6 +188,8 @@ int main(int argc, char* argv[]) {
         std::cout << "=== BLAS Level 1 ===" << std::endl;
         b::bench_dot(rep, label, blas_sizes);
         b::bench_nrm2(rep, label, blas_sizes);
+        b::bench_axpy(rep, label, blas_sizes);
+        b::bench_scal(rep, label, blas_sizes);
         std::cout << "=== BLAS Level 2 ===" << std::endl;
         b::bench_gemv(rep, label, blas_sizes);
         std::cout << "=== BLAS Level 3 ===" << std::endl;
@@ -196,6 +198,8 @@ int main(int argc, char* argv[]) {
         std::cout << "=== BLAS Level 1 ===" << std::endl;
         b::bench_dot(rep, label, blas_sizes);
         b::bench_nrm2(rep, label, blas_sizes);
+        b::bench_axpy(rep, label, blas_sizes);
+        b::bench_scal(rep, label, blas_sizes);
     } else if (suite == "l2") {
         std::cout << "=== BLAS Level 2 ===" << std::endl;
         b::bench_gemv(rep, label, blas_sizes);
@@ -212,6 +216,10 @@ int main(int argc, char* argv[]) {
         b::bench_dot(rep, label, blas_sizes);
     } else if (suite == "nrm2") {
         b::bench_nrm2(rep, label, blas_sizes);
+    } else if (suite == "axpy") {
+        b::bench_axpy(rep, label, blas_sizes);
+    } else if (suite == "scal") {
+        b::bench_scal(rep, label, blas_sizes);
     } else if (suite == "gemv") {
         b::bench_gemv(rep, label, blas_sizes);
     } else if (suite == "gemm") {
