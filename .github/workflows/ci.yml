@@ -249,7 +249,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
 
       - name: Build
-        run: cmake --build build-ci-regression --parallel
+        run: cmake --build build-ci-regression --parallel 2
 
       - name: Run regression tests
         run: >
