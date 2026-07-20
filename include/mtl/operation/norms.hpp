@@ -11,6 +11,7 @@
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/detail/thread_pool.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <type_traits>
 #include <mtl/simd/algorithm.hpp>
@@ -67,7 +68,14 @@ auto two_norm(const V& v) {
     // Native SIMD path for contiguous real float/double (abs is the identity).
     if constexpr (interface::BlasDenseVector<V>) {
         using std::sqrt;
-        return sqrt(simd::reduce_sum_squares<typename V::value_type>(v.data(), v.size()));
+        // Parallel reduction of the sum of squares (deterministic per thread
+        // count, not serial-bit-identical). Serial by default.
+        using T = typename V::value_type;
+        const T* d = v.data();
+        const T ss = detail::thread_pool::instance().parallel_reduce<T>(
+            v.size(), /*grain=*/std::size_t{65536},
+            [&](std::size_t lo, std::size_t hi) { return simd::reduce_sum_squares<T>(d + lo, hi - lo); });
+        return sqrt(ss);
     } else {
         auto acc = math::zero<mag_t>();
         for (typename V::size_type i = 0; i < v.size(); ++i) {

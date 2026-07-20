@@ -153,9 +153,19 @@ void mult(const M& A, const VIn& x, VOut& y) {
                     detail::gemv_rowmajor<T>(e - b, nn, Ap + b * nn, nn, xp, yp + b);
                 });
         } else {
-            // Col-major GEMV accumulates y across columns; left serial (a row
-            // partition would need strided access -- a separate follow-up).
-            detail::gemv_colmajor<T>(mm, nn, A.data(), mm, x.data(), y.data());
+            // Partition over output rows: each y[i] accumulates its columns in
+            // the same order regardless of the row sub-block, so the result is
+            // bit-identical across thread counts. The column stride (lda = mm) is
+            // preserved for the sub-block; A + b offsets to row b.
+            const std::size_t grain =
+                nn ? std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / nn) : std::size_t{1};
+            const T* Ap = A.data();
+            const T* xp = x.data();
+            T* yp = y.data();
+            detail::thread_pool::instance().parallel_for(mm, grain,
+                [&](std::size_t b, std::size_t e) {
+                    detail::gemv_colmajor<T>(e - b, nn, Ap + b, mm, xp, yp + b);
+                });
         }
         return;
     }

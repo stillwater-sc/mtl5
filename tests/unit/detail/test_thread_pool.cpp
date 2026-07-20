@@ -111,6 +111,56 @@ TEST_CASE("thread_pool: parallel_for below grain runs as one chunk", "[detail][t
     REQUIRE(seen_e == 10);
 }
 
+TEST_CASE("thread_pool: parallel_reduce sums correctly", "[detail][thread_pool]") {
+    for (unsigned nt : {1u, 2u, 4u, 8u}) {
+        thread_pool pool(nt);
+        for (std::size_t n : {std::size_t{0}, std::size_t{1}, std::size_t{5},
+                              std::size_t{1000}, std::size_t{250000}}) {
+            long long total = pool.parallel_reduce<long long>(n, /*grain=*/1024,
+                [&](std::size_t b, std::size_t e) {
+                    long long s = 0;
+                    for (std::size_t i = b; i < e; ++i) s += static_cast<long long>(i);
+                    return s;
+                });
+            REQUIRE(total == static_cast<long long>(n) * (n > 0 ? n - 1 : 0) / 2);
+        }
+    }
+}
+
+namespace {
+// A result type that defines operator+ but NOT operator+= -- locks the
+// parallel_reduce contract (combine must use operator+ only).
+struct PlusOnly {
+    long long v = 0;
+    friend PlusOnly operator+(PlusOnly a, PlusOnly b) { return PlusOnly{a.v + b.v}; }
+};
+} // namespace
+
+TEST_CASE("thread_pool: parallel_reduce uses operator+ only (plus-only type)", "[detail][thread_pool]") {
+    thread_pool pool(4);
+    const std::size_t n = 100000;
+    PlusOnly total = pool.parallel_reduce<PlusOnly>(n, /*grain=*/1024,
+        [&](std::size_t b, std::size_t e) {
+            PlusOnly s;
+            for (std::size_t i = b; i < e; ++i) s = s + PlusOnly{static_cast<long long>(i)};
+            return s;
+        });
+    REQUIRE(total.v == static_cast<long long>(n) * (n - 1) / 2);
+}
+
+TEST_CASE("thread_pool: parallel_reduce below grain runs as one map call", "[detail][thread_pool]") {
+    thread_pool pool(8);
+    int calls = 0;
+    long long total = pool.parallel_reduce<long long>(50, /*grain=*/1024,
+        [&](std::size_t b, std::size_t e) {
+            calls++;
+            long long s = 0; for (std::size_t i = b; i < e; ++i) s += static_cast<long long>(i);
+            return s;
+        });
+    REQUIRE(calls == 1);
+    REQUIRE(total == 50LL * 49 / 2);
+}
+
 TEST_CASE("thread_pool: nested run falls back to serial (no deadlock)", "[detail][thread_pool]") {
     thread_pool pool(4);
     std::atomic<int> inner{0};
