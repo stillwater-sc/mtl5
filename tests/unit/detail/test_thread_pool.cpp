@@ -127,6 +127,27 @@ TEST_CASE("thread_pool: parallel_reduce sums correctly", "[detail][thread_pool]"
     }
 }
 
+namespace {
+// A result type that defines operator+ but NOT operator+= -- locks the
+// parallel_reduce contract (combine must use operator+ only).
+struct PlusOnly {
+    long long v = 0;
+    friend PlusOnly operator+(PlusOnly a, PlusOnly b) { return PlusOnly{a.v + b.v}; }
+};
+} // namespace
+
+TEST_CASE("thread_pool: parallel_reduce uses operator+ only (plus-only type)", "[detail][thread_pool]") {
+    thread_pool pool(4);
+    const std::size_t n = 100000;
+    PlusOnly total = pool.parallel_reduce<PlusOnly>(n, /*grain=*/1024,
+        [&](std::size_t b, std::size_t e) {
+            PlusOnly s;
+            for (std::size_t i = b; i < e; ++i) s = s + PlusOnly{static_cast<long long>(i)};
+            return s;
+        });
+    REQUIRE(total.v == static_cast<long long>(n) * (n - 1) / 2);
+}
+
 TEST_CASE("thread_pool: parallel_reduce below grain runs as one map call", "[detail][thread_pool]") {
     thread_pool pool(8);
     int calls = 0;

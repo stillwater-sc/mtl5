@@ -153,7 +153,9 @@ public:
             partials[tid] = map(b, (n < b + chunk) ? n : b + chunk);
         });
         T acc = T{};
-        for (unsigned t = 0; t < team; ++t) acc += partials[t];   // deterministic tid order
+        // Combine with operator+ only (not +=), honoring the documented contract
+        // so plus-only result types work. Deterministic tid order.
+        for (unsigned t = 0; t < team; ++t) acc = acc + partials[t];
         return acc;
     }
 
