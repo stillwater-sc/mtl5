@@ -34,6 +34,24 @@ TEST_CASE("CG with default Accumulator matches unmodified baseline", "[itl][cg][
         REQUIRE_THAT(r(i), Catch::Matchers::WithinAbs(b(i), 1e-8));
 }
 
+
+// --- Edge case: CG on a trivial 1x1 SPD system ---
+TEST_CASE("CG handles 1x1 system", "[itl][cg][quire]") {
+    mat::dense2D<double> A(1, 1);
+    A(0,0) = 4.0;
+
+    vec::dense_vector<double> b = {2.0};
+    vec::dense_vector<double> x(1, 0.0);
+
+    itl::pc::identity<mat::dense2D<double>> pc(A);
+    itl::basic_iteration<double> iter(b, 100, 1e-10);
+
+    int err = itl::cg(A, x, b, pc, iter);
+
+    REQUIRE(err == 0);
+    REQUIRE_THAT(x(0), Catch::Matchers::WithinAbs(0.5, 1e-8));
+}
+
 #ifdef MTL5_HAS_UNIVERSAL
 #include <universal/number/posit/posit.hpp>
 #include <mtl/math/quire_accumulator.hpp>
