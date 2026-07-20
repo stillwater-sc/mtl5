@@ -2,6 +2,9 @@
 // MTL5 -- Operator overloads for matrix types (expression template returns)
 #include <type_traits>
 #include <cassert>
+#include <algorithm>
+#include <cstddef>
+#include <mtl/detail/thread_pool.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/traits/is_expression.hpp>
@@ -131,13 +134,22 @@ auto operator*(const compressed2D<V, P>& A,
     const auto& starts  = A.ref_major();
     const auto& indices = A.ref_minor();
     const auto& data    = A.ref_data();
-    for (size_type r = 0; r < A.num_rows(); ++r) {
-        auto acc = math::zero<result_t>();
-        for (size_type k = starts[r]; k < starts[r + 1]; ++k) {
-            acc += static_cast<result_t>(data[k]) * static_cast<result_t>(x(indices[k]));
-        }
-        y(r) = acc;
-    }
+    // Parallelize over output rows: each y(r) is an independent sparse dot, so
+    // the result is bit-identical across thread counts. Grain targets ~64K
+    // nonzeros per chunk (avg nnz/row). Serial by default (MTL5_NUM_THREADS=1).
+    const std::size_t nrows = A.num_rows();
+    const std::size_t nnz   = data.size();
+    const std::size_t avg   = nrows ? std::max<std::size_t>(std::size_t{1}, nnz / nrows) : std::size_t{1};
+    const std::size_t grain = std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / avg);
+    detail::thread_pool::instance().parallel_for(nrows, grain,
+        [&](std::size_t rb, std::size_t re) {
+            for (std::size_t r = rb; r < re; ++r) {
+                auto acc = math::zero<result_t>();
+                for (size_type k = starts[r]; k < starts[r + 1]; ++k)
+                    acc += static_cast<result_t>(data[k]) * static_cast<result_t>(x(indices[k]));
+                y(r) = acc;
+            }
+        });
     return y;
 }
 
