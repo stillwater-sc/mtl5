@@ -3,6 +3,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
+#include <mtl/operation/mult.hpp>
 
 namespace mtl::itl {
 
@@ -11,9 +12,15 @@ namespace mtl::itl {
 /// M is a preconditioner satisfying M.solve(x, b).
 /// iter is a convergence controller (basic_iteration or derived).
 ///
+/// Accumulator (optional): accumulation type for the two dot products and
+/// the matrix-vector product (see math/accumulator_traits.hpp, #158).
+/// Defaults to void, matching dot()/mult()'s own default -- unspecified
+/// behavior is unchanged.
+///
 /// Returns the iteration object (convertible to int error code).
 template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter>
+          typename PC, typename Iter,
+          typename Accumulator = void>
 int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;
@@ -23,7 +30,8 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     vec::dense_vector<value_type> r(n), z(n), p(n), q(n);
 
     // r = b - A*x
-    auto Ax = A * x;
+    vec::dense_vector<value_type> Ax(n);
+    mtl::mult<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i)
         r(i) = b(i) - Ax(i);
 
@@ -31,7 +39,7 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     M.solve(z, r);
 
     // rho = dot(r, z)
-    value_type rho = mtl::dot(r, z);
+    value_type rho = mtl::dot<Accumulator, value_type>(r, z);
     value_type rho_1{};
 
     while (!iter.finished(r)) {
@@ -49,12 +57,10 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         }
 
         // q = A * p
-        auto Ap = A * p;
-        for (size_type i = 0; i < n; ++i)
-            q(i) = Ap(i);
+        mtl::mult<Accumulator>(A, p, q);
 
         // alpha = rho / dot(p, q)
-        value_type alpha = rho / mtl::dot(p, q);
+        value_type alpha = rho / mtl::dot<Accumulator, value_type>(p, q);
 
         // x += alpha * p
         for (size_type i = 0; i < n; ++i)
@@ -71,7 +77,7 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         M.solve(z, r);
 
         // rho = dot(r, z)
-        rho = mtl::dot(r, z);
+        rho = mtl::dot<Accumulator, value_type>(r, z);
     }
 
     return iter;
