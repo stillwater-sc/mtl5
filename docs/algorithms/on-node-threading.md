@@ -110,7 +110,10 @@ fp64 throughput (GFLOP/s) and speedup vs 1 thread:
 > reported GEMM at only 4.3× on "8 threads" — that run used `taskset -c 0-7`,
 > which is four physical cores hyperthreaded, not eight cores. Pinning to distinct
 > physical cores (above) shows the real 6.3–6.9×. Always verify the affinity mask
-> against the core topology before drawing a scaling conclusion.
+> against the core topology before drawing a scaling conclusion. The full
+> investigation — hypotheses, controls, and attribution — is written up as a
+> performance-engineering case study:
+> [Multi-Core Scaling of MTL5's Threaded Kernels](../design/multicore-scaling-investigation.md).
 
 ## Not yet threaded
 
