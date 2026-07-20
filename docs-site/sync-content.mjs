@@ -51,6 +51,7 @@ const FILE_MAP = {
   // ── Linear Algebra Algorithms ───────────────────────────────────
   'algorithms/overview.md':                     'algorithms/overview.md',
   'algorithms/eigenvalues.md':                  'algorithms/eigenvalues.md',
+  'algorithms/on-node-threading.md':            'algorithms/on-node-threading.md',
   'algorithms/mixed-precision-kernels.md':      'algorithms/mixed-precision-kernels.md',
   'algorithms/measuring-solver-accuracy.md':    'algorithms/measuring-solver-accuracy.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
