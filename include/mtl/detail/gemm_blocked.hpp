@@ -39,6 +39,7 @@
 #include <mtl/detail/aligned_allocator.hpp>
 #include <mtl/detail/gemm_microkernel.hpp>
 #include <mtl/detail/gemm_pack.hpp>
+#include <mtl/detail/thread_pool.hpp>
 #include <mtl/simd/blocking.hpp>
 
 namespace mtl::detail {
@@ -47,30 +48,11 @@ namespace mtl::detail {
 template <typename T>
 using packed_buffer = std::vector<T, aligned_allocator<T>>;
 
-/// Joins a std::thread team on destruction (exception-safe: the team is joined
-/// even if the main thread's share throws). Portable -- std::jthread is not
-/// reliably available in Apple Clang's libc++.
-struct thread_join_guard {
-    std::vector<std::thread>& threads;
-    ~thread_join_guard() { for (auto& t : threads) if (t.joinable()) t.join(); }
-};
-
-/// Default GEMM thread count: env MTL5_NUM_THREADS, clamped to the hardware
-/// concurrency; defaults to 1 (single-thread, behaviour unchanged) when unset or
-/// invalid. Read once. Set MTL5_NUM_THREADS=N to enable the parallel path.
+/// Default GEMM thread count: the persistent pool's size (env MTL5_NUM_THREADS,
+/// clamped to hardware concurrency; 1 when unset/invalid). Using the pool as the
+/// single source of truth guarantees the GEMM's team never exceeds the pool.
 inline unsigned gemm_default_threads() {
-    static const unsigned n = [] {
-        unsigned hw = std::thread::hardware_concurrency();
-        if (hw == 0) hw = 1;
-        if (const char* e = std::getenv("MTL5_NUM_THREADS")) {
-            char* end = nullptr;
-            const unsigned long v = std::strtoul(e, &end, 10);
-            if (end != e && v >= 1)
-                return static_cast<unsigned>(v < hw ? v : hw);
-        }
-        return 1u;
-    }();
-    return n;
+    return thread_pool::instance().size();
 }
 
 /// C[m x n] (row-major, leading dim ldc) := beta*C + alpha * A[m x k] * B[k x n].
@@ -171,24 +153,27 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                     do_ic_block(ic, Ac.data());
             } else {
                 // Parallel over ic-blocks: disjoint C rows, shared read-only Bc,
-                // per-thread A buffer. Static round-robin assignment.
+                // per-thread A buffer. Static round-robin assignment, dispatched
+                // on the persistent thread pool -- one condition-variable handoff
+                // per (jc,pc) region instead of spawning a fresh std::thread team.
+                // The static tid->ic-block partition is unchanged, so the result
+                // stays BIT-IDENTICAL across thread counts. An exception in any
+                // ic-block propagates after all workers join (see thread_pool).
                 std::vector<std::size_t> ic_starts;
                 for (std::size_t ic = 0; ic < m; ic += MC) ic_starts.push_back(ic);
-                const unsigned team = static_cast<unsigned>(
-                    std::min<std::size_t>(nthreads, ic_starts.size()));
-                auto worker = [&](unsigned tid) {
+                // team is BOTH the round-robin stride and the count handed to the
+                // pool, so it must not exceed the pool size -- otherwise run()
+                // would clamp the worker count while the stride still skipped the
+                // higher-tid ic-blocks. Capping keeps every block covered.
+                thread_pool& pool = thread_pool::instance();
+                const unsigned team = static_cast<unsigned>(std::min<std::size_t>(
+                    {static_cast<std::size_t>(nthreads), ic_starts.size(),
+                     static_cast<std::size_t>(pool.size())}));
+                pool.run(team, [&](unsigned tid) {
                     packed_buffer<TAB> Aloc(packed_A_size(mc_max, kc_max, MR));
                     for (std::size_t b = tid; b < ic_starts.size(); b += team)
                         do_ic_block(ic_starts[b], Aloc.data());
-                };
-                // The guard joins the team on scope exit -- including if worker(0)
-                // throws (e.g. a buffer allocation failure) -- so an un-joined
-                // std::thread never reaches its destructor and calls std::terminate.
-                std::vector<std::thread> pool;
-                pool.reserve(team > 0 ? team - 1 : 0);
-                thread_join_guard guard{pool};
-                for (unsigned t = 1; t < team; ++t) pool.emplace_back(worker, t);
-                worker(0);
+                });
             }
         }
     }
