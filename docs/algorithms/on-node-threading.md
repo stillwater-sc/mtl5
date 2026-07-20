@@ -51,36 +51,66 @@ SpMV/L1 threading with no solver-code changes.
   more than the work; nested/concurrent regions fall back to serial (no
   oversubscription or deadlock).
 
+## Measurement methodology (pin to *distinct physical cores*)
+
+Getting an honest scaling curve requires pinning each software thread to its own
+**physical core** — not to SMT siblings and not to slower efficiency cores. This
+matters especially on hybrid CPUs. On the i7-12700K used below, logical CPUs pair
+up as SMT siblings on 8 P-cores and the 4 E-cores sit at the top:
+
+```text
+lscpu -e=CPU,CORE,MAXMHZ
+# P-cores: logical 0,1 -> core0 ; 2,3 -> core1 ; ... 14,15 -> core7   (~4.9-5.0 GHz)
+# E-cores: logical 16..19 -> cores 8..11                              (3.8 GHz)
+```
+
+So the **one-logical-CPU-per-physical-P-core** set is `0,2,4,6,8,10,12,14`. A
+naive `taskset -c 0-7` instead spans only **four** physical cores (0–3) doubled by
+SMT — an easy way to mismeasure "8 threads" as 4 hyperthreaded cores. Pin
+explicitly:
+
+```bash
+MTL5_NUM_THREADS=8 taskset -c 0,2,4,6,8,10,12,14 ./bench   # 8 distinct P-cores
+```
+
 ## Scaling results (indicative)
 
-> **Indicative only.** Measured on a shared **Intel i7-12700K** (8 P-cores +
-> 4 E-cores), single-run, `taskset`-pinned to logical CPUs 0–7 — which on this
-> hybrid part spans P-core SMT siblings, so the 8-thread column is
-> SMT/bandwidth-limited rather than 8 distinct physical cores. Numbers are
-> directional (±10–15%), not an authoritative benchmark. Reproduce with
-> `MTL5_NUM_THREADS=<n>` on a quiesced, P-core-pinned rig.
+> **Indicative only.** Single-run on a shared **Intel i7-12700K**, fp64, each
+> thread pinned to a distinct physical P-core (`0,2,4,6,8,10,12,14`), no SMT
+> siblings, no E-cores. Directional (±10–15%), not an authoritative benchmark.
 
 fp64 throughput (GFLOP/s) and speedup vs 1 thread:
 
 | Kernel | 1T | 2T | 4T | 8T | speedup @4T | @8T |
 |---|---|---|---|---|---|---|
-| **GEMM** (N=2048) | 58.7 | 109.5 | 196.6 | 252.3 | **3.35×** | 4.30× |
-| **GEMV** (N=8192) | 9.9 | 13.3 | 17.2 | 16.9 | 1.74× | 1.71× |
-| **dot** (N=8M) | 4.6 | 7.4 | 8.7 | 8.8 | 1.89× | 1.92× |
-| **axpy** (N=8M) | 3.5 | 5.3 | 6.3 | 6.2 | 1.79× | 1.76× |
-| **scal** (N=8M) | 2.6 | 4.4 | 4.9 | 5.6 | 1.86× | 2.14× |
-| **SpMV** (490k-row 2D Laplacian) | 1.00× | 1.42× | 1.74× | 1.73× | 1.74× | 1.73× |
+| **GEMM** (N=2048) | 57.4 | 110.3 | 205.1 | 362.5 | 3.57× | **6.32×** |
+| **GEMM** (N=4096) | 57.4 | — | — | 393.7 | — | **6.85×** |
+| **GEMV** (N=8192) | 9.4 | 13.2 | 17.1 | 20.6 | 1.82× | 2.19× |
+| **dot** (N=8M) | 4.6 | 7.6 | 8.6 | 11.1 | 1.89× | 2.43× |
+| **axpy** (N=8M) | 3.4 | 5.3 | 6.4 | 6.9 | 1.87× | 2.02× |
+| **scal** (N=8M) | 2.6 | 4.2 | 5.6 | 6.6 | 2.12× | 2.48× |
+| **SpMV** (490k-row 2D Laplacian) | 1.00× | 1.33× | 1.79× | 1.92× | 1.79× | 1.92× |
 
 ### Reading the results
 
-- **GEMM is compute-bound** and scales with cores (3.35× at 4T, 4.3× at 8T) — its
-  arithmetic intensity keeps the cores fed.
+- **GEMM is compute-bound and scales with cores** — **6.32× at 8 cores** (N=2048),
+  rising to **6.85×** at N=4096 (~86% parallel efficiency). Scaling *improves*
+  with N, which rules out a memory-bandwidth ceiling: larger tiles do more
+  arithmetic per parallel region, so the fixed per-region synchronization
+  amortizes better. At small N (e.g. N=1024, ~5.1×) that per-region handoff is the
+  main limiter; the remaining few percent is the all-core turbo drop.
 - **The Level-1/2 kernels and SpMV are memory-bandwidth-bound.** They reach
-  ~1.7–2× and then **plateau**: a few cores already saturate the memory channels,
-  so adding threads cannot help. This is the expected roofline behavior, not a
-  defect — the win from threading them is the ~2× bandwidth a couple of cores
-  extract over one, and (for the solvers) overlapping that with the compute-bound
+  ~2–2.5× and then **plateau**: a couple of P-cores already saturate the (two
+  DDR5 channel) memory bandwidth, so more threads cannot help. This is the
+  expected roofline behavior, not a defect — the value is the ~2× a few cores
+  extract over one, and (for the solvers) overlapping it with the compute-bound
   GEMM/preconditioner work.
+
+> **Measurement caveat learned the hard way.** An earlier draft of this table
+> reported GEMM at only 4.3× on "8 threads" — that run used `taskset -c 0-7`,
+> which is four physical cores hyperthreaded, not eight cores. Pinning to distinct
+> physical cores (above) shows the real 6.3–6.9×. Always verify the affinity mask
+> against the core topology before drawing a scaling conclusion.
 
 ## Not yet threaded
 
