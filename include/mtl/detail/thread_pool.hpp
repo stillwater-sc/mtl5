@@ -129,6 +129,34 @@ public:
         });
     }
 
+    /// Reduce over [0, n): map(begin, end) returns a partial T; partials are
+    /// combined with operator+ in chunk (tid) order. Runs serially (a single
+    /// map(0, n)) when the pool is serial or n is below the grain.
+    ///
+    /// Deterministic for a fixed thread count, but NOT bit-identical to the
+    /// serial reduction -- chunking changes the summation grouping/associativity.
+    /// Callers that need serial-exact results must not rely on this.
+    template <typename T, typename MapFn>
+    T parallel_reduce(std::size_t n, std::size_t grain, MapFn&& map) {
+        if (n == 0) return T{};
+        unsigned team = n_;
+        if (team <= 1 || grain == 0 || n < grain * 2) return map(std::size_t{0}, n);
+        const std::size_t max_chunks = n / grain;
+        if (static_cast<std::size_t>(team) > max_chunks)
+            team = static_cast<unsigned>(max_chunks);
+        if (team <= 1) return map(std::size_t{0}, n);
+        const std::size_t chunk = (n + team - 1) / team;
+        std::vector<T> partials(team, T{});
+        run(team, [&](unsigned tid) {
+            const std::size_t b = static_cast<std::size_t>(tid) * chunk;
+            if (b >= n) return;
+            partials[tid] = map(b, (n < b + chunk) ? n : b + chunk);
+        });
+        T acc = T{};
+        for (unsigned t = 0; t < team; ++t) acc += partials[t];   // deterministic tid order
+        return acc;
+    }
+
     thread_pool(const thread_pool&) = delete;
     thread_pool& operator=(const thread_pool&) = delete;
 
