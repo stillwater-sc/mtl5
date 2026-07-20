@@ -106,6 +106,29 @@ public:
         if (worker_exc) std::rethrow_exception(worker_exc);
     }
 
+    /// Partition [0, n) into contiguous chunks across the pool and run
+    /// body(begin, end) per chunk. Runs serially (a single body(0, n)) when the
+    /// pool is serial or n is too small to amortize the handoff; otherwise caps
+    /// the team so each chunk holds >= `grain` iteration units. Contiguous,
+    /// deterministic chunking -> element-wise callers stay bit-identical across
+    /// thread counts (each output element is produced by exactly one chunk).
+    template <typename Body>
+    void parallel_for(std::size_t n, std::size_t grain, Body&& body) {
+        if (n == 0) return;
+        unsigned team = n_;
+        if (team <= 1 || grain == 0 || n < grain * 2) { body(std::size_t{0}, n); return; }
+        const std::size_t max_chunks = n / grain;
+        if (static_cast<std::size_t>(team) > max_chunks)
+            team = static_cast<unsigned>(max_chunks);
+        if (team <= 1) { body(std::size_t{0}, n); return; }
+        const std::size_t chunk = (n + team - 1) / team;
+        run(team, [&](unsigned tid) {
+            const std::size_t b = static_cast<std::size_t>(tid) * chunk;
+            if (b >= n) return;
+            body(b, (n < b + chunk) ? n : b + chunk);
+        });
+    }
+
     thread_pool(const thread_pool&) = delete;
     thread_pool& operator=(const thread_pool&) = delete;
 

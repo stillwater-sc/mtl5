@@ -16,6 +16,8 @@
 #include <type_traits>
 #include <mtl/detail/gemm_blocked.hpp>
 #include <mtl/detail/gemv.hpp>
+#include <mtl/detail/thread_pool.hpp>
+#include <algorithm>
 #endif
 
 namespace mtl {
@@ -138,8 +140,21 @@ void mult(const M& A, const VIn& x, VOut& y) {
         const std::size_t mm = A.num_rows();
         const std::size_t nn = A.num_cols();
         if constexpr (interface::is_row_major_v<M>) {
-            detail::gemv_rowmajor<T>(mm, nn, A.data(), nn, x.data(), y.data());
+            // Parallelize over output rows: each y[i] is an independent dot, so
+            // the result is bit-identical across thread counts. Grain balances
+            // ~64K flops per chunk. Serial by default (MTL5_NUM_THREADS=1).
+            const std::size_t grain =
+                nn ? std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / nn) : std::size_t{1};
+            const T* Ap = A.data();
+            const T* xp = x.data();
+            T* yp = y.data();
+            detail::thread_pool::instance().parallel_for(mm, grain,
+                [&](std::size_t b, std::size_t e) {
+                    detail::gemv_rowmajor<T>(e - b, nn, Ap + b * nn, nn, xp, yp + b);
+                });
         } else {
+            // Col-major GEMV accumulates y across columns; left serial (a row
+            // partition would need strided access -- a separate follow-up).
             detail::gemv_colmajor<T>(mm, nn, A.data(), mm, x.data(), y.data());
         }
         return;
