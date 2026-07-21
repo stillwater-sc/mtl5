@@ -70,7 +70,7 @@ bool is_zero(const V& v, magnitude_t<typename V::value_type> tol = 0) {
     return true;
 }
 
-/// Every entry is finite (no NaN, no ±Inf).
+/// Every entry is finite (no NaN, no +/-Inf).
 template <Vector V>
 bool is_finite(const V& v) {
     for (typename V::size_type i = 0; i < v.size(); ++i)
@@ -86,7 +86,7 @@ bool has_nan(const V& v) {
     return false;
 }
 
-/// At least one entry is ±Inf.
+/// At least one entry is +/-Inf.
 template <Vector V>
 bool has_inf(const V& v) {
     for (typename V::size_type i = 0; i < v.size(); ++i)
