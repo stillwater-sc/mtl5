@@ -192,6 +192,7 @@
 #include <mtl/operation/eigenvalue_symmetric.hpp>
 #include <mtl/operation/eigenvalue.hpp>
 #include <mtl/operation/svd.hpp>
+#include <mtl/operation/spectral_properties.hpp>
 #include <mtl/operation/kron.hpp>
 #include <mtl/operation/reorder.hpp>
 #include <mtl/operation/transcendental.hpp>
