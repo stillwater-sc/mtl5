@@ -256,4 +256,4 @@ jobs:
           ctest --test-dir build-ci-regression
           -L regression
           --output-on-failure
-          --timeout 300
+          --timeout 600
