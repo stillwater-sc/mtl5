@@ -85,6 +85,7 @@
 #include <mtl/tensor/index.hpp>
 #include <mtl/tensor/symmetric.hpp>
 #include <mtl/tensor/metric.hpp>
+#include <mtl/tensor/properties.hpp>
 
 // Scalar functors
 #include <mtl/functor/scalar/plus.hpp>
