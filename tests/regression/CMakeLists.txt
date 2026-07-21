@@ -25,7 +25,7 @@ function(add_regression_tests prefix folder sources)
         add_test(NAME ${target} COMMAND ${target})
         set_tests_properties(${target} PROPERTIES
             LABELS "regression"
-            TIMEOUT 600
+            TIMEOUT 300
         )
     endforeach()
 endfunction()
@@ -46,4 +46,5 @@ endif()
 file(GLOB ITL_REG_SRC "itl/*.cpp")
 if(ITL_REG_SRC)
     add_regression_tests("itl" "itl" "${ITL_REG_SRC}")
+    set_tests_properties(regression_itl_test_cg PROPERTIES TIMEOUT 600)
 endif()
