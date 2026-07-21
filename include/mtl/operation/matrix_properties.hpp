@@ -11,11 +11,14 @@
 // The deviation tests are written as !(dev <= tol) rather than dev > tol so a
 // NaN entry (dev is NaN, all comparisons unordered) fails the predicate instead
 // of being silently accepted.
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/magnitude.hpp>
+#include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl {
@@ -131,6 +134,83 @@ bool is_diagonally_dominant(const M& A, bool strict = false) {
         const mag_t d = abs(A(i, i));
         if (strict ? !(d > off) : !(d >= off)) return false;
     }
+    return true;
+}
+
+namespace detail {
+
+// Scale-aware default threshold for the O(n^3) product-based predicates
+// (is_unitary / is_normal). The residual entries scale like n * max|A|^2, so the
+// default relative tolerance is multiplied by that magnitude. A negative caller
+// tol selects this default; a non-negative tol is used verbatim (absolute).
+template <Matrix M>
+magnitude_t<typename M::value_type> product_tol(const M& A,
+                                                magnitude_t<typename M::value_type> tol) {
+    using mag_t = magnitude_t<typename M::value_type>;
+    if (tol >= mag_t(0)) return tol;
+    using std::abs;
+    using size_type = typename M::size_type;
+    const size_type m = A.num_rows(), n = A.num_cols();
+    mag_t scale = mag_t(0);
+    for (size_type i = 0; i < m; ++i)
+        for (size_type j = 0; j < n; ++j)
+            scale = std::max(scale, abs(A(i, j)));
+    const mag_t nn = static_cast<mag_t>(std::max(m, n));
+    return mag_t(128) * std::numeric_limits<mag_t>::epsilon() * nn * scale * scale;
+}
+
+} // namespace detail
+
+/// Unitary: A is square and A^H A == I (within tol). For a real element type
+/// A^H = A^T, i.e. this is the orthogonality test. The default tol is a
+/// scale-aware relative threshold (~128 * n * eps * max|A|^2); pass tol >= 0 for
+/// an explicit absolute threshold. Non-square matrices are never unitary.
+template <Matrix M>
+bool is_unitary(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+    using T = typename M::value_type;
+    using size_type = typename M::size_type;
+    using std::abs;
+    if (A.num_rows() != A.num_cols()) return false;
+    const size_type n = A.num_rows();
+    const auto thr = detail::product_tol(A, tol);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = i; j < n; ++j) {         // (A^H A) is Hermitian
+            T s = math::zero<T>();
+            for (size_type k = 0; k < n; ++k)
+                s += functor::scalar::conj<T>::apply(A(k, i)) * A(k, j);
+            const T expected = (i == j) ? math::one<T>() : math::zero<T>();
+            if (!(abs(s - expected) <= thr)) return false;
+        }
+    return true;
+}
+
+/// Orthogonal: alias for is_unitary (conventional name for real matrices).
+template <Matrix M>
+bool is_orthogonal(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+    return is_unitary(A, tol);
+}
+
+/// Normal: A is square and A A^H == A^H A (within tol) -- the class of matrices
+/// unitarily diagonalizable, containing the symmetric/Hermitian, skew, and
+/// unitary matrices. Default tol as for is_unitary. Non-square is never normal.
+template <Matrix M>
+bool is_normal(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+    using T = typename M::value_type;
+    using size_type = typename M::size_type;
+    using std::abs;
+    if (A.num_rows() != A.num_cols()) return false;
+    const size_type n = A.num_rows();
+    const auto thr = detail::product_tol(A, tol);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = i; j < n; ++j) {         // residual A A^H - A^H A is Hermitian
+            T aah = math::zero<T>();                 // (A A^H)_{ij} = sum_k A(i,k) conj(A(j,k))
+            T aha = math::zero<T>();                 // (A^H A)_{ij} = sum_k conj(A(k,i)) A(k,j)
+            for (size_type k = 0; k < n; ++k) {
+                aah += A(i, k) * functor::scalar::conj<T>::apply(A(j, k));
+                aha += functor::scalar::conj<T>::apply(A(k, i)) * A(k, j);
+            }
+            if (!(abs(aah - aha) <= thr)) return false;
+        }
     return true;
 }
 

@@ -17,6 +17,7 @@
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/eigenvalue.hpp>
+#include <mtl/operation/eigenvalue_symmetric.hpp>
 
 namespace mtl {
 
@@ -112,6 +113,49 @@ std::size_t nullity(const M& A, magnitude_t<typename M::value_type> tol = -1) {
     const std::size_t r = numerical_rank(A, tol);
     const std::size_t ncols = static_cast<std::size_t>(A.num_cols());
     return ncols > r ? ncols - r : 0;
+}
+
+/// Inertia of a symmetric matrix: the counts (positive, negative, zero) of its
+/// eigenvalues. By Sylvester's law of inertia this triple is invariant under
+/// congruence, so it is the definiteness fingerprint of A: (n,0,0) positive
+/// definite, (0,n,0) negative definite, zero > 0 singular, and positive>0 &&
+/// negative>0 indefinite. Computed from the symmetric eigenvalues; an eigenvalue
+/// is classified zero when |lambda| <= tol (default max|lambda| * n * eps; pass
+/// tol for an explicit cutoff). Precondition: A is real symmetric.
+struct inertia_t {
+    std::size_t positive = 0;
+    std::size_t negative = 0;
+    std::size_t zero     = 0;
+};
+
+template <Matrix M>
+inertia_t inertia(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+    using mag_t = magnitude_t<typename M::value_type>;
+    using std::abs;
+    inertia_t result;
+    if (A.num_rows() == 0) return result;
+    auto eigs = eigenvalue_symmetric(A);   // ascending real eigenvalues
+    mag_t maxabs = mag_t(0);
+    for (std::size_t i = 0; i < eigs.size(); ++i)
+        maxabs = std::max(maxabs, abs(eigs(i)));
+    mag_t threshold = tol;
+    if (!(tol >= mag_t(0)))
+        threshold = static_cast<mag_t>(eigs.size()) *
+                    std::numeric_limits<mag_t>::epsilon() * maxabs;
+    for (std::size_t i = 0; i < eigs.size(); ++i) {
+        const mag_t l = eigs(i);
+        if (l > threshold)       ++result.positive;
+        else if (l < -threshold) ++result.negative;
+        else                     ++result.zero;
+    }
+    return result;
+}
+
+/// Indefinite: a symmetric matrix with both positive and negative eigenvalues.
+template <Matrix M>
+bool is_indefinite(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+    const inertia_t in = inertia(A, tol);
+    return in.positive > 0 && in.negative > 0;
 }
 
 } // namespace mtl
