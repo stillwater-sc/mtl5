@@ -6,6 +6,8 @@
 // const reference and copy internally), so the caller's matrix is unchanged.
 // Cost is that of the underlying decomposition (SVD / QR-iteration), for dense
 // matrices with a real floating value type.
+#include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -25,30 +27,30 @@ namespace detail {
 template <Matrix M>
 std::vector<magnitude_t<typename M::value_type>> singular_values(const M& A) {
     using mag_t = magnitude_t<typename M::value_type>;
-    using size_type = typename M::size_type;
     using std::abs;
-    const size_type mn = std::min(A.num_rows(), A.num_cols());
+    const std::size_t mn = std::min<std::size_t>(A.num_rows(), A.num_cols());
     std::vector<mag_t> sv;
-    sv.reserve(static_cast<std::size_t>(mn));
+    sv.reserve(mn);
     if (mn == 0) return sv;
     auto [U, S, V] = svd(A);
     (void)U; (void)V;
-    for (size_type i = 0; i < mn; ++i) sv.push_back(abs(S(i, i)));
+    for (std::size_t i = 0; i < mn; ++i) sv.push_back(abs(S(i, i)));
     return sv;
 }
 
 } // namespace detail
 
-/// Spectral radius: max |eigenvalue|. Requires a square matrix; the empty (0x0)
-/// matrix has spectral radius 0.
+/// Spectral radius: max |eigenvalue|. Requires a square matrix (precondition,
+/// as for eigenvalue); the empty (0x0) matrix has spectral radius 0.
 template <Matrix M>
 magnitude_t<typename M::value_type> spectral_radius(const M& A) {
     using mag_t = magnitude_t<typename M::value_type>;
     using std::abs;
+    assert(A.num_rows() == A.num_cols() && "spectral_radius requires a square matrix");
     if (A.num_rows() == 0) return mag_t(0);
     auto eigs = eigenvalue(A);
     mag_t r = mag_t(0);
-    for (typename decltype(eigs)::size_type k = 0; k < eigs.size(); ++k) {
+    for (std::size_t k = 0; k < eigs.size(); ++k) {
         mag_t m = abs(eigs(k));
         if (m > r) r = m;
     }
@@ -96,7 +98,7 @@ std::size_t numerical_rank(const M& A,
     for (mag_t s : sv) if (s > smax) smax = s;
     mag_t threshold = tol;
     if (!(tol >= mag_t(0))) {   // negative sentinel -> default cutoff
-        const mag_t dim = static_cast<mag_t>(std::max(A.num_rows(), A.num_cols()));
+        const mag_t dim = static_cast<mag_t>(std::max<std::size_t>(A.num_rows(), A.num_cols()));
         threshold = dim * std::numeric_limits<mag_t>::epsilon() * smax;
     }
     std::size_t r = 0;
