@@ -13,9 +13,10 @@ MTL5_NUM_THREADS=8 ./your_program
 ```
 
 `MTL5_NUM_THREADS` is read **once** (clamped to the hardware concurrency) and
-sizes a single process-wide pool. Unset or `=1` means fully serial with **zero
-overhead** (no worker threads are created), so the default build behaves exactly
-as before.
+sizes a single process-wide pool. Unset or `=1` means fully serial: **no worker
+threads are created** and each kernel runs its original serial path (a cheap
+pool-size check is all the threading layer adds), so the default build behaves as
+before.
 
 ## What is parallelized
 
@@ -53,10 +54,13 @@ SpMV/L1 threading with no solver-code changes.
 
 ## Measurement methodology (pin to *distinct physical cores*)
 
-Getting an honest scaling curve requires pinning each software thread to its own
-**physical core** — not to SMT siblings and not to slower efficiency cores. This
-matters especially on hybrid CPUs. On the i7-12700K used below, logical CPUs pair
-up as SMT siblings on 8 P-cores and the 4 E-cores sit at the top:
+Getting an honest scaling curve requires confining the run to distinct
+**physical cores** — not to SMT siblings and not to slower efficiency cores.
+`taskset` sets the *process* affinity mask (it does not hard-pin individual
+threads); but when the mask is exactly N logical CPUs, one per physical core, the
+OS keeps the N worker threads one-per-core in steady state. This matters
+especially on hybrid CPUs. On the i7-12700K used below, logical CPUs pair up as
+SMT siblings on 8 P-cores and the 4 E-cores sit at the top:
 
 ```text
 lscpu -e=CPU,CORE,MAXMHZ
@@ -75,9 +79,10 @@ MTL5_NUM_THREADS=8 taskset -c 0,2,4,6,8,10,12,14 ./bench   # 8 distinct P-cores
 
 ## Scaling results (indicative)
 
-> **Indicative only.** Single-run on a shared **Intel i7-12700K**, fp64, each
-> thread pinned to a distinct physical P-core (`0,2,4,6,8,10,12,14`), no SMT
-> siblings, no E-cores. Directional (±10–15%), not an authoritative benchmark.
+> **Indicative only.** Single-run on a shared **Intel i7-12700K**, fp64, the
+> process affinity-masked to N distinct physical P-cores (`0,2,4,6,8,10,12,14`,
+> one logical CPU each — no SMT siblings, no E-cores). Directional (±10–15%), not
+> an authoritative benchmark.
 
 fp64 throughput (GFLOP/s) and speedup vs 1 thread:
 
@@ -89,7 +94,13 @@ fp64 throughput (GFLOP/s) and speedup vs 1 thread:
 | **dot** (N=8M) | 4.6 | 7.6 | 8.6 | 11.1 | 1.89× | 2.43× |
 | **axpy** (N=8M) | 3.4 | 5.3 | 6.4 | 6.9 | 1.87× | 2.02× |
 | **scal** (N=8M) | 2.6 | 4.2 | 5.6 | 6.6 | 2.12× | 2.48× |
-| **SpMV** (490k-row 2D Laplacian) | 1.00× | 1.33× | 1.79× | 1.92× | 1.79× | 1.92× |
+
+**SpMV** (490k-row 2D Laplacian) is measured in **ms/matvec** (lower is better),
+not GFLOP/s:
+
+| threads | 1T | 2T | 4T | 8T | speedup @8T |
+|---|---|---|---|---|---|
+| ms/matvec | 2.18 | 1.64 | 1.21 | 1.13 | **1.92×** |
 
 ### Reading the results
 

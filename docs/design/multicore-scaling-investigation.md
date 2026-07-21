@@ -89,9 +89,11 @@ experiment never tested eight cores.*
 
 ### 3.3 The corrected design
 
-Pin each software thread to its **own physical P-core** — one logical CPU per
-core, no SMT siblings, no E-cores. The primary logical CPU of each P-core is the
-even id: `0,2,4,6,8,10,12,14`.
+Constrain the process to N **distinct physical P-cores** — one logical CPU per
+core, no SMT siblings, no E-cores. `taskset -c` sets the process affinity mask (it
+does not hard-pin each thread to a specific core), but with one sibling per core
+in the mask the OS keeps the N worker threads one-per-core. The primary logical
+CPU of each P-core is the even id: `0,2,4,6,8,10,12,14`.
 
 ```bash
 MTL5_NUM_THREADS=1 taskset -c 0                        ./bench --suite gemm --sizes 2048
@@ -109,7 +111,7 @@ Controls:
 
 ## 4. Results
 
-### 4.1 GEMM, one thread per distinct physical core (N=2048)
+### 4.1 GEMM, process pinned to N distinct physical cores (N=2048)
 
 | threads | GFLOP/s | speedup | efficiency |
 |---|---|---|---|
@@ -134,7 +136,9 @@ Scaling **improves** with N. A memory-bandwidth ceiling would do the opposite, s
 so the fixed per-`(jc,pc)`-region synchronization amortizes better — pointing at
 **H4** as the small-N limiter.
 
-### 4.3 Memory-bound kernels, distinct physical cores (8T speedup)
+### 4.3 Memory-bound kernels, distinct physical cores
+
+GFLOP/s and speedup vs 1 thread:
 
 | Kernel | 1T | 2T | 4T | 8T | speedup |
 |---|---|---|---|---|---|
@@ -142,7 +146,10 @@ so the fixed per-`(jc,pc)`-region synchronization amortizes better — pointing 
 | dot (N=8M) | 4.6 | 7.6 | 8.6 | 11.1 | 2.43× |
 | axpy (N=8M) | 3.4 | 5.3 | 6.4 | 6.9 | 2.02× |
 | scal (N=8M) | 2.6 | 4.2 | 5.6 | 6.6 | 2.48× |
-| SpMV (490k-row 2D Laplacian) | — | 1.33× | 1.79× | 1.92× | 1.92× |
+
+SpMV (490k-row 2D Laplacian) in **ms/matvec** (lower is better), separately since
+its unit differs: 2.18 / 1.64 / 1.21 / 1.13 ms at 1 / 2 / 4 / 8 cores → **1.92×**
+at 8 cores.
 
 These plateau at ~2–2.5× regardless of correct pinning.
 
@@ -152,7 +159,10 @@ These plateau at ~2–2.5× regardless of correct pinning.
   6.85× at N=4096. The ~14–21% shortfall from ideal splits between (a) the
   per-region pool synchronization — dominant at small N, where there are few
   cache blocks to spread over 8 threads (5.08× at N=1024) — and (b) the all-core
-  turbo drop (H6), the residual few percent after H1–H4 are accounted for.
+  turbo drop (H6), which *plausibly* accounts for the residual few percent. We did
+  not measure the effective clock directly (hardware performance counters were
+  unavailable on this host), so (b) is inferred from the known all-core turbo
+  behavior of this part, not established here.
 - **The Level-1/2 kernels and SpMV are memory-bandwidth-bound.** Two DDR5 channels
   are saturated by a couple of P-cores, so more threads cannot help — the ~2–2.5×
   plateau is the roofline, not a defect. Threading them is still worth the ~2× a
@@ -168,7 +178,9 @@ These plateau at ~2–2.5× regardless of correct pinning.
 2. **H3 (bandwidth) rejected for GEMM**, confirmed for the memory-bound kernels.
 3. **H4 (per-region sync)** is the small-N limiter for GEMM; larger problems
    amortize it away.
-4. **H6 (turbo)** accounts for the last few percent.
+4. **H6 (turbo)** *may* account for the last few percent — inferred from this
+   part's all-core turbo behavior, not directly measured (perf counters were
+   unavailable on this host).
 
 MTL5's on-node threading scales as a from-scratch implementation should: the
 compute-bound kernel tracks cores, and the bandwidth-bound kernels track memory
