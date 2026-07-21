@@ -177,6 +177,8 @@
 #include <mtl/operation/symm.hpp>
 #include <mtl/operation/syrk.hpp>
 #include <mtl/operation/syr2k.hpp>
+#include <mtl/operation/matrix_properties.hpp>
+#include <mtl/operation/vector_properties.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/householder.hpp>
 #include <mtl/operation/qr.hpp>
