@@ -7,6 +7,10 @@
 // requires exact structure (as constructed). Pass tol > 0 for an approximate
 // check on a computed matrix. Works for any Matrix that supports A(i,j) (dense
 // or sparse) and any element type with abs() (real, complex, custom).
+//
+// The deviation tests are written as !(dev <= tol) rather than dev > tol so a
+// NaN entry (dev is NaN, all comparisons unordered) fails the predicate instead
+// of being silently accepted.
 #include <cmath>
 #include <cstddef>
 
@@ -33,7 +37,7 @@ bool is_symmetric(const M& A, magnitude_t<typename M::value_type> tol = 0) {
     const size_type n = A.num_rows();
     for (size_type i = 0; i < n; ++i)
         for (size_type j = i + 1; j < n; ++j)
-            if (abs(A(i, j) - A(j, i)) > tol) return false;
+            if (!(abs(A(i, j) - A(j, i)) <= tol)) return false;
     return true;
 }
 
@@ -48,7 +52,7 @@ bool is_hermitian(const M& A, magnitude_t<typename M::value_type> tol = 0) {
     const size_type n = A.num_rows();
     for (size_type i = 0; i < n; ++i)
         for (size_type j = i; j < n; ++j)   // include the diagonal: Im(A(i,i)) ~ 0
-            if (abs(A(i, j) - functor::scalar::conj<T>::apply(A(j, i))) > tol) return false;
+            if (!(abs(A(i, j) - functor::scalar::conj<T>::apply(A(j, i))) <= tol)) return false;
     return true;
 }
 
@@ -60,7 +64,7 @@ bool is_upper_triangular(const M& A, magnitude_t<typename M::value_type> tol = 0
     const size_type m = A.num_rows(), n = A.num_cols();
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < i && j < n; ++j)
-            if (abs(A(i, j)) > tol) return false;
+            if (!(abs(A(i, j)) <= tol)) return false;
     return true;
 }
 
@@ -72,7 +76,7 @@ bool is_lower_triangular(const M& A, magnitude_t<typename M::value_type> tol = 0
     const size_type m = A.num_rows(), n = A.num_cols();
     for (size_type i = 0; i < m; ++i)
         for (size_type j = i + 1; j < n; ++j)
-            if (abs(A(i, j)) > tol) return false;
+            if (!(abs(A(i, j)) <= tol)) return false;
     return true;
 }
 
@@ -90,7 +94,7 @@ bool is_diagonal(const M& A, magnitude_t<typename M::value_type> tol = 0) {
     const size_type m = A.num_rows(), n = A.num_cols();
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < n; ++j)
-            if (i != j && abs(A(i, j)) > tol) return false;
+            if (i != j && !(abs(A(i, j)) <= tol)) return false;
     return true;
 }
 
@@ -106,7 +110,7 @@ bool is_banded(const M& A, std::size_t kl, std::size_t ku,
         for (size_type j = 0; j < n; ++j) {
             const bool below = (i > j) && (static_cast<std::size_t>(i - j) > kl);
             const bool above = (j > i) && (static_cast<std::size_t>(j - i) > ku);
-            if ((below || above) && abs(A(i, j)) > tol) return false;
+            if ((below || above) && !(abs(A(i, j)) <= tol)) return false;
         }
     return true;
 }

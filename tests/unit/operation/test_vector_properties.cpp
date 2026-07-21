@@ -37,6 +37,14 @@ TEST_CASE("is_finite / has_nan / has_inf", "[operation][properties][vector]") {
     REQUIRE_FALSE(has_nan(vec_t{1.0, inf, 3.0}));
 }
 
+TEST_CASE("is_zero: NaN entry is not zero", "[operation][properties][vector]") {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    // A NaN entry must fail is_zero even under a large tolerance (NaN is
+    // unordered, so the naive `abs > tol` test would wrongly accept it).
+    REQUIRE_FALSE(is_zero(vec_t{0.0, nan, 0.0}));
+    REQUIRE_FALSE(is_zero(vec_t{0.0, nan, 0.0}, 1e6));
+}
+
 TEST_CASE("is_normalized / is_unit", "[operation][properties][vector]") {
     // 3-4-5 normalized.
     REQUIRE(is_normalized(vec_t{0.6, 0.8}));

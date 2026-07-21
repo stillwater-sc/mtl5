@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <complex>
+#include <limits>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -109,6 +110,22 @@ TEST_CASE("is_banded", "[operation][properties][matrix]") {
     auto Lb = make({{1, 0, 0}, {2, 3, 0}, {0, 4, 5}});
     REQUIRE(is_banded(Lb, 1, 0));
     REQUIRE_FALSE(is_banded(Lb, 0, 0));
+}
+
+TEST_CASE("NaN entries fail structural predicates", "[operation][properties][matrix]") {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    // A NaN is unordered, so `abs > tol` would silently accept it; the
+    // predicates use !(dev <= tol) so a NaN must break every structural check.
+    // NaN in an off-diagonal position makes the deviation abs(A(i,j)-A(j,i))
+    // itself NaN, which must fail the symmetry test at any tolerance.
+    auto S = make({{1.0, nan}, {2.0, 3.0}});
+    REQUIRE_FALSE(is_symmetric(S));
+    REQUIRE_FALSE(is_symmetric(S, 1e6));
+    auto Dg = make({{nan, 0.0}, {0.0, 1.0}});  // NaN on diagonal (off-diag zero)
+    REQUIRE(is_diagonal(Dg));                  // off-diagonals are zero
+    auto Off = make({{1.0, nan}, {0.0, 1.0}}); // NaN off-diagonal
+    REQUIRE_FALSE(is_diagonal(Off));
+    REQUIRE_FALSE(is_upper_triangular(make({{1.0, 2.0}, {nan, 1.0}})));
 }
 
 TEST_CASE("is_diagonally_dominant", "[operation][properties][matrix]") {

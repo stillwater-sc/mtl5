@@ -61,12 +61,13 @@ constexpr Mag default_norm_tol() {
     return Mag(128) * std::numeric_limits<Mag>::epsilon();
 }
 
-/// Every entry is within tol of zero (default tol 0: exactly zero).
+/// Every entry is within tol of zero (default tol 0: exactly zero). Written as
+/// !(abs <= tol) so a NaN entry fails the predicate rather than being accepted.
 template <Vector V>
 bool is_zero(const V& v, magnitude_t<typename V::value_type> tol = 0) {
     using std::abs;
     for (typename V::size_type i = 0; i < v.size(); ++i)
-        if (abs(v(i)) > tol) return false;
+        if (!(abs(v(i)) <= tol)) return false;
     return true;
 }
 
