@@ -51,6 +51,7 @@ const FILE_MAP = {
   // ── Linear Algebra Algorithms ───────────────────────────────────
   'algorithms/overview.md':                     'algorithms/overview.md',
   'algorithms/eigenvalues.md':                  'algorithms/eigenvalues.md',
+  'algorithms/on-node-threading.md':            'algorithms/on-node-threading.md',
   'algorithms/mixed-precision-kernels.md':      'algorithms/mixed-precision-kernels.md',
   'algorithms/measuring-solver-accuracy.md':    'algorithms/measuring-solver-accuracy.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
@@ -60,6 +61,7 @@ const FILE_MAP = {
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',
   'position-mixed-precision-acceleration.md':   'design/mixed-precision-acceleration.md',
   'design/blas-kernel-architecture.md':         'design/blas-kernel-architecture.md',
+  'design/multicore-scaling-investigation.md':  'design/multicore-scaling-investigation.md',
   'design/mixed-precision-custom-types-SIMD.md': 'design/mixed-precision-custom-types-SIMD.md',
 
   // ── Modernization ──────────────────────────────────────────────────────
