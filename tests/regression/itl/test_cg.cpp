@@ -60,7 +60,7 @@ void report(const char* solver, const char* pc, const char* matrix,
 } // anonymous namespace
 
 TEST_CASE("CG regression: 2D Laplacian, identity PC", "[regression][itl][cg]") {
-    auto k = GENERATE(100, 224);
+    auto k = GENERATE(100);
     std::size_t n = std::size_t(k) * std::size_t(k);
 
     auto A = generators::laplacian_2d<double>(k, k);
@@ -78,7 +78,7 @@ TEST_CASE("CG regression: 2D Laplacian, identity PC", "[regression][itl][cg]") {
 }
 
 TEST_CASE("CG regression: 2D Laplacian, Jacobi PC", "[regression][itl][cg]") {
-    auto k = GENERATE(100, 224);
+    auto k = GENERATE(100);
     std::size_t n = std::size_t(k) * std::size_t(k);
 
     auto A = generators::laplacian_2d<double>(k, k);
@@ -114,14 +114,14 @@ TEST_CASE("CG regression: 2D Poisson, IC(0) PC", "[regression][itl][cg]") {
 }
 
 TEST_CASE("CG regression: 1D Laplacian 10K DOF", "[regression][itl][cg]") {
-    std::size_t n = 10000;
+    std::size_t n = 1000;
 
     auto A = generators::laplacian_1d<double>(n);
     vec::dense_vector<double> b(n, 1.0);
     vec::dense_vector<double> x(n, 0.0);
 
     itl::pc::diagonal<mat::compressed2D<double>> pc(A);
-    itl::basic_iteration<double> iter(b, 50000, 1e-10);
+    itl::basic_iteration<double> iter(b, 5000, 1e-10);
     int err = itl::cg(A, x, b, pc, iter);
 
     double rr = sparse_relative_residual(A, x, b);

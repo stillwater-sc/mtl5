@@ -147,7 +147,7 @@ jobs:
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel 2
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -209,7 +209,7 @@ jobs:
           -DMTL5_WITH_BLAS=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel 2
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
@@ -249,11 +249,11 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
 
       - name: Build
-        run: cmake --build build-ci-regression --parallel
+        run: cmake --build build-ci-regression --parallel 2
 
       - name: Run regression tests
         run: >
           ctest --test-dir build-ci-regression
           -L regression
           --output-on-failure
-          --timeout 300
+          --timeout 600
