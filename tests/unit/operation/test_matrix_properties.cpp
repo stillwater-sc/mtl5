@@ -3,12 +3,14 @@
 // is_diagonal, is_banded, is_diagonally_dominant.
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <complex>
 #include <limits>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/matrix_properties.hpp>
+#include <mtl/generators/randorth.hpp>
 
 using namespace mtl;
 using cd = std::complex<double>;
@@ -142,4 +144,45 @@ TEST_CASE("is_diagonally_dominant", "[operation][properties][matrix]") {
     REQUIRE_FALSE(is_diagonally_dominant(N));
     // Non-square is never dominant.
     REQUIRE_FALSE(is_diagonally_dominant(mat::dense2D<double>(2, 3)));
+}
+
+TEST_CASE("is_orthogonal / is_unitary", "[operation][properties][orthogonal]") {
+    // Identity and permutation are exactly orthogonal.
+    auto I = make({{1, 0, 0}, {0, 1, 0}, {0, 0, 1}});
+    REQUIRE(is_orthogonal(I));
+    REQUIRE(is_orthogonal(make({{0, 1}, {1, 0}})));
+
+    // Rotation matrix (orthogonal within rounding).
+    const double th = 0.7;
+    auto R = make({{std::cos(th), -std::sin(th)}, {std::sin(th), std::cos(th)}});
+    REQUIRE(is_orthogonal(R));
+
+    // Non-orthogonal (columns not unit / not perpendicular).
+    REQUIRE_FALSE(is_orthogonal(make({{1, 1}, {0, 1}})));
+    // Scaled identity: orthogonal columns but not unit norm.
+    REQUIRE_FALSE(is_orthogonal(make({{2, 0}, {0, 2}})));
+    // Non-square is never orthogonal.
+    REQUIRE_FALSE(is_orthogonal(mat::dense2D<double>(3, 2)));
+
+    // A random orthogonal matrix (Q from QR) passes at the default tolerance.
+    REQUIRE(is_orthogonal(generators::randorth<double>(6)));
+
+    // Complex unitary: diag(i, 1) has A^H A = I.
+    mat::dense2D<cd> U(2, 2);
+    U(0, 0) = cd(0, 1); U(0, 1) = cd(0, 0);
+    U(1, 0) = cd(0, 0); U(1, 1) = cd(1, 0);
+    REQUIRE(is_unitary(U));
+}
+
+TEST_CASE("is_normal", "[operation][properties][normal]") {
+    // Symmetric, skew-symmetric, orthogonal, and diagonal matrices are normal.
+    REQUIRE(is_normal(make({{1, 2, 3}, {2, 4, 5}, {3, 5, 6}})));   // symmetric
+    REQUIRE(is_normal(make({{0, 1}, {-1, 0}})));                   // skew
+    REQUIRE(is_normal(make({{0, 1}, {1, 0}})));                    // orthogonal
+    REQUIRE(is_normal(make({{5, 0}, {0, -2}})));                   // diagonal
+
+    // A generic non-symmetric matrix is not normal (A A^T != A^T A).
+    REQUIRE_FALSE(is_normal(make({{1, 1}, {0, 1}})));
+    // Non-square is never normal.
+    REQUIRE_FALSE(is_normal(mat::dense2D<double>(2, 3)));
 }

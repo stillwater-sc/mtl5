@@ -103,3 +103,42 @@ TEST_CASE("numerical_rank / nullity", "[operation][properties][spectral]") {
     REQUIRE(numerical_rank(T, 1e-8) == 2);
     REQUIRE(nullity(T, 1e-8) == 0);
 }
+
+TEST_CASE("inertia / is_indefinite", "[operation][properties][inertia]") {
+    // SPD: all eigenvalues positive -> (n, 0, 0), not indefinite.
+    auto SPD = make({{2, -1, 0}, {-1, 2, -1}, {0, -1, 2}});
+    auto iSPD = inertia(SPD);
+    REQUIRE(iSPD.positive == 3);
+    REQUIRE(iSPD.negative == 0);
+    REQUIRE(iSPD.zero == 0);
+    REQUIRE_FALSE(is_indefinite(SPD));
+
+    // Indefinite: eigenvalues 3 and -1 -> (1, 1, 0).
+    auto Ind = make({{1, 2}, {2, 1}});
+    auto iInd = inertia(Ind);
+    REQUIRE(iInd.positive == 1);
+    REQUIRE(iInd.negative == 1);
+    REQUIRE(is_indefinite(Ind));
+
+    // Negative definite -> (0, n, 0).
+    auto Neg = make({{-2, 0}, {0, -3}});
+    auto iNeg = inertia(Neg);
+    REQUIRE(iNeg.positive == 0);
+    REQUIRE(iNeg.negative == 2);
+    REQUIRE_FALSE(is_indefinite(Neg));
+
+    // Semidefinite / singular with mixed signs: diag(3, -1, 0) -> (1, 1, 1).
+    // Explicit tol for robust zero classification on the in-house eigensolver.
+    auto Mix = make({{3, 0, 0}, {0, -1, 0}, {0, 0, 0}});
+    auto iMix = inertia(Mix, 1e-8);
+    REQUIRE(iMix.positive == 1);
+    REQUIRE(iMix.negative == 1);
+    REQUIRE(iMix.zero == 1);
+    REQUIRE(is_indefinite(Mix, 1e-8));   // has both + and - eigenvalues
+
+    // Empty matrix: all counts zero.
+    auto iEmpty = inertia(mat::dense2D<double>(0, 0));
+    REQUIRE(iEmpty.positive == 0);
+    REQUIRE(iEmpty.negative == 0);
+    REQUIRE(iEmpty.zero == 0);
+}
