@@ -34,6 +34,13 @@ struct spy_options {
 };
 
 // -- Structural non-zero traversal: f(row, col, value) --------------------
+//
+// A "structural non-zero" is an entry whose *value* differs from zero. The
+// sparse overloads therefore skip explicitly-stored zeros, matching the dense
+// (i,j) scan so every format renders the same pattern. (COO duplicates at the
+// same coordinate are reported as stored, i.e. not coalesced; they land in the
+// same pixel cell, so the spy pattern is unaffected -- call compress() first if
+// exact per-coordinate values matter for a magnitude/density plot.)
 
 /// Generic fallback: scan (i,j) and report entries that differ from zero.
 /// Used for dense2D and any Matrix type without a specialized overload.
@@ -48,28 +55,32 @@ void for_each_nonzero(const M& A, F&& f) {
         }
 }
 
-/// CRS: iterate the three arrays directly (O(nnz)).
+/// CRS: iterate the three arrays directly (O(nnz)), skipping stored zeros.
 template <typename Value, typename Parameters, typename F>
 void for_each_nonzero(const mat::compressed2D<Value, Parameters>& A, F&& f) {
+    const auto zero = math::zero<Value>();
     const auto& starts  = A.ref_major();
     const auto& indices = A.ref_minor();
     const auto& data    = A.ref_data();
     for (std::size_t i = 0; i < A.num_rows(); ++i)
         for (std::size_t k = starts[i]; k < starts[i + 1]; ++k)
-            f(i, std::size_t(indices[k]), data[k]);
+            if (data[k] != zero) f(i, std::size_t(indices[k]), data[k]);
 }
 
-/// COO: iterate the stored triplets (O(nnz)).
+/// COO: iterate the stored triplets (O(nnz)), skipping stored zeros.
 template <typename Value, typename Parameters, typename F>
 void for_each_nonzero(const mat::coordinate2D<Value, Parameters>& A, F&& f) {
+    const auto zero = math::zero<Value>();
     for (const auto& [r, c, v] : A.ref_entries())
-        f(std::size_t(r), std::size_t(c), v);
+        if (v != zero) f(std::size_t(r), std::size_t(c), v);
 }
 
-/// ELLPACK: iterate the packed rows up to the invalid sentinel (O(nnz)).
+/// ELLPACK: iterate the packed rows up to the invalid sentinel (O(nnz)),
+/// skipping stored zeros.
 template <typename Value, typename Parameters, typename F>
 void for_each_nonzero(const mat::ell_matrix<Value, Parameters>& A, F&& f) {
     using ell = mat::ell_matrix<Value, Parameters>;
+    const auto zero = math::zero<Value>();
     const auto& indices = A.ref_indices();
     const auto& data    = A.ref_data();
     const std::size_t w = A.max_width();
@@ -77,7 +88,7 @@ void for_each_nonzero(const mat::ell_matrix<Value, Parameters>& A, F&& f) {
         for (std::size_t k = 0; k < w; ++k) {
             const auto idx = indices[i * w + k];
             if (idx == ell::invalid) break;
-            f(i, std::size_t(idx), data[i * w + k]);
+            if (data[i * w + k] != zero) f(i, std::size_t(idx), data[i * w + k]);
         }
 }
 
@@ -91,6 +102,20 @@ struct spy_grid {
     std::vector<std::size_t> counts;   ///< non-zeros per cell
     std::vector<Mag>         maxabs;   ///< max |value| per cell
 };
+
+/// floor(idx * span / dim) for idx < dim and span <= dim, without overflowing
+/// the intermediate product for huge logical dimensions.
+inline std::size_t scale_index(std::size_t idx, std::size_t span, std::size_t dim) {
+#if defined(__SIZEOF_INT128__)
+    const std::size_t v = static_cast<std::size_t>(
+        (static_cast<unsigned __int128>(idx) * span) / dim);
+#else
+    const std::size_t v = static_cast<std::size_t>(
+        (static_cast<long double>(idx) * static_cast<long double>(span)) /
+         static_cast<long double>(dim));
+#endif
+    return (v < span) ? v : span - 1;
+}
 
 template <typename M>
 spy_grid<magnitude_t<typename M::value_type>>
@@ -107,14 +132,16 @@ build_spy_grid(const M& A, std::size_t max_pixels) {
     spy_grid<mag_t> g;
     g.W = std::min(n, max_pixels);
     g.H = std::min(m, max_pixels);
-    g.counts.assign(g.W * g.H, 0);
-    g.maxabs.assign(g.W * g.H, mag_t(0));
+    // Guard the grid allocation against size_type overflow.
+    if (g.H != 0 && g.W > (static_cast<std::size_t>(-1) / g.H))
+        throw std::runtime_error("spy: image grid too large");
+    const std::size_t cells = g.W * g.H;
+    g.counts.assign(cells, 0);
+    g.maxabs.assign(cells, mag_t(0));
 
     for_each_nonzero(A, [&](std::size_t i, std::size_t j, const value_type& v) {
-        std::size_t px = (j * g.W) / n;   // map column -> [0, W)
-        std::size_t py = (i * g.H) / m;   // map row    -> [0, H)
-        if (px >= g.W) px = g.W - 1;
-        if (py >= g.H) py = g.H - 1;
+        const std::size_t px = scale_index(j, g.W, n);   // column -> [0, W)
+        const std::size_t py = scale_index(i, g.H, m);   // row    -> [0, H)
         const std::size_t c = py * g.W + px;
         ++g.counts[c];
         const mag_t a = abs(v);
@@ -170,7 +197,9 @@ void spy_magnitude(const M& A, const std::filesystem::path& path, const spy_opti
     const double lgmin = have_min ? std::log10(static_cast<double>(gmin_pos)) : 0.0;
     const double lgmax = gmax > mag_t(0) ? std::log10(static_cast<double>(gmax)) : 0.0;
 
-    std::vector<std::uint8_t> rgb(g.W * g.H * 3, 255);   // white background
+    if (g.counts.size() > (static_cast<std::size_t>(-1) / 3))
+        throw std::runtime_error("spy: image grid too large");
+    std::vector<std::uint8_t> rgb(g.counts.size() * 3, 255);   // white background
     for (std::size_t c = 0; c < g.counts.size(); ++c) {
         if (g.counts[c] == 0) continue;
         double t = 0.0;
@@ -194,7 +223,9 @@ void spy_density(const M& A, const std::filesystem::path& path, const spy_option
     std::size_t cmax = 0;
     for (std::size_t v : g.counts) cmax = std::max(cmax, v);
 
-    std::vector<std::uint8_t> rgb(g.W * g.H * 3, 255);   // white background
+    if (g.counts.size() > (static_cast<std::size_t>(-1) / 3))
+        throw std::runtime_error("spy: image grid too large");
+    std::vector<std::uint8_t> rgb(g.counts.size() * 3, 255);   // white background
     for (std::size_t c = 0; c < g.counts.size(); ++c) {
         if (g.counts[c] == 0) continue;
         double t = 0.0;

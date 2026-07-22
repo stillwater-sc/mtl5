@@ -5,7 +5,6 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <vector>
 
 #include <mtl/mat/dense2D.hpp>
@@ -13,23 +12,17 @@
 #include <mtl/mat/coordinate2D.hpp>
 #include <mtl/mat/ell_matrix.hpp>
 #include <mtl/io/spy.hpp>
+#include "png_decode.hpp"
 
 using namespace mtl;
 using mtl::io::spy_options;
+using mtl_test::decode_png;
+using mtl_test::read_file;
 
 namespace {
 
 std::filesystem::path tmp(const std::string& name) {
     return std::filesystem::temp_directory_path() / name;
-}
-
-bool is_png(const std::filesystem::path& p) {
-    std::ifstream in(p, std::ios::binary);
-    std::uint8_t sig[8] = {0};
-    in.read(reinterpret_cast<char*>(sig), 8);
-    static const std::uint8_t want[8] = {137, 80, 78, 71, 13, 10, 26, 10};
-    for (int i = 0; i < 8; ++i) if (sig[i] != want[i]) return false;
-    return true;
 }
 
 // Build a 4x4 tridiagonal matrix in COO (then convertible to CRS/ELL).
@@ -95,24 +88,53 @@ TEST_CASE("build_spy_grid: down-sampling bins non-zeros", "[io][spy]") {
             REQUIRE(g.counts[i * 10 + j] == (i == j ? 10u : 0u));
 }
 
-TEST_CASE("spy variants emit valid PNGs", "[io][spy]") {
-    auto A = tridiag_coo(8);
+TEST_CASE("spy emits a valid PNG whose pixels match the pattern", "[io][spy]") {
+    // 5x5 tridiagonal, spy -> 5x5 grayscale; decode and check black marks land
+    // exactly on |i-j| <= 1, white elsewhere.
+    auto A = tridiag_coo(5);
+    const auto path = tmp("mtl5_spy.png");
+    io::spy(A, path);
 
-    const auto p1 = tmp("mtl5_spy.png");
+    const auto dec = decode_png(read_file(path));   // verifies CRCs + Adler-32
+    REQUIRE(dec.w == 5);
+    REQUIRE(dec.h == 5);
+    REQUIRE(dec.channels == 1);
+    for (std::size_t i = 0; i < 5; ++i)
+        for (std::size_t j = 0; j < 5; ++j) {
+            const bool mark = (i == j) || (i + 1 == j) || (j + 1 == i);
+            REQUIRE(dec.pixels[i * 5 + j] == (mark ? 0 : 255));
+        }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("spy_magnitude / spy_density emit valid RGB PNGs", "[io][spy]") {
+    auto A = tridiag_coo(8);
     const auto p2 = tmp("mtl5_spy_mag.png");
     const auto p3 = tmp("mtl5_spy_den.png");
 
-    io::spy(A, p1);
     io::spy_magnitude(A, p2, {64, /*log_scale=*/true});
     io::spy_density(A, p3);
 
-    REQUIRE(is_png(p1));
-    REQUIRE(is_png(p2));
-    REQUIRE(is_png(p3));
+    const auto d2 = decode_png(read_file(p2));   // full structural validation
+    const auto d3 = decode_png(read_file(p3));
+    REQUIRE(d2.channels == 3);
+    REQUIRE(d3.channels == 3);
+    REQUIRE(d2.w == 8); REQUIRE(d2.h == 8);
+    REQUIRE(d3.w == 8); REQUIRE(d3.h == 8);
 
-    std::filesystem::remove(p1);
     std::filesystem::remove(p2);
     std::filesystem::remove(p3);
+}
+
+TEST_CASE("spy skips explicitly-stored zeros", "[io][spy]") {
+    // A COO with an explicit stored zero must not produce a mark there, matching
+    // the dense (value != 0) semantics.
+    mat::coordinate2D<double> A(2, 2);
+    A.insert(0, 0, 1.0);
+    A.insert(1, 1, 0.0);   // explicit zero -> not a structural non-zero
+    auto g = io::detail::build_spy_grid(A, 1024);
+    REQUIRE(g.counts[0] == 1);   // (0,0)
+    REQUIRE(g.counts[3] == 0);   // (1,1) skipped
 }
 
 TEST_CASE("spy rejects a zero-dimension matrix", "[io][spy]") {
