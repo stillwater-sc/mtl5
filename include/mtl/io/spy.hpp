@@ -106,7 +106,10 @@ struct spy_grid {
 /// floor(idx * span / dim) for idx < dim and span <= dim, without overflowing
 /// the intermediate product for huge logical dimensions.
 inline std::size_t scale_index(std::size_t idx, std::size_t span, std::size_t dim) {
-#if defined(__SIZEOF_INT128__)
+    // __int128 division needs the __udivti3 builtin, which the MSVC ABI
+    // (incl. clang-cl) does not link; use it only on the GNU/Clang runtimes and
+    // fall back to long double elsewhere (exact for dim < 2^53, clamped anyway).
+#if defined(__SIZEOF_INT128__) && !defined(_MSC_VER)
     const std::size_t v = static_cast<std::size_t>(
         (static_cast<unsigned __int128>(idx) * span) / dim);
 #else
