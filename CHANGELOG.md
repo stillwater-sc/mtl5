@@ -7,6 +7,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+#### Matrix/vector/tensor property predicate module (#244)
+A cohesive set of runtime property and predicate queries as free functions in `namespace mtl`, built on the existing primitives (cholesky/lu/svd/eigenvalue/norms) with no new dependencies. Consistent tolerance policy: structural checks are exact-by-default and NaN-safe (`!(dev <= tol)`), while norm/factorization/spectral-backed checks use relative or scale-aware tolerances; verified on both the in-house and LAPACK paths.
+- **Structural + vector predicates** (`operation/matrix_properties.hpp`, `operation/vector_properties.hpp`) — `is_square`, `is_empty`, `is_symmetric`, `is_hermitian`, `is_upper/lower/is_triangular`, `is_diagonal`, `is_banded`, `is_diagonally_dominant`; `is_zero`, `is_finite`/`has_nan`/`has_inf`, `is_normalized`/`is_unit`, `is_orthogonal_to`. O(n)/O(nnz), no factorization (#245)
+- **Factorization-backed predicates** (`operation/factorization_properties.hpp`) — `is_spd`/`is_positive_definite` (symmetric + Cholesky), `is_singular`/`is_nonsingular`/`is_invertible` and `determinant` (LU), each on a copy so the caller's matrix is unchanged (#246)
+- **Spectral / condition / rank** (`operation/spectral_properties.hpp`) — `spectral_radius`, `condition_number`, `rcond`, `numerical_rank`, `nullity`, wrapping the dense SVD and eigensolver (#247)
+- **Rank-2 tensor predicates** (`tensor/properties.hpp`) — `is_symmetric`, `is_antisymmetric` (#248)
+- **Orthogonality + inertia** — `is_orthogonal`/`is_unitary` (`AᴴA == I`) and `is_normal` (`AAᴴ == AᴴA`), plus `inertia` (the congruence-invariant `(positive, negative, zero)` eigenvalue-sign triple, Sylvester's law) and `is_indefinite`; inertia is backed by the symmetric eigensolver so it is robust for singular/semidefinite inputs (#249)
+
+#### On-node threading (#221)
+- **`mtl::detail::thread_pool`** — a persistent worker pool (no OpenMP/TBB, just the C++ standard concurrency runtime) with `run`, `parallel_for` (bit-identical contiguous chunking), and `parallel_reduce` (chunked, deterministic-per-thread-count). Threading is **off by default**; `MTL5_NUM_THREADS` (read once, clamped to hardware concurrency) sizes the pool, and `=1`/unset creates no workers and runs the original serial paths (#239)
+- **Threaded kernels** on the pool — blocked GEMM (#239), row-/col-major GEMV and `axpy`/`scal` (#240), `dot`/`nrm2` and column-major GEMV (#241), and sparse SpMV `compressed2D * vector` (#242). The iterative and eigensolvers inherit the SpMV/L1 threading with no solver-code changes. Every kernel except the reductions is bit-identical across thread counts
+- **Documentation** — an on-node threading reference (`docs/algorithms/on-node-threading.md`) and a performance-engineering case study on multi-core scaling (`docs/design/multicore-scaling-investigation.md`), including the SMT-affinity measurement pitfall and the corrected 6.3–6.9× GEMM scaling on 8 physical cores (#243)
+
+#### Iterative solvers
+- **`cg` accumulator policy** — the conjugate-gradient solver routes its two `dot` calls and the `mult` through an optional `accumulator_traits` accumulator (#158); default (`void`) behavior is unchanged, while `posit32`+quire shows a consistent accuracy gain over naive `posit32` (#238)
+
 #### Mixed-precision tensor operations (epic #157)
 - **`mtl::math::accumulator_traits<Acc, Value>`** — a shared, cross-cutting accumulator policy with a generalized `value<Result>` round-out, expressing the three independent precisions of a mixed-precision op: element (storage), accumulator (compute), result (serialize). The accumulate→output conversion is fused into the final store (#158)
 - **Accumulator/result policy on the dense operations**: `dot`/`dot_real` (#159), `gemm`/`mult` with the result type inferred from `C` (#161), `gemv` (#160), and the sum-of-squares norms `two_norm`/`frobenius_norm` (#162). E.g. `mult<float>(A_bf16, B_bf16, C_bf16)` accumulates in fp32 and writes bf16 once. Default `Accumulator = void` is byte-identical to prior behavior
