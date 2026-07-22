@@ -61,6 +61,9 @@ public:
     size_type size()     const { return nrows_ * ncols_; }
     size_type nnz()      const { return entries_.size(); }
 
+    /// Raw access to the (row, col, value) triplets (unsorted unless sort()ed).
+    const std::vector<triplet_type>& ref_entries() const { return entries_; }
+
     // -- Sorting ----------------------------------------------------------
 
     /// Sort entries by (row, col) in-place.
