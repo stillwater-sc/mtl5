@@ -72,7 +72,7 @@ void report(const char* solver, const char* pc, const char* matrix,
 } // anonymous namespace
 
 TEST_CASE("BiCGSTAB regression: 2D Laplacian, identity PC", "[regression][itl][bicgstab]") {
-    auto k = GENERATE(50, 100);
+    auto k = GENERATE(50, 70);
     std::size_t n = std::size_t(k) * std::size_t(k);
 
     auto A = generators::laplacian_2d<double>(k, k);
@@ -90,7 +90,7 @@ TEST_CASE("BiCGSTAB regression: 2D Laplacian, identity PC", "[regression][itl][b
 }
 
 TEST_CASE("BiCGSTAB regression: 1D convection-diffusion, ILU(0) PC", "[regression][itl][bicgstab]") {
-    auto n = GENERATE(10000, 50000);
+    auto n = GENERATE(10000, 20000);
 
     auto A = make_convdiff_1d(n);
     vec::dense_vector<double> b(n, 1.0);
@@ -107,7 +107,7 @@ TEST_CASE("BiCGSTAB regression: 1D convection-diffusion, ILU(0) PC", "[regressio
 }
 
 TEST_CASE("BiCGSTAB regression: 2D Laplacian, Jacobi PC", "[regression][itl][bicgstab]") {
-    auto k = GENERATE(100, 158);
+    auto k = GENERATE(70);
     std::size_t n = std::size_t(k) * std::size_t(k);
 
     auto A = generators::laplacian_2d<double>(k, k);

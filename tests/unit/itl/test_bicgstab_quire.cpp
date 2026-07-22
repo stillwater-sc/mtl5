@@ -76,13 +76,15 @@ TEST_CASE("BiCGSTAB: quire-accumulated products improve posit32 accuracy vs naiv
     vec::dense_vector<Posit> x_naive(n, Posit(0.0));
     itl::pc::identity<mat::dense2D<Posit>> pc(A);
     itl::basic_iteration<Posit> iter_naive(b, 200, Posit(1e-6));
-    itl::bicgstab(A, x_naive, b, pc, iter_naive); // default Accumulator = naive posit32
+    int err_naive = itl::bicgstab(A, x_naive, b, pc, iter_naive); // default Accumulator = naive posit32
+    REQUIRE(err_naive == 0);
 
     vec::dense_vector<Posit> x_quire(n, Posit(0.0));
     itl::basic_iteration<Posit> iter_quire(b, 200, Posit(1e-6));
-    itl::bicgstab<mat::dense2D<Posit>, vec::dense_vector<Posit>, vec::dense_vector<Posit>,
+    int err_quire = itl::bicgstab<mat::dense2D<Posit>, vec::dense_vector<Posit>, vec::dense_vector<Posit>,
                   itl::pc::identity<mat::dense2D<Posit>>, itl::basic_iteration<Posit>, Quire>(
         A, x_quire, b, pc, iter_quire);
+    REQUIRE(err_quire == 0);
 
     // Reference in double for the true solution's residual comparison.
     mat::dense2D<double> Ad(n, n);

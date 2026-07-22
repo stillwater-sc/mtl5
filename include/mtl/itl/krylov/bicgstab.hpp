@@ -67,7 +67,12 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         mtl::mult<Accumulator>(A, phat, v);
 
         // alpha = rho / dot(r_star, v)
-        alpha = rho / mtl::dot<Accumulator, value_type>(r_star, v);
+        value_type rsv = mtl::dot<Accumulator, value_type>(r_star, v);
+        if (rsv == value_type(0)) {
+            iter.fail(3, "bicgstab breakdown: dot(r_star, v) == 0");
+            return iter;
+        }
+        alpha = rho / rsv;
 
         // s = r - alpha * v
         for (size_type i = 0; i < n; ++i)
@@ -88,7 +93,12 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         mtl::mult<Accumulator>(A, shat, t);
 
         // omega = dot(t, s) / dot(t, t)
-        omega = mtl::dot<Accumulator, value_type>(t, s) / mtl::dot<Accumulator, value_type>(t, t);
+        value_type tt = mtl::dot<Accumulator, value_type>(t, t);
+        if (tt == value_type(0)) {
+            iter.fail(4, "bicgstab breakdown: dot(t, t) == 0");
+            return iter;
+        }
+        omega = mtl::dot<Accumulator, value_type>(t, s) / tt;
 
         // x += alpha * phat + omega * shat
         for (size_type i = 0; i < n; ++i)
