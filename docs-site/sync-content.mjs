@@ -77,6 +77,7 @@ const FILE_MAP = {
   'examples/ukf-cholesky-vs-ldlt.md':   'examples/ukf-cholesky-vs-ldlt.md',
   'examples/gmres-restart.md':          'examples/gmres-restart.md',
   'examples/circuit-matrix-klu.md':     'examples/circuit-matrix-klu.md',
+  'examples/sparse-visualization.md':   'examples/sparse-visualization.md',
 
   // ── Generators ──────────────────────────────────────────────────
   'generators/strengthen-LA-tests-with-generator-matrices.md': 'generators/strengthen-tests.md',
