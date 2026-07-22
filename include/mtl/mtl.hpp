@@ -232,6 +232,7 @@
 #include <mtl/io/matrix_market.hpp>
 #include <mtl/io/read_el.hpp>
 #include <mtl/io/write_el.hpp>
+#include <mtl/io/png.hpp>
 
 // Generators -- Test matrix generation facility
 #include <mtl/generators/generators.hpp>
