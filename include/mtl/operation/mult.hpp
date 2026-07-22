@@ -8,6 +8,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/mat/compressed2D.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -46,6 +47,39 @@ void mult_generic(const M& A, const VIn& x, VOut& y) {
             for (typename M::size_type c = 0; c < A.num_cols(); ++c) {
                 AT::add_product(acc, static_cast<Value>(A(r, c)), static_cast<Value>(x(c)));
             }
+            y(r) = AT::template value<Result>(acc);
+        }
+    }
+}
+
+/// Sparse CRS mat*vec: y = A * x, iterating only stored nonzeros. Mirrors
+/// mat::operator*(compressed2D, dense_vector)'s traversal but adds
+/// Accumulator support (accumulator_traits), so mixed-precision / quire
+/// accumulation works on sparse matrices too, not just dense ones.
+template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
+void mult_sparse_crs(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y) {
+    using Result = typename VOut::value_type;
+    using size_type = typename mat::compressed2D<V, P>::size_type;
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    const std::size_t nrows = A.num_rows();
+    if constexpr (std::is_void_v<Accumulator>) {
+        using Value = std::common_type_t<V, typename VIn::value_type>;
+        for (std::size_t r = 0; r < nrows; ++r) {
+            auto acc = math::zero<Result>();
+            for (size_type k = starts[r]; k < starts[r + 1]; ++k)
+                acc += static_cast<Result>(static_cast<Value>(data[k]) * static_cast<Value>(x(indices[k])));
+            y(r) = acc;
+        }
+    } else {
+        using Value = std::common_type_t<V, typename VIn::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        for (std::size_t r = 0; r < nrows; ++r) {
+            Accumulator acc{};
+            AT::clear(acc);
+            for (size_type k = starts[r]; k < starts[r + 1]; ++k)
+                AT::add_product(acc, static_cast<Value>(data[k]), static_cast<Value>(x(indices[k])));
             y(r) = AT::template value<Result>(acc);
         }
     }
@@ -100,7 +134,10 @@ void mult(const M& A, const VIn& x, VOut& y) {
     assert(A.num_cols() == x.size());
     assert(A.num_rows() == y.size());
 
-    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
+    if constexpr (interface::is_compressed2D_v<M>) {
+        detail::mult_sparse_crs<Accumulator>(A, x, y);
+        return;
+    } else if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         detail::mult_generic<Accumulator>(A, x, y);
         return;
     } else {
