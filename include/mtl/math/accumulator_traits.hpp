@@ -9,18 +9,41 @@
 //   * Acc    -- the accumulator precision the products are summed in (registers)
 //   * Result -- the precision the rounded result is delivered/stored in (out)
 //
-// MTL5 stays free of any external number library: a caller supplies a custom
-// `Acc` (a compensated/Kahan accumulator, a Universal `quire` super-accumulator,
-// or simply a wider IEEE type) by specializing `accumulator_traits<Acc, Value>`.
+// The trait abstracts a sum-of-products reduction behind clear/assign/
+// add_product/value, so a kernel writes the same loop regardless of HOW the
+// terms are combined. Three reduction configurations are expressible:
 //
-// The default specialization makes `Acc == Value` (plain arithmetic, zero
-// overhead, identical results) -- the behavior unless a caller opts in.
+//   1. Plain accumulate (acc += product) -- the DEFAULT primary template.
+//      The product `m*v` is formed in the accumulator precision `Acc`, rounded,
+//      then added: two rounding events per term. Zero overhead and byte-
+//      identical to hand-written arithmetic when `Acc == Value`; a wider `Acc`
+//      than `Value` (e.g. fp32 accumulate over bf16 elements) gains accuracy
+//      out of the box. Use any arithmetic type as `Acc` (e.g. `float`,`double`).
+//
+//   2. Fused multiply-add (acc = fma(m, v, acc)) -- `fma_accumulator<T>`.
+//      The product is never rounded: `m*v + acc` is formed as if in infinite
+//      precision and rounded ONCE to `T` per term. One rounding event per term
+//      instead of two. The fused step is `using std::fma; fma(...)`, so `T` may
+//      be a built-in float or any custom arithmetic type with an ADL-found `fma`.
+//
+//   3. Super-accumulator (exact sum of products, single final round-out).
+//      A caller supplies a custom `Acc` (a compensated/Kahan accumulator, or a
+//      Universal `quire` exact dot product) by specializing
+//      `accumulator_traits<Acc, Value>`. MTL5 stays free of any external number
+//      library, so the quire super-accumulator itself lives in the peer repo
+//      that pairs MTL5 with Universal; this header only defines the contract it
+//      plugs into. `value<Result>` then rounds the exact accumulator out once.
 //
 // Used by the sparse factorizations and the dense BLAS-level operations.
+
+#include <cmath>   // std::fma
 
 namespace mtl::math {
 
 /// Accumulator policy for accumulating products of `Value`s into an `Acc`.
+///
+/// Configuration 1 (plain `acc += product`): the primary template. The product
+/// is formed in `Acc`, so `Acc` wider than `Value` accumulates more accurately.
 template <typename Acc, typename Value>
 struct accumulator_traits {
     /// Reset the accumulator to zero.
@@ -44,6 +67,50 @@ struct accumulator_traits {
     /// no-op cast and byte-identical when `Acc == Value`.
     static void add_product(Acc& a, const Value& m, const Value& v) {
         a += static_cast<Acc>(m) * static_cast<Acc>(v);
+    }
+};
+
+/// Configuration 2 -- fused multiply-add accumulator.
+///
+/// A distinguished accumulator type that selects the FMA reduction: pass it as
+/// the `Acc` template argument to any accumulator-aware operation to fuse each
+/// `m*v` into the running sum, so the intermediate product is never rounded (one
+/// rounding per term instead of two). `T` is the accumulation precision held in
+/// registers; it need not equal the element precision `Value`.
+///
+/// `T` is intentionally unconstrained so this stays usable by custom arithmetic
+/// types: the fused step is `using std::fma; fma(...)`, which selects `std::fma`
+/// for the built-in floating types and, via ADL, a type-specific fused multiply-
+/// add for a custom number type (e.g. a posit `fma`). A type that has no fused
+/// operation simply does not satisfy the call and is not a valid `T`.
+template <typename T = double>
+struct fma_accumulator {
+    T sum{};
+};
+
+/// Accumulator policy for the FMA reduction (configuration 2).
+///
+/// `add_product` computes `sum = m*v + sum` with a single rounding to `T`, so the
+/// product `m*v` incurs no separate rounding event -- one rounding per term
+/// instead of two. When `T` is wider than `Value` the operand widening is exact.
+/// Eliminating the product rounding generally improves accuracy over the plain
+/// path at the same `T`; over a long reduction the two accumulation-error streams
+/// can occasionally align differently, so this is a per-term guarantee, not a
+/// strict ordering on every possible sum.
+template <typename T, typename Value>
+struct accumulator_traits<fma_accumulator<T>, Value> {
+    using Acc = fma_accumulator<T>;
+
+    static void clear(Acc& a) { a.sum = T{}; }
+
+    static void assign(Acc& a, const Value& v) { a.sum = static_cast<T>(v); }
+
+    template <typename Result = Value>
+    static Result value(const Acc& a) { return static_cast<Result>(a.sum); }
+
+    static void add_product(Acc& a, const Value& m, const Value& v) {
+        using std::fma;   // ADL: std::fma for built-ins, a custom fma for user types
+        a.sum = fma(static_cast<T>(m), static_cast<T>(v), a.sum);
     }
 };
 

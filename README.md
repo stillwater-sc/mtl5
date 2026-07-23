@@ -9,7 +9,7 @@ MTL5 is a modernized successor to [MTL4](https://github.com/stillwater-sc/mtl4),
 - **Header-only** — no build step; drop `include/` on your path and `#include <mtl/mtl.hpp>`
 - **Zero Boost dependency** — pure C++20 (concepts, `constexpr`, `std::span`, ranges)
 - **Mixed precision throughout** — a shared `accumulator_traits` policy expresses the three precisions of a kernel (element, accumulate, result); e.g. `mult<float>(A_bf16, B_bf16, C_bf16)` accumulates in fp32 and stores bf16 once
-- **Custom arithmetic types** — designed for posits, LNS, and other Universal number types, with quire-based exact accumulation
+- **Custom arithmetic types** — designed for posits, LNS, and other Universal number types; the accumulator is a pluggable policy, so an exact quire super-accumulator drops in from the Universal pairing (MTL5 itself stays library-free)
 - **Dense & sparse** — CSR/CSC, COO, ELLPACK, block-diagonal, plus dense row/column-major
 - **Complete BLAS surface** — L1/L2/L3, generic over any type, auto-dispatching to external BLAS/LAPACK for dense float/double
 - **Sparse direct solvers** — native Cholesky/LDLᵀ/LU/QR, supernodal LU/LDLᵀ, KLU, fill-reducing orderings, plus wrappers for SuiteSparse/SuperLU
@@ -81,8 +81,7 @@ int main() {
 
 ### Mixed precision
 
-- **`math::accumulator_traits<Acc, Value>`** — a cross-cutting policy expressing element (storage), accumulator (compute), and result (serialize) precisions; the accumulate→output conversion is fused into the final store
-- **`math::quire_accumulator`** — exact posit accumulation via the quire
+- **`math::accumulator_traits<Acc, Value>`** — a cross-cutting policy expressing element (storage), accumulator (compute), and result (serialize) precisions; the accumulate→output conversion is fused into the final store. It abstracts a sum-of-products reduction so a kernel writes one loop regardless of how terms combine, and covers three configurations: plain `acc += product` (the default primary template), fused multiply-add via `math::fma_accumulator<T>` (one rounding per term, no intermediate product round), and a caller-supplied super-accumulator (e.g. an exact quire) for single-rounding dot products
 - **`convert`** — standalone element-wise re-quantization (distinct from the fused epilogue)
 - Applied across `dot`, `gemm`/`mult`, `gemv`, and the sum-of-squares norms; default (`Accumulator = void`) is byte-identical to the plain path
 
