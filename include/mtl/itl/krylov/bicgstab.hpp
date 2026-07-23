@@ -3,13 +3,20 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
+#include <mtl/operation/mult.hpp>
 
 namespace mtl::itl {
 
 /// BiCGSTAB method for non-symmetric systems.
 /// Solves A*x = b with preconditioner M and iteration controller iter.
+///
+/// Accumulator (optional): accumulation type for the dot products and the
+/// matrix-vector products (see math/accumulator_traits.hpp, #158).
+/// Defaults to void, matching dot()/mult()'s own default -- unspecified
+/// behavior is unchanged.
 template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter>
+          typename PC, typename Iter,
+          typename Accumulator = void>
 int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;
@@ -20,7 +27,8 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
     vec::dense_vector<value_type> v(n), s(n), shat(n), t(n);
 
     // r = b - A*x
-    auto Ax = A * x;
+    vec::dense_vector<value_type> Ax(n);
+    mtl::mult<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i) {
         r(i) = b(i) - Ax(i);
         r_star(i) = r(i);
@@ -39,7 +47,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
     while (!iter.finished(r)) {
         ++iter;
 
-        value_type rho = mtl::dot(r_star, r);
+        value_type rho = mtl::dot<Accumulator, value_type>(r_star, r);
 
         if (rho == value_type(0)) {
             iter.fail(2, "bicgstab breakdown: rho == 0");
@@ -56,12 +64,15 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         M.solve(phat, p);
 
         // v = A * phat
-        auto Aphat = A * phat;
-        for (size_type i = 0; i < n; ++i)
-            v(i) = Aphat(i);
+        mtl::mult<Accumulator>(A, phat, v);
 
         // alpha = rho / dot(r_star, v)
-        alpha = rho / mtl::dot(r_star, v);
+        value_type rsv = mtl::dot<Accumulator, value_type>(r_star, v);
+        if (rsv == value_type(0)) {
+            iter.fail(3, "bicgstab breakdown: dot(r_star, v) == 0");
+            return iter;
+        }
+        alpha = rho / rsv;
 
         // s = r - alpha * v
         for (size_type i = 0; i < n; ++i)
@@ -79,12 +90,15 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         M.solve(shat, s);
 
         // t = A * shat
-        auto Ashat = A * shat;
-        for (size_type i = 0; i < n; ++i)
-            t(i) = Ashat(i);
+        mtl::mult<Accumulator>(A, shat, t);
 
         // omega = dot(t, s) / dot(t, t)
-        omega = mtl::dot(t, s) / mtl::dot(t, t);
+        value_type tt = mtl::dot<Accumulator, value_type>(t, t);
+        if (tt == value_type(0)) {
+            iter.fail(4, "bicgstab breakdown: dot(t, t) == 0");
+            return iter;
+        }
+        omega = mtl::dot<Accumulator, value_type>(t, s) / tt;
 
         // x += alpha * phat + omega * shat
         for (size_type i = 0; i < n; ++i)
