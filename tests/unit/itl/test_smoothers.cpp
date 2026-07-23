@@ -10,6 +10,7 @@
 #include <mtl/itl/smoother/gauss_seidel.hpp>
 #include <mtl/itl/smoother/jacobi.hpp>
 #include <mtl/itl/smoother/sor.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 using namespace mtl;
 
@@ -38,6 +39,55 @@ static mat::compressed2D<double> make_sparse_spd() {
     }
     return A;
 }
+
+// Same SPD matrix in float, for the accumulator-routing test (double
+// accumulation over narrower float data -- no Universal needed).
+static mat::dense2D<float> make_dense_spd_f() {
+    mat::dense2D<float> A(4, 4);
+    for (std::size_t i = 0; i < 4; ++i)
+        for (std::size_t j = 0; j < 4; ++j)
+            A(i, j) = 0.0f;
+    A(0,0)=4; A(0,1)=1;
+    A(1,0)=1; A(1,1)=4; A(1,2)=1;
+    A(2,1)=1; A(2,2)=4; A(2,3)=1;
+    A(3,2)=1; A(3,3)=4;
+    return A;
+}
+
+static mat::compressed2D<float> make_sparse_spd_f() {
+    mat::compressed2D<float> A(4, 4);
+    {
+        mat::inserter<mat::compressed2D<float>> ins(A);
+        ins[0][0] << 4.0f; ins[0][1] << 1.0f;
+        ins[1][0] << 1.0f; ins[1][1] << 4.0f; ins[1][2] << 1.0f;
+        ins[2][1] << 1.0f; ins[2][2] << 4.0f; ins[2][3] << 1.0f;
+        ins[3][2] << 1.0f; ins[3][3] << 4.0f;
+    }
+    return A;
+}
+
+namespace {
+// A wider-precision accumulator over float data: the running sum is held in
+// double and every add_product is counted, so the test can assert the jacobi
+// smoother actually routes its off-diagonal row sum through accumulator_traits
+// rather than the naive value_type path.
+int g_jacobi_addproduct_calls = 0;
+struct counting_wide_acc { double v = 0.0; };
+} // namespace
+
+namespace mtl::math {
+template <>
+struct accumulator_traits<counting_wide_acc, float> {
+    static void clear(counting_wide_acc& a) { a.v = 0.0; }
+    static void assign(counting_wide_acc& a, const float& x) { a.v = static_cast<double>(x); }
+    template <typename Result = float>
+    static Result value(const counting_wide_acc& a) { return static_cast<Result>(a.v); }
+    static void add_product(counting_wide_acc& a, const float& m, const float& x) {
+        ++g_jacobi_addproduct_calls;
+        a.v += static_cast<double>(m) * static_cast<double>(x);
+    }
+};
+} // namespace mtl::math
 
 TEST_CASE("Gauss-Seidel reduces residual (dense)", "[itl][smoother][gauss_seidel]") {
     auto A = make_dense_spd();
@@ -89,6 +139,50 @@ TEST_CASE("Jacobi reduces residual", "[itl][smoother][jacobi]") {
     auto r = A * x;
     for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
     REQUIRE(two_norm(r) < 1e-6);
+}
+
+TEST_CASE("Jacobi routes the row sum through accumulator_traits (#262)",
+          "[itl][smoother][jacobi][accumulator]") {
+    vec::dense_vector<float> b = {1.0f, 2.0f, 3.0f, 4.0f};
+
+    SECTION("dense: double-accumulate-over-float matches the void default") {
+        auto A = make_dense_spd_f();
+        vec::dense_vector<float> x_default(4, 0.0f);
+        vec::dense_vector<float> x_wide(4, 0.0f);
+
+        itl::smoother::jacobi<mat::dense2D<float>> jac_default(A);
+        itl::smoother::jacobi<mat::dense2D<float>, counting_wide_acc> jac_wide(A);
+
+        g_jacobi_addproduct_calls = 0;
+        for (int sweep = 0; sweep < 50; ++sweep) {
+            jac_default(x_default, b);
+            jac_wide(x_wide, b);
+        }
+
+        REQUIRE(g_jacobi_addproduct_calls > 0);   // routing actually exercised
+        // Well-conditioned: the wider accumulator converges to the same solution.
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(x_wide(i), Catch::Matchers::WithinAbs(x_default(i), 1e-4));
+        auto r = A * x_wide;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
+
+    SECTION("sparse specialization also routes through the accumulator") {
+        auto A = make_sparse_spd_f();
+        vec::dense_vector<float> x(4, 0.0f);
+
+        itl::smoother::jacobi<mat::compressed2D<float>, counting_wide_acc> jac(A);
+
+        g_jacobi_addproduct_calls = 0;
+        for (int sweep = 0; sweep < 50; ++sweep)
+            jac(x, b);
+
+        REQUIRE(g_jacobi_addproduct_calls > 0);   // the specialization routes too
+        auto r = A * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
 }
 
 TEST_CASE("SOR with omega=1.0 matches Gauss-Seidel", "[itl][smoother][sor]") {
