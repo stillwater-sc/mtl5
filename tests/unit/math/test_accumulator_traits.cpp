@@ -16,6 +16,23 @@ namespace {
 // Extended accumulator: hold the running sum in double, accumulate products in
 // double, and deliver in any result type via value<Result>.
 struct wide_acc { double v = 0.0; };
+
+// A minimal custom arithmetic type with an ADL-found fma, standing in for a
+// posit or other Universal number type. fma_accumulator<T> must route through
+// THIS fma (not std::fma), which is why its T is not constrained to
+// std::floating_point.
+int g_adl_fma_calls = 0;
+struct adl_real {
+    double x = 0.0;
+    adl_real() = default;
+    adl_real(double d) : x(d) {}                     // static_cast<adl_real>(float)
+    explicit operator double() const { return x; }   // value<double>()
+    explicit operator float()  const { return static_cast<float>(x); }
+};
+adl_real fma(adl_real a, adl_real b, adl_real c) {
+    ++g_adl_fma_calls;
+    return adl_real{std::fma(a.x, b.x, c.x)};
+}
 } // namespace
 
 namespace mtl::math {
@@ -153,4 +170,24 @@ TEST_CASE("accumulator_traits configuration 2: FMA avoids the product rounding e
     const float fused = AT2::value(p2);
 
     REQUIRE(fused == exact_err);                    // product error kept via FMA
+}
+
+TEST_CASE("accumulator_traits configuration 2: fma_accumulator routes through an ADL fma",
+          "[math][accumulator][fma]") {
+    // fma_accumulator<T> is intentionally unconstrained so custom arithmetic
+    // types (posits, etc.) can plug in a type-specific fused multiply-add. The
+    // `using std::fma; fma(...)` step must select the ADL-found custom fma, not
+    // std::fma. adl_real records each call to prove the dispatch.
+    using Acc = mtl::math::fma_accumulator<adl_real>;
+    using AT = accumulator_traits<Acc, float>;
+    g_adl_fma_calls = 0;
+
+    Acc a;
+    AT::clear(a);
+    AT::assign(a, 1.5f);
+    AT::add_product(a, 2.0f, 3.0f);                  // must call adl_real's fma
+    AT::add_product(a, 1.0f, 1.0f);
+
+    REQUIRE(g_adl_fma_calls == 2);                   // the custom fma was used
+    REQUIRE(AT::value<double>(a) == 8.5);            // 1.5 + 2*3 + 1*1
 }

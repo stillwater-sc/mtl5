@@ -23,7 +23,8 @@
 //   2. Fused multiply-add (acc = fma(m, v, acc)) -- `fma_accumulator<T>`.
 //      The product is never rounded: `m*v + acc` is formed as if in infinite
 //      precision and rounded ONCE to `T` per term. One rounding event per term
-//      instead of two. Requires hardware/library FMA (`std::fma`).
+//      instead of two. The fused step is `using std::fma; fma(...)`, so `T` may
+//      be a built-in float or any custom arithmetic type with an ADL-found `fma`.
 //
 //   3. Super-accumulator (exact sum of products, single final round-out).
 //      A caller supplies a custom `Acc` (a compensated/Kahan accumulator, or a
@@ -35,8 +36,7 @@
 //
 // Used by the sparse factorizations and the dense BLAS-level operations.
 
-#include <cmath>      // std::fma
-#include <concepts>   // std::floating_point
+#include <cmath>   // std::fma
 
 namespace mtl::math {
 
@@ -74,15 +74,16 @@ struct accumulator_traits {
 ///
 /// A distinguished accumulator type that selects the FMA reduction: pass it as
 /// the `Acc` template argument to any accumulator-aware operation to fuse each
-/// `m*v` into the running sum through `std::fma`, so the intermediate product is
-/// never rounded (one rounding per term instead of two). `T` is the accumulation
-/// precision held in registers; it need not equal the element precision `Value`.
+/// `m*v` into the running sum, so the intermediate product is never rounded (one
+/// rounding per term instead of two). `T` is the accumulation precision held in
+/// registers; it need not equal the element precision `Value`.
 ///
-/// `T` is constrained to `std::floating_point`: `std::fma` is an IEEE/hardware
-/// primitive defined for the built-in floating types. A custom number type that
-/// wants fused accumulation supplies its own accumulator specialization
-/// (configuration 3), rather than reusing this one.
-template <std::floating_point T = double>
+/// `T` is intentionally unconstrained so this stays usable by custom arithmetic
+/// types: the fused step is `using std::fma; fma(...)`, which selects `std::fma`
+/// for the built-in floating types and, via ADL, a type-specific fused multiply-
+/// add for a custom number type (e.g. a posit `fma`). A type that has no fused
+/// operation simply does not satisfy the call and is not a valid `T`.
+template <typename T = double>
 struct fma_accumulator {
     T sum{};
 };
@@ -96,7 +97,7 @@ struct fma_accumulator {
 /// path at the same `T`; over a long reduction the two accumulation-error streams
 /// can occasionally align differently, so this is a per-term guarantee, not a
 /// strict ordering on every possible sum.
-template <std::floating_point T, typename Value>
+template <typename T, typename Value>
 struct accumulator_traits<fma_accumulator<T>, Value> {
     using Acc = fma_accumulator<T>;
 
@@ -108,7 +109,8 @@ struct accumulator_traits<fma_accumulator<T>, Value> {
     static Result value(const Acc& a) { return static_cast<Result>(a.sum); }
 
     static void add_product(Acc& a, const Value& m, const Value& v) {
-        a.sum = std::fma(static_cast<T>(m), static_cast<T>(v), a.sum);
+        using std::fma;   // ADL: std::fma for built-ins, a custom fma for user types
+        a.sum = fma(static_cast<T>(m), static_cast<T>(v), a.sum);
     }
 };
 
