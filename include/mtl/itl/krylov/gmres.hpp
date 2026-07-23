@@ -8,6 +8,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/givens.hpp>
+#include <mtl/operation/mult.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl::itl {
@@ -17,7 +18,7 @@ namespace detail {
 /// Single GMRES cycle (inner iteration) -- up to kmax Arnoldi steps.
 /// Returns 0 on convergence, 1 if kmax exhausted (restart needed).
 template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter>
+          typename PC, typename Iter, typename Accumulator = void>
 int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
                 const PC& M, Iter& iter, int kmax) {
     using value_type = typename VecX::value_type;
@@ -26,7 +27,8 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
 
     // r = M^{-1}(b - A*x)
     vec::dense_vector<value_type> r0(n), r(n);
-    auto Ax = A * x;
+    vec::dense_vector<value_type> Ax(n);
+    mtl::mult<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i)
         r0(i) = b(i) - Ax(i);
     M.solve(r, r0);
@@ -56,29 +58,23 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
     for (; k < kmax; ++k) {
         // w = M^{-1}(A * V[k])
         vec::dense_vector<value_type> w_tmp(n), w(n);
-        auto Avk = A * V[k];
-        for (size_type i = 0; i < n; ++i)
-            w_tmp(i) = Avk(i);
+        mtl::mult<Accumulator>(A, V[k], w_tmp);
         M.solve(w, w_tmp);
 
         // Modified Gram-Schmidt
         for (int j = 0; j <= k; ++j) {
-            H(j, k) = mtl::dot(V[j], w);
+            H(j, k) = mtl::dot<Accumulator, value_type>(V[j], w);
             for (size_type i = 0; i < n; ++i)
                 w(i) -= H(j, k) * V[j](i);
         }
 
         H(k + 1, k) = mtl::two_norm(w);
 
-        // Check for breakdown
-        if (H(k + 1, k) == math::zero<value_type>()) {
-            // Lucky breakdown: exact solution in Krylov subspace
-            // Apply existing stored rotations and solve
-            break;
+        bool breakdown = (H(k + 1, k) == math::zero<value_type>());
+        if (!breakdown) {
+            for (size_type i = 0; i < n; ++i)
+                V[k + 1](i) = w(i) / H(k + 1, k);
         }
-
-        for (size_type i = 0; i < n; ++i)
-            V[k + 1](i) = w(i) / H(k + 1, k);
 
         // Apply previously stored Givens rotations to column k
         for (int j = 0; j < k; ++j)
@@ -88,6 +84,17 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
         mtl::apply_givens_rotation(H, g, cs, sn, static_cast<size_type>(k));
 
         ++iter;
+
+        if (breakdown) {
+            // Lucky breakdown: exact solution lies in the Krylov subspace
+            // spanned by V[0..k]. Column k's rotation was just applied
+            // above, so it's valid to include in back-substitution --
+            // unlike the old code, which broke out before applying the
+            // rotation or incrementing iter, leaving x and iter unchanged
+            // and causing gmres()'s outer restart loop to spin forever.
+            ++k;
+            break;
+        }
 
         // Check convergence using |g(k+1)|
         using std::abs;
@@ -121,11 +128,11 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
 /// Solves A*x = b with left preconditioner M.
 /// restart: maximum Krylov subspace dimension before restart (default 30).
 template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter>
+          typename PC, typename Iter, typename Accumulator = void>
 int gmres(const LinearOp& A, VecX& x, const VecB& b,
           const PC& M, Iter& iter, int restart = 30) {
     while (!iter.is_finished()) {
-        detail::gmres_inner(A, x, b, M, iter, restart);
+        detail::gmres_inner<LinearOp, VecX, VecB, PC, Iter, Accumulator>(A, x, b, M, iter, restart);
     }
     return iter;
 }
