@@ -185,6 +185,50 @@ TEST_CASE("Jacobi routes the row sum through accumulator_traits (#262)",
     }
 }
 
+TEST_CASE("Gauss-Seidel routes the row sum through accumulator_traits (#263)",
+          "[itl][smoother][gauss_seidel][accumulator]") {
+    vec::dense_vector<float> b = {1.0f, 2.0f, 3.0f, 4.0f};
+
+    SECTION("dense: double-accumulate-over-float matches the void default") {
+        auto A = make_dense_spd_f();
+        vec::dense_vector<float> x_default(4, 0.0f);
+        vec::dense_vector<float> x_wide(4, 0.0f);
+
+        itl::smoother::gauss_seidel<mat::dense2D<float>> gs_default(A);
+        itl::smoother::gauss_seidel<mat::dense2D<float>, counting_wide_acc> gs_wide(A);
+
+        g_jacobi_addproduct_calls = 0;
+        for (int sweep = 0; sweep < 30; ++sweep) {
+            gs_default(x_default, b);
+            gs_wide(x_wide, b);
+        }
+
+        REQUIRE(g_jacobi_addproduct_calls > 0);   // routing actually exercised
+        // Well-conditioned: the wider accumulator converges to the same solution.
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(x_wide(i), Catch::Matchers::WithinAbs(x_default(i), 1e-4));
+        auto r = A * x_wide;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
+
+    SECTION("sparse specialization also routes through the accumulator") {
+        auto A = make_sparse_spd_f();
+        vec::dense_vector<float> x(4, 0.0f);
+
+        itl::smoother::gauss_seidel<mat::compressed2D<float>, counting_wide_acc> gs(A);
+
+        g_jacobi_addproduct_calls = 0;
+        for (int sweep = 0; sweep < 30; ++sweep)
+            gs(x, b);
+
+        REQUIRE(g_jacobi_addproduct_calls > 0);   // the specialization routes too
+        auto r = A * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
+}
+
 TEST_CASE("SOR with omega=1.0 matches Gauss-Seidel", "[itl][smoother][sor]") {
     auto A = make_dense_spd();
     vec::dense_vector<double> b = {1.0, 2.0, 3.0, 4.0};
