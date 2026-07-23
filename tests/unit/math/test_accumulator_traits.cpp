@@ -104,16 +104,24 @@ TEST_CASE("accumulator_traits configuration 2: FMA accumulator basics",
     AT::assign(a, 1.5);           REQUIRE(a.sum == 1.5);
     AT::add_product(a, 2.0, 3.0); REQUIRE(a.sum == 7.5);   // fma(2,3,1.5) = 7.5
     REQUIRE(AT::value(a) == 7.5);
-    REQUIRE(AT::value<float>(a) == 7.5f);                  // round-out to Result
+
+    // value<Result> genuinely rounds to Result: pick a double accumulator value
+    // that is not representable in float and check it rounds to the adjacent float.
+    Acc r; AT::clear(r);
+    AT::assign(r, 1.0);
+    AT::add_product(r, 1.0, 0x1p-30);          // 1 + 2^-30, exact in double...
+    REQUIRE(r.sum == 1.0 + 0x1p-30);
+    REQUIRE(AT::value<float>(r) == 1.0f);      // ...but rounds to 1.0f in float
+    REQUIRE(AT::value<double>(r) == 1.0 + 0x1p-30);   // exact when Result == Acc
 }
 
 TEST_CASE("accumulator_traits configuration 2: FMA avoids the product rounding event",
           "[math][accumulator][fma]") {
     // The two-product identity: for representable a, b the exact product a*b
     // splits as round(a*b) + err, where err is the (representable) rounding error
-    // of the product. Config 1 rounds a*b to round(a*b) BEFORE adding, so adding
-    // c = -round(a*b) yields exactly 0 -- err is lost. Config 2 fuses via
-    // std::fma, forming a*b + c with a single rounding, so it recovers err.
+    // of the product. A separately-rounded product loses err (it rounds a*b to
+    // round(a*b) before the add); the fused std::fma keeps it (it forms a*b + c
+    // with a single rounding). Configuration 2 guarantees the fused behavior.
     //
     // With T = float (ulp 2^-23 on [1,2)):
     //   a = b = 1 + 2^-13
@@ -122,24 +130,27 @@ TEST_CASE("accumulator_traits configuration 2: FMA avoids the product rounding e
     //   err = a*b - round(a*b) = 2^-26   (representable)
     const float a = 1.0f + 0x1p-13f;
     const float b = 1.0f + 0x1p-13f;
-    const float rounded_prod = 1.0f + 0x1p-12f;     // round(a*b) in float
+    const float rounded_prod = a * b;               // one rounding: 1 + 2^-12
     const float c = -rounded_prod;                  // cancel the rounded product
     const float exact_err = 0x1p-26f;               // a*b - round(a*b)
 
-    // Configuration 1: plain acc += product, accumulator in float.
-    using AT1 = accumulator_traits<float, float>;
-    float p1; AT1::clear(p1); AT1::assign(p1, c);   // start at c
-    AT1::add_product(p1, a, b);                     // c + round(a*b)
-    const float plain = AT1::value(p1);
+    REQUIRE(rounded_prod == 1.0f + 0x1p-12f);        // premise: the tail rounds away
 
-    // Configuration 2: FMA accumulator in float.
+    // A separately-rounded product (two roundings, computed here in two distinct
+    // statements so no compiler may contract them into an FMA): the tail is lost.
+    // This is the accuracy configuration 2 exists to avoid -- note that whether
+    // configuration 1's own `a += m*v` is contracted into an FMA is left to the
+    // compiler's FP-contraction setting, which is exactly why an *explicit* fused
+    // accumulator is offered as a distinct, guaranteed policy.
+    const float separately_rounded = rounded_prod + c;
+    REQUIRE(separately_rounded == 0.0f);            // product error rounded away
+
+    // Configuration 2: FMA accumulator in float -- guaranteed single rounding.
     using Acc2 = mtl::math::fma_accumulator<float>;
     using AT2 = accumulator_traits<Acc2, float>;
     Acc2 p2; AT2::clear(p2); AT2::assign(p2, c);    // start at c
     AT2::add_product(p2, a, b);                     // fma(a, b, c), one rounding
     const float fused = AT2::value(p2);
 
-    REQUIRE(rounded_prod == static_cast<float>(a) * static_cast<float>(b)); // premise
-    REQUIRE(plain == 0.0f);                         // product error rounded away
     REQUIRE(fused == exact_err);                    // product error kept via FMA
 }

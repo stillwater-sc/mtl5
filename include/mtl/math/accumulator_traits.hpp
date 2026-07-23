@@ -35,7 +35,8 @@
 //
 // Used by the sparse factorizations and the dense BLAS-level operations.
 
-#include <cmath>   // std::fma
+#include <cmath>      // std::fma
+#include <concepts>   // std::floating_point
 
 namespace mtl::math {
 
@@ -76,7 +77,12 @@ struct accumulator_traits {
 /// `m*v` into the running sum through `std::fma`, so the intermediate product is
 /// never rounded (one rounding per term instead of two). `T` is the accumulation
 /// precision held in registers; it need not equal the element precision `Value`.
-template <typename T = double>
+///
+/// `T` is constrained to `std::floating_point`: `std::fma` is an IEEE/hardware
+/// primitive defined for the built-in floating types. A custom number type that
+/// wants fused accumulation supplies its own accumulator specialization
+/// (configuration 3), rather than reusing this one.
+template <std::floating_point T = double>
 struct fma_accumulator {
     T sum{};
 };
@@ -84,10 +90,13 @@ struct fma_accumulator {
 /// Accumulator policy for the FMA reduction (configuration 2).
 ///
 /// `add_product` computes `sum = m*v + sum` with a single rounding to `T`, so the
-/// product `m*v` incurs no separate rounding event. When `T` is wider than
-/// `Value` the operand widening is exact, so this is strictly at least as
-/// accurate as configuration 1 at the same `T`.
-template <typename T, typename Value>
+/// product `m*v` incurs no separate rounding event -- one rounding per term
+/// instead of two. When `T` is wider than `Value` the operand widening is exact.
+/// Eliminating the product rounding generally improves accuracy over the plain
+/// path at the same `T`; over a long reduction the two accumulation-error streams
+/// can occasionally align differently, so this is a per-term guarantee, not a
+/// strict ordering on every possible sum.
+template <std::floating_point T, typename Value>
 struct accumulator_traits<fma_accumulator<T>, Value> {
     using Acc = fma_accumulator<T>;
 
