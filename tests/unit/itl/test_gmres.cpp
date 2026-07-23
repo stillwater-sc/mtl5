@@ -95,3 +95,29 @@ TEST_CASE("GMRES with diagonal preconditioner", "[itl][gmres][pc]") {
         REQUIRE_THAT(Ax(i), Catch::Matchers::WithinAbs(b(i), 1e-8));
     }
 }
+
+// --- Regression: lucky breakdown must not hang or leave x/iter unchanged.
+// A matrix with only 2 distinct eigenvalues converges GMRES in <=2 Krylov
+// steps; if x(1)^2 spans exactly that subspace, H(k+1,k) hits an exact zero. ---
+TEST_CASE("GMRES lucky breakdown converges (does not hang)", "[itl][gmres][breakdown]") {
+    mat::dense2D<double> A(4, 4);
+    for (std::size_t i = 0; i < 4; ++i)
+        for (std::size_t j = 0; j < 4; ++j)
+            A(i,j) = 0.0;
+    // Two distinct eigenvalues (2 and 5), each with multiplicity 2.
+    A(0,0) = 2; A(1,1) = 2; A(2,2) = 5; A(3,3) = 5;
+
+    vec::dense_vector<double> b = {1.0, 1.0, 1.0, 1.0};
+    vec::dense_vector<double> x(4, 0.0);
+
+    itl::pc::identity<mat::dense2D<double>> pc(A);
+    itl::basic_iteration<double> iter(b, /*max_iter=*/3, 1e-10);
+
+    int err = itl::gmres(A, x, b, pc, iter, /*restart=*/10);
+    REQUIRE(err == 0);
+    REQUIRE(iter.iterations() == 2);   // old buggy code cannot reach exact convergence in this budget
+
+    auto r = A * x;
+    for (std::size_t i = 0; i < 4; ++i)
+        REQUIRE_THAT(r(i), Catch::Matchers::WithinAbs(b(i), 1e-8));
+}
