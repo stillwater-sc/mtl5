@@ -111,11 +111,11 @@ TEST_CASE("GMRES lucky breakdown converges (does not hang)", "[itl][gmres][break
     vec::dense_vector<double> x(4, 0.0);
 
     itl::pc::identity<mat::dense2D<double>> pc(A);
-    itl::basic_iteration<double> iter(b, 50, 1e-10);
+    itl::basic_iteration<double> iter(b, /*max_iter=*/3, 1e-10);
 
     int err = itl::gmres(A, x, b, pc, iter, /*restart=*/10);
     REQUIRE(err == 0);
-    REQUIRE(iter.iterations() > 0);   // must have actually advanced, not stalled
+    REQUIRE(iter.iterations() == 2);   // old buggy code cannot reach exact convergence in this budget
 
     auto r = A * x;
     for (std::size_t i = 0; i < 4; ++i)
