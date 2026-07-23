@@ -93,3 +93,53 @@ TEST_CASE("sparse accumulator_traits inherits the canonical mtl::math trait",
     REQUIRE(SAT::value(a) == 2.0f);
     REQUIRE(SAT::value<double>(a) == 2.0);
 }
+
+TEST_CASE("accumulator_traits configuration 2: FMA accumulator basics",
+          "[math][accumulator][fma]") {
+    // fma_accumulator<T> selects the fused reduction: sum = fma(m, v, sum).
+    using Acc = mtl::math::fma_accumulator<double>;
+    using AT = accumulator_traits<Acc, double>;
+    Acc a;
+    AT::clear(a);                 REQUIRE(a.sum == 0.0);
+    AT::assign(a, 1.5);           REQUIRE(a.sum == 1.5);
+    AT::add_product(a, 2.0, 3.0); REQUIRE(a.sum == 7.5);   // fma(2,3,1.5) = 7.5
+    REQUIRE(AT::value(a) == 7.5);
+    REQUIRE(AT::value<float>(a) == 7.5f);                  // round-out to Result
+}
+
+TEST_CASE("accumulator_traits configuration 2: FMA avoids the product rounding event",
+          "[math][accumulator][fma]") {
+    // The two-product identity: for representable a, b the exact product a*b
+    // splits as round(a*b) + err, where err is the (representable) rounding error
+    // of the product. Config 1 rounds a*b to round(a*b) BEFORE adding, so adding
+    // c = -round(a*b) yields exactly 0 -- err is lost. Config 2 fuses via
+    // std::fma, forming a*b + c with a single rounding, so it recovers err.
+    //
+    // With T = float (ulp 2^-23 on [1,2)):
+    //   a = b = 1 + 2^-13
+    //   a*b = 1 + 2^-12 + 2^-26   (exact)
+    //   round(a*b) = 1 + 2^-12    (the 2^-26 tail is below half-ulp, rounds away)
+    //   err = a*b - round(a*b) = 2^-26   (representable)
+    const float a = 1.0f + 0x1p-13f;
+    const float b = 1.0f + 0x1p-13f;
+    const float rounded_prod = 1.0f + 0x1p-12f;     // round(a*b) in float
+    const float c = -rounded_prod;                  // cancel the rounded product
+    const float exact_err = 0x1p-26f;               // a*b - round(a*b)
+
+    // Configuration 1: plain acc += product, accumulator in float.
+    using AT1 = accumulator_traits<float, float>;
+    float p1; AT1::clear(p1); AT1::assign(p1, c);   // start at c
+    AT1::add_product(p1, a, b);                     // c + round(a*b)
+    const float plain = AT1::value(p1);
+
+    // Configuration 2: FMA accumulator in float.
+    using Acc2 = mtl::math::fma_accumulator<float>;
+    using AT2 = accumulator_traits<Acc2, float>;
+    Acc2 p2; AT2::clear(p2); AT2::assign(p2, c);    // start at c
+    AT2::add_product(p2, a, b);                     // fma(a, b, c), one rounding
+    const float fused = AT2::value(p2);
+
+    REQUIRE(rounded_prod == static_cast<float>(a) * static_cast<float>(b)); // premise
+    REQUIRE(plain == 0.0f);                         // product error rounded away
+    REQUIRE(fused == exact_err);                    // product error kept via FMA
+}
