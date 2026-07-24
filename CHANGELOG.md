@@ -7,6 +7,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+#### Range and test-matrix generators (BLAS extraction from Universal)
+- **`mtl::generators::{arange, linspace, logspace, geomspace}`** (`generators/ranges.hpp`) — NumPy-style spacing vectors returning `vec::dense_vector<T>`, generic over the scalar type (Universal-free). `geomspace` computes a true geometric progression between its endpoints, fixing the historical Universal implementation that aliased `logspace` and treated the endpoints as exponents (`geomspace(1, 1000, 4) == {1, 10, 100, 1000}`).
+- **`mtl::generators::magic`** (`generators/magic.hpp`) — magic square of order N (odd via the Siamese method, doubly-even via the complement method); singly-even orders throw `std::invalid_argument` pending support.
+- Migrated from Universal's `sw::blas` as the first step of extracting the linear-algebra layer into MTL5 (Universal epic #1204, phase #1206).
+
 #### Matrix/vector/tensor property predicate module (#244)
 A cohesive set of runtime property and predicate queries as free functions in `namespace mtl`, built on the existing primitives (cholesky/lu/svd/eigenvalue/norms) with no new dependencies. Consistent tolerance policy: structural checks are exact-by-default and NaN-safe (`!(dev <= tol)`), while norm/factorization/spectral-backed checks use relative or scale-aware tolerances; verified on both the in-house and LAPACK paths.
 - **Structural + vector predicates** (`operation/matrix_properties.hpp`, `operation/vector_properties.hpp`) — `is_square`, `is_empty`, `is_symmetric`, `is_hermitian`, `is_upper/lower/is_triangular`, `is_diagonal`, `is_banded`, `is_diagonally_dominant`; `is_zero`, `is_finite`/`has_nan`/`has_inf`, `is_normalized`/`is_unit`, `is_orthogonal_to`. O(n)/O(nnz), no factorization (#245)
