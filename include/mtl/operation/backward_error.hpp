@@ -13,8 +13,10 @@
 // roundoff. Universal-free -- generic over any arithmetic type; all norms are
 // accumulated in double so the yardstick is precision-independent.
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <stdexcept>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -28,6 +30,15 @@ double normwise_backward_error(const mat::dense2D<T, PA>& A,
                                const vec::dense_vector<T, PV>& x,
                                const vec::dense_vector<T, PV>& b) {
     const std::size_t n = A.num_rows();
+    // Enforce the documented contract (mirrors lu_iterative_refine): A(i,j) is
+    // indexed for i,j < n and x[j]/b[i] for j,i < n, so a non-square A or a short
+    // x/b would read out of bounds.
+    if (A.num_cols() != n)
+        throw std::invalid_argument("normwise_backward_error: matrix must be square");
+    if (static_cast<std::size_t>(x.size()) != n)
+        throw std::invalid_argument("normwise_backward_error: x size does not match A");
+    if (static_cast<std::size_t>(b.size()) != n)
+        throw std::invalid_argument("normwise_backward_error: b size does not match A");
     double rnorm = 0.0;   // ||b - A x||_inf
     double anorm = 0.0;   // ||A||_inf   (max abs row sum)
     double xnorm = 0.0;   // ||x||_inf

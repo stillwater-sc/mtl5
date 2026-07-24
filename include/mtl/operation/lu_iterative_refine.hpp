@@ -126,7 +126,12 @@ lu_refine_result lu_iterative_refine(
             for (std::size_t j = 0; j < n; ++j) ax += A(i, j) * x[j];
             r[i] = b[i] - ax;
         }
-        double rn = residual_norm(x);
+        // Norm the residual we just built (measured in double) rather than
+        // recomputing b - A x a second time -- one matvec per step, and the
+        // value used for correction and for convergence is a single quantity.
+        double rn = 0.0;
+        for (std::size_t i = 0; i < n; ++i)
+            rn = std::max(rn, std::abs(static_cast<double>(r[i])));
         if (rn < best_rn) { best_rn = rn; best_x = x; stalls = 0; }
         else              { ++stalls; }
 

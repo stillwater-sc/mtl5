@@ -1,7 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <stdexcept>
 #include <vector>
 
 #include <mtl/mat/dense2D.hpp>
@@ -105,9 +108,13 @@ TEST_CASE("lu_iterative_refine best-iterate never worse than the plain solve", "
     vec::dense_vector<double> x;
     lu_refine_options opt; opt.max_iter = 20;   // no rel_tol: runs the budget, keeps best
     auto res = lu_iterative_refine<float>(A, b, x, opt);
-    // ||b||_inf is O(1) here, so rel_residual ~ abs residual; refined must not be
-    // worse than the unrefined float solve.
-    REQUIRE(res.rel_residual <= plain_lu_residual<float>(10) + 1e-12);
+    // Compare like-for-like: res.rel_residual is best_rn/||b||_inf, whereas
+    // plain_lu_residual is the ABSOLUTE ||b - A x||_inf. build(10)'s boundary rows
+    // give ||b||_inf = 3, so recover the absolute best residual before comparing;
+    // the refined best-iterate must not be worse than the unrefined float solve.
+    double bnorm = 0.0;
+    for (std::size_t i = 0; i < 10; ++i) bnorm = std::max(bnorm, std::abs(double(b[i])));
+    REQUIRE(res.rel_residual * bnorm <= plain_lu_residual<float>(10) + 1e-12);
 }
 
 TEST_CASE("normwise_backward_error is tiny for the exact solution", "[operation][ir][nbe]") {
@@ -118,4 +125,41 @@ TEST_CASE("normwise_backward_error is tiny for the exact solution", "[operation]
 
     vec::dense_vector<double> xbad(8, 0.0);       // a wrong solution -> O(1) backward error
     REQUIRE(normwise_backward_error(A, xbad, b) > 1e-3);
+}
+
+TEST_CASE("lu_iterative_refine handles 1x1 and empty systems", "[operation][ir][edge]") {
+    SECTION("1x1") {
+        mat::dense2D<double> A; vec::dense_vector<double> b;
+        build(A, b, 1);                              // A = [4], b = [4] -> x = [1]
+        vec::dense_vector<double> x;
+        auto res = lu_iterative_refine<double>(A, b, x);
+        REQUIRE(x.size() == 1);
+        REQUIRE_THAT(double(x[0]), WithinAbs(1.0, 1e-12));
+        REQUIRE(res.rel_residual <= 1e-12);
+    }
+    SECTION("empty") {
+        mat::dense2D<double> A(0, 0);
+        vec::dense_vector<double> b(0), x;
+        auto res = lu_iterative_refine<double>(A, b, x);
+        REQUIRE(x.size() == 0);
+        REQUIRE(res.rel_residual == 0.0);            // no equations -> nothing to refine
+    }
+}
+
+TEST_CASE("normwise_backward_error rejects ill-formed inputs", "[operation][ir][nbe][edge]") {
+    // 1x1 sanity: exact solution has a tiny backward error.
+    mat::dense2D<double> A1(1, 1); A1(0, 0) = 2.0;
+    vec::dense_vector<double> b1(1, 4.0), x1(1, 2.0);   // 2*2 == 4
+    REQUIRE(normwise_backward_error(A1, x1, b1) <= 1e-15);
+
+    // Non-square A must throw.
+    mat::dense2D<double> R(2, 3);
+    vec::dense_vector<double> v2(2, 1.0);
+    REQUIRE_THROWS_AS(normwise_backward_error(R, v2, v2), std::invalid_argument);
+
+    // Square A but mismatched x / b lengths must throw.
+    mat::dense2D<double> S(2, 2);
+    vec::dense_vector<double> good2(2, 1.0), short1(1, 1.0);
+    REQUIRE_THROWS_AS(normwise_backward_error(S, short1, good2), std::invalid_argument);
+    REQUIRE_THROWS_AS(normwise_backward_error(S, good2, short1), std::invalid_argument);
 }
