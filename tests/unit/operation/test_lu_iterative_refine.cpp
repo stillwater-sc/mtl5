@@ -144,6 +144,16 @@ TEST_CASE("lu_iterative_refine handles 1x1 and empty systems", "[operation][ir][
         REQUIRE(x.size() == 0);
         REQUIRE(res.rel_residual == 0.0);            // no equations -> nothing to refine
     }
+    SECTION("non-square throws") {
+        mat::dense2D<double> R(2, 3);
+        vec::dense_vector<double> rhs(2, 1.0), x;
+        REQUIRE_THROWS_AS(lu_iterative_refine<double>(R, rhs, x), std::invalid_argument);
+    }
+    SECTION("mismatched b size throws") {
+        mat::dense2D<double> S(2, 2);
+        vec::dense_vector<double> rhs(1, 1.0), x;    // b too short for A
+        REQUIRE_THROWS_AS(lu_iterative_refine<double>(S, rhs, x), std::invalid_argument);
+    }
 }
 
 TEST_CASE("normwise_backward_error rejects ill-formed inputs", "[operation][ir][nbe][edge]") {
