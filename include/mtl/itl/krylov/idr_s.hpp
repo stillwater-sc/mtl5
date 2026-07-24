@@ -9,6 +9,7 @@
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
+#include <mtl/operation/mult.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl::itl {
@@ -16,7 +17,8 @@ namespace mtl::itl {
 /// IDR(s) solver for non-symmetric systems A*x = b.
 /// s = shadow space dimension (larger s -> faster convergence, more memory).
 template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter>
+          typename PC, typename Iter,
+          typename Accumulator = void>
 int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
           typename VecX::size_type s = 4) {
     using value_type = typename VecX::value_type;
@@ -39,7 +41,8 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     std::vector<vec::dense_vector<value_type>> dX(s, vec::dense_vector<value_type>(n));
 
     // r = b - A*x
-    auto Ax = A * x;
+    vec::dense_vector<value_type> Ax(n);
+    mtl::mult<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i)
         r(i) = b(i) - Ax(i);
 
@@ -53,14 +56,15 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     for (size_type k = 0; k < s; ++k) {
         // v = M^{-1} r
         M.solve(v, r);
-        auto Av = A * v;
+        vec::dense_vector<value_type> Av(n);
+        mtl::mult<Accumulator>(A, v, Av);
         for (size_type i = 0; i < n; ++i)
             t(i) = Av(i);
 
         // omega = dot(t,r) / dot(t,t)
-        value_type tt = mtl::dot(t, t);
+        value_type tt = mtl::dot<Accumulator, value_type>(t, t);
         if (tt != value_type(0))
-            omega = mtl::dot(t, r) / tt;
+            omega = mtl::dot<Accumulator, value_type>(t, r) / tt;
 
         // dX[k] = omega * v
         // dR[k] = -omega * t (= r_new - r_old in effect)
@@ -86,7 +90,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     // Build M = P^T * dR
     for (size_type i = 0; i < s; ++i)
         for (size_type j = 0; j < s; ++j)
-            Mmat(i, j) = mtl::dot(P[i], dR[j]);
+            Mmat(i, j) = mtl::dot<Accumulator, value_type>(P[i], dR[j]);
 
     // Main IDR(s) loop
     size_type oldest = 0;
@@ -94,7 +98,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     while (!iter.finished(r)) {
         // f = P^T * r
         for (size_type i = 0; i < s; ++i)
-            f(i) = mtl::dot(P[i], r);
+            f(i) = mtl::dot<Accumulator, value_type>(P[i], r);
 
         // Solve M * c = f via simple Gaussian elimination (s is small)
         // Copy M and f for in-place solve
@@ -154,14 +158,15 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
         M.solve(vhat, v);
 
         // t = A * vhat
-        auto Avhat = A * vhat;
+        vec::dense_vector<value_type> Avhat(n);
+        mtl::mult<Accumulator>(A, vhat, Avhat);
         for (size_type i = 0; i < n; ++i)
             t(i) = Avhat(i);
 
         // omega = dot(t, v) / dot(t, t)
-        value_type tt = mtl::dot(t, t);
+        value_type tt = mtl::dot<Accumulator, value_type>(t, t);
         if (tt != value_type(0))
-            omega = mtl::dot(t, v) / tt;
+            omega = mtl::dot<Accumulator, value_type>(t, v) / tt;
 
         // dR[oldest] = -sum(c[k]*dR[k]) - omega*t  (= new_r - old_r)
         // dX[oldest] = -sum(c[k]*dX[k]) + omega*vhat
@@ -192,7 +197,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
 
         // Update M = P^T * dR (only column 'oldest')
         for (size_type i = 0; i < s; ++i)
-            Mmat(i, oldest) = mtl::dot(P[i], dR[oldest]);
+            Mmat(i, oldest) = mtl::dot<Accumulator, value_type>(P[i], dR[oldest]);
 
         oldest = (oldest + 1) % s;
         ++iter;
