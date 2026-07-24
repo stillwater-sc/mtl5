@@ -50,6 +50,11 @@ TEST_CASE("arange int64 extremes do not overflow", "[generators][ranges][arange]
     auto b = generators::arange<double>(0, IMIN, IMIN);   // one element: 0
     REQUIRE(b.size() == 1);
     REQUIRE_THAT(b[0], WithinAbs(0.0, 0.0));
+    // Full-range span: the ceiling-division count must not wrap in uint64.
+    auto c = generators::arange<double>(IMIN, IMAX, IMAX);   // IMIN, -1, IMAX-1
+    REQUIRE(c.size() == 3);
+    REQUIRE_THAT(c[0], WithinAbs(double(IMIN), 0.0));
+    REQUIRE_THAT(c[1], WithinAbs(-1.0, 0.0));
 }
 
 // -- linspace ------------------------------------------------------------

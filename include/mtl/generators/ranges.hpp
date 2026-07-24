@@ -19,15 +19,17 @@ vec::dense_vector<T> arange(std::int64_t start, std::int64_t stop, std::int64_t 
     if (step == 0) return vec::dense_vector<T>();
     // Count the elements in unsigned arithmetic so it never overflows for valid
     // int64 arguments (spans near INT64_MIN..INT64_MAX, or step == INT64_MIN).
+    // ceil(span / mag) written as span/mag + (span%mag != 0) so it stays exact
+    // even when span is the full uint64 range (span + mag - 1 would itself wrap).
     std::size_t n = 0;
     if (step > 0 && stop > start) {
         std::uint64_t span = static_cast<std::uint64_t>(stop) - static_cast<std::uint64_t>(start);
         std::uint64_t mag  = static_cast<std::uint64_t>(step);
-        n = static_cast<std::size_t>((span + mag - 1) / mag);
+        n = static_cast<std::size_t>(span / mag + (span % mag != 0));
     } else if (step < 0 && stop < start) {
         std::uint64_t span = static_cast<std::uint64_t>(start) - static_cast<std::uint64_t>(stop);
         std::uint64_t mag  = 0u - static_cast<std::uint64_t>(step);   // |step|, safe for INT64_MIN
-        n = static_cast<std::size_t>((span + mag - 1) / mag);
+        n = static_cast<std::size_t>(span / mag + (span % mag != 0));
     }
     vec::dense_vector<T> v(n);
     std::int64_t sample = start;
