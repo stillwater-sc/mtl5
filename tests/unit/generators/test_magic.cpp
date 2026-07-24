@@ -35,6 +35,13 @@ TEST_CASE("magic dimensions", "[generators][magic]") {
     REQUIRE(A.num_cols() == 5);
 }
 
+TEST_CASE("magic order 1 (minimum supported)", "[generators][magic]") {
+    auto A = generators::magic<double>(1);
+    REQUIRE(A.num_rows() == 1);
+    REQUIRE(A.num_cols() == 1);
+    REQUIRE_THAT(A(0, 0), WithinAbs(1.0, 1e-12));   // the only cell holds 1
+}
+
 TEST_CASE("magic order 3 known values", "[generators][magic]") {
     auto A = generators::magic<double>(3);
     // Siamese 3x3:  8 1 6 / 3 5 7 / 4 9 2

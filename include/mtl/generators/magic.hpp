@@ -3,6 +3,7 @@
 // A magic square of order N contains the integers 1..N^2 arranged so that
 // every row, every column, and both main diagonals sum to N*(N^2+1)/2.
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <mtl/mat/dense2D.hpp>
 
@@ -17,6 +18,12 @@ namespace mtl::generators {
 template <typename T = double>
 mat::dense2D<T> magic(std::size_t N) {
     if (N == 0) throw std::invalid_argument("magic: order must be >= 1");
+    // Guard N*N before it is used for the allocation, the value range, and the
+    // complement expressions; a wrapped square would mis-size the matrix and
+    // corrupt the placement/complement counts (out-of-bounds writes for large N).
+    if (N > std::numeric_limits<std::size_t>::max() / N)
+        throw std::invalid_argument("magic: order too large (N*N overflows size_t)");
+    const std::size_t N2 = N * N;
 
     mat::dense2D<T> A(N, N);
     for (std::size_t i = 0; i < N; ++i)
@@ -26,7 +33,7 @@ mat::dense2D<T> magic(std::size_t N) {
         // Siamese method: start at the middle of the top row, step up-and-right
         // with wraparound; on collision drop straight down instead.
         std::size_t i = 0, j = N / 2;
-        for (std::size_t k = 1; k <= N * N; ++k) {
+        for (std::size_t k = 1; k <= N2; ++k) {
             A(i, j) = T(k);
             std::size_t ni = (i == 0) ? N - 1 : i - 1;
             std::size_t nj = (j == N - 1) ? 0 : j + 1;
@@ -45,7 +52,7 @@ mat::dense2D<T> magic(std::size_t N) {
             for (std::size_t j = 0; j < N; ++j) {
                 std::size_t val = i * N + j + 1;
                 if ((i % 4 == j % 4) || ((i % 4 + j % 4) == 3))
-                    val = N * N + 1 - val;
+                    val = N2 + 1 - val;
                 A(i, j) = T(val);
             }
     }

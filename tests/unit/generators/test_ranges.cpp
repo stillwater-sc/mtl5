@@ -2,6 +2,9 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
 #include <mtl/generators/ranges.hpp>
 
 using namespace mtl;
@@ -34,6 +37,19 @@ TEST_CASE("arange empty and degenerate", "[generators][ranges][arange]") {
     REQUIRE(generators::arange<double>(5, 0).size() == 0);   // wrong direction
     REQUIRE(generators::arange<double>(0, 0).size() == 0);   // empty
     REQUIRE(generators::arange<double>(0, 5, 0).size() == 0);// zero step
+}
+
+TEST_CASE("arange int64 extremes do not overflow", "[generators][ranges][arange]") {
+    constexpr std::int64_t IMAX = std::numeric_limits<std::int64_t>::max();
+    constexpr std::int64_t IMIN = std::numeric_limits<std::int64_t>::min();
+    // One element just below the max: the unused final increment must not overflow.
+    auto a = generators::arange<double>(IMAX - 1, IMAX, 2);
+    REQUIRE(a.size() == 1);
+    REQUIRE_THAT(a[0], WithinAbs(double(IMAX - 1), 0.0));
+    // Descending with step == INT64_MIN: |step| must be computed without overflow.
+    auto b = generators::arange<double>(0, IMIN, IMIN);   // one element: 0
+    REQUIRE(b.size() == 1);
+    REQUIRE_THAT(b[0], WithinAbs(0.0, 0.0));
 }
 
 // -- linspace ------------------------------------------------------------
@@ -96,5 +112,17 @@ TEST_CASE("geomspace negative same-sign endpoints", "[generators][ranges][geomsp
     auto v = generators::geomspace<double>(-1000.0, -1.0, 4);   // -1000,-100,-10,-1
     REQUIRE(v.size() == 4);
     REQUIRE_THAT(v[0], WithinAbs(-1000.0, 1e-6));
+    REQUIRE_THAT(v[1], WithinAbs(-100.0, 1e-6));   // interior values, geometric
+    REQUIRE_THAT(v[2], WithinAbs(-10.0, 1e-6));
     REQUIRE_THAT(v[3], WithinAbs(-1.0, 1e-9));
+}
+
+TEST_CASE("geomspace rejects invalid domains", "[generators][ranges][geomspace]") {
+    using generators::geomspace;
+    // zero endpoint: ratio would divide by zero
+    REQUIRE_THROWS_AS(geomspace<double>(0.0, 10.0, 4), std::invalid_argument);
+    REQUIRE_THROWS_AS(geomspace<double>(1.0, 0.0, 4), std::invalid_argument);
+    // opposite signs: pow(negative ratio, fractional) is NaN
+    REQUIRE_THROWS_AS(geomspace<double>(-1.0, 1000.0, 4), std::invalid_argument);
+    REQUIRE_THROWS_AS(geomspace<double>(1.0, -1000.0, 4), std::invalid_argument);
 }
