@@ -28,12 +28,12 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
 
     // Random shadow space P (n x s)
     std::mt19937 gen(42);
-    std::normal_distribution<value_type> dist(0.0, 1.0);
+    std::normal_distribution<double> dist(0.0, 1.0);
 
     std::vector<vec::dense_vector<value_type>> P(s, vec::dense_vector<value_type>(n));
     for (size_type j = 0; j < s; ++j)
         for (size_type i = 0; i < n; ++i)
-            P[j](i) = dist(gen);
+            P[j](i) = value_type(dist(gen));
 
     // Workspace
     vec::dense_vector<value_type> r(n), v(n), t(n);
