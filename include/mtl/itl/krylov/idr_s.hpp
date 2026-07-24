@@ -29,12 +29,20 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
 
     // Random shadow space P (n x s)
     std::mt19937 gen(42);
-    std::normal_distribution<double> dist(0.0, 1.0);
+    auto next_uniform = [&gen]() {
+        return static_cast<double>(gen() - gen.min()) /
+               static_cast<double>(gen.max() - gen.min());
+    };
+    auto next_normal = [&]() {
+        double u1 = std::max(next_uniform(), 1e-12);
+        double u2 = next_uniform();
+        return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * M_PI * u2);
+    };
 
     std::vector<vec::dense_vector<value_type>> P(s, vec::dense_vector<value_type>(n));
     for (size_type j = 0; j < s; ++j)
         for (size_type i = 0; i < n; ++i)
-            P[j](i) = value_type(dist(gen));
+            P[j](i) = value_type(next_normal());
 
     // Workspace
     vec::dense_vector<value_type> r(n), v(n), t(n);
