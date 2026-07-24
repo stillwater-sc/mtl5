@@ -7,12 +7,13 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/trans.hpp>
+#include <mtl/operation/mult.hpp>
 
 namespace mtl::itl {
 
 /// QMR solver for non-symmetric systems A*x = b.
 template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter>
+          typename PC, typename Iter, typename Accumulator = void>
 int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;
@@ -25,7 +26,8 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     vec::dense_vector<value_type> p(n), q(n), d(n), s(n), p_tilde(n);
 
     // r = b - A*x
-    auto Ax = A * x;
+    vec::dense_vector<value_type> Ax(n);
+    mtl::mult<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i) {
         r(i) = b(i) - Ax(i);
         v_tilde(i) = r(i);
@@ -64,7 +66,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             z(i) = z(i) / xi;
         }
 
-        value_type delta = mtl::dot(z, y);
+        value_type delta = mtl::dot<Accumulator, value_type>(z, y);
         if (delta == value_type(0)) {
             iter.fail(2, "qmr breakdown: delta == 0");
             return iter;
@@ -87,11 +89,9 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         }
 
         // p_tilde = A * p
-        auto Ap = A * p;
-        for (size_type i = 0; i < n; ++i)
-            p_tilde(i) = Ap(i);
+        mtl::mult<Accumulator>(A, p, p_tilde);
 
-        epsilon = mtl::dot(q, p_tilde);
+        epsilon = mtl::dot<Accumulator, value_type>(q, p_tilde);
         if (epsilon == value_type(0)) {
             iter.fail(2, "qmr breakdown: epsilon == 0");
             return iter;
@@ -109,7 +109,8 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         value_type rho_new = mtl::two_norm(y);
 
         // w_tilde = A^T * q - beta * w
-        auto Atq = trans(A) * q;
+        vec::dense_vector<value_type> Atq(n);
+        mtl::mult<Accumulator>(trans(A), q, Atq);
         for (size_type i = 0; i < n; ++i)
             w_tilde(i) = Atq(i) - beta * w(i);
 

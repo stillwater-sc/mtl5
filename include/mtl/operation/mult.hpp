@@ -9,6 +9,8 @@
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/mat/view/transposed_view.hpp>
+#include <vector>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -121,6 +123,43 @@ void mult_generic(const MA& A, const MB& B, MC& C) {
     }
 }
 
+
+/// Transposed sparse CRS mat*vec: y = A^T * x, O(nnz), scatter into y.
+/// Mirrors mat::operator*(transposed_view<compressed2D>, dense_vector) but
+/// adds Accumulator support so mixed-precision / quire accumulation works
+/// on transposed sparse matvecs too. Scatter pattern means each y(j)
+/// receives contributions from multiple rows r, so accumulation is done
+/// per-output-element rather than per-row.
+template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
+void mult_sparse_crs_transposed(const mat::view::transposed_view<mat::compressed2D<V, P>>& At,
+                                 const VIn& x, VOut& y) {
+    using Result = typename VOut::value_type;
+    using size_type = typename mat::compressed2D<V, P>::size_type;
+    const auto& A = At.base();
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    const std::size_t nrows = A.num_rows();
+    for (typename VOut::size_type i = 0; i < y.size(); ++i)
+        y(i) = math::zero<Result>();
+    if constexpr (std::is_void_v<Accumulator>) {
+        using Value = std::common_type_t<V, typename VIn::value_type>;
+        for (std::size_t r = 0; r < nrows; ++r)
+            for (size_type k = starts[r]; k < starts[r + 1]; ++k)
+                y(indices[k]) += static_cast<Result>(static_cast<Value>(data[k]) * static_cast<Value>(x(r)));
+    } else {
+        using Value = std::common_type_t<V, typename VIn::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        std::vector<Accumulator> accs(y.size());
+        for (auto& a : accs) AT::clear(a);
+        for (std::size_t r = 0; r < nrows; ++r)
+            for (size_type k = starts[r]; k < starts[r + 1]; ++k)
+                AT::add_product(accs[indices[k]], static_cast<Value>(data[k]), static_cast<Value>(x(r)));
+        for (typename VOut::size_type j = 0; j < y.size(); ++j)
+            y(j) = AT::template value<Result>(accs[j]);
+    }
+}
+
 } // namespace detail
 
 /// mat*vec multiply into pre-allocated y: y = A * x.
@@ -129,6 +168,16 @@ void mult_generic(const MA& A, const MB& B, MC& C) {
 /// precision distinct from the operand element type; the result is rounded out to
 /// y's element type. Default `Accumulator = void` keeps the BLAS / native-fast /
 /// generic dispatch unchanged.
+/// mat*vec multiply for a transposed sparse view: y = A^T * x, O(nnz).
+/// Mirrors mat::operator*(transposed_view<compressed2D>, dense_vector) but
+/// adds Accumulator support for mixed-precision / quire accumulation.
+template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
+void mult(const mat::view::transposed_view<mat::compressed2D<V, P>>& At, const VIn& x, VOut& y) {
+    assert(At.num_cols() == x.size());
+    assert(At.num_rows() == y.size());
+    detail::mult_sparse_crs_transposed<Accumulator>(At, x, y);
+}
+
 template <typename Accumulator = void, Matrix M, Vector VIn, Vector VOut>
 void mult(const M& A, const VIn& x, VOut& y) {
     assert(A.num_cols() == x.size());
