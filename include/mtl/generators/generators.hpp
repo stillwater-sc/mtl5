@@ -9,7 +9,11 @@
 #include <mtl/generators/ones.hpp>
 #include <mtl/generators/minij.hpp>
 
+// Range / spacing vector generators (return dense_vector<T>)
+#include <mtl/generators/ranges.hpp>
+
 // Tier 2: Dense factory generators (return dense2D<T>)
+#include <mtl/generators/magic.hpp>
 #include <mtl/generators/kahan.hpp>
 #include <mtl/generators/frank.hpp>
 #include <mtl/generators/moler.hpp>
