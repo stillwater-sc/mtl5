@@ -7,6 +7,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+#### Dense mixed-precision iterative refinement (BLAS extraction from Universal)
+- **`mtl::lu_iterative_refine<Working>(A, b, x, opt)`** (`operation/lu_iterative_refine.hpp`) — the dense counterpart of `sparse::iterative_refine`: factor A once in a low `Working` precision via `lu_factor`/`lu_solve`, then correct with a residual formed in the (deduced, higher) `Residual` precision. Universal-free and generic over the arithmetic type. Shares the sibling's `refine_options`/`refine_result` shape: best-iterate return, patience for a noisy low-precision residual, `rel_tol` convergence, and an opt-in `scaled` (scale-and-round) variant that carries the correction magnitude in `Residual` precision so narrow-exponent `Working` factors don't underflow.
+- **`mtl::normwise_backward_error(A, x, b)`** (`operation/backward_error.hpp`) — the normwise backward error `||b - A x||_inf / (||A||_inf ||x||_inf + ||b||_inf)` (Higham, "Accuracy and Stability of Numerical Algorithms", Thm 7.1), the natural quality/termination metric for refinement.
+- Ported (Universal-free) from Universal's `blas/ext/solvers/luir.hpp` (`SolveIRLU`) + `blas/utes/nbe.hpp` as the first library piece of the Universal->MTL5 linear-algebra extraction; the posit/precision *experiments* driving it live in mp-ir (Universal epic #1204, phase #1207).
+
 #### Range and test-matrix generators (BLAS extraction from Universal)
 - **`mtl::generators::{arange, linspace, logspace, geomspace}`** (`generators/ranges.hpp`) — NumPy-style spacing vectors returning `vec::dense_vector<T>`, generic over the scalar type (Universal-free). `geomspace` computes a true geometric progression between its endpoints, fixing the historical Universal implementation that aliased `logspace` and treated the endpoints as exponents (`geomspace(1, 1000, 4) == {1, 10, 100, 1000}`).
 - **`mtl::generators::magic`** (`generators/magic.hpp`) — magic square of order N (odd via the Siamese method, doubly-even via the complement method); singly-even orders throw `std::invalid_argument` pending support.

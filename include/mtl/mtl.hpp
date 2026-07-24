@@ -189,6 +189,8 @@
 #include <mtl/operation/ldlt_bk.hpp>
 #include <mtl/operation/factorization_properties.hpp>
 #include <mtl/operation/inv.hpp>
+#include <mtl/operation/backward_error.hpp>
+#include <mtl/operation/lu_iterative_refine.hpp>
 #include <mtl/operation/hessenberg.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
 #include <mtl/operation/eigenvalue.hpp>
