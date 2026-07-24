@@ -7,6 +7,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+#### Dense mixed-precision iterative refinement (BLAS extraction from Universal)
+- **`mtl::lu_iterative_refine<Working>(A, b, x, opt)`** (`operation/lu_iterative_refine.hpp`) — the dense counterpart of `sparse::iterative_refine`: factor A once in a low `Working` precision via `lu_factor`/`lu_solve`, then correct with a residual formed in the (deduced, higher) `Residual` precision. Universal-free and generic over the arithmetic type. Shares the sibling's `refine_options`/`refine_result` shape: best-iterate return, patience for a noisy low-precision residual, `rel_tol` convergence, and an opt-in `scaled` (scale-and-round) variant that carries the correction magnitude in `Residual` precision so narrow-exponent `Working` factors don't underflow.
+- **`mtl::normwise_backward_error(A, x, b)`** (`operation/backward_error.hpp`) — the normwise backward error `||b - A x||_inf / (||A||_inf ||x||_inf + ||b||_inf)` (Higham, "Accuracy and Stability of Numerical Algorithms", Thm 7.1), the natural quality/termination metric for refinement.
+- Ported (Universal-free) from Universal's `blas/ext/solvers/luir.hpp` (`SolveIRLU`) + `blas/utes/nbe.hpp` as the first library piece of the Universal->MTL5 linear-algebra extraction; the posit/precision *experiments* driving it live in mp-ir (Universal epic #1204, phase #1207).
+
 #### Matrix/vector/tensor property predicate module (#244)
 A cohesive set of runtime property and predicate queries as free functions in `namespace mtl`, built on the existing primitives (cholesky/lu/svd/eigenvalue/norms) with no new dependencies. Consistent tolerance policy: structural checks are exact-by-default and NaN-safe (`!(dev <= tol)`), while norm/factorization/spectral-backed checks use relative or scale-aware tolerances; verified on both the in-house and LAPACK paths.
 - **Structural + vector predicates** (`operation/matrix_properties.hpp`, `operation/vector_properties.hpp`) — `is_square`, `is_empty`, `is_symmetric`, `is_hermitian`, `is_upper/lower/is_triangular`, `is_diagonal`, `is_banded`, `is_diagonally_dominant`; `is_zero`, `is_finite`/`has_nan`/`has_inf`, `is_normalized`/`is_unit`, `is_orthogonal_to`. O(n)/O(nnz), no factorization (#245)
