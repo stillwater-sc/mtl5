@@ -179,3 +179,45 @@ TEST_CASE("Threaded Cholesky factorization is bit-identical to serial (#297)",
         }
     REQUIRE(resid < 1e-8);
 }
+
+TEST_CASE("Threaded factorizations degrade correctly at the single-chunk boundary (#297)",
+          "[operation][lu][cholesky][threading][mt][edge]") {
+    // n = 1 and n = 2: trailing/rows collapse to 0 or 1, so parallel_for takes
+    // its serial-fallback branch. The result must still match the serial
+    // reference bit-for-bit. Explicit (deterministic) tiny matrices so the SPD /
+    // diagonally-dominant property never depends on the RNG.
+
+    auto check_lu = [](mat::dense2D<double> A) {
+        auto Aref = A;
+        std::vector<mat::dense2D<double>::size_type> piv;
+        REQUIRE(lu_factor(A, piv) == 0);
+        std::vector<std::size_t> rpiv;
+        ref_lu(Aref, rpiv);
+        const std::size_t n = A.num_rows();
+        for (std::size_t i = 0; i < n; ++i) {
+            REQUIRE(static_cast<std::size_t>(piv[i]) == rpiv[i]);
+            for (std::size_t j = 0; j < n; ++j) REQUIRE(A(i, j) == Aref(i, j));
+        }
+    };
+    auto check_chol = [](mat::dense2D<double> A) {
+        auto Aref = A;
+        REQUIRE(cholesky_factor(A) == 0);
+        ref_chol(Aref);
+        const std::size_t n = A.num_rows();
+        for (std::size_t j = 0; j < n; ++j)
+            for (std::size_t i = j; i < n; ++i) REQUIRE(A(i, j) == Aref(i, j));
+    };
+
+    SECTION("1x1") {
+        mat::dense2D<double> A(1, 1); A(0, 0) = 4.0;
+        check_lu(A);
+        check_chol(A);
+    }
+    SECTION("2x2") {
+        mat::dense2D<double> A(2, 2);
+        A(0, 0) = 4.0; A(0, 1) = 1.0;
+        A(1, 0) = 1.0; A(1, 1) = 3.0;   // symmetric, SPD, diagonally dominant
+        check_lu(A);
+        check_chol(A);
+    }
+}
