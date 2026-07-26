@@ -444,11 +444,21 @@ TEST_CASE("backward / symmetric Gauss-Seidel edge cases: 1x1 and empty (#269)",
         sgs(xs, b); REQUIRE_THAT(xs(0), Catch::Matchers::WithinAbs(0.5, 1e-15));
     }
 
-    SECTION("empty system is a safe no-op") {
+    SECTION("empty system is a safe no-op (dense)") {
         mat::dense2D<double> A(0, 0);
         vec::dense_vector<double> b(0), xb(0), xs(0);
         itl::smoother::backward_gauss_seidel<mat::dense2D<double>> bwd(A);
         itl::smoother::symmetric_gauss_seidel<mat::dense2D<double>> sgs(A);
+        bwd(xb, b); REQUIRE(xb.size() == 0);
+        sgs(xs, b); REQUIRE(xs.size() == 0);
+    }
+
+    SECTION("empty system is a safe no-op (sparse)") {
+        // Exercise the compressed2D specialization's zero-row / zero-nnz path.
+        mat::compressed2D<double> A(0, 0);
+        vec::dense_vector<double> b(0), xb(0), xs(0);
+        itl::smoother::backward_gauss_seidel<mat::compressed2D<double>> bwd(A);
+        itl::smoother::symmetric_gauss_seidel<mat::compressed2D<double>> sgs(A);
         bwd(xb, b); REQUIRE(xb.size() == 0);
         sgs(xs, b); REQUIRE(xs.size() == 0);
     }
