@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <stdexcept>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
@@ -15,6 +16,7 @@
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/upper_trisolve.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/detail/thread_pool.hpp>
 #ifdef MTL5_HAS_LAPACK
 #include <mtl/interface/lapack.hpp>
 #endif
@@ -78,12 +80,26 @@ int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
         if (A(k, k) == math::zero<value_type>())
             return static_cast<int>(k + 1);
 
-        // Eliminate below diagonal
-        for (size_type i = k + 1; i < n; ++i) {
-            A(i, k) /= A(k, k);  // L multiplier
-            for (size_type j = k + 1; j < n; ++j) {
-                A(i, j) -= A(i, k) * A(k, j);
-            }
+        // Eliminate below diagonal -- parallelize the trailing-submatrix update
+        // over rows i (each row is written by exactly one chunk and reads only
+        // the shared pivot row k, so contiguous chunking is bit-identical to the
+        // serial path). No-op team at MTL5_NUM_THREADS=1.
+        const size_type trailing = n - k - 1;   // rows i in (k, n) and inner cols
+        if (trailing > 0) {
+            const std::size_t grain =
+                std::max<std::size_t>(std::size_t{1},
+                                      std::size_t{65536} / static_cast<std::size_t>(trailing));
+            detail::thread_pool::instance().parallel_for(
+                static_cast<std::size_t>(trailing), grain,
+                [&](std::size_t b, std::size_t e) {
+                    for (std::size_t t = b; t < e; ++t) {
+                        const size_type i = k + 1 + static_cast<size_type>(t);
+                        A(i, k) /= A(k, k);  // L multiplier
+                        for (size_type j = k + 1; j < n; ++j) {
+                            A(i, j) -= A(i, k) * A(k, j);
+                        }
+                    }
+                });
         }
     }
     return 0;

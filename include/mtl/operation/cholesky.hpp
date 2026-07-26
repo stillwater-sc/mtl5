@@ -2,13 +2,16 @@
 // MTL5 -- Cholesky factorization for symmetric positive definite matrices
 // A = L*L^T. In-place: lower triangle of A is overwritten with L.
 // Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/detail/thread_pool.hpp>
 #ifdef MTL5_HAS_LAPACK
 #include <mtl/interface/lapack.hpp>
 #endif
@@ -45,12 +48,26 @@ int cholesky_factor(M& A) {
             return static_cast<int>(j + 1);
         A(j, j) = sqrt(diag);
 
-        // Compute L(i,j) for i > j
-        for (size_type i = j + 1; i < n; ++i) {
-            sum = math::zero<value_type>();
-            for (size_type k = 0; k < j; ++k)
-                sum += A(i, k) * A(j, k);
-            A(i, j) = (A(i, j) - sum) / A(j, j);
+        // Compute L(i,j) for i > j -- parallelize over rows i (each A(i,j) is
+        // written by exactly one chunk and reads only already-finalized columns
+        // k < j and the shared column j, so contiguous chunking is bit-identical
+        // to the serial path). No-op team at MTL5_NUM_THREADS=1.
+        const size_type rows = n - j - 1;
+        if (rows > 0) {
+            const std::size_t inner = static_cast<std::size_t>(j == 0 ? 1 : j);
+            const std::size_t grain =
+                std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / inner);
+            detail::thread_pool::instance().parallel_for(
+                static_cast<std::size_t>(rows), grain,
+                [&](std::size_t b, std::size_t e) {
+                    for (std::size_t t = b; t < e; ++t) {
+                        const size_type i = j + 1 + static_cast<size_type>(t);
+                        auto s = math::zero<value_type>();
+                        for (size_type k = 0; k < j; ++k)
+                            s += A(i, k) * A(j, k);
+                        A(i, j) = (A(i, j) - s) / A(j, j);
+                    }
+                });
         }
     }
     return 0;
