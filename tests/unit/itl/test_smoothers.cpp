@@ -417,3 +417,39 @@ TEST_CASE("backward / symmetric Gauss-Seidel route through accumulator_traits (#
         REQUIRE(two_norm(r) < 1e-4f);
     }
 }
+
+TEST_CASE("backward / symmetric Gauss-Seidel edge cases: 1x1 and empty (#269)",
+          "[itl][smoother][gauss_seidel][edge]") {
+    // Smoothers operate on a square system (they invert the diagonal), so the
+    // relevant edge cases are the minimum 1x1 system and the empty system;
+    // rectangular input is not applicable.
+    SECTION("1x1 dense: one sweep is exact") {
+        mat::dense2D<double> A(1, 1); A(0, 0) = 4.0;
+        vec::dense_vector<double> b(1, 2.0);              // x = b/A = 0.5
+        vec::dense_vector<double> xb(1, 0.0), xs(1, 0.0);
+        itl::smoother::backward_gauss_seidel<mat::dense2D<double>> bwd(A);
+        itl::smoother::symmetric_gauss_seidel<mat::dense2D<double>> sgs(A);
+        bwd(xb, b); REQUIRE_THAT(xb(0), Catch::Matchers::WithinAbs(0.5, 1e-15));
+        sgs(xs, b); REQUIRE_THAT(xs(0), Catch::Matchers::WithinAbs(0.5, 1e-15));
+    }
+
+    SECTION("1x1 sparse: one sweep is exact") {
+        mat::compressed2D<double> A(1, 1);
+        { mat::inserter<mat::compressed2D<double>> ins(A); ins[0][0] << 4.0; }
+        vec::dense_vector<double> b(1, 2.0);
+        vec::dense_vector<double> xb(1, 0.0), xs(1, 0.0);
+        itl::smoother::backward_gauss_seidel<mat::compressed2D<double>> bwd(A);
+        itl::smoother::symmetric_gauss_seidel<mat::compressed2D<double>> sgs(A);
+        bwd(xb, b); REQUIRE_THAT(xb(0), Catch::Matchers::WithinAbs(0.5, 1e-15));
+        sgs(xs, b); REQUIRE_THAT(xs(0), Catch::Matchers::WithinAbs(0.5, 1e-15));
+    }
+
+    SECTION("empty system is a safe no-op") {
+        mat::dense2D<double> A(0, 0);
+        vec::dense_vector<double> b(0), xb(0), xs(0);
+        itl::smoother::backward_gauss_seidel<mat::dense2D<double>> bwd(A);
+        itl::smoother::symmetric_gauss_seidel<mat::dense2D<double>> sgs(A);
+        bwd(xb, b); REQUIRE(xb.size() == 0);
+        sgs(xs, b); REQUIRE(xs.size() == 0);
+    }
+}
