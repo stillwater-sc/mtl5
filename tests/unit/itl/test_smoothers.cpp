@@ -312,3 +312,108 @@ TEST_CASE("Sparse specialization matches generic version", "[itl][smoother][spar
         REQUIRE_THAT(x_sparse(i), Catch::Matchers::WithinAbs(x_dense(i), 1e-12));
     }
 }
+
+// -- backward + symmetric Gauss-Seidel (#269) ----------------------------
+
+TEST_CASE("Backward Gauss-Seidel reaches the same fixed point as forward (#269)",
+          "[itl][smoother][gauss_seidel][backward]") {
+    vec::dense_vector<double> b = {1.0, 2.0, 3.0, 4.0};
+
+    SECTION("dense") {
+        auto A = make_dense_spd();
+        vec::dense_vector<double> xf(4, 0.0), xb(4, 0.0);
+        itl::smoother::gauss_seidel<mat::dense2D<double>> fwd(A);
+        itl::smoother::backward_gauss_seidel<mat::dense2D<double>> bwd(A);
+        for (int s = 0; s < 100; ++s) { fwd(xf, b); bwd(xb, b); }
+        // Both convergent sweep orders reach the same A^{-1} b on an SPD system.
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(xb(i), Catch::Matchers::WithinAbs(xf(i), 1e-9));
+        auto r = A * xb;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+
+    SECTION("sparse specialization") {
+        auto A = make_sparse_spd();
+        vec::dense_vector<double> xb(4, 0.0);
+        itl::smoother::backward_gauss_seidel<mat::compressed2D<double>> bwd(A);
+        for (int s = 0; s < 100; ++s) bwd(xb, b);
+        auto r = A * xb;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+}
+
+TEST_CASE("Symmetric Gauss-Seidel = forward then backward, order-symmetric (#269)",
+          "[itl][smoother][gauss_seidel][symmetric]") {
+    auto A = make_dense_spd();
+    vec::dense_vector<double> b = {1.0, 2.0, 3.0, 4.0};
+
+    SECTION("one SGS application equals a forward sweep then a backward sweep") {
+        vec::dense_vector<double> x_sgs(4, 0.0), x_manual(4, 0.0);
+        itl::smoother::symmetric_gauss_seidel<mat::dense2D<double>> sgs(A);
+        itl::smoother::gauss_seidel<mat::dense2D<double>> gs(A);
+        sgs(x_sgs, b);
+        gs.forward(x_manual, b);
+        gs.backward(x_manual, b);
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(x_sgs(i), Catch::Matchers::WithinAbs(x_manual(i), 1e-15));
+    }
+
+    SECTION("forward+backward and backward+forward reach the same fixed point") {
+        // "Independent of which end it starts": both symmetric orderings converge
+        // to the same solution on an SPD system.
+        vec::dense_vector<double> x_fb(4, 0.0), x_bf(4, 0.0);
+        itl::smoother::symmetric_gauss_seidel<mat::dense2D<double>> sgs(A);   // F then B
+        itl::smoother::gauss_seidel<mat::dense2D<double>> gs(A);
+        for (int s = 0; s < 60; ++s) {
+            sgs(x_fb, b);
+            gs.backward(x_bf, b);                                             // B then F
+            gs.forward(x_bf, b);
+        }
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(x_fb(i), Catch::Matchers::WithinAbs(x_bf(i), 1e-9));
+        auto r = A * x_fb;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+
+    SECTION("sparse specialization converges") {
+        auto As = make_sparse_spd();
+        vec::dense_vector<double> x(4, 0.0);
+        itl::smoother::symmetric_gauss_seidel<mat::compressed2D<double>> sgs(As);
+        for (int s = 0; s < 60; ++s) sgs(x, b);
+        auto r = As * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+}
+
+TEST_CASE("backward / symmetric Gauss-Seidel route through accumulator_traits (#269)",
+          "[itl][smoother][gauss_seidel][symmetric][accumulator]") {
+    vec::dense_vector<float> b = {1.0f, 2.0f, 3.0f, 4.0f};
+
+    SECTION("backward (dense) invokes the accumulator") {
+        auto A = make_dense_spd_f();
+        vec::dense_vector<float> x(4, 0.0f);
+        itl::smoother::backward_gauss_seidel<mat::dense2D<float>, counting_wide_acc> bwd(A);
+        g_jacobi_addproduct_calls = 0;
+        for (int s = 0; s < 30; ++s) bwd(x, b);
+        REQUIRE(g_jacobi_addproduct_calls > 0);
+        auto r = A * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
+
+    SECTION("symmetric (sparse) invokes the accumulator") {
+        auto A = make_sparse_spd_f();
+        vec::dense_vector<float> x(4, 0.0f);
+        itl::smoother::symmetric_gauss_seidel<mat::compressed2D<float>, counting_wide_acc> sgs(A);
+        g_jacobi_addproduct_calls = 0;
+        for (int s = 0; s < 30; ++s) sgs(x, b);
+        REQUIRE(g_jacobi_addproduct_calls > 0);
+        auto r = A * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
+}

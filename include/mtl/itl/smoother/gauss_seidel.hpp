@@ -27,8 +27,11 @@ namespace mtl::itl::smoother {
 // intra-sweep error propagation is exactly what mp-iterative studies on top of
 // this per-row accumulation policy.
 
-/// Gauss-Seidel smoother: in-place forward sweep.
+/// Gauss-Seidel smoother.
 /// x[i] = dia_inv[i] * (b[i] - sum_{j!=i} A(i,j)*x[j])
+/// operator() runs a forward (ascending-row) sweep; forward()/backward() expose
+/// the sweep direction explicitly (backward_gauss_seidel / symmetric_gauss_seidel
+/// build on them). All variants carry the optional Accumulator unchanged.
 template <typename Matrix, typename Accumulator = void>
 class gauss_seidel {
     using value_type = typename Matrix::value_type;
@@ -39,11 +42,25 @@ public:
             dia_inv_(i) = value_type(1) / A(i, i);
     }
 
+    /// Forward sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+
+    /// Forward sweep: rows iterated in ascending order.
+    template <typename VecX, typename VecB>
+    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+
+    /// Backward sweep: rows iterated in descending order (n-1..0).
+    template <typename VecX, typename VecB>
+    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+
+private:
+    template <typename VecX, typename VecB>
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
-        for (size_type i = 0; i < n; ++i) {
+        for (size_type step = 0; step < n; ++step) {
+            const size_type i = ascending ? step : (n - 1 - step);
             value_type sigma;
             if constexpr (std::is_void_v<Accumulator>) {
                 sigma = math::zero<value_type>();
@@ -67,7 +84,6 @@ public:
         return x;
     }
 
-private:
     const Matrix& A_;
     vec::dense_vector<value_type> dia_inv_;
 };
@@ -95,14 +111,28 @@ public:
         }
     }
 
+    /// Forward sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+
+    /// Forward sweep: rows iterated in ascending order.
+    template <typename VecX, typename VecB>
+    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+
+    /// Backward sweep: rows iterated in descending order (n-1..0).
+    template <typename VecX, typename VecB>
+    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+
+private:
+    template <typename VecX, typename VecB>
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         const auto& starts  = A_.ref_major();
         const auto& indices = A_.ref_minor();
         const auto& data    = A_.ref_data();
-        for (size_type i = 0; i < n; ++i) {
+        for (size_type step = 0; step < n; ++step) {
+            const size_type i = ascending ? step : (n - 1 - step);
             value_type sigma;
             if constexpr (std::is_void_v<Accumulator>) {
                 sigma = math::zero<value_type>();
@@ -126,10 +156,44 @@ public:
         return x;
     }
 
-private:
     const matrix_type& A_;
     vec::dense_vector<value_type> dia_inv_;
     std::vector<size_type> dia_pos_;
+};
+
+/// Backward Gauss-Seidel: one in-place sweep in descending row order.
+/// Same fixed point as the forward sweep; the sweep direction is what
+/// mp-iterative studies against low-precision error propagation.
+template <typename Matrix, typename Accumulator = void>
+class backward_gauss_seidel {
+public:
+    explicit backward_gauss_seidel(const Matrix& A) : gs_(A) {}
+
+    template <typename VecX, typename VecB>
+    VecX& operator()(VecX& x, const VecB& b) { return gs_.backward(x, b); }
+
+private:
+    gauss_seidel<Matrix, Accumulator> gs_;
+};
+
+/// Symmetric Gauss-Seidel (SGS): one forward sweep immediately followed by one
+/// backward sweep per application. For symmetric A this application is itself
+/// symmetric (SPD-preserving), which is why Krylov methods use it as a
+/// preconditioner -- hence a first-class primitive rather than a caller-side
+/// compose. Carries the optional Accumulator through both sweeps.
+template <typename Matrix, typename Accumulator = void>
+class symmetric_gauss_seidel {
+public:
+    explicit symmetric_gauss_seidel(const Matrix& A) : gs_(A) {}
+
+    template <typename VecX, typename VecB>
+    VecX& operator()(VecX& x, const VecB& b) {
+        gs_.forward(x, b);
+        return gs_.backward(x, b);
+    }
+
+private:
+    gauss_seidel<Matrix, Accumulator> gs_;
 };
 
 } // namespace mtl::itl::smoother
