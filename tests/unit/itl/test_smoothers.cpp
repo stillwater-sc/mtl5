@@ -463,3 +463,154 @@ TEST_CASE("backward / symmetric Gauss-Seidel edge cases: 1x1 and empty (#269)",
         sgs(xs, b); REQUIRE(xs.size() == 0);
     }
 }
+
+// -- backward + symmetric SOR / SSOR (#291) ------------------------------
+
+TEST_CASE("Backward SOR reaches the same fixed point as forward (#291)",
+          "[itl][smoother][sor][backward]") {
+    vec::dense_vector<double> b = {1.0, 2.0, 3.0, 4.0};
+    const double omega = 1.1;   // over-relaxation
+
+    SECTION("dense") {
+        auto A = make_dense_spd();
+        vec::dense_vector<double> xf(4, 0.0), xb(4, 0.0);
+        itl::smoother::sor<mat::dense2D<double>> fwd(A, omega);
+        itl::smoother::backward_sor<mat::dense2D<double>> bwd(A, omega);
+        for (int s = 0; s < 100; ++s) { fwd(xf, b); bwd(xb, b); }
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(xb(i), Catch::Matchers::WithinAbs(xf(i), 1e-9));
+        auto r = A * xb;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+
+    SECTION("sparse specialization") {
+        auto A = make_sparse_spd();
+        vec::dense_vector<double> xb(4, 0.0);
+        itl::smoother::backward_sor<mat::compressed2D<double>> bwd(A, omega);
+        for (int s = 0; s < 100; ++s) bwd(xb, b);
+        auto r = A * xb;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+}
+
+TEST_CASE("SSOR = forward then backward relaxed sweep, order-symmetric (#291)",
+          "[itl][smoother][sor][symmetric][ssor]") {
+    auto A = make_dense_spd();
+    vec::dense_vector<double> b = {1.0, 2.0, 3.0, 4.0};
+    const double omega = 1.25;
+
+    SECTION("one SSOR application equals a forward then a backward relaxed sweep") {
+        vec::dense_vector<double> x_ssor(4, 0.0), x_manual(4, 0.0);
+        itl::smoother::symmetric_sor<mat::dense2D<double>> ssor(A, omega);
+        itl::smoother::sor<mat::dense2D<double>> s(A, omega);
+        ssor(x_ssor, b);
+        s.forward(x_manual, b);
+        s.backward(x_manual, b);
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(x_ssor(i), Catch::Matchers::WithinAbs(x_manual(i), 1e-15));
+    }
+
+    SECTION("forward+backward and backward+forward reach the same fixed point") {
+        vec::dense_vector<double> x_fb(4, 0.0), x_bf(4, 0.0);
+        itl::smoother::symmetric_sor<mat::dense2D<double>> ssor(A, omega);   // F then B
+        itl::smoother::sor<mat::dense2D<double>> s(A, omega);
+        for (int step = 0; step < 80; ++step) {
+            ssor(x_fb, b);
+            s.backward(x_bf, b);                                             // B then F
+            s.forward(x_bf, b);
+        }
+        for (std::size_t i = 0; i < 4; ++i)
+            REQUIRE_THAT(x_fb(i), Catch::Matchers::WithinAbs(x_bf(i), 1e-9));
+        auto r = A * x_fb;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+
+    SECTION("sparse specialization converges") {
+        auto As = make_sparse_spd();
+        vec::dense_vector<double> x(4, 0.0);
+        itl::smoother::symmetric_sor<mat::compressed2D<double>> ssor(As, omega);
+        for (int s = 0; s < 80; ++s) ssor(x, b);
+        auto r = As * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-9);
+    }
+}
+
+TEST_CASE("backward / symmetric SOR route through accumulator_traits (#291)",
+          "[itl][smoother][sor][symmetric][accumulator]") {
+    vec::dense_vector<float> b = {1.0f, 2.0f, 3.0f, 4.0f};
+    const float omega = 1.1f;
+
+    SECTION("backward (dense) invokes the accumulator") {
+        auto A = make_dense_spd_f();
+        vec::dense_vector<float> x(4, 0.0f);
+        itl::smoother::backward_sor<mat::dense2D<float>, counting_wide_acc> bwd(A, omega);
+        g_jacobi_addproduct_calls = 0;
+        for (int s = 0; s < 40; ++s) bwd(x, b);
+        REQUIRE(g_jacobi_addproduct_calls > 0);
+        auto r = A * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
+
+    SECTION("SSOR (sparse) invokes the accumulator") {
+        auto A = make_sparse_spd_f();
+        vec::dense_vector<float> x(4, 0.0f);
+        itl::smoother::symmetric_sor<mat::compressed2D<float>, counting_wide_acc> ssor(A, omega);
+        g_jacobi_addproduct_calls = 0;
+        for (int s = 0; s < 40; ++s) ssor(x, b);
+        REQUIRE(g_jacobi_addproduct_calls > 0);
+        auto r = A * x;
+        for (std::size_t i = 0; i < 4; ++i) r(i) = b(i) - r(i);
+        REQUIRE(two_norm(r) < 1e-4f);
+    }
+}
+
+TEST_CASE("backward / symmetric SOR edge cases: 1x1 and empty (#291)",
+          "[itl][smoother][sor][edge]") {
+    const double omega = 1.1;
+    SECTION("1x1 dense: one relaxed sweep from zero is omega * b/a") {
+        mat::dense2D<double> A(1, 1); A(0, 0) = 4.0;
+        vec::dense_vector<double> b(1, 2.0);
+        // x0=0: gs_update = b/a = 0.5; x = omega*0.5 + (1-omega)*0 = 0.55
+        vec::dense_vector<double> xb(1, 0.0), xs(1, 0.0);
+        itl::smoother::backward_sor<mat::dense2D<double>> bwd(A, omega);
+        bwd(xb, b); REQUIRE_THAT(xb(0), Catch::Matchers::WithinAbs(0.55, 1e-15));
+        // SSOR = forward then backward: after forward x=0.55, backward gs_update
+        // is still b/a=0.5 (1x1 has no off-diagonal), x = omega*0.5 + (1-omega)*0.55
+        itl::smoother::symmetric_sor<mat::dense2D<double>> ssor(A, omega);
+        ssor(xs, b);
+        const double after_fwd = omega * 0.5;                        // 0.55
+        const double expected  = omega * 0.5 + (1.0 - omega) * after_fwd;
+        REQUIRE_THAT(xs(0), Catch::Matchers::WithinAbs(expected, 1e-15));
+    }
+
+    SECTION("1x1 sparse converges to the exact solution") {
+        mat::compressed2D<double> A(1, 1);
+        { mat::inserter<mat::compressed2D<double>> ins(A); ins[0][0] << 4.0; }
+        vec::dense_vector<double> b(1, 2.0), xb(1, 0.0), xs(1, 0.0);
+        itl::smoother::backward_sor<mat::compressed2D<double>> bwd(A, omega);
+        itl::smoother::symmetric_sor<mat::compressed2D<double>> ssor(A, omega);
+        for (int s = 0; s < 50; ++s) { bwd(xb, b); ssor(xs, b); }
+        REQUIRE_THAT(xb(0), Catch::Matchers::WithinAbs(0.5, 1e-12));   // 2/4
+        REQUIRE_THAT(xs(0), Catch::Matchers::WithinAbs(0.5, 1e-12));
+    }
+
+    SECTION("empty system is a safe no-op (dense + sparse)") {
+        vec::dense_vector<double> b(0), xb(0), xs(0);
+        mat::dense2D<double> Ad(0, 0);
+        itl::smoother::backward_sor<mat::dense2D<double>> bwd_d(Ad, omega);
+        itl::smoother::symmetric_sor<mat::dense2D<double>> ssor_d(Ad, omega);
+        bwd_d(xb, b); REQUIRE(xb.size() == 0);
+        ssor_d(xs, b); REQUIRE(xs.size() == 0);
+
+        mat::compressed2D<double> As(0, 0);
+        itl::smoother::backward_sor<mat::compressed2D<double>> bwd_s(As, omega);
+        itl::smoother::symmetric_sor<mat::compressed2D<double>> ssor_s(As, omega);
+        bwd_s(xb, b); REQUIRE(xb.size() == 0);
+        ssor_s(xs, b); REQUIRE(xs.size() == 0);
+    }
+}

@@ -29,6 +29,9 @@ namespace mtl::itl::smoother {
 
 /// SOR smoother with relaxation parameter omega.
 /// omega=1.0 reduces to Gauss-Seidel.
+/// operator() runs a forward (ascending-row) relaxed sweep; forward()/backward()
+/// expose the sweep direction explicitly (backward_sor / symmetric_sor build on
+/// them). All variants carry the optional Accumulator unchanged.
 template <typename Matrix, typename Accumulator = void>
 class sor {
     using value_type = typename Matrix::value_type;
@@ -41,11 +44,25 @@ public:
             dia_inv_(i) = value_type(1) / A(i, i);
     }
 
+    /// Forward relaxed sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+
+    /// Forward relaxed sweep: rows iterated in ascending order.
+    template <typename VecX, typename VecB>
+    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+
+    /// Backward relaxed sweep: rows iterated in descending order (n-1..0).
+    template <typename VecX, typename VecB>
+    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+
+private:
+    template <typename VecX, typename VecB>
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
-        for (size_type i = 0; i < n; ++i) {
+        for (size_type step = 0; step < n; ++step) {
+            const size_type i = ascending ? step : (n - 1 - step);
             value_type sigma;
             if constexpr (std::is_void_v<Accumulator>) {
                 sigma = math::zero<value_type>();
@@ -71,7 +88,6 @@ public:
         return x;
     }
 
-private:
     const Matrix& A_;
     value_type omega_;
     vec::dense_vector<value_type> dia_inv_;
@@ -100,14 +116,28 @@ public:
         }
     }
 
+    /// Forward relaxed sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+
+    /// Forward relaxed sweep: rows iterated in ascending order.
+    template <typename VecX, typename VecB>
+    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+
+    /// Backward relaxed sweep: rows iterated in descending order (n-1..0).
+    template <typename VecX, typename VecB>
+    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+
+private:
+    template <typename VecX, typename VecB>
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         const auto& starts  = A_.ref_major();
         const auto& indices = A_.ref_minor();
         const auto& data    = A_.ref_data();
-        for (size_type i = 0; i < n; ++i) {
+        for (size_type step = 0; step < n; ++step) {
+            const size_type i = ascending ? step : (n - 1 - step);
             value_type sigma;
             if constexpr (std::is_void_v<Accumulator>) {
                 sigma = math::zero<value_type>();
@@ -133,10 +163,46 @@ public:
         return x;
     }
 
-private:
     const matrix_type& A_;
     value_type omega_;
     vec::dense_vector<value_type> dia_inv_;
+};
+
+/// Backward SOR: one in-place relaxed sweep in descending row order.
+/// Same fixed point as the forward relaxed sweep on an SPD system.
+template <typename Matrix, typename Accumulator = void>
+class backward_sor {
+    using value_type = typename Matrix::value_type;
+public:
+    explicit backward_sor(const Matrix& A, value_type omega = value_type(1)) : sor_(A, omega) {}
+
+    template <typename VecX, typename VecB>
+    VecX& operator()(VecX& x, const VecB& b) { return sor_.backward(x, b); }
+
+private:
+    sor<Matrix, Accumulator> sor_;
+};
+
+/// Symmetric SOR (SSOR): one forward relaxed sweep immediately followed by one
+/// backward relaxed sweep per application -- the relaxed analogue of symmetric
+/// Gauss-Seidel (#269). For symmetric A this application is itself symmetric
+/// (SPD-preserving), which is why Krylov methods use it as a preconditioner,
+/// hence a first-class primitive rather than a caller-side compose. omega and the
+/// optional Accumulator are carried through both sweeps.
+template <typename Matrix, typename Accumulator = void>
+class symmetric_sor {
+    using value_type = typename Matrix::value_type;
+public:
+    explicit symmetric_sor(const Matrix& A, value_type omega = value_type(1)) : sor_(A, omega) {}
+
+    template <typename VecX, typename VecB>
+    VecX& operator()(VecX& x, const VecB& b) {
+        sor_.forward(x, b);
+        return sor_.backward(x, b);
+    }
+
+private:
+    sor<Matrix, Accumulator> sor_;
 };
 
 } // namespace mtl::itl::smoother
