@@ -23,6 +23,8 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/cholesky.hpp>
+#include <mtl/operation/householder.hpp>
+#include <mtl/operation/qr.hpp>
 #include <mtl/detail/thread_pool.hpp>
 
 using namespace mtl;
@@ -219,5 +221,123 @@ TEST_CASE("Threaded factorizations degrade correctly at the single-chunk boundar
         A(1, 0) = 1.0; A(1, 1) = 3.0;   // symmetric, SPD, diagonally dominant
         check_lu(A);
         check_chol(A);
+    }
+}
+
+// -- Householder reflector application (#297 batch 2) --------------------
+
+namespace {
+// Serial reference for apply_householder_left: update every column j >= col.
+template <typename T>
+void ref_hh_left(mat::dense2D<T>& A, const vec::dense_vector<T>& v, T beta,
+                 std::size_t row, std::size_t col) {
+    const std::size_t n = A.num_cols();
+    const std::size_t vlen = v.size();
+    for (std::size_t j = col; j < n; ++j) {
+        T w = T(0);
+        for (std::size_t i = 0; i < vlen; ++i) w += v(i) * A(row + i, j);
+        for (std::size_t i = 0; i < vlen; ++i) A(row + i, j) -= beta * v(i) * w;
+    }
+}
+// Serial reference for apply_householder_right: update every row i >= row.
+template <typename T>
+void ref_hh_right(mat::dense2D<T>& A, const vec::dense_vector<T>& v, T beta,
+                  std::size_t row, std::size_t col) {
+    const std::size_t m = A.num_rows();
+    const std::size_t vlen = v.size();
+    for (std::size_t i = row; i < m; ++i) {
+        T w = T(0);
+        for (std::size_t j = 0; j < vlen; ++j) w += A(i, col + j) * v(j);
+        for (std::size_t j = 0; j < vlen; ++j) A(i, col + j) -= beta * w * v(j);
+    }
+}
+} // namespace
+
+TEST_CASE("Threaded apply_householder_left is bit-identical to serial (#297)",
+          "[operation][householder][qr][threading][mt]") {
+    if (detail::thread_pool::instance().size() < 2) WARN("single-core runner: threading not exercised");
+    const std::size_t m = 512, n = 512;   // enough columns to split
+    mat::dense2D<double> A(m, n), Aref(m, n);
+    std::mt19937_64 rng(2024);
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) { double x = d(rng); A(i, j) = x; Aref(i, j) = x; }
+    vec::dense_vector<double> v(m);
+    v(0) = 1.0;
+    for (std::size_t i = 1; i < m; ++i) v(i) = d(rng);
+    const double beta = 0.37;
+
+    apply_householder_left(A, v, beta, /*row=*/0, /*col=*/0);   // threaded
+    ref_hh_left(Aref, v, beta, 0, 0);                           // serial reference
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) REQUIRE(A(i, j) == Aref(i, j));
+}
+
+TEST_CASE("Threaded apply_householder_right is bit-identical to serial (#297)",
+          "[operation][householder][threading][mt]") {
+    if (detail::thread_pool::instance().size() < 2) WARN("single-core runner: threading not exercised");
+    const std::size_t m = 512, n = 512;   // enough rows to split
+    mat::dense2D<double> A(m, n), Aref(m, n);
+    std::mt19937_64 rng(4048);
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) { double x = d(rng); A(i, j) = x; Aref(i, j) = x; }
+    vec::dense_vector<double> v(n);
+    for (std::size_t j = 0; j < n; ++j) v(j) = d(rng);
+    const double beta = 0.51;
+
+    apply_householder_right(A, v, beta, /*row=*/0, /*col=*/0);  // threaded
+    ref_hh_right(Aref, v, beta, 0, 0);                          // serial reference
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) REQUIRE(A(i, j) == Aref(i, j));
+}
+
+TEST_CASE("Threaded QR factorization reconstructs A = Q*R (#297)",
+          "[operation][qr][threading][mt]") {
+    if (detail::thread_pool::instance().size() < 2) WARN("single-core runner: threading not exercised");
+    const std::size_t m = 400, n = 300;   // overdetermined; exercises the threaded reflector loop
+    mat::dense2D<double> A(m, n), A0(m, n);
+    std::mt19937_64 rng(1234);
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) { double x = d(rng); A(i, j) = x; A0(i, j) = x; }
+
+    vec::dense_vector<double> tau;
+    REQUIRE(qr_factor(A, tau) == 0);         // threaded reflector applications
+    auto Q = qr_extract_Q(A, tau);           // m x m
+    auto R = qr_extract_R(A);                 // m x n
+
+    // Q*R must reconstruct the original A (correctness under threading).
+    double resid = 0.0;
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            double qr = 0.0;
+            for (std::size_t l = 0; l < m; ++l) qr += Q(i, l) * R(l, j);
+            resid = std::max(resid, std::abs(qr - A0(i, j)));
+        }
+    REQUIRE(resid < 1e-10);
+}
+
+TEST_CASE("Threaded Householder reflectors: single-chunk boundary (#297)",
+          "[operation][householder][threading][mt][edge]") {
+    // Tiny sizes so the parallel_for takes its serial-fallback branch.
+    for (std::size_t nsz : {std::size_t{1}, std::size_t{2}}) {
+        mat::dense2D<double> A(nsz, nsz), Al(nsz, nsz), Ar(nsz, nsz);
+        for (std::size_t i = 0; i < nsz; ++i)
+            for (std::size_t j = 0; j < nsz; ++j) { double x = 1.0 + double(i) - 0.5 * double(j); A(i, j) = x; Al(i, j) = x; Ar(i, j) = x; }
+        vec::dense_vector<double> v(nsz);
+        v(0) = 1.0;
+        for (std::size_t i = 1; i < nsz; ++i) v(i) = 0.25 * double(i);
+        const double beta = 0.4;
+
+        auto Lref = Al; ref_hh_left(Lref, v, beta, 0, 0);
+        apply_householder_left(Al, v, beta, 0, 0);
+        auto Rref = Ar; ref_hh_right(Rref, v, beta, 0, 0);
+        apply_householder_right(Ar, v, beta, 0, 0);
+        for (std::size_t i = 0; i < nsz; ++i)
+            for (std::size_t j = 0; j < nsz; ++j) {
+                REQUIRE(Al(i, j) == Lref(i, j));
+                REQUIRE(Ar(i, j) == Rref(i, j));
+            }
     }
 }
