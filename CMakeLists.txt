@@ -72,6 +72,17 @@ configure_file(
     @ONLY
 )
 
+# ── Named test-matrix catalog data dir (universal#1210) ─────────────────
+# Bake the in-tree path to the .mtx catalog so mtl::testsuite::by_name() works
+# out of the box for in-tree / FetchContent consumers; installed consumers pass
+# an explicit directory.
+set(MTL5_TESTSUITE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/testsuite")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/mtl/testsuite_config.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/mtl/testsuite_config.hpp"
+    @ONLY
+)
+
 # ── Header-only INTERFACE library ────────────────────────────────────────
 add_library(mtl5 INTERFACE)
 add_library(MTL5::mtl5 ALIAS mtl5)
@@ -269,6 +280,17 @@ install(DIRECTORY include/mtl
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/mtl/version.hpp"
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mtl
+)
+
+# Named test-matrix catalog: the generated data-path header + the .mtx data set
+# (universal#1210). Installed consumers pass the installed data dir explicitly to
+# mtl::testsuite::by_name(), since the baked-in macro points at the build tree.
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/mtl/testsuite_config.hpp"
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/mtl
+)
+install(DIRECTORY data/testsuite
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/mtl5
+    FILES_MATCHING PATTERN "*.mtx"
 )
 
 install(EXPORT MTL5Targets

@@ -1,0 +1,12 @@
+%%MatrixMarket matrix coordinate real general
+% migrated from Universal blas/matrices/faires74x3.hpp (universal#1210)
+3 3 9
+1 1 3.333
+1 2 15920.0
+1 3 -10.333
+2 1 2.222
+2 2 16.71
+2 3 9.612
+3 1 1.5611
+3 2 5.1791
+3 3 1.6852

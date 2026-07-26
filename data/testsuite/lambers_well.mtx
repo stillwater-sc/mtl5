@@ -1,0 +1,7 @@
+%%MatrixMarket matrix coordinate real general
+% migrated from Universal blas/matrices/lambers_well.hpp (universal#1210)
+2 2 4
+1 1 0.45368292
+1 2 0.19382865
+2 1 0.70364726
+2 2 0.52104011
