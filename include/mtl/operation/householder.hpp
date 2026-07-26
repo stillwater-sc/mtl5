@@ -68,8 +68,10 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
     // only column j of A, writes only column j), so partitioning the columns
     // across the thread pool is bit-identical to serial. No-op at
     // MTL5_NUM_THREADS=1.
+    // Empty or beyond-end target column: no work (matches the serial loop, and
+    // avoids an unsigned underflow in n - col before deriving the work range).
+    if (col >= n) return;
     const size_type ncols = n - col;
-    if (ncols == 0) return;
     const std::size_t grain = std::max<std::size_t>(
         std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
     detail::thread_pool::instance().parallel_for(
@@ -101,8 +103,10 @@ void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
     // its own vlen entries of A, writes only those), so partitioning the rows
     // across the thread pool is bit-identical to serial. No-op at
     // MTL5_NUM_THREADS=1.
+    // Empty or beyond-end target row: no work (matches the serial loop, and
+    // avoids an unsigned underflow in m - row before deriving the work range).
+    if (row >= m) return;
     const size_type nrows = m - row;
-    if (nrows == 0) return;
     const std::size_t grain = std::max<std::size_t>(
         std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
     detail::thread_pool::instance().parallel_for(

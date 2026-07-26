@@ -341,3 +341,29 @@ TEST_CASE("Threaded Householder reflectors: single-chunk boundary (#297)",
             }
     }
 }
+
+TEST_CASE("Threaded Householder reflectors: empty / beyond-end target is a no-op (#297)",
+          "[operation][householder][threading][mt][edge]") {
+    // col >= n (left) and row >= m (right) must leave A unchanged, matching the
+    // serial loops -- guards against the unsigned n-col / m-row underflow.
+    const std::size_t m = 8, n = 8;
+    mat::dense2D<double> A(m, n), A0(m, n);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) { double x = 1.0 + double(i) + 0.5 * double(j); A(i, j) = x; A0(i, j) = x; }
+    vec::dense_vector<double> v(m, 0.5);
+    const double beta = 0.3;
+
+    auto unchanged = [&] {
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n; ++j) REQUIRE(A(i, j) == A0(i, j));
+    };
+
+    apply_householder_left(A, v, beta, /*row=*/0, /*col=*/n);       // target empty
+    unchanged();
+    apply_householder_left(A, v, beta, /*row=*/0, /*col=*/n + 3);   // beyond end
+    unchanged();
+    apply_householder_right(A, v, beta, /*row=*/m, /*col=*/0);      // target empty
+    unchanged();
+    apply_householder_right(A, v, beta, /*row=*/m + 3, /*col=*/0);  // beyond end
+    unchanged();
+}
