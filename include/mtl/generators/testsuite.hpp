@@ -23,12 +23,13 @@
 #include <vector>
 #include <unordered_map>
 #include <stdexcept>
+#include <filesystem>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/io/matrix_market.hpp>
 
 #if __has_include(<mtl/testsuite_config.hpp>)
-#  include <mtl/testsuite_config.hpp>   // MTL5_TESTSUITE_DATA_DIR (CMake-configured)
+#  include <mtl/testsuite_config.hpp>   // MTL5_TESTSUITE_DATA_DIR (CMake-configured, in-tree builds)
 #endif
 
 namespace mtl::testsuite {
@@ -68,12 +69,22 @@ inline double kappa(const std::string& name) {
     return it->second;
 }
 
-/// The default catalog data directory (build-tree path baked in by CMake).
+/// The default catalog data directory.
+///
+/// Header-only consumers frequently pull MTL5 in by adding `include/` to the
+/// search path only (FetchContent_Populate, `-Iinclude`), so MTL5's CMake never
+/// runs and the configured macro is absent. We therefore derive the data dir
+/// from THIS header's own location (`__FILE__` is the absolute compile-time path
+/// under CMake): include/mtl/generators/testsuite.hpp -> ../../../data/testsuite.
+/// The CMake-configured macro, when present, takes precedence. Installed
+/// consumers (source tree gone) should pass an explicit `dir` to by_name().
 inline std::string data_dir() {
 #ifdef MTL5_TESTSUITE_DATA_DIR
     return MTL5_TESTSUITE_DATA_DIR;
 #else
-    return ".";
+    namespace fs = std::filesystem;
+    return fs::weakly_canonical(
+        fs::path(__FILE__).parent_path() / ".." / ".." / ".." / "data" / "testsuite").string();
 #endif
 }
 
