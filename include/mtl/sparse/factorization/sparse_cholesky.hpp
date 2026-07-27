@@ -72,10 +72,19 @@ struct cholesky_numeric {
     /// Install the numeric factor and (re)build the coupled forward-solve
     /// schedule from it. L and its schedule are always set together here, which
     /// enforces the invariant the level solve relies on -- the schedule's cached
-    /// entry positions always match L's pattern.
+    /// entry positions always match L's pattern. The factor must be square and
+    /// match the symbolic dimension (set symbolic first). Strongly exception
+    /// safe: the schedule is built before either member is replaced, so a throw
+    /// leaves the object unchanged.
     void set_factor(util::csc_matrix<Value> L) {
-        L_ = std::move(L);
-        fwd_sched_ = build_lower_solve_schedule(L_);
+        if (static_cast<std::size_t>(L.ncols) != symbolic.n ||
+            static_cast<std::size_t>(L.nrows) != symbolic.n)
+            throw std::invalid_argument(
+                "cholesky_numeric::set_factor: factor dimension does not match "
+                "the symbolic analysis");
+        lower_solve_schedule sched = build_lower_solve_schedule(L);   // may throw
+        L_ = std::move(L);                                            // noexcept
+        fwd_sched_ = std::move(sched);                               // noexcept
     }
 
     /// Solve A*x = b using the Cholesky factorization.
