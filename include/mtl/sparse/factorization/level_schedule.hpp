@@ -20,12 +20,18 @@
 //     independent, so within a level every row writes its OWN x[i] (no race)
 //     while reading only x[k] from earlier levels (already finalized).
 //
-// The schedule is O(nnz) to build and is meant to be computed once and reused
-// across many solves (the factor-once / solve-many transient path), so the
-// build cost amortizes. Threading is off by default (MTL5_NUM_THREADS=1): the
-// solve then runs the levels serially and is byte-identical to dense_lower_solve.
+// The schedule stores only STRUCTURE -- the positions of L's entries, not their
+// values -- and reads the numbers from L at solve time. So a same-pattern
+// re-factorization that overwrites L's values in place (the transient / mp-spice
+// path) can reuse the schedule with fresh values; only a pattern change needs a
+// rebuild (caught by comparing L.nnz(), and in normal use a pattern change comes
+// with a new symbolic analysis / object). The schedule is O(nnz) to build and is
+// meant to be computed once and reused across many solves, so the build cost
+// amortizes. Threading is off by default (MTL5_NUM_THREADS=1): the solve then
+// runs the levels serially and is byte-identical to dense_lower_solve.
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <vector>
 
@@ -36,14 +42,16 @@ namespace mtl::sparse::factorization {
 
 /// Reusable schedule for a level-scheduled lower-triangular forward solve.
 /// Built from a lower-triangular L in CSC; equivalent to dense_lower_solve.
-template <typename Value>
+/// Stores positions into L's arrays (value-agnostic), so it survives an in-place
+/// same-pattern re-factorization of L.
 struct lower_solve_schedule {
     std::size_t n = 0;
+    std::size_t built_nnz = 0;          // L.nnz() when built (staleness guard)
     // CSR of the strictly-lower entries (k < i), increasing k within each row.
     std::vector<std::size_t> row_ptr;   // length n+1
-    std::vector<std::size_t> col_ind;   // length nnz_offdiag
-    std::vector<Value>       val;       // length nnz_offdiag
-    std::vector<Value>       diag;      // length n, L(i,i)
+    std::vector<std::size_t> col_ind;   // length nnz_offdiag: the column k
+    std::vector<std::size_t> val_pos;   // length nnz_offdiag: index of L(i,k) in L.values
+    std::vector<std::size_t> diag_pos;  // length n: index of L(i,i) in L.values
     // Level partition of the rows: order[level_ptr[l] .. level_ptr[l+1]) are the
     // rows of level l (kept in increasing-row order for determinism).
     std::vector<std::size_t> level_ptr; // length nlevels+1
@@ -55,20 +63,21 @@ struct lower_solve_schedule {
 /// stored entry of each column must be the diagonal (row j), matching the layout
 /// dense_lower_solve expects.
 template <typename Value, typename SizeType>
-lower_solve_schedule<Value> build_lower_solve_schedule(
+lower_solve_schedule build_lower_solve_schedule(
     const util::csc_matrix<Value, SizeType>& L)
 {
     const std::size_t n = static_cast<std::size_t>(L.ncols);
-    lower_solve_schedule<Value> s;
+    lower_solve_schedule s;
     s.n = n;
-    s.diag.assign(n, Value{0});
+    s.built_nnz = static_cast<std::size_t>(L.nnz());
+    s.diag_pos.assign(n, std::size_t{0});
     s.row_ptr.assign(n + 1, std::size_t{0});
 
-    // Pass 1: diagonal + count strictly-lower entries per row (for the transpose).
+    // Pass 1: diagonal position + count strictly-lower entries per row.
     std::size_t nnz_off = 0;
     for (std::size_t j = 0; j < n; ++j) {
         SizeType p = L.col_ptr[j];
-        if (p < L.col_ptr[j + 1]) s.diag[j] = L.values[p];   // first entry is the diagonal
+        if (p < L.col_ptr[j + 1]) s.diag_pos[j] = static_cast<std::size_t>(p);   // first entry is the diagonal
         for (SizeType q = p + 1; q < L.col_ptr[j + 1]; ++q) {
             const std::size_t i = static_cast<std::size_t>(L.row_ind[q]);   // i > j
             ++s.row_ptr[i + 1];
@@ -77,7 +86,7 @@ lower_solve_schedule<Value> build_lower_solve_schedule(
     }
     for (std::size_t i = 0; i < n; ++i) s.row_ptr[i + 1] += s.row_ptr[i];
     s.col_ind.resize(nnz_off);
-    s.val.resize(nnz_off);
+    s.val_pos.resize(nnz_off);
 
     // Pass 2: scatter into CSR. Iterating columns j in increasing order makes
     // each row's entries land in increasing-column order.
@@ -87,7 +96,7 @@ lower_solve_schedule<Value> build_lower_solve_schedule(
             const std::size_t i = static_cast<std::size_t>(L.row_ind[q]);
             const std::size_t dst = fill[i]++;
             s.col_ind[dst] = j;
-            s.val[dst] = L.values[q];
+            s.val_pos[dst] = static_cast<std::size_t>(q);
         }
     }
 
@@ -121,13 +130,19 @@ lower_solve_schedule<Value> build_lower_solve_schedule(
 }
 
 /// Level-scheduled lower-triangular forward solve: solve L x = b with x holding
-/// b on entry and the solution on exit. Bit-identical to dense_lower_solve; the
-/// rows of each level are solved in parallel on the thread pool (serial when
-/// MTL5_NUM_THREADS=1).
-template <typename Value>
-void level_scheduled_lower_solve(const lower_solve_schedule<Value>& s,
+/// b on entry and the solution on exit. Values are read from L (so a same-pattern
+/// re-factorization is picked up), using the positions cached in the schedule.
+/// Bit-identical to dense_lower_solve; the rows of each level are solved in
+/// parallel on the thread pool (serial when MTL5_NUM_THREADS=1).
+template <typename Value, typename SizeType>
+void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
+                                 const lower_solve_schedule& s,
                                  std::vector<Value>& x)
 {
+    assert(s.n == static_cast<std::size_t>(L.ncols) &&
+           s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
+           "schedule does not match L (rebuild after a pattern change)");
+    assert(x.size() >= s.n && "solution vector shorter than the system");
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -141,8 +156,8 @@ void level_scheduled_lower_solve(const lower_solve_schedule<Value>& s,
                     const std::size_t i = s.order[lb + t];
                     Value acc = x[i];   // b[i]
                     for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
-                        acc -= s.val[p] * x[s.col_ind[p]];
-                    x[i] = acc / s.diag[i];
+                        acc -= L.values[s.val_pos[p]] * x[s.col_ind[p]];
+                    x[i] = acc / L.values[s.diag_pos[i]];
                 }
             });
     }

@@ -97,7 +97,7 @@ void require_bit_identical(const csc_matrix<double>& L, std::uint64_t rhs_seed) 
     auto got = ref;
     factorization::dense_lower_solve(L, ref);                        // serial reference
     auto sched = factorization::build_lower_solve_schedule(L);
-    factorization::level_scheduled_lower_solve(sched, got);          // level-scheduled
+    factorization::level_scheduled_lower_solve(L, sched, got);       // level-scheduled
     for (std::size_t i = 0; i < n; ++i) REQUIRE(got[i] == ref[i]);
 }
 
@@ -119,6 +119,15 @@ TEST_CASE("level_scheduled_lower_solve == dense_lower_solve (wide level splits)"
 
 TEST_CASE("level_scheduled_lower_solve boundary cases",
           "[sparse][trisolve][threading][mt][edge]") {
+    // Empty 0x0: build (zero levels) and solve must be no-ops.
+    {
+        csc_matrix<double> L; L.nrows = 0; L.ncols = 0; L.col_ptr = {0};
+        auto sched = factorization::build_lower_solve_schedule(L);
+        REQUIRE(sched.n == 0);
+        std::vector<double> x;   // empty
+        factorization::level_scheduled_lower_solve(L, sched, x);   // no-op
+        REQUIRE(x.empty());
+    }
     // 1x1
     {
         csc_matrix<double> L; L.nrows = 1; L.ncols = 1;

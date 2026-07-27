@@ -85,12 +85,14 @@ struct cholesky_numeric {
 
         // Step 2: Forward solve: L * y = w.
         // Level-scheduled (parallel, bit-identical to dense_lower_solve); the
-        // schedule is built once on first solve and reused (factor-once /
-        // solve-many). Serial and byte-identical at MTL5_NUM_THREADS=1.
-        if (!fwd_sched_)
-            fwd_sched_ = std::make_shared<const lower_solve_schedule<Value>>(
+        // schedule is built once and reused (factor-once / solve-many). It stores
+        // only structure and reads L's values at solve time, so it is rebuilt
+        // only when L's pattern (nnz) changes. Serial and byte-identical at
+        // MTL5_NUM_THREADS=1.
+        if (!fwd_sched_ || fwd_sched_->built_nnz != static_cast<std::size_t>(L.nnz()))
+            fwd_sched_ = std::make_shared<const lower_solve_schedule>(
                 build_lower_solve_schedule(L));
-        level_scheduled_lower_solve(*fwd_sched_, w);
+        level_scheduled_lower_solve(L, *fwd_sched_, w);
 
         // Step 3: Back solve: L^T * z = y (serial; level scheduling of the
         // transpose solve is a follow-up in the #297 rollout).
@@ -102,11 +104,12 @@ struct cholesky_numeric {
     }
 
 private:
-    // Forward-solve level schedule, built lazily on first solve() and reused.
-    // shared_ptr so a copied cholesky_numeric shares the (pattern-identical)
-    // schedule. Not safe against concurrent solve() calls on the same object,
-    // which was never a supported use.
-    mutable std::shared_ptr<const lower_solve_schedule<Value>> fwd_sched_;
+    // Forward-solve level schedule, built lazily on first solve() and reused;
+    // rebuilt if L's pattern (nnz) changes. Value-agnostic (reads L at solve),
+    // so an in-place same-pattern re-factorization is picked up automatically.
+    // shared_ptr so a copied cholesky_numeric shares the schedule. Not safe
+    // against concurrent solve() calls on the same object (never a supported use).
+    mutable std::shared_ptr<const lower_solve_schedule> fwd_sched_;
 };
 
 /// Perform symbolic Cholesky analysis on a symmetric sparse matrix.
