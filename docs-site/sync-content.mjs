@@ -62,6 +62,7 @@ const FILE_MAP = {
   'position-mixed-precision-acceleration.md':   'design/mixed-precision-acceleration.md',
   'design/blas-kernel-architecture.md':         'design/blas-kernel-architecture.md',
   'design/multicore-scaling-investigation.md':  'design/multicore-scaling-investigation.md',
+  'design/parallelization-patterns-and-pitfalls.md': 'design/parallelization-patterns-and-pitfalls.md',
   'design/mixed-precision-custom-types-SIMD.md': 'design/mixed-precision-custom-types-SIMD.md',
 
   // ── Modernization ──────────────────────────────────────────────────────
