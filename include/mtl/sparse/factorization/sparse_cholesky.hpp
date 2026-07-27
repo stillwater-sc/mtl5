@@ -25,6 +25,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -37,6 +38,7 @@
 #include <mtl/sparse/analysis/elimination_tree.hpp>
 #include <mtl/sparse/analysis/postorder.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
+#include <mtl/sparse/factorization/level_schedule.hpp>
 
 namespace mtl::sparse::factorization {
 
@@ -81,16 +83,30 @@ struct cholesky_numeric {
         for (std::size_t i = 0; i < n; ++i)
             w[i] = static_cast<Value>(b(symbolic.perm[i]));
 
-        // Step 2: Forward solve: L * y = w
-        dense_lower_solve(L, w);
+        // Step 2: Forward solve: L * y = w.
+        // Level-scheduled (parallel, bit-identical to dense_lower_solve); the
+        // schedule is built once on first solve and reused (factor-once /
+        // solve-many). Serial and byte-identical at MTL5_NUM_THREADS=1.
+        if (!fwd_sched_)
+            fwd_sched_ = std::make_shared<const lower_solve_schedule<Value>>(
+                build_lower_solve_schedule(L));
+        level_scheduled_lower_solve(*fwd_sched_, w);
 
-        // Step 3: Back solve: L^T * z = y
+        // Step 3: Back solve: L^T * z = y (serial; level scheduling of the
+        // transpose solve is a follow-up in the #297 rollout).
         dense_lower_transpose_solve(L, w);
 
         // Step 4: Apply inverse permutation: x = P^T * z
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
+
+private:
+    // Forward-solve level schedule, built lazily on first solve() and reused.
+    // shared_ptr so a copied cholesky_numeric shares the (pattern-identical)
+    // schedule. Not safe against concurrent solve() calls on the same object,
+    // which was never a supported use.
+    mutable std::shared_ptr<const lower_solve_schedule<Value>> fwd_sched_;
 };
 
 /// Perform symbolic Cholesky analysis on a symmetric sparse matrix.
