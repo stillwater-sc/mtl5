@@ -55,15 +55,28 @@ struct cholesky_symbolic {
 };
 
 /// Result of numeric Cholesky factorization.
-/// Contains the lower triangular factor L in CSC format and the
-/// symbolic analysis used (for permutation information during solve).
+/// Holds the lower triangular factor L (CSC) and its forward-solve level
+/// schedule as coupled, read-only state: L is only ever installed together with
+/// the schedule built from it (via set_factor), so the two cannot drift out of
+/// sync. The symbolic analysis is exposed for permutation info during solve.
 template <typename Value>
 struct cholesky_numeric {
-    util::csc_matrix<Value> L;            // lower triangular Cholesky factor (CSC)
     cholesky_symbolic symbolic;           // symbolic analysis used
 
     std::size_t num_rows() const { return symbolic.n; }
     std::size_t num_cols() const { return symbolic.n; }
+
+    /// Read-only access to the lower Cholesky factor L (CSC).
+    const util::csc_matrix<Value>& factor() const { return L_; }
+
+    /// Install the numeric factor and (re)build the coupled forward-solve
+    /// schedule from it. L and its schedule are always set together here, which
+    /// enforces the invariant the level solve relies on -- the schedule's cached
+    /// entry positions always match L's pattern.
+    void set_factor(util::csc_matrix<Value> L) {
+        L_ = std::move(L);
+        fwd_sched_ = build_lower_solve_schedule(L_);
+    }
 
     /// Solve A*x = b using the Cholesky factorization.
     /// A = P^T L L^T P, so x = P^T L^{-T} L^{-1} P b
@@ -84,28 +97,24 @@ struct cholesky_numeric {
 
         // Step 2: Forward solve: L * y = w.
         // Level-scheduled (parallel, bit-identical to dense_lower_solve); the
-        // schedule was built together with L at factorization time and is bound
-        // to it. It stores only structure and reads L's values at solve time, so
-        // an in-place same-pattern re-factorization is reflected automatically.
+        // schedule is bound to L_ (built together with it in set_factor). It
+        // stores only structure and reads L_'s values at solve time, so an
+        // in-place same-pattern re-factorization is reflected automatically.
         // Serial and byte-identical at MTL5_NUM_THREADS=1.
-        level_scheduled_lower_solve(L, fwd_sched, w);
+        level_scheduled_lower_solve(L_, fwd_sched_, w);
 
         // Step 3: Back solve: L^T * z = y (serial; level scheduling of the
         // transpose solve is a follow-up in the #297 rollout).
-        dense_lower_transpose_solve(L, w);
+        dense_lower_transpose_solve(L_, w);
 
         // Step 4: Apply inverse permutation: x = P^T * z
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
 
-    // Forward-solve level schedule, built with L at factorization time (by
-    // sparse_cholesky_numeric) and bound to it. Value-agnostic: it stores only
-    // the positions of L's entries and reads the numbers from L at solve time,
-    // so an in-place same-pattern re-factorization is reflected. Like L and
-    // symbolic, this is part of the immutable factorization result -- L must not
-    // be replaced with a different pattern independently of it.
-    lower_solve_schedule fwd_sched;
+private:
+    util::csc_matrix<Value> L_;           // lower triangular Cholesky factor (CSC)
+    lower_solve_schedule    fwd_sched_;   // forward-solve level schedule, bound to L_
 };
 
 /// Perform symbolic Cholesky analysis on a symmetric sparse matrix.
@@ -413,12 +422,11 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
     }
 
     cholesky_numeric<Value> result;
-    result.L = std::move(L);
     result.symbolic = sym;
-    // Build the forward-solve level schedule now, while L is authoritative, so it
-    // is bound to this factorization (no lazy build from a possibly-mutated L,
-    // and no need for a run-time staleness key).
-    result.fwd_sched = build_lower_solve_schedule(result.L);
+    // Installs L and builds its coupled forward-solve schedule atomically, so the
+    // schedule is bound to this factorization (no separately-mutable state, no
+    // run-time staleness key).
+    result.set_factor(std::move(L));
     return result;
 }
 

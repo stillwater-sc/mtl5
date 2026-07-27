@@ -89,7 +89,7 @@ TEST_CASE("Sparse Cholesky numeric: 3x3 SPD matrix", "[sparse][cholesky]") {
     auto num = factorization::sparse_cholesky_numeric(A, sym);
 
     // Verify L is lower triangular
-    const auto& L = num.L;
+    const auto& L = num.factor();
     REQUIRE(L.nrows == 3);
     REQUIRE(L.ncols == 3);
 
