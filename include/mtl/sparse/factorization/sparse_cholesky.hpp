@@ -25,7 +25,6 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
-#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -85,14 +84,11 @@ struct cholesky_numeric {
 
         // Step 2: Forward solve: L * y = w.
         // Level-scheduled (parallel, bit-identical to dense_lower_solve); the
-        // schedule is built once and reused (factor-once / solve-many). It stores
-        // only structure and reads L's values at solve time, so it is rebuilt
-        // only when L's pattern (nnz) changes. Serial and byte-identical at
-        // MTL5_NUM_THREADS=1.
-        if (!fwd_sched_ || fwd_sched_->built_nnz != static_cast<std::size_t>(L.nnz()))
-            fwd_sched_ = std::make_shared<const lower_solve_schedule>(
-                build_lower_solve_schedule(L));
-        level_scheduled_lower_solve(L, *fwd_sched_, w);
+        // schedule was built together with L at factorization time and is bound
+        // to it. It stores only structure and reads L's values at solve time, so
+        // an in-place same-pattern re-factorization is reflected automatically.
+        // Serial and byte-identical at MTL5_NUM_THREADS=1.
+        level_scheduled_lower_solve(L, fwd_sched, w);
 
         // Step 3: Back solve: L^T * z = y (serial; level scheduling of the
         // transpose solve is a follow-up in the #297 rollout).
@@ -103,13 +99,13 @@ struct cholesky_numeric {
             x(symbolic.perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
 
-private:
-    // Forward-solve level schedule, built lazily on first solve() and reused;
-    // rebuilt if L's pattern (nnz) changes. Value-agnostic (reads L at solve),
-    // so an in-place same-pattern re-factorization is picked up automatically.
-    // shared_ptr so a copied cholesky_numeric shares the schedule. Not safe
-    // against concurrent solve() calls on the same object (never a supported use).
-    mutable std::shared_ptr<const lower_solve_schedule> fwd_sched_;
+    // Forward-solve level schedule, built with L at factorization time (by
+    // sparse_cholesky_numeric) and bound to it. Value-agnostic: it stores only
+    // the positions of L's entries and reads the numbers from L at solve time,
+    // so an in-place same-pattern re-factorization is reflected. Like L and
+    // symbolic, this is part of the immutable factorization result -- L must not
+    // be replaced with a different pattern independently of it.
+    lower_solve_schedule fwd_sched;
 };
 
 /// Perform symbolic Cholesky analysis on a symmetric sparse matrix.
@@ -419,6 +415,10 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
     cholesky_numeric<Value> result;
     result.L = std::move(L);
     result.symbolic = sym;
+    // Build the forward-solve level schedule now, while L is authoritative, so it
+    // is bound to this factorization (no lazy build from a possibly-mutated L,
+    // and no need for a run-time staleness key).
+    result.fwd_sched = build_lower_solve_schedule(result.L);
     return result;
 }
 
