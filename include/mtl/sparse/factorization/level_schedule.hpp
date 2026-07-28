@@ -163,4 +163,107 @@ void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
     }
 }
 
+// ---------------------------------------------------------------------------
+// Backward (transpose) solve: L^T x = b, L lower-triangular in CSC.
+//
+// dense_lower_transpose_solve processes columns in DECREASING order: for each
+// col it gathers x[col] -= L(i,col)*x[i] over the below-diagonal entries i>col
+// of column col (already stored in increasing-row order), then divides by the
+// diagonal. Those below-diagonal entries of column col are exactly row col of
+// L^T, so the transpose solve is a row-gather that reads L's CSC columns
+// directly -- no transpose of L is needed, unlike the forward solve.
+//
+// Dependencies run backward: x[col] depends on x[i] for i>col with L(i,col)!=0.
+// level[col] = 1 + max level of those i (computed by scanning columns in
+// decreasing order). Columns in a level are independent -- each writes its own
+// x[col] reading only later columns (earlier levels) -- so a level is solved in
+// parallel, and iterating each column's entries in the stored (increasing-row)
+// order reproduces the serial gather exactly: bit-identical to
+// dense_lower_transpose_solve.
+
+/// Reusable schedule for a level-scheduled lower-triangular TRANSPOSE solve.
+/// Value-agnostic: only the column-level partition is stored; L's values (and
+/// its column structure) are read at solve time.
+struct lower_transpose_solve_schedule {
+    std::size_t n = 0;
+    std::size_t built_nnz = 0;          // L.nnz() when built (staleness guard)
+    std::vector<std::size_t> level_ptr; // length nlevels+1
+    std::vector<std::size_t> order;     // length n: columns grouped by level
+    std::size_t grain = 1;
+};
+
+/// Build the transpose-solve schedule from a lower-triangular L (CSC).
+template <typename Value, typename SizeType>
+lower_transpose_solve_schedule build_lower_transpose_solve_schedule(
+    const util::csc_matrix<Value, SizeType>& L)
+{
+    const std::size_t n = static_cast<std::size_t>(L.ncols);
+    lower_transpose_solve_schedule s;
+    s.n = n;
+    s.built_nnz = static_cast<std::size_t>(L.nnz());
+
+    // level[col] = 1 + max level of its dependencies (rows i>col in column col).
+    // Scan columns in decreasing order so every dependency i>col is done first.
+    std::vector<std::size_t> level(n, 0);
+    std::size_t nlevels = 0, nnz_off = 0;
+    for (std::size_t col = n; col-- > 0; ) {
+        const SizeType diag = L.col_ptr[col];
+        std::size_t lv = 0;
+        for (SizeType p = diag + 1; p < L.col_ptr[col + 1]; ++p) {
+            const std::size_t i = static_cast<std::size_t>(L.row_ind[p]);   // i > col
+            if (level[i] + 1 > lv) lv = level[i] + 1;
+            ++nnz_off;
+        }
+        level[col] = lv;
+        if (lv + 1 > nlevels) nlevels = lv + 1;
+    }
+
+    // Counting-sort the columns into level order (increasing col within a level).
+    s.level_ptr.assign(nlevels + 1, std::size_t{0});
+    for (std::size_t c = 0; c < n; ++c) ++s.level_ptr[level[c] + 1];
+    for (std::size_t l = 0; l < nlevels; ++l) s.level_ptr[l + 1] += s.level_ptr[l];
+    s.order.resize(n);
+    std::vector<std::size_t> cursor(s.level_ptr.begin(), s.level_ptr.end() - 1);
+    for (std::size_t c = 0; c < n; ++c) s.order[cursor[level[c]]++] = c;
+
+    const std::size_t avg = n ? std::max<std::size_t>(1, nnz_off / n) : 1;
+    s.grain = std::max<std::size_t>(std::size_t{1}, std::size_t{32768} / avg);
+    return s;
+}
+
+/// Level-scheduled transpose solve: solve L^T x = b with x holding b on entry and
+/// the solution on exit. Reads L's values at solve time. Bit-identical to
+/// dense_lower_transpose_solve; each level's columns are solved in parallel
+/// (serial when MTL5_NUM_THREADS=1).
+template <typename Value, typename SizeType>
+void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeType>& L,
+                                           const lower_transpose_solve_schedule& s,
+                                           std::vector<Value>& x)
+{
+    assert(s.n == static_cast<std::size_t>(L.ncols) &&
+           s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
+           "schedule does not match L (rebuild after a pattern change)");
+    assert(x.size() >= s.n && "solution vector shorter than the system");
+    const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
+    for (std::size_t l = 0; l < nlevels; ++l) {
+        const std::size_t lb = s.level_ptr[l];
+        const std::size_t le = s.level_ptr[l + 1];
+        const std::size_t count = le - lb;
+        if (count == 0) continue;
+        detail::thread_pool::instance().parallel_for(
+            count, s.grain,
+            [&](std::size_t cb, std::size_t ce) {
+                for (std::size_t t = cb; t < ce; ++t) {
+                    const std::size_t col = s.order[lb + t];
+                    const SizeType diag = L.col_ptr[col];
+                    if (diag >= L.col_ptr[col + 1]) continue;   // empty column: skip (as serial)
+                    Value acc = x[col];
+                    for (SizeType p = diag + 1; p < L.col_ptr[col + 1]; ++p)
+                        acc -= L.values[p] * x[static_cast<std::size_t>(L.row_ind[p])];
+                    x[col] = acc / L.values[diag];
+                }
+            });
+    }
+}
+
 } // namespace mtl::sparse::factorization

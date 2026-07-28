@@ -69,22 +69,24 @@ struct cholesky_numeric {
     /// Read-only access to the lower Cholesky factor L (CSC).
     const util::csc_matrix<Value>& factor() const { return L_; }
 
-    /// Install the numeric factor and (re)build the coupled forward-solve
-    /// schedule from it. L and its schedule are always set together here, which
-    /// enforces the invariant the level solve relies on -- the schedule's cached
-    /// entry positions always match L's pattern. The factor must be square and
-    /// match the symbolic dimension (set symbolic first). Strongly exception
-    /// safe: the schedule is built before either member is replaced, so a throw
-    /// leaves the object unchanged.
+    /// Install the numeric factor and (re)build the coupled forward and
+    /// transpose solve schedules from it. L and its schedules are always set
+    /// together here, which enforces the invariant the level solves rely on --
+    /// the schedules' cached structure always matches L's pattern. The factor
+    /// must be square and match the symbolic dimension (set symbolic first).
+    /// Strongly exception safe: both schedules are built into locals before any
+    /// member is replaced, so a throw leaves the object unchanged.
     void set_factor(util::csc_matrix<Value> L) {
         if (static_cast<std::size_t>(L.ncols) != symbolic.n ||
             static_cast<std::size_t>(L.nrows) != symbolic.n)
             throw std::invalid_argument(
                 "cholesky_numeric::set_factor: factor dimension does not match "
                 "the symbolic analysis");
-        lower_solve_schedule sched = build_lower_solve_schedule(L);   // may throw
-        L_ = std::move(L);                                            // noexcept
-        fwd_sched_ = std::move(sched);                               // noexcept
+        lower_solve_schedule           fsched = build_lower_solve_schedule(L);            // may throw
+        lower_transpose_solve_schedule bsched = build_lower_transpose_solve_schedule(L);  // may throw
+        L_ = std::move(L);                                                                // noexcept
+        fwd_sched_ = std::move(fsched);                                                   // noexcept
+        bwd_sched_ = std::move(bsched);                                                   // noexcept
     }
 
     /// Solve A*x = b using the Cholesky factorization.
@@ -112,9 +114,11 @@ struct cholesky_numeric {
         // Serial and byte-identical at MTL5_NUM_THREADS=1.
         level_scheduled_lower_solve(L_, fwd_sched_, w);
 
-        // Step 3: Back solve: L^T * z = y (serial; level scheduling of the
-        // transpose solve is a follow-up in the #297 rollout).
-        dense_lower_transpose_solve(L_, w);
+        // Step 3: Back solve: L^T * z = y.
+        // Level-scheduled (parallel, bit-identical to dense_lower_transpose_solve);
+        // the schedule is bound to L_ and reads its values at solve time. Serial
+        // and byte-identical at MTL5_NUM_THREADS=1.
+        level_scheduled_lower_transpose_solve(L_, bwd_sched_, w);
 
         // Step 4: Apply inverse permutation: x = P^T * z
         for (std::size_t i = 0; i < n; ++i)
@@ -122,8 +126,9 @@ struct cholesky_numeric {
     }
 
 private:
-    util::csc_matrix<Value> L_;           // lower triangular Cholesky factor (CSC)
-    lower_solve_schedule    fwd_sched_;   // forward-solve level schedule, bound to L_
+    util::csc_matrix<Value>        L_;          // lower triangular Cholesky factor (CSC)
+    lower_solve_schedule           fwd_sched_;  // forward-solve (L y = w) schedule, bound to L_
+    lower_transpose_solve_schedule bwd_sched_;  // transpose-solve (L^T z = y) schedule, bound to L_
 };
 
 /// Perform symbolic Cholesky analysis on a symmetric sparse matrix.

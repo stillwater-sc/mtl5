@@ -145,3 +145,84 @@ TEST_CASE("level_scheduled_lower_solve boundary cases",
         require_bit_identical(L, 7);
     }
 }
+
+// -- transpose solve (#297 batch 4) --------------------------------------
+
+namespace {
+
+// Lower triangular whose last row is dense: column col (col < n-1) has its
+// diagonal plus one entry in row n-1. In the TRANSPOSE solve every such column
+// gathers from x[n-1], so columns 0..n-2 form one wide level that splits across
+// the pool (the arrow's transpose would instead collapse to a single column).
+csc_matrix<double> make_last_row_dense_lower(std::size_t n, std::uint64_t seed) {
+    csc_matrix<double> L;
+    L.nrows = n; L.ncols = n;
+    L.col_ptr.assign(n + 1, 0);
+    for (std::size_t col = 0; col + 1 < n; ++col) L.col_ptr[col + 1] = L.col_ptr[col] + 2;  // diag + row n-1
+    if (n) L.col_ptr[n] = L.col_ptr[n - 1] + 1;                                              // last col: diag only
+    L.row_ind.resize(L.col_ptr[n]);
+    L.values.resize(L.col_ptr[n]);
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> d(-0.5, 0.5);
+    std::size_t p = 0;
+    for (std::size_t col = 0; col + 1 < n; ++col) {
+        L.row_ind[p] = col;   L.values[p] = double(n); ++p;      // diagonal
+        L.row_ind[p] = n - 1; L.values[p] = d(rng);   ++p;       // entry in the dense last row
+    }
+    if (n) { L.row_ind[p] = n - 1; L.values[p] = double(n); }     // last diagonal
+    return L;
+}
+
+// Assert level_scheduled_lower_transpose_solve == dense_lower_transpose_solve.
+void require_transpose_bit_identical(const csc_matrix<double>& L, std::uint64_t rhs_seed) {
+    const std::size_t n = L.ncols;
+    auto ref = random_rhs(n, rhs_seed);
+    auto got = ref;
+    factorization::dense_lower_transpose_solve(L, ref);                    // serial reference
+    auto sched = factorization::build_lower_transpose_solve_schedule(L);
+    factorization::level_scheduled_lower_transpose_solve(L, sched, got);   // level-scheduled
+    for (std::size_t i = 0; i < n; ++i) REQUIRE(got[i] == ref[i]);
+}
+
+} // namespace
+
+TEST_CASE("level_scheduled_lower_transpose_solve == dense_lower_transpose_solve (block-diagonal)",
+          "[sparse][trisolve][transpose][threading][mt]") {
+    require_transpose_bit_identical(make_block_diag_lower(64, 8, 11), 401);
+    require_transpose_bit_identical(make_block_diag_lower(1, 200, 22), 402);   // one dense block: sequential
+}
+
+TEST_CASE("level_scheduled_lower_transpose_solve == dense_lower_transpose_solve (wide level splits)",
+          "[sparse][trisolve][transpose][threading][mt]") {
+    if (mtl::detail::thread_pool::instance().size() < 2) WARN("single-core runner: threading not exercised");
+    require_transpose_bit_identical(make_last_row_dense_lower(80000, 33), 403);   // level 1 splits across the pool
+}
+
+TEST_CASE("level_scheduled_lower_transpose_solve boundary cases",
+          "[sparse][trisolve][transpose][threading][mt][edge]") {
+    // Empty 0x0
+    {
+        csc_matrix<double> L; L.nrows = 0; L.ncols = 0; L.col_ptr = {0};
+        auto sched = factorization::build_lower_transpose_solve_schedule(L);
+        REQUIRE(sched.n == 0);
+        std::vector<double> x;
+        factorization::level_scheduled_lower_transpose_solve(L, sched, x);   // no-op
+        REQUIRE(x.empty());
+    }
+    // 1x1
+    {
+        csc_matrix<double> L; L.nrows = 1; L.ncols = 1;
+        L.col_ptr = {0, 1}; L.row_ind = {0}; L.values = {3.0};
+        require_transpose_bit_identical(L, 1);
+    }
+    // Diagonal: every column is level 0 (maximally parallel).
+    {
+        const std::size_t n = 50000;
+        csc_matrix<double> L; L.nrows = n; L.ncols = n;
+        L.col_ptr.resize(n + 1);
+        for (std::size_t j = 0; j <= n; ++j) L.col_ptr[j] = j;
+        L.row_ind.resize(n); L.values.resize(n);
+        for (std::size_t j = 0; j < n; ++j) { L.row_ind[j] = j; L.values[j] = 2.0 + double(j % 7); }
+        require_transpose_bit_identical(L, 7);
+    }
+}
