@@ -214,6 +214,98 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  # -- Threaded lane: run the suite with the pool actually multithreaded ----
+  # Same Release build as the default job, but ctest runs with
+  # MTL5_NUM_THREADS=4 so detail::thread_pool sizes to a real team and the
+  # pool-based kernels (mult/gemv/dot/nrm2/axpy/scal, sparse SpMV, the dense
+  # factorization updates, Householder application, sparse triangular solve)
+  # actually run multithreaded -- the default job runs them serial. The
+  # deterministic kernels are bit-identical across thread counts, so pass/fail
+  # must match serial; a divergence is a real race/chunking bug this lane
+  # surfaces. Runs on every push and PR (incl. drafts), like the build job. (#299)
+  threaded:
+    name: Linux x64 threaded (${{ matrix.cxx }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cc: gcc-13
+            cxx: g++-13
+          - cc: clang-18
+            cxx: clang++-18
+
+    # Same trusted-run gate as the build job: forked PRs skip sccache so they
+    # cannot poison the shared GHA cache.
+    env:
+      SCCACHE_LAUNCHER: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'sccache' || '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up sccache
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test (MTL5_NUM_THREADS=4)
+        run: ctest --test-dir build --output-on-failure
+        env:
+          MTL5_NUM_THREADS: 4
+
+  # -- ThreadSanitizer lane: race-check the threading-tagged tests ----------
+  # Builds the *_mt tests with -DMTL5_SANITIZE=thread (Clang) and runs them
+  # under MTL5_NUM_THREADS=4 to catch data races the plain threaded run can
+  # miss. Scoped to the _mt tests to stay cheap; add new *_mt targets to the
+  # build list below as more threaded coverage lands. (#299)
+  tsan:
+    name: Linux x64 ThreadSanitizer (mt tests)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure (ThreadSanitizer)
+        run: >
+          cmake -B build-tsan
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER=clang-18
+          -DCMAKE_CXX_COMPILER=clang++-18
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DMTL5_SANITIZE=thread
+          -DMTL5_BUILD_EXAMPLES=OFF
+          -DMTL5_BUILD_BENCHMARKS=OFF
+
+      - name: Build mt tests
+        run: >
+          cmake --build build-tsan --parallel 2
+          --target op_test_gemm_mt op_test_factorization_mt
+          sparse_test_trisolve_level_schedule_mt
+
+      - name: Run mt tests under TSan (MTL5_NUM_THREADS=4)
+        run: ctest --test-dir build-tsan -R _mt --output-on-failure
+        env:
+          MTL5_NUM_THREADS: 4
+          TSAN_OPTIONS: halt_on_error=1
+
   # ── Tier 2: Regression tests on Linux (~10 min) ─────────────────────
   # Runs only on non-draft PRs, after Tier 1 passes.
   # Exercises dense, sparse, and iterative solvers at 100–50K DOF.
