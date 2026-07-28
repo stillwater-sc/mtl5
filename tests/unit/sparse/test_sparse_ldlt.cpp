@@ -99,7 +99,7 @@ TEST_CASE("Sparse LDL^T numeric: 3x3 SPD matrix", "[sparse][ldlt]") {
     auto num = factorization::sparse_ldlt_numeric(A, sym);
 
     // Verify L structure: unit lower triangular with no diagonal stored
-    const auto& L = num.L;
+    const auto& L = num.factorL();
     REQUIRE(L.nrows == 3);
     REQUIRE(L.ncols == 3);
 
@@ -111,9 +111,9 @@ TEST_CASE("Sparse LDL^T numeric: 3x3 SPD matrix", "[sparse][ldlt]") {
     }
 
     // Verify D has positive entries (SPD matrix)
-    REQUIRE(num.D.size() == 3);
+    REQUIRE(num.diagonal().size() == 3);
     for (std::size_t j = 0; j < 3; ++j)
-        REQUIRE(num.D[j] > 0.0);
+        REQUIRE(num.diagonal()[j] > 0.0);
 }
 
 TEST_CASE("Sparse LDL^T solve: 3x3 tridiagonal", "[sparse][ldlt]") {

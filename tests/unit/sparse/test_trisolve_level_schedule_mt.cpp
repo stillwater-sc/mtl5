@@ -329,3 +329,120 @@ TEST_CASE("level_scheduled_upper_solve boundary cases",
         require_upper_bit_identical(U, 7);
     }
 }
+
+// -- unit lower solves (#297 batch 6: sparse_ldlt rollout) ---------------
+// Unit lower: L has NO stored diagonal (strictly-lower entries only); the solves
+// never divide.
+
+namespace {
+
+// Block-diagonal strictly-lower (unit): B dense-strictly-lower m x m blocks.
+csc_matrix<double> make_unit_block_diag_lower(std::size_t B, std::size_t m, std::uint64_t seed) {
+    csc_matrix<double> L;
+    const std::size_t n = B * m;
+    L.nrows = n; L.ncols = n;
+    L.col_ptr.assign(n + 1, 0);
+    for (std::size_t b = 0; b < B; ++b)
+        for (std::size_t cc = 0; cc < m; ++cc)
+            L.col_ptr[b * m + cc + 1] = L.col_ptr[b * m + cc] + (m - cc - 1);   // rows below, no diagonal
+    L.row_ind.resize(L.col_ptr[n]);
+    L.values.resize(L.col_ptr[n]);
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> d(-0.5, 0.5);
+    std::size_t p = 0;
+    for (std::size_t b = 0; b < B; ++b)
+        for (std::size_t cc = 0; cc < m; ++cc)
+            for (std::size_t r = cc + 1; r < m; ++r) { L.row_ind[p] = b * m + r; L.values[p] = d(rng); ++p; }
+    return L;
+}
+
+// Strictly-lower arrow: column 0 has rows 1..n-1; the rest empty. Forward unit
+// solve: rows 1..n-1 all depend on row 0 -> one wide level that splits.
+csc_matrix<double> make_unit_arrow_lower(std::size_t n, std::uint64_t seed) {
+    csc_matrix<double> L;
+    L.nrows = n; L.ncols = n;
+    L.col_ptr.assign(n + 1, 0);
+    if (n) L.col_ptr[1] = n - 1;
+    for (std::size_t j = 1; j < n; ++j) L.col_ptr[j + 1] = L.col_ptr[j];   // empty
+    L.row_ind.resize(L.col_ptr[n]);
+    L.values.resize(L.col_ptr[n]);
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> d(-0.5, 0.5);
+    std::size_t p = 0;
+    for (std::size_t i = 1; i < n; ++i) { L.row_ind[p] = i; L.values[p] = d(rng); ++p; }
+    return L;
+}
+
+// Strictly-lower "dense last row": columns 0..n-2 each have an entry in row n-1.
+// TRANSPOSE unit solve: columns 0..n-2 all gather from x[n-1] -> wide level.
+csc_matrix<double> make_unit_last_row_dense_lower(std::size_t n, std::uint64_t seed) {
+    csc_matrix<double> L;
+    L.nrows = n; L.ncols = n;
+    L.col_ptr.assign(n + 1, 0);
+    for (std::size_t col = 0; col + 1 < n; ++col) L.col_ptr[col + 1] = L.col_ptr[col] + 1;
+    if (n) L.col_ptr[n] = L.col_ptr[n - 1];   // last column empty
+    L.row_ind.resize(L.col_ptr[n]);
+    L.values.resize(L.col_ptr[n]);
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> d(-0.5, 0.5);
+    std::size_t p = 0;
+    for (std::size_t col = 0; col + 1 < n; ++col) { L.row_ind[p] = n - 1; L.values[p] = d(rng); ++p; }
+    return L;
+}
+
+void require_unit_bit_identical(const csc_matrix<double>& L, std::uint64_t rhs_seed) {
+    const std::size_t n = L.ncols;
+    auto ref = random_rhs(n, rhs_seed);
+    auto got = ref;
+    factorization::dense_unit_lower_solve(L, ref);
+    auto sched = factorization::build_unit_lower_solve_schedule(L);
+    factorization::level_scheduled_unit_lower_solve(L, sched, got);
+    for (std::size_t i = 0; i < n; ++i) REQUIRE(got[i] == ref[i]);
+}
+
+void require_unit_transpose_bit_identical(const csc_matrix<double>& L, std::uint64_t rhs_seed) {
+    const std::size_t n = L.ncols;
+    auto ref = random_rhs(n, rhs_seed);
+    auto got = ref;
+    factorization::dense_unit_lower_transpose_solve(L, ref);
+    auto sched = factorization::build_unit_lower_transpose_solve_schedule(L);
+    factorization::level_scheduled_unit_lower_transpose_solve(L, sched, got);
+    for (std::size_t i = 0; i < n; ++i) REQUIRE(got[i] == ref[i]);
+}
+
+} // namespace
+
+TEST_CASE("level_scheduled_unit_lower_solve == dense_unit_lower_solve",
+          "[sparse][trisolve][unit][threading][mt]") {
+    require_unit_bit_identical(make_unit_block_diag_lower(64, 8, 11), 601);
+    if (mtl::detail::thread_pool::instance().size() < 2) WARN("single-core runner: threading not exercised");
+    require_unit_bit_identical(make_unit_arrow_lower(80000, 33), 602);   // wide level splits
+}
+
+TEST_CASE("level_scheduled_unit_lower_transpose_solve == dense_unit_lower_transpose_solve",
+          "[sparse][trisolve][unit][transpose][threading][mt]") {
+    require_unit_transpose_bit_identical(make_unit_block_diag_lower(64, 8, 22), 611);
+    if (mtl::detail::thread_pool::instance().size() < 2) WARN("single-core runner: threading not exercised");
+    require_unit_transpose_bit_identical(make_unit_last_row_dense_lower(80000, 44), 612);   // wide level splits
+}
+
+TEST_CASE("unit lower solves boundary cases",
+          "[sparse][trisolve][unit][threading][mt][edge]") {
+    // Empty 0x0
+    {
+        csc_matrix<double> L; L.nrows = 0; L.ncols = 0; L.col_ptr = {0};
+        auto fs = factorization::build_unit_lower_solve_schedule(L);
+        auto bs = factorization::build_unit_lower_transpose_solve_schedule(L);
+        REQUIRE(fs.n == 0); REQUIRE(bs.n == 0);
+        std::vector<double> x;
+        factorization::level_scheduled_unit_lower_solve(L, fs, x);
+        factorization::level_scheduled_unit_lower_transpose_solve(L, bs, x);
+        REQUIRE(x.empty());
+    }
+    // 1x1 (single implicit-unit diagonal, no stored entries)
+    {
+        csc_matrix<double> L; L.nrows = 1; L.ncols = 1; L.col_ptr = {0, 0};   // empty column
+        require_unit_bit_identical(L, 1);
+        require_unit_transpose_bit_identical(L, 2);
+    }
+}

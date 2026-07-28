@@ -33,6 +33,7 @@
 #include <mtl/sparse/analysis/elimination_tree.hpp>
 #include <mtl/sparse/analysis/postorder.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
+#include <mtl/sparse/factorization/level_schedule.hpp>
 #include <mtl/sparse/factorization/sparse_cholesky.hpp>  // for cholesky_symbolic
 
 namespace mtl::sparse::factorization {
@@ -46,12 +47,35 @@ using ldlt_symbolic = cholesky_symbolic;
 /// the diagonal D, and the symbolic analysis (for permutation during solve).
 template <typename Value>
 struct ldlt_numeric {
-    util::csc_matrix<Value> L;            // unit lower triangular (CSC)
-    std::vector<Value>      D;            // diagonal entries
-    ldlt_symbolic           symbolic;     // symbolic analysis used
+    ldlt_symbolic symbolic;               // symbolic analysis used
 
     std::size_t num_rows() const { return symbolic.n; }
     std::size_t num_cols() const { return symbolic.n; }
+
+    /// Read-only access to the unit lower factor L (CSC) and the diagonal D.
+    const util::csc_matrix<Value>& factorL() const { return L_; }
+    const std::vector<Value>&      diagonal() const { return D_; }
+
+    /// Install the factor (unit lower L, diagonal D) and (re)build the coupled
+    /// unit forward and transpose solve schedules from L. L, D and the schedules
+    /// are always set together, so the schedules' cached structure always matches
+    /// L's pattern. Strongly exception safe: the schedules are built into locals
+    /// before any member is replaced.
+    void set_factor(util::csc_matrix<Value> L, std::vector<Value> D) {
+        const std::size_t n = symbolic.n;
+        if (static_cast<std::size_t>(L.ncols) != n || static_cast<std::size_t>(L.nrows) != n)
+            throw std::invalid_argument(
+                "ldlt_numeric::set_factor: factor dimension does not match the symbolic analysis");
+        if (D.size() != n)
+            throw std::invalid_argument(
+                "ldlt_numeric::set_factor: diagonal size does not match the symbolic analysis");
+        unit_lower_solve_schedule           fsched = build_unit_lower_solve_schedule(L);
+        unit_lower_transpose_solve_schedule bsched = build_unit_lower_transpose_solve_schedule(L);
+        L_ = std::move(L);            // noexcept
+        D_ = std::move(D);            // noexcept
+        fwd_sched_ = std::move(fsched);  // noexcept
+        bwd_sched_ = std::move(bsched);  // noexcept
+    }
 
     /// Solve A*x = b using the LDL^T factorization.
     /// A = P^T L D L^T P, so x = P^T L^{-T} D^{-1} L^{-1} P b
@@ -70,20 +94,29 @@ struct ldlt_numeric {
         for (std::size_t i = 0; i < n; ++i)
             w[i] = static_cast<Value>(b(symbolic.perm[i]));
 
-        // Step 2: Forward solve: L * y = w  (L is unit lower triangular)
-        dense_unit_lower_solve(L, w);
+        // Step 2: Forward solve: L * y = w (unit lower). Level-scheduled
+        // (parallel, bit-identical to dense_unit_lower_solve); serial at
+        // MTL5_NUM_THREADS=1.
+        level_scheduled_unit_lower_solve(L_, fwd_sched_, w);
 
         // Step 3: Diagonal solve: D * z = y
         for (std::size_t i = 0; i < n; ++i)
-            w[i] /= D[i];
+            w[i] /= D_[i];
 
-        // Step 4: Back solve: L^T * u = z  (L^T is unit upper triangular)
-        dense_unit_lower_transpose_solve(L, w);
+        // Step 4: Back solve: L^T * u = z (unit upper). Level-scheduled
+        // (parallel, bit-identical to dense_unit_lower_transpose_solve).
+        level_scheduled_unit_lower_transpose_solve(L_, bwd_sched_, w);
 
         // Step 5: Apply inverse permutation: x = P^T * u
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
+
+private:
+    util::csc_matrix<Value>             L_;          // unit lower triangular (CSC), no stored diagonal
+    std::vector<Value>                  D_;          // diagonal entries
+    unit_lower_solve_schedule           fwd_sched_;  // forward (L y = w) schedule, bound to L_
+    unit_lower_transpose_solve_schedule bwd_sched_;  // transpose (L^T u = z) schedule, bound to L_
 };
 
 /// Perform symbolic LDL^T analysis on a symmetric sparse matrix.
@@ -335,9 +368,9 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
     }
 
     ldlt_numeric<Value> result;
-    result.L = std::move(L);
-    result.D = std::move(D);
     result.symbolic = sym;
+    // Install L and D and build the coupled solve schedules atomically.
+    result.set_factor(std::move(L), std::move(D));
     return result;
 }
 

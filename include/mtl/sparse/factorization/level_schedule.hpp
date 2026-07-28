@@ -399,4 +399,174 @@ void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
     }
 }
 
+// ---------------------------------------------------------------------------
+// UNIT lower triangular solves (L D L^T factors): L is unit lower with an
+// IMPLICIT diagonal -- no diagonal entry is stored and the solves never divide.
+// dense_unit_lower_solve scatters x[i] -= L(i,j)*x[j] for i>j (columns
+// increasing); dense_unit_lower_transpose_solve gathers x[col] -= L(i,col)*x[i]
+// for i>col (columns decreasing). These mirror the non-unit lower / transpose
+// schedules but (a) identify the strictly-lower entries by row_ind > col rather
+// than by position (there is no stored diagonal to skip) and (b) omit the final
+// division. Bit-identical to the dense unit solves.
+
+/// Schedule for a level-scheduled UNIT lower forward solve L x = b.
+struct unit_lower_solve_schedule {
+    std::size_t n = 0;
+    std::size_t built_nnz = 0;
+    std::vector<std::size_t> row_ptr;   // CSR of strictly-lower entries, increasing k per row
+    std::vector<std::size_t> col_ind;
+    std::vector<std::size_t> val_pos;
+    std::vector<std::size_t> level_ptr;
+    std::vector<std::size_t> order;
+    std::size_t grain = 1;
+};
+
+template <typename Value, typename SizeType>
+unit_lower_solve_schedule build_unit_lower_solve_schedule(
+    const util::csc_matrix<Value, SizeType>& L)
+{
+    const std::size_t n = static_cast<std::size_t>(L.ncols);
+    unit_lower_solve_schedule s;
+    s.n = n;
+    s.built_nnz = static_cast<std::size_t>(L.nnz());
+    s.row_ptr.assign(n + 1, std::size_t{0});
+
+    std::size_t nnz_off = 0;
+    for (std::size_t j = 0; j < n; ++j)
+        for (SizeType q = L.col_ptr[j]; q < L.col_ptr[j + 1]; ++q)
+            if (static_cast<std::size_t>(L.row_ind[q]) > j) {   // strictly lower
+                ++s.row_ptr[static_cast<std::size_t>(L.row_ind[q]) + 1];
+                ++nnz_off;
+            }
+    for (std::size_t i = 0; i < n; ++i) s.row_ptr[i + 1] += s.row_ptr[i];
+    s.col_ind.resize(nnz_off);
+    s.val_pos.resize(nnz_off);
+
+    std::vector<std::size_t> fill(s.row_ptr.begin(), s.row_ptr.end() - 1);
+    for (std::size_t j = 0; j < n; ++j)   // columns increasing -> rows get increasing-k order
+        for (SizeType q = L.col_ptr[j]; q < L.col_ptr[j + 1]; ++q) {
+            const std::size_t i = static_cast<std::size_t>(L.row_ind[q]);
+            if (i > j) { const std::size_t dst = fill[i]++; s.col_ind[dst] = j; s.val_pos[dst] = static_cast<std::size_t>(q); }
+        }
+
+    std::vector<std::size_t> level(n, 0);
+    std::size_t nlevels = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        std::size_t lv = 0;
+        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+            if (level[s.col_ind[p]] + 1 > lv) lv = level[s.col_ind[p]] + 1;
+        level[i] = lv;
+        if (lv + 1 > nlevels) nlevels = lv + 1;
+    }
+    s.level_ptr.assign(nlevels + 1, std::size_t{0});
+    for (std::size_t i = 0; i < n; ++i) ++s.level_ptr[level[i] + 1];
+    for (std::size_t l = 0; l < nlevels; ++l) s.level_ptr[l + 1] += s.level_ptr[l];
+    s.order.resize(n);
+    std::vector<std::size_t> cursor(s.level_ptr.begin(), s.level_ptr.end() - 1);
+    for (std::size_t i = 0; i < n; ++i) s.order[cursor[level[i]]++] = i;
+
+    const std::size_t avg = n ? std::max<std::size_t>(1, nnz_off / n) : 1;
+    s.grain = std::max<std::size_t>(std::size_t{1}, std::size_t{32768} / avg);
+    return s;
+}
+
+/// Level-scheduled UNIT lower forward solve. Bit-identical to
+/// dense_unit_lower_solve (no diagonal division).
+template <typename Value, typename SizeType>
+void level_scheduled_unit_lower_solve(const util::csc_matrix<Value, SizeType>& L,
+                                      const unit_lower_solve_schedule& s,
+                                      std::vector<Value>& x)
+{
+    assert(s.n == static_cast<std::size_t>(L.ncols) &&
+           s.built_nnz == static_cast<std::size_t>(L.nnz()) && "schedule does not match L");
+    assert(x.size() >= s.n && "solution vector shorter than the system");
+    const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
+    for (std::size_t l = 0; l < nlevels; ++l) {
+        const std::size_t lb = s.level_ptr[l], le = s.level_ptr[l + 1];
+        if (le == lb) continue;
+        detail::thread_pool::instance().parallel_for(
+            le - lb, s.grain,
+            [&](std::size_t cb, std::size_t ce) {
+                for (std::size_t t = cb; t < ce; ++t) {
+                    const std::size_t i = s.order[lb + t];
+                    Value acc = x[i];
+                    for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                        acc -= L.values[s.val_pos[p]] * x[s.col_ind[p]];
+                    x[i] = acc;   // unit diagonal: no division
+                }
+            });
+    }
+}
+
+/// Schedule for a level-scheduled UNIT lower TRANSPOSE solve L^T x = b (gathers
+/// within CSC columns over the below-diagonal entries; no division).
+struct unit_lower_transpose_solve_schedule {
+    std::size_t n = 0;
+    std::size_t built_nnz = 0;
+    std::vector<std::size_t> level_ptr;
+    std::vector<std::size_t> order;
+    std::size_t grain = 1;
+};
+
+template <typename Value, typename SizeType>
+unit_lower_transpose_solve_schedule build_unit_lower_transpose_solve_schedule(
+    const util::csc_matrix<Value, SizeType>& L)
+{
+    const std::size_t n = static_cast<std::size_t>(L.ncols);
+    unit_lower_transpose_solve_schedule s;
+    s.n = n;
+    s.built_nnz = static_cast<std::size_t>(L.nnz());
+
+    std::vector<std::size_t> level(n, 0);
+    std::size_t nlevels = 0, nnz_off = 0;
+    for (std::size_t col = n; col-- > 0; ) {
+        std::size_t lv = 0;
+        for (SizeType p = L.col_ptr[col]; p < L.col_ptr[col + 1]; ++p) {
+            const std::size_t i = static_cast<std::size_t>(L.row_ind[p]);
+            if (i > col) { if (level[i] + 1 > lv) lv = level[i] + 1; ++nnz_off; }
+        }
+        level[col] = lv;
+        if (lv + 1 > nlevels) nlevels = lv + 1;
+    }
+    s.level_ptr.assign(nlevels + 1, std::size_t{0});
+    for (std::size_t c = 0; c < n; ++c) ++s.level_ptr[level[c] + 1];
+    for (std::size_t l = 0; l < nlevels; ++l) s.level_ptr[l + 1] += s.level_ptr[l];
+    s.order.resize(n);
+    std::vector<std::size_t> cursor(s.level_ptr.begin(), s.level_ptr.end() - 1);
+    for (std::size_t c = 0; c < n; ++c) s.order[cursor[level[c]]++] = c;
+
+    const std::size_t avg = n ? std::max<std::size_t>(1, nnz_off / n) : 1;
+    s.grain = std::max<std::size_t>(std::size_t{1}, std::size_t{32768} / avg);
+    return s;
+}
+
+/// Level-scheduled UNIT lower transpose solve. Bit-identical to
+/// dense_unit_lower_transpose_solve (no diagonal division).
+template <typename Value, typename SizeType>
+void level_scheduled_unit_lower_transpose_solve(const util::csc_matrix<Value, SizeType>& L,
+                                                const unit_lower_transpose_solve_schedule& s,
+                                                std::vector<Value>& x)
+{
+    assert(s.n == static_cast<std::size_t>(L.ncols) &&
+           s.built_nnz == static_cast<std::size_t>(L.nnz()) && "schedule does not match L");
+    assert(x.size() >= s.n && "solution vector shorter than the system");
+    const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
+    for (std::size_t l = 0; l < nlevels; ++l) {
+        const std::size_t lb = s.level_ptr[l], le = s.level_ptr[l + 1];
+        if (le == lb) continue;
+        detail::thread_pool::instance().parallel_for(
+            le - lb, s.grain,
+            [&](std::size_t cb, std::size_t ce) {
+                for (std::size_t t = cb; t < ce; ++t) {
+                    const std::size_t col = s.order[lb + t];
+                    Value acc = x[col];
+                    for (SizeType p = L.col_ptr[col]; p < L.col_ptr[col + 1]; ++p)
+                        if (static_cast<std::size_t>(L.row_ind[p]) > col)
+                            acc -= L.values[p] * x[static_cast<std::size_t>(L.row_ind[p])];
+                    x[col] = acc;   // unit diagonal: no division
+                }
+            });
+    }
+}
+
 } // namespace mtl::sparse::factorization
