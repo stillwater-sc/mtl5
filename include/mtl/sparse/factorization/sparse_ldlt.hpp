@@ -61,8 +61,21 @@ struct ldlt_numeric {
     /// are always set together, so the schedules' cached structure always matches
     /// L's pattern. Strongly exception safe: the schedules are built into locals
     /// before any member is replaced.
+    ///
+    /// Precondition: the symbolic analysis (`symbolic`) MUST be installed first --
+    /// set_factor validates L and D against `symbolic.n`. Calling it while
+    /// `symbolic` is still default-constructed (n == 0) with a non-empty factor
+    /// throws (see the guard below), rather than silently accepting a factor that
+    /// no later solve could use.
     void set_factor(util::csc_matrix<Value> L, std::vector<Value> D) {
         const std::size_t n = symbolic.n;
+        // Guard the ordering hazard explicitly: n == 0 with a non-empty factor
+        // almost always means set_factor was called before `symbolic` was
+        // assigned, so point at that cause instead of the generic mismatch below.
+        if (n == 0 && (L.ncols != 0 || L.nrows != 0 || !D.empty()))
+            throw std::invalid_argument(
+                "ldlt_numeric::set_factor: symbolic analysis not installed (symbolic.n == 0); "
+                "assign `symbolic` before calling set_factor");
         if (static_cast<std::size_t>(L.ncols) != n || static_cast<std::size_t>(L.nrows) != n)
             throw std::invalid_argument(
                 "ldlt_numeric::set_factor: factor dimension does not match the symbolic analysis");
