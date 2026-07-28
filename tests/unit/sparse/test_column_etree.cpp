@@ -119,7 +119,7 @@ TEST_CASE("Predicted fill is a valid upper bound on actual LU fill",
         // Actual nnz(L)+nnz(U) from a real factorization (natural ordering).
         auto sym = factorization::sparse_lu_symbolic(A);
         auto num = factorization::sparse_lu_numeric(A, sym);
-        std::size_t actual = num.L.nnz() + num.U.nnz();
+        std::size_t actual = num.factorL().nnz() + num.factorU().nnz();
 
         REQUIRE(sa.fill_lu_bound >= actual);          // the static bound holds
         REQUIRE(sa.fill_chol_ata >= A.num_rows());    // at least the diagonal

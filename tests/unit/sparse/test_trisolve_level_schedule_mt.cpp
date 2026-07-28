@@ -226,3 +226,106 @@ TEST_CASE("level_scheduled_lower_transpose_solve boundary cases",
         require_transpose_bit_identical(L, 7);
     }
 }
+
+// -- upper solve (#297 batch 5: sparse_lu rollout) -----------------------
+
+namespace {
+
+// Block-diagonal UPPER triangular: B dense m x m upper blocks, diagonal last in
+// each column. Narrow levels (width B), for correctness across the level range.
+csc_matrix<double> make_block_diag_upper(std::size_t B, std::size_t m, std::uint64_t seed) {
+    csc_matrix<double> U;
+    const std::size_t n = B * m;
+    U.nrows = n; U.ncols = n;
+    U.col_ptr.assign(n + 1, 0);
+    for (std::size_t b = 0; b < B; ++b)
+        for (std::size_t cc = 0; cc < m; ++cc)
+            U.col_ptr[b * m + cc + 1] = U.col_ptr[b * m + cc] + (cc + 1);  // rows b*m..b*m+cc
+    U.row_ind.resize(U.col_ptr[n]);
+    U.values.resize(U.col_ptr[n]);
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> d(-0.5, 0.5);
+    for (std::size_t b = 0; b < B; ++b)
+        for (std::size_t cc = 0; cc < m; ++cc) {
+            const std::size_t col = b * m + cc;
+            std::size_t p = U.col_ptr[col];
+            for (std::size_t r = 0; r < cc; ++r) { U.row_ind[p] = b * m + r; U.values[p] = d(rng); ++p; }
+            U.row_ind[p] = col; U.values[p] = double(m) + 1.0;   // diagonal LAST
+        }
+    return U;
+}
+
+// Upper triangular whose last COLUMN is dense: column n-1 has an entry in every
+// row 0..n-1. In the upper solve rows 0..n-2 all gather from x[n-1], forming one
+// wide level that splits across the pool.
+csc_matrix<double> make_last_col_dense_upper(std::size_t n, std::uint64_t seed) {
+    csc_matrix<double> U;
+    U.nrows = n; U.ncols = n;
+    U.col_ptr.assign(n + 1, 0);
+    for (std::size_t j = 0; j + 1 < n; ++j) U.col_ptr[j + 1] = U.col_ptr[j] + 1;   // diagonal only
+    if (n) U.col_ptr[n] = U.col_ptr[n - 1] + n;                                     // last col dense
+    U.row_ind.resize(U.col_ptr[n]);
+    U.values.resize(U.col_ptr[n]);
+    std::mt19937_64 rng(seed);
+    std::uniform_real_distribution<double> d(-0.5, 0.5);
+    std::size_t p = 0;
+    for (std::size_t j = 0; j + 1 < n; ++j) { U.row_ind[p] = j; U.values[p] = double(n); ++p; }  // diagonals
+    if (n) {
+        for (std::size_t i = 0; i + 1 < n; ++i) { U.row_ind[p] = i; U.values[p] = d(rng); ++p; }  // rows 0..n-2
+        U.row_ind[p] = n - 1; U.values[p] = double(n);                                            // diagonal LAST
+    }
+    return U;
+}
+
+void require_upper_bit_identical(const csc_matrix<double>& U, std::uint64_t rhs_seed) {
+    const std::size_t n = U.ncols;
+    auto ref = random_rhs(n, rhs_seed);
+    auto got = ref;
+    factorization::dense_upper_solve(U, ref);                     // serial reference
+    auto sched = factorization::build_upper_solve_schedule(U);
+    factorization::level_scheduled_upper_solve(U, sched, got);    // level-scheduled
+    for (std::size_t i = 0; i < n; ++i) REQUIRE(got[i] == ref[i]);
+}
+
+} // namespace
+
+TEST_CASE("level_scheduled_upper_solve == dense_upper_solve (block-diagonal)",
+          "[sparse][trisolve][upper][threading][mt]") {
+    require_upper_bit_identical(make_block_diag_upper(64, 8, 11), 501);
+    require_upper_bit_identical(make_block_diag_upper(1, 200, 22), 502);   // one dense block: sequential
+}
+
+TEST_CASE("level_scheduled_upper_solve == dense_upper_solve (wide level splits)",
+          "[sparse][trisolve][upper][threading][mt]") {
+    if (mtl::detail::thread_pool::instance().size() < 2) WARN("single-core runner: threading not exercised");
+    require_upper_bit_identical(make_last_col_dense_upper(80000, 33), 503);
+}
+
+TEST_CASE("level_scheduled_upper_solve boundary cases",
+          "[sparse][trisolve][upper][threading][mt][edge]") {
+    // Empty 0x0
+    {
+        csc_matrix<double> U; U.nrows = 0; U.ncols = 0; U.col_ptr = {0};
+        auto sched = factorization::build_upper_solve_schedule(U);
+        REQUIRE(sched.n == 0);
+        std::vector<double> x;
+        factorization::level_scheduled_upper_solve(U, sched, x);
+        REQUIRE(x.empty());
+    }
+    // 1x1
+    {
+        csc_matrix<double> U; U.nrows = 1; U.ncols = 1;
+        U.col_ptr = {0, 1}; U.row_ind = {0}; U.values = {3.0};
+        require_upper_bit_identical(U, 1);
+    }
+    // Diagonal: every row is level 0.
+    {
+        const std::size_t n = 50000;
+        csc_matrix<double> U; U.nrows = n; U.ncols = n;
+        U.col_ptr.resize(n + 1);
+        for (std::size_t j = 0; j <= n; ++j) U.col_ptr[j] = j;
+        U.row_ind.resize(n); U.values.resize(n);
+        for (std::size_t j = 0; j < n; ++j) { U.row_ind[j] = j; U.values[j] = 2.0 + double(j % 7); }
+        require_upper_bit_identical(U, 7);
+    }
+}

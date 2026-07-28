@@ -80,7 +80,7 @@ double relative_residual(const mat::compressed2D<double>& A,
 std::size_t factor_fill(const sparse::factorization::klu_numeric<double>& fac) {
     std::size_t fill = 0;
     for (const auto& blk : fac.block_numeric)
-        fill += blk.L.nnz() + blk.U.nnz();
+        fill += blk.factorL().nnz() + blk.factorU().nnz();
     return fill;
 }
 

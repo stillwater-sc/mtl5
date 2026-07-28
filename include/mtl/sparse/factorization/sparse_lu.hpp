@@ -44,6 +44,7 @@
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
+#include <mtl/sparse/factorization/level_schedule.hpp>
 
 namespace mtl::sparse::factorization {
 
@@ -62,8 +63,6 @@ struct lu_symbolic {
 /// plus the row and column permutations.
 template <typename Value>
 struct lu_numeric {
-    util::csc_matrix<Value> L;           // unit lower triangular factor (CSC)
-    util::csc_matrix<Value> U;           // upper triangular factor (CSC)
     std::vector<std::size_t> row_perm;   // row permutation from pivoting (p[new]=old)
     std::vector<std::size_t> row_pinv;   // inverse row permutation
     std::size_t num_perturbed = 0;       // pivots replaced by perturbation (0 = clean factor)
@@ -71,6 +70,30 @@ struct lu_numeric {
 
     std::size_t num_rows() const { return symbolic.n; }
     std::size_t num_cols() const { return symbolic.n; }
+
+    /// Read-only access to the factors (L unit lower, U upper; both CSC).
+    const util::csc_matrix<Value>& factorL() const { return L_; }
+    const util::csc_matrix<Value>& factorU() const { return U_; }
+
+    /// Install the factors and (re)build the coupled forward (L) and upper (U)
+    /// solve schedules from them. L, U and their schedules are always set
+    /// together here, so the schedules' cached structure always matches the
+    /// factors' patterns. Both must be square and match the symbolic dimension.
+    /// Strongly exception safe: both schedules are built into locals before any
+    /// member is replaced, so a throw leaves the object unchanged.
+    void set_factor(util::csc_matrix<Value> L, util::csc_matrix<Value> U) {
+        const std::size_t n = symbolic.n;
+        if (static_cast<std::size_t>(L.ncols) != n || static_cast<std::size_t>(L.nrows) != n ||
+            static_cast<std::size_t>(U.ncols) != n || static_cast<std::size_t>(U.nrows) != n)
+            throw std::invalid_argument(
+                "lu_numeric::set_factor: factor dimensions do not match the symbolic analysis");
+        lower_solve_schedule fsched = build_lower_solve_schedule(L);   // may throw
+        upper_solve_schedule usched = build_upper_solve_schedule(U);   // may throw
+        L_ = std::move(L);            // noexcept
+        U_ = std::move(U);            // noexcept
+        fwd_sched_ = std::move(fsched);  // noexcept
+        up_sched_  = std::move(usched);  // noexcept
+    }
 
     /// Solve A*x = b using the LU factorization.
     /// P*A*Q = L*U, so A = P^T * L * U * Q^T
@@ -96,17 +119,25 @@ struct lu_numeric {
         for (std::size_t i = 0; i < n; ++i)
             w[i] = static_cast<Value>(b(row_perm[i]));
 
-        // Step 2: Forward solve: L * z = w (L is unit lower triangular)
-        dense_lower_solve(L, w);
+        // Step 2: Forward solve: L * z = w. Level-scheduled (parallel,
+        // bit-identical to dense_lower_solve); serial at MTL5_NUM_THREADS=1.
+        level_scheduled_lower_solve(L_, fwd_sched_, w);
 
-        // Step 3: Back solve: U * y = z
-        dense_upper_solve(U, w);
+        // Step 3: Back solve: U * y = z. Level-scheduled (parallel, bit-identical
+        // to dense_upper_solve); serial at MTL5_NUM_THREADS=1.
+        level_scheduled_upper_solve(U_, up_sched_, w);
 
         // Step 4: Apply column permutation: x = Q * y
         // Q maps new col -> old col, so x[q[i]] = y[i]
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.col_perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
+
+private:
+    util::csc_matrix<Value> L_;          // unit lower triangular factor (CSC), diagonal first
+    util::csc_matrix<Value> U_;          // upper triangular factor (CSC), diagonal last
+    lower_solve_schedule    fwd_sched_;  // forward (L z = w) schedule, bound to L_
+    upper_solve_schedule    up_sched_;   // upper  (U y = z) schedule, bound to U_
 };
 
 /// Perform symbolic LU analysis on a square sparse matrix.
@@ -458,8 +489,8 @@ lu_numeric<Value> sparse_lu_numeric(
         }
         return M;
     };
-    result.L = to_csc(Lp, Li, Lx);
-    result.U = to_csc(Up, Ui, Ux);
+    // Install the factors and build their coupled solve schedules atomically.
+    result.set_factor(to_csc(Lp, Li, Lx), to_csc(Up, Ui, Ux));
     return result;
 }
 
@@ -492,10 +523,11 @@ lu_numeric<Value> sparse_lu_refactor(
     auto C  = util::crs_to_csc(AQ);
 
     const auto& pinv = prev.row_pinv;    // original row -> pivot position (fixed)
-    lu_numeric<Value> result = prev;     // reuse pattern + perms + symbolic
-    result.num_perturbed = 0;            // refactor recomputes values without perturbing (throws on zero pivot)
-    auto& L = result.L;                  // overwrite values in place
-    auto& U = result.U;
+    // Local mutable copies of the prior factors: same pattern, values recomputed
+    // in place below, then installed via set_factor (which rebuilds the coupled
+    // solve schedules). refactor throws on a zero pivot; no perturbation.
+    auto L = prev.factorL();
+    auto U = prev.factorU();
 
     std::vector<Value> x(n, Value{0});
 
@@ -545,6 +577,14 @@ lu_numeric<Value> sparse_lu_refactor(
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) x[pinv[C.row_ind[p]]] = Value{0};
     }
 
+    // Reuse the prior symbolic analysis and permutations; install the recomputed
+    // factors, which rebuilds the coupled solve schedules for the new values.
+    lu_numeric<Value> result;
+    result.symbolic = prev.symbolic;
+    result.row_perm = prev.row_perm;
+    result.row_pinv = prev.row_pinv;
+    result.num_perturbed = 0;   // refactor recomputes values without perturbing
+    result.set_factor(std::move(L), std::move(U));
     return result;
 }
 

@@ -266,4 +266,137 @@ void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeTyp
     }
 }
 
+// ---------------------------------------------------------------------------
+// Upper triangular forward-of-the-backsolve: U x = b, U upper in CSC with the
+// diagonal stored LAST in each column (the layout dense_upper_solve expects).
+//
+// dense_upper_solve is a CSC column-scatter in DECREASING column order: for each
+// col it divides x[col] by the diagonal, then scatters x[i] -= U(i,col)*x[col]
+// over the above-diagonal entries i<col. As with the lower solve this scatter
+// does not parallelize deterministically, so we build the equivalent row-gather:
+//
+//   x[i] = (b[i] - sum_{k>i} U(i,k)*x[k]) / U(i,i)
+//
+// iterating each row's entries k>i in DECREASING k order -- the same order the
+// scatter accumulates them -- so the gather is bit-identical to
+// dense_upper_solve. Dependencies run backward (x[i] depends on x[k], k>i), so
+// levels are assigned scanning rows in decreasing order; a level's rows are
+// independent and solved in parallel.
+
+/// Reusable schedule for a level-scheduled UPPER-triangular solve U x = b.
+struct upper_solve_schedule {
+    std::size_t n = 0;
+    std::size_t built_nnz = 0;
+    // CSR of the strictly-upper entries (k > i), DECREASING k within each row.
+    std::vector<std::size_t> row_ptr;
+    std::vector<std::size_t> col_ind;   // the column k
+    std::vector<std::size_t> val_pos;   // index of U(i,k) in U.values
+    std::vector<std::size_t> diag_pos;  // index of U(i,i) in U.values (last in column i)
+    std::vector<std::size_t> level_ptr;
+    std::vector<std::size_t> order;
+    std::size_t grain = 1;
+};
+
+/// Build the upper-solve schedule from an upper-triangular U (CSC, diagonal last).
+template <typename Value, typename SizeType>
+upper_solve_schedule build_upper_solve_schedule(
+    const util::csc_matrix<Value, SizeType>& U)
+{
+    const std::size_t n = static_cast<std::size_t>(U.ncols);
+    upper_solve_schedule s;
+    s.n = n;
+    s.built_nnz = static_cast<std::size_t>(U.nnz());
+    s.diag_pos.assign(n, std::size_t{0});
+    s.row_ptr.assign(n + 1, std::size_t{0});
+
+    // Pass 1: diagonal position (last entry of each column) + count strictly-upper
+    // entries per row (rows i < col, i.e. all but the last entry of the column).
+    std::size_t nnz_off = 0;
+    for (std::size_t j = 0; j < n; ++j) {
+        if (U.col_ptr[j] < U.col_ptr[j + 1]) {
+            s.diag_pos[j] = static_cast<std::size_t>(U.col_ptr[j + 1] - 1);   // diagonal last
+            for (SizeType q = U.col_ptr[j]; q + 1 < U.col_ptr[j + 1]; ++q) {  // above-diagonal
+                ++s.row_ptr[static_cast<std::size_t>(U.row_ind[q]) + 1];
+                ++nnz_off;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < n; ++i) s.row_ptr[i + 1] += s.row_ptr[i];
+    s.col_ind.resize(nnz_off);
+    s.val_pos.resize(nnz_off);
+
+    // Pass 2: scatter into CSR, iterating columns in DECREASING order so each
+    // row's entries land in decreasing-column order (matching the scatter).
+    std::vector<std::size_t> fill(s.row_ptr.begin(), s.row_ptr.end() - 1);
+    for (std::size_t j = n; j-- > 0; ) {
+        if (U.col_ptr[j] >= U.col_ptr[j + 1]) continue;
+        for (SizeType q = U.col_ptr[j]; q + 1 < U.col_ptr[j + 1]; ++q) {
+            const std::size_t i = static_cast<std::size_t>(U.row_ind[q]);   // i < j
+            const std::size_t dst = fill[i]++;
+            s.col_ind[dst] = j;
+            s.val_pos[dst] = static_cast<std::size_t>(q);
+        }
+    }
+
+    // Pass 3: levels. level[i] = 1 + max level of its dependencies (k>i in row i);
+    // scan rows i in decreasing order so every dependency k>i already has a level.
+    std::vector<std::size_t> level(n, 0);
+    std::size_t nlevels = 0;
+    for (std::size_t ii = 0; ii < n; ++ii) {
+        const std::size_t i = n - 1 - ii;
+        std::size_t lv = 0;
+        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p) {
+            const std::size_t k = s.col_ind[p];
+            if (level[k] + 1 > lv) lv = level[k] + 1;
+        }
+        level[i] = lv;
+        if (lv + 1 > nlevels) nlevels = lv + 1;
+    }
+
+    s.level_ptr.assign(nlevels + 1, std::size_t{0});
+    for (std::size_t i = 0; i < n; ++i) ++s.level_ptr[level[i] + 1];
+    for (std::size_t l = 0; l < nlevels; ++l) s.level_ptr[l + 1] += s.level_ptr[l];
+    s.order.resize(n);
+    std::vector<std::size_t> cursor(s.level_ptr.begin(), s.level_ptr.end() - 1);
+    for (std::size_t i = 0; i < n; ++i) s.order[cursor[level[i]]++] = i;
+
+    const std::size_t avg = n ? std::max<std::size_t>(1, nnz_off / n) : 1;
+    s.grain = std::max<std::size_t>(std::size_t{1}, std::size_t{32768} / avg);
+    return s;
+}
+
+/// Level-scheduled upper-triangular solve: solve U x = b with x holding b on
+/// entry and the solution on exit. Reads U's values at solve time. Bit-identical
+/// to dense_upper_solve; each level's rows are solved in parallel (serial when
+/// MTL5_NUM_THREADS=1).
+template <typename Value, typename SizeType>
+void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
+                                 const upper_solve_schedule& s,
+                                 std::vector<Value>& x)
+{
+    assert(s.n == static_cast<std::size_t>(U.ncols) &&
+           s.built_nnz == static_cast<std::size_t>(U.nnz()) &&
+           "schedule does not match U (rebuild after a pattern change)");
+    assert(x.size() >= s.n && "solution vector shorter than the system");
+    const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
+    for (std::size_t l = 0; l < nlevels; ++l) {
+        const std::size_t lb = s.level_ptr[l];
+        const std::size_t le = s.level_ptr[l + 1];
+        const std::size_t count = le - lb;
+        if (count == 0) continue;
+        detail::thread_pool::instance().parallel_for(
+            count, s.grain,
+            [&](std::size_t cb, std::size_t ce) {
+                for (std::size_t t = cb; t < ce; ++t) {
+                    const std::size_t i = s.order[lb + t];
+                    if (U.col_ptr[i] >= U.col_ptr[i + 1]) continue;   // empty column: skip (as serial)
+                    Value acc = x[i];
+                    for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                        acc -= U.values[s.val_pos[p]] * x[s.col_ind[p]];
+                    x[i] = acc / U.values[s.diag_pos[i]];
+                }
+            });
+    }
+}
+
 } // namespace mtl::sparse::factorization

@@ -59,7 +59,7 @@ TEST_CASE("sparse LU fill stays linear on a banded matrix", "[sparse][lu][scalin
         auto A = make_unsym_tridiag(n);
         auto sym = sparse::factorization::sparse_lu_symbolic(A);   // natural
         auto num = sparse::factorization::sparse_lu_numeric(A, sym);
-        std::size_t fill = num.L.nnz() + num.U.nnz();
+        std::size_t fill = num.factorL().nnz() + num.factorU().nnz();
         REQUIRE(fill < 8 * n);   // ~4n expected; generous linear bound
     }
 }
