@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <stdexcept>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -133,4 +134,15 @@ TEST_CASE("supernodal LDL^T threaded solve boundary cases",
           "[sparse][supernodal][ldlt][threading][mt][edge]") {
     require_supernodal_solve_bit_identical(make_spd_tridiag(1));    // 1x1
     require_supernodal_solve_bit_identical(make_spd_tridiag(2));    // 2x2
+}
+
+// A factor with `symbolic` installed (n > 0) but no factor must reject solve
+// rather than index the empty diagonal.
+TEST_CASE("supernodal LDL^T solve rejects a missing factor",
+          "[sparse][supernodal][ldlt][edge]") {
+    factorization::supernodal_ldlt_factor<double> fac;
+    fac.symbolic.n = 3;                       // symbolic set, set_factor never called
+    vec::dense_vector<double> x(3), b(3);
+    for (int i = 0; i < 3; ++i) b(i) = 1.0;
+    REQUIRE_THROWS_AS(fac.solve(x, b), std::logic_error);
 }
