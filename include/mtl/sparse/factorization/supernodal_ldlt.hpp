@@ -44,6 +44,7 @@
 #include <mtl/sparse/analysis/postorder.hpp>
 #include <mtl/sparse/analysis/supernodes.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
+#include <mtl/sparse/factorization/level_schedule.hpp>
 #include <mtl/sparse/factorization/sparse_cholesky.hpp>  // sparse_cholesky_symbolic
 #include <mtl/sparse/iterative_refine.hpp>
 
@@ -66,12 +67,50 @@ struct supernodal_symbolic {
 /// in CSC (diagonal implicit) in the permuted space; D is the diagonal.
 template <typename Value>
 struct supernodal_ldlt_factor {
-    util::csc_matrix<Value> L;          // unit lower triangular (CSC, no diagonal)
-    std::vector<Value>      D;          // diagonal entries
-    supernodal_symbolic     symbolic;
+    supernodal_symbolic symbolic;
 
     std::size_t num_rows() const { return symbolic.n; }
     std::size_t num_cols() const { return symbolic.n; }
+
+    /// Read-only access to the unit lower factor L (CSC) and the diagonal D.
+    const util::csc_matrix<Value>& factorL() const { return L_; }
+    const std::vector<Value>&      diagonal() const { return D_; }
+
+    /// Install the factor (unit lower L, diagonal D) and (re)build the coupled
+    /// unit forward and transpose solve schedules from L. L, D and the schedules
+    /// are always set together, so the schedules' cached structure always matches
+    /// L's pattern. Strongly exception safe: the schedules are built into locals
+    /// before any member is replaced.
+    ///
+    /// Precondition: the symbolic analysis (`symbolic`) MUST be installed first --
+    /// set_factor validates L and D against `symbolic.n`. Calling it while
+    /// `symbolic` is still default-constructed (n == 0) with a non-empty factor
+    /// throws (see the guard below), rather than silently accepting a factor that
+    /// no later solve could use.
+    void set_factor(util::csc_matrix<Value> L, std::vector<Value> D) {
+        const std::size_t n = symbolic.n;
+        // Guard the ordering hazard explicitly: n == 0 with a non-empty factor
+        // almost always means set_factor was called before `symbolic` was
+        // assigned, so point at that cause instead of the generic mismatch below.
+        if (n == 0 && (L.ncols != 0 || L.nrows != 0 || !D.empty()))
+            throw std::invalid_argument(
+                "supernodal_ldlt_factor::set_factor: symbolic analysis not installed "
+                "(symbolic.n == 0); assign `symbolic` before calling set_factor");
+        if (static_cast<std::size_t>(L.ncols) != n || static_cast<std::size_t>(L.nrows) != n)
+            throw std::invalid_argument(
+                "supernodal_ldlt_factor::set_factor: factor dimension does not match "
+                "the symbolic analysis");
+        if (D.size() != n)
+            throw std::invalid_argument(
+                "supernodal_ldlt_factor::set_factor: diagonal size does not match "
+                "the symbolic analysis");
+        unit_lower_solve_schedule           fsched = build_unit_lower_solve_schedule(L);
+        unit_lower_transpose_solve_schedule bsched = build_unit_lower_transpose_solve_schedule(L);
+        L_ = std::move(L);               // noexcept
+        D_ = std::move(D);               // noexcept
+        fwd_sched_ = std::move(fsched);  // noexcept
+        bwd_sched_ = std::move(bsched);  // noexcept
+    }
 
     /// Solve A*x = b.  A = P^T L D L^T P, so x = P^T L^{-T} D^{-1} L^{-1} P b.
     template <typename VecX, typename VecB>
@@ -88,13 +127,23 @@ struct supernodal_ldlt_factor {
         std::vector<Value> w(n);
         for (std::size_t i = 0; i < n; ++i)
             w[i] = static_cast<Value>(b(p[i]));            // w = P b
-        dense_unit_lower_solve(L, w);                       // L y = w
+        // Forward solve L y = w (unit lower). Level-scheduled -- parallel and
+        // bit-identical to dense_unit_lower_solve; serial at MTL5_NUM_THREADS=1.
+        level_scheduled_unit_lower_solve(L_, fwd_sched_, w);
         for (std::size_t i = 0; i < n; ++i)
-            w[i] /= D[i];                                   // D z = y
-        dense_unit_lower_transpose_solve(L, w);             // L^T u = z
+            w[i] /= D_[i];                                 // D z = y
+        // Back solve L^T u = z (unit upper). Level-scheduled, bit-identical to
+        // dense_unit_lower_transpose_solve.
+        level_scheduled_unit_lower_transpose_solve(L_, bwd_sched_, w);
         for (std::size_t i = 0; i < n; ++i)
             x(p[i]) = static_cast<typename VecX::value_type>(w[i]);  // x = P^T u
     }
+
+private:
+    util::csc_matrix<Value>             L_;          // unit lower triangular (CSC), no stored diagonal
+    std::vector<Value>                  D_;          // diagonal entries
+    unit_lower_solve_schedule           fwd_sched_;  // forward (L y = w) schedule, bound to L_
+    unit_lower_transpose_solve_schedule bwd_sched_;  // transpose (L^T u = z) schedule, bound to L_
 };
 
 namespace detail {
@@ -313,9 +362,9 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
     }
 
     supernodal_ldlt_factor<Value> result;
-    result.L = std::move(L);
-    result.D = std::move(D);
     result.symbolic = sym;
+    // Install L and D and build the coupled solve schedules atomically.
+    result.set_factor(std::move(L), std::move(D));
     return result;
 }
 
