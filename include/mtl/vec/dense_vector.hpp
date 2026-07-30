@@ -107,8 +107,8 @@ public:
         requires (Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector(const Expr& expr) : dense_vector(static_cast<size_type>(expr.size())) {
-        // Element-wise sweep: each element is independent, so the level-scheduled
-        // contiguous chunking is bit-identical to the serial loop (serial at
+        // Element-wise sweep: each element is independent, so the contiguous
+        // chunking is bit-identical to the serial loop (serial at
         // MTL5_NUM_THREADS=1). See mtl/detail/ewise.hpp.
         detail::parallel_ewise(size(), 1, [&](std::size_t i) {
             (*this)(i) = static_cast<Value>(expr(i));
