@@ -39,6 +39,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdlib>
+#include <exception>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -234,6 +235,23 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     std::vector<std::unique_ptr<gemm_barrier>> team_bar(jc_nt);
     for (unsigned j = 0; j < jc_nt; ++j) team_bar[j] = std::make_unique<gemm_barrier>(ic_nt);
 
+    // Exception safety across the barrier: a Scalar element type may throw in
+    // pack_B / do_ic_block (float/double cannot, and no allocation happens in the
+    // region, but the template is Scalar-general -- posit/LNS etc.). A worker that
+    // unwound out of the region would skip its remaining bar.wait() calls and its
+    // teammates would spin forever. So we CATCH inside the region, record the
+    // first failure atomically, skip only the *compute* on failure, and keep
+    // every bar.wait() UNCONDITIONAL so barrier participation never desyncs. The
+    // first exception is rethrown after the region joins. `first_exc` has a single
+    // writer (the CAS winner) and is published to the caller by the pool's join.
+    std::atomic<bool> failed{false};
+    std::exception_ptr first_exc;
+    auto record_failure = [&](std::exception_ptr e) noexcept {
+        bool expected = false;
+        if (failed.compare_exchange_strong(expected, true, std::memory_order_relaxed))
+            first_exc = e;   // single-writer; visible to the caller after run() joins
+    };
+
     // tid -> (jc_id, ic_id): threads sharing jc_id form one jc-team of ic_nt
     // members. Teams take jc-blocks round-robin by jc_id; members take ic-blocks
     // round-robin by ic_id. Every (ic-block, jc-block) C macro-block is owned by
@@ -250,17 +268,25 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
             const std::size_t npanels = (nci + NR - 1) / NR;
             for (std::size_t pc = 0; pc < k; pc += KC) {
                 const std::size_t kci = std::min(KC, k - pc);
-                if (ic_id == 0)                                   // team leader packs shared B once
-                    pack_B<TAB, NR>(B + static_cast<std::ptrdiff_t>(pc) * b_rs
-                                      + static_cast<std::ptrdiff_t>(jc) * b_cs,
-                                    b_rs, b_cs, kci, nci, Bteam);
+                if (ic_id == 0 && !failed.load(std::memory_order_relaxed)) {
+                    try {                                         // team leader packs shared B once
+                        pack_B<TAB, NR>(B + static_cast<std::ptrdiff_t>(pc) * b_rs
+                                          + static_cast<std::ptrdiff_t>(jc) * b_cs,
+                                        b_rs, b_cs, kci, nci, Bteam);
+                    } catch (...) { record_failure(std::current_exception()); }
+                }
                 bar.wait();                                       // publish B to the team
-                for (std::size_t ib = ic_id; ib < nib; ib += ic_nt)
-                    do_ic_block(ic_starts[ib], jc, nci, npanels, kci, pc, Bteam, Aloc);
+                if (!failed.load(std::memory_order_relaxed)) {
+                    try {
+                        for (std::size_t ib = ic_id; ib < nib; ib += ic_nt)
+                            do_ic_block(ic_starts[ib], jc, nci, npanels, kci, pc, Bteam, Aloc);
+                    } catch (...) { record_failure(std::current_exception()); }
+                }
                 bar.wait();                                       // all done reading B before repack
             }
         }
     });
+    if (first_exc) std::rethrow_exception(first_exc);
 }
 
 } // namespace mtl::detail

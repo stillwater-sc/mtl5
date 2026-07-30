@@ -110,6 +110,10 @@ TEMPLATE_TEST_CASE("MT GEMM 2D grid: wide/short spans few ic-blocks -> jc-parall
     const std::size_t n = bp.nc + bp.nr + 1;       // 2 nc (jc) blocks
     const std::size_t k = bp.kc + 3;               // multiple pc iterations
     INFO("m=" << m << " n=" << n << " k=" << k << " (mc=" << bp.mc << " nc=" << bp.nc << ")");
+    // gemm_blocked caps the grid to the pool size, so a pool < 2 would exercise
+    // only the serial fallback -- flag that the jc-parallel path went untested.
+    if (mtl::detail::thread_pool::instance().size() < 2)
+        WARN("pool < 2 workers: jc-parallel path not exercised (set MTL5_NUM_THREADS)");
     for (unsigned nt : {2u, 4u}) {
         CHECK(mt_matches<TestType>(m, n, k, true,  true,  nt, TestType(1),    TestType(0),   100 + nt));
         CHECK(mt_matches<TestType>(m, n, k, false, true,  nt, TestType(1.5),  TestType(-0.5),200 + nt));
@@ -129,6 +133,10 @@ TEMPLATE_TEST_CASE("MT GEMM 2D grid: rectangular exercises ic_nt>1 && jc_nt>1",
     const std::size_t n = bp.nc + bp.nr + 1;   // 2 jc-blocks (njb == 2)
     const std::size_t k = bp.kc + 7;           // 2 pc iterations (leader repacks B)
     INFO("m=" << m << " n=" << n << " k=" << k << " (mc=" << bp.mc << " nc=" << bp.nc << ")");
+    // A genuine 2x2 grid needs >= 4 pool workers; below that the grid degenerates
+    // (1D or serial) and the multi-member-team barrier path goes untested.
+    if (mtl::detail::thread_pool::instance().size() < 4)
+        WARN("pool < 4 workers: 2x2 grid not formed (set MTL5_NUM_THREADS>=4)");
     for (unsigned nt : {4u, 8u}) {   // budget>=4 -> 2x2 grid; pool caps to its size
         CHECK(mt_matches<TestType>(m, n, k, true,  true,  nt, TestType(1),    TestType(0),    300 + nt));
         CHECK(mt_matches<TestType>(m, n, k, true,  false, nt, TestType(-0.75),TestType(1.25), 400 + nt));
