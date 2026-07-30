@@ -292,3 +292,13 @@ TEST_CASE("Sparse LDL^T handles symmetric indefinite matrix", "[sparse][ldlt]") 
     double rr = relative_residual(A, x, b);
     REQUIRE(rr < 1e-12);
 }
+
+// A factor with `symbolic` installed (n > 0) but no factor must reject solve
+// rather than index the empty diagonal (#307).
+TEST_CASE("Sparse LDL^T solve rejects a missing factor", "[sparse][ldlt][edge]") {
+    factorization::ldlt_numeric<double> num;
+    num.symbolic.n = 3;                       // symbolic set, set_factor never called
+    vec::dense_vector<double> x(3), b(3);
+    for (int i = 0; i < 3; ++i) b(i) = 1.0;
+    REQUIRE_THROWS_AS(num.solve(x, b), std::logic_error);
+}

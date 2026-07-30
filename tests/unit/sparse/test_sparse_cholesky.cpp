@@ -265,3 +265,13 @@ TEST_CASE("Sparse Cholesky solve: larger 10x10 system", "[sparse][cholesky]") {
     double rr = relative_residual(A, x, b);
     REQUIRE(rr < 1e-12);
 }
+
+// A factor with `symbolic` installed (n > 0) but no factor must reject solve
+// rather than index the empty factor (#307).
+TEST_CASE("Sparse Cholesky solve rejects a missing factor", "[sparse][cholesky][edge]") {
+    factorization::cholesky_numeric<double> num;
+    num.symbolic.n = 3;                       // symbolic set, set_factor never called
+    vec::dense_vector<double> x(3), b(3);
+    for (int i = 0; i < 3; ++i) b(i) = 1.0;
+    REQUIRE_THROWS_AS(num.solve(x, b), std::logic_error);
+}

@@ -93,6 +93,7 @@ struct lu_numeric {
         U_ = std::move(U);            // noexcept
         fwd_sched_ = std::move(fsched);  // noexcept
         up_sched_  = std::move(usched);  // noexcept
+        has_factor_ = true;              // commit last: solve() is now valid
     }
 
     /// Solve A*x = b using the LU factorization.
@@ -106,6 +107,13 @@ struct lu_numeric {
     /// 4. x = Q * y
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        // A caller can set `symbolic` (n > 0) yet never install a factor; the
+        // triangular solves below would then read empty factor arrays. Reject
+        // that explicitly instead of walking off the end.
+        if (!has_factor_)
+            throw std::logic_error(
+                "lu_numeric::solve: no factor installed (call set_factor "
+                "or sparse_lu_numeric first)");
         std::size_t n = symbolic.n;
         if (static_cast<std::size_t>(x.size()) != n ||
             static_cast<std::size_t>(b.size()) != n) {
@@ -138,6 +146,7 @@ private:
     util::csc_matrix<Value> U_;          // upper triangular factor (CSC), diagonal last
     lower_solve_schedule    fwd_sched_;  // forward (L z = w) schedule, bound to L_
     upper_solve_schedule    up_sched_;   // upper  (U y = z) schedule, bound to U_
+    bool                    has_factor_ = false;  // set by set_factor; solve() requires it
 };
 
 /// Perform symbolic LU analysis on a square sparse matrix.

@@ -87,12 +87,20 @@ struct cholesky_numeric {
         L_ = std::move(L);                                                                // noexcept
         fwd_sched_ = std::move(fsched);                                                   // noexcept
         bwd_sched_ = std::move(bsched);                                                   // noexcept
+        has_factor_ = true;                            // commit last: solve() is now valid
     }
 
     /// Solve A*x = b using the Cholesky factorization.
     /// A = P^T L L^T P, so x = P^T L^{-T} L^{-1} P b
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        // A caller can set `symbolic` (n > 0) yet never install a factor; the
+        // triangular solves below would then read an empty factor. Reject that
+        // explicitly instead of walking off the end.
+        if (!has_factor_)
+            throw std::logic_error(
+                "cholesky_numeric::solve: no factor installed (call set_factor "
+                "or sparse_cholesky_numeric first)");
         std::size_t n = symbolic.n;
         if (static_cast<std::size_t>(x.size()) != n ||
             static_cast<std::size_t>(b.size()) != n) {
@@ -129,6 +137,7 @@ private:
     util::csc_matrix<Value>        L_;          // lower triangular Cholesky factor (CSC)
     lower_solve_schedule           fwd_sched_;  // forward-solve (L y = w) schedule, bound to L_
     lower_transpose_solve_schedule bwd_sched_;  // transpose-solve (L^T z = y) schedule, bound to L_
+    bool                           has_factor_ = false;  // set by set_factor; solve() requires it
 };
 
 /// Perform symbolic Cholesky analysis on a symmetric sparse matrix.
