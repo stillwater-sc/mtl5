@@ -114,8 +114,8 @@ TEST_CASE("Supernodal LU refactor reuses the pattern", "[sparse][lu][supernodal]
     REQUIRE(rel_residual(A2, xr, b) < 1e-11);
 
     // Pattern preserved and result matches a fresh factor of A2.
-    REQUIRE(re.L.col_ptr == fac.L.col_ptr);
-    REQUIRE(re.U.col_ptr == fac.U.col_ptr);
+    REQUIRE(re.factorL().col_ptr == fac.factorL().col_ptr);
+    REQUIRE(re.factorU().col_ptr == fac.factorU().col_ptr);
     auto fresh = factorization::supernodal_lu_numeric(A2, sym);
     vec::dense_vector<double> xf(n, 0.0); fresh.solve(xf, b);
     for (std::size_t i = 0; i < n; ++i)

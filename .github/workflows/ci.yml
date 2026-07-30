@@ -300,6 +300,7 @@ jobs:
           --target op_test_gemm_mt op_test_factorization_mt
           sparse_test_trisolve_level_schedule_mt
           sparse_test_supernodal_ldlt_mt
+          sparse_test_supernodal_lu_mt
 
       - name: Run mt tests under TSan (MTL5_NUM_THREADS=4)
         run: ctest --test-dir build-tsan -R _mt --output-on-failure

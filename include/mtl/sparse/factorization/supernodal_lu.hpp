@@ -42,6 +42,7 @@
 #include <mtl/sparse/util/permutation.hpp>
 #include <mtl/sparse/analysis/column_etree.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
+#include <mtl/sparse/factorization/level_schedule.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>   // lu_symbolic conventions, accumulator_traits
 #include <mtl/sparse/iterative_refine.hpp>
 
@@ -61,8 +62,6 @@ struct supernodal_lu_symbolic {
 /// lu_numeric, plus the dynamic L-supernode boundaries).
 template <typename Value>
 struct supernodal_lu_factor {
-    util::csc_matrix<Value>  L;            // unit lower (CSC), diagonal first
-    util::csc_matrix<Value>  U;            // upper (CSC), diagonal last
     std::vector<std::size_t> row_perm;     // pivoting row order (p[new]=old)
     std::vector<std::size_t> row_pinv;     // inverse
     std::vector<std::size_t> lsuper_first; // dynamic L-supernode boundaries (size nsuper+1)
@@ -74,9 +73,42 @@ struct supernodal_lu_factor {
     std::size_t num_cols() const { return symbolic.n; }
     std::size_t nsuper()   const { return lsuper_first.empty() ? 0 : lsuper_first.size() - 1; }
 
+    /// Read-only access to the unit lower factor L and the upper factor U (CSC).
+    const util::csc_matrix<Value>& factorL() const { return L_; }
+    const util::csc_matrix<Value>& factorU() const { return U_; }
+
+    /// Install the factors (unit lower L diagonal-first, upper U diagonal-last)
+    /// and (re)build the coupled forward (L z = w) and upper (U y = z) solve
+    /// schedules from them. L, U and the schedules are always set together, so the
+    /// schedules' cached structure always matches the factors' patterns. Strongly
+    /// exception safe: the schedules are built into locals before any member is
+    /// replaced. Requires `symbolic` installed first (validates against symbolic.n).
+    void set_factor(util::csc_matrix<Value> L, util::csc_matrix<Value> U) {
+        const std::size_t n = symbolic.n;
+        if (static_cast<std::size_t>(L.ncols) != n || static_cast<std::size_t>(L.nrows) != n ||
+            static_cast<std::size_t>(U.ncols) != n || static_cast<std::size_t>(U.nrows) != n)
+            throw std::invalid_argument(
+                "supernodal_lu_factor::set_factor: factor dimensions do not match "
+                "the symbolic analysis");
+        lower_solve_schedule fsched = build_lower_solve_schedule(L);   // may throw
+        upper_solve_schedule usched = build_upper_solve_schedule(U);   // may throw
+        L_ = std::move(L);            // noexcept
+        U_ = std::move(U);            // noexcept
+        fwd_sched_ = std::move(fsched);  // noexcept
+        up_sched_  = std::move(usched);  // noexcept
+        has_factor_ = true;              // commit last: solve() is now valid
+    }
+
     /// Solve A*x = b.  P*A*Q = L*U (identical to lu_numeric::solve).
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        // A caller can set `symbolic` (n > 0) yet never install factors; the
+        // triangular solves below would then read empty factor arrays. Reject
+        // that explicitly instead of walking off the end.
+        if (!has_factor_)
+            throw std::logic_error(
+                "supernodal_lu_factor::solve: no factor installed (call set_factor "
+                "or supernodal_lu_numeric first)");
         const std::size_t n = symbolic.n;
         if (static_cast<std::size_t>(x.size()) != n ||
             static_cast<std::size_t>(b.size()) != n) {
@@ -92,11 +124,20 @@ struct supernodal_lu_factor {
             const std::size_t orow = row_perm[i];
             w[i] = static_cast<Value>(b(orow)) * (scaled ? row_scale[orow] : Value{1});
         }
-        dense_lower_solve(L, w);                               // L z = P (R b)
-        dense_upper_solve(U, w);                               // U y = z
+        // L z = P (R b), then U y = z. Level-scheduled (parallel, bit-identical to
+        // dense_lower_solve / dense_upper_solve); serial at MTL5_NUM_THREADS=1.
+        level_scheduled_lower_solve(L_, fwd_sched_, w);
+        level_scheduled_upper_solve(U_, up_sched_, w);
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.col_perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
+
+private:
+    util::csc_matrix<Value> L_;          // unit lower (CSC), diagonal first
+    util::csc_matrix<Value> U_;          // upper (CSC), diagonal last
+    lower_solve_schedule    fwd_sched_;  // forward (L z = w) schedule, bound to L_
+    upper_solve_schedule    up_sched_;   // upper  (U y = z) schedule, bound to U_
+    bool                    has_factor_ = false;  // set by set_factor; solve() requires it
 };
 
 /// Symbolic supernodal LU analysis with a fill-reducing column ordering.
@@ -480,8 +521,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         }
         return M;
     };
-    result.L = to_csc(Lp, Li, Lx);
-    result.U = to_csc(Up, Ui, Ux);
+    // Install L and U and build the coupled solve schedules atomically.
+    result.set_factor(to_csc(Lp, Li, Lx), to_csc(Up, Ui, Ux));
     return result;
 }
 
@@ -511,26 +552,28 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
     using std::abs;
     auto C = util::crs_to_csc(util::column_permute(A, prev.symbolic.col_perm));
     const auto& pinv = prev.row_pinv;        // original row -> pivot position (fixed)
-    supernodal_lu_factor<Value> result = prev;   // reuse pattern + perms + symbolic + supernodes
-    result.num_perturbed = 0;                    // refactor replays values without perturbing (throws on zero pivot)
 
     // If the prior factorization was row-equilibrated, re-equilibrate the new
     // values (same pattern) and factor R*A; solve() row-scales the RHS by R.
+    std::vector<Value> row_scale;            // empty unless prev was equilibrated
     if (!prev.row_scale.empty()) {
         std::vector<Value> rmax(n, Value{0});
         for (size_type p = 0; p < C.values.size(); ++p) {
             Value a = abs(C.values[p]);
             if (a > rmax[C.row_ind[p]]) rmax[C.row_ind[p]] = a;
         }
-        result.row_scale.assign(n, Value{1});
+        row_scale.assign(n, Value{1});
         for (size_type r = 0; r < n; ++r)
-            if (rmax[r] > Value{0}) result.row_scale[r] = Value{1} / rmax[r];
+            if (rmax[r] > Value{0}) row_scale[r] = Value{1} / rmax[r];
         for (size_type p = 0; p < C.values.size(); ++p)
-            C.values[p] *= result.row_scale[C.row_ind[p]];
+            C.values[p] *= row_scale[C.row_ind[p]];
     }
 
-    auto& L = result.L;                      // overwrite values in place
-    auto& U = result.U;
+    // Local mutable copies of the prior factors: same pattern, values recomputed
+    // in place below, then installed via set_factor (which rebuilds the coupled
+    // solve schedules). refactor throws on a zero pivot; no perturbation.
+    auto L = prev.factorL();
+    auto U = prev.factorU();
 
     std::vector<Value> x(n, Value{0});
     for (size_type k = 0; k < n; ++k) {
@@ -568,6 +611,17 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
         for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) x[L.row_ind[p]] = Value{0};
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) x[pinv[C.row_ind[p]]] = Value{0};
     }
+
+    // Reuse the prior symbolic analysis, permutations, and supernode boundaries;
+    // install the recomputed factors, which rebuilds the coupled solve schedules.
+    supernodal_lu_factor<Value> result;
+    result.symbolic = prev.symbolic;
+    result.row_perm = prev.row_perm;
+    result.row_pinv = prev.row_pinv;
+    result.lsuper_first = prev.lsuper_first;
+    result.row_scale = std::move(row_scale);
+    result.num_perturbed = 0;    // refactor replays values without perturbing (throws on zero pivot)
+    result.set_factor(std::move(L), std::move(U));
     return result;
 }
 
