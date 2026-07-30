@@ -297,7 +297,7 @@ jobs:
       - name: Build mt tests
         run: >
           cmake --build build-tsan --parallel 2
-          --target op_test_gemm_mt op_test_factorization_mt
+          --target op_test_gemm_mt op_test_factorization_mt op_test_ewise_sweep_mt
           sparse_test_trisolve_level_schedule_mt
           sparse_test_supernodal_ldlt_mt
           sparse_test_supernodal_lu_mt

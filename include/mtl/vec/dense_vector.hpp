@@ -20,6 +20,7 @@
 #include <mtl/concepts/vector.hpp>
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
+#include <mtl/detail/ewise.hpp>
 #include <mtl/vec/dimension.hpp>
 #include <mtl/vec/parameter.hpp>
 
@@ -106,8 +107,12 @@ public:
         requires (Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector(const Expr& expr) : dense_vector(static_cast<size_type>(expr.size())) {
-        for (size_type i = 0; i < size(); ++i)
+        // Element-wise sweep: each element is independent, so the level-scheduled
+        // contiguous chunking is bit-identical to the serial loop (serial at
+        // MTL5_NUM_THREADS=1). See mtl/detail/ewise.hpp.
+        detail::parallel_ewise(size(), 1, [&](std::size_t i) {
             (*this)(i) = static_cast<Value>(expr(i));
+        });
     }
 
     template <typename Expr>
@@ -115,8 +120,9 @@ public:
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector& operator=(const Expr& expr) {
         change_dim(static_cast<size_type>(expr.size()));
-        for (size_type i = 0; i < size(); ++i)
+        detail::parallel_ewise(size(), 1, [&](std::size_t i) {
             (*this)(i) = static_cast<Value>(expr(i));
+        });
         return *this;
     }
 
@@ -125,8 +131,9 @@ public:
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector& operator+=(const Expr& expr) {
         assert(size() == expr.size());
-        for (size_type i = 0; i < size(); ++i)
+        detail::parallel_ewise(size(), 1, [&](std::size_t i) {
             (*this)(i) += static_cast<Value>(expr(i));
+        });
         return *this;
     }
 
@@ -135,8 +142,9 @@ public:
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector& operator-=(const Expr& expr) {
         assert(size() == expr.size());
-        for (size_type i = 0; i < size(); ++i)
+        detail::parallel_ewise(size(), 1, [&](std::size_t i) {
             (*this)(i) -= static_cast<Value>(expr(i));
+        });
         return *this;
     }
 
