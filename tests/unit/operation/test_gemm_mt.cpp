@@ -96,3 +96,41 @@ TEMPLATE_TEST_CASE("MT GEMM: crosses mc/kc blocks", "[operation][gemm][mt]", flo
     CHECK(mt_matches<TestType>(m, n, k, true, true, 4, TestType(1), TestType(0), 7));
     CHECK(mt_matches<TestType>(m, n, k, true, true, 8, TestType(1.25), TestType(-0.5), 9));
 }
+
+// #297 batch 9: BLIS multi-loop (2D jc_nt x ic_nt grid). A wide/short matrix has
+// few ic (mc) blocks, so the ic-only parallelization can't use all threads --
+// the jc loop must be partitioned too. Bit-identity must hold for ANY grid shape.
+TEMPLATE_TEST_CASE("MT GEMM 2D grid: wide/short spans few ic-blocks -> jc-parallel",
+                   "[operation][gemm][mt]", float, double) {
+    constexpr auto bp = mtl::simd::default_blocking<TestType>;
+    // m spans a single ic-block (nib == 1): with ic-only this would run 1 thread;
+    // the 2D grid must fall to pure jc-parallelism. n crosses nc (njb == 2) so the
+    // jc loop actually partitions (nc is L3-sized, so one crossing is plenty).
+    const std::size_t m = bp.mr + 1;               // < mc -> one ic-block
+    const std::size_t n = bp.nc + bp.nr + 1;       // 2 nc (jc) blocks
+    const std::size_t k = bp.kc + 3;               // multiple pc iterations
+    INFO("m=" << m << " n=" << n << " k=" << k << " (mc=" << bp.mc << " nc=" << bp.nc << ")");
+    for (unsigned nt : {2u, 4u}) {
+        CHECK(mt_matches<TestType>(m, n, k, true,  true,  nt, TestType(1),    TestType(0),   100 + nt));
+        CHECK(mt_matches<TestType>(m, n, k, false, true,  nt, TestType(1.5),  TestType(-0.5),200 + nt));
+    }
+}
+
+// A problem with TWO ic-blocks AND TWO jc-blocks forces a genuine 2D grid
+// (ic_nt > 1 AND jc_nt > 1 when the budget is >= 4), exercising the per-team
+// barrier and the shared packed-B panel with multi-member teams. Kept small: nc
+// is L3-sized, so just crossing it once (njb == 2) is already a wide panel;
+// nib == 2 keeps ic_nt <= 2 so the budget spills into jc_nt. Bit-identity vs
+// single-thread must hold for the resulting grid.
+TEMPLATE_TEST_CASE("MT GEMM 2D grid: rectangular exercises ic_nt>1 && jc_nt>1",
+                   "[operation][gemm][mt]", float, double) {
+    constexpr auto bp = mtl::simd::default_blocking<TestType>;
+    const std::size_t m = bp.mc + bp.mr + 1;   // 2 ic-blocks (nib == 2)
+    const std::size_t n = bp.nc + bp.nr + 1;   // 2 jc-blocks (njb == 2)
+    const std::size_t k = bp.kc + 7;           // 2 pc iterations (leader repacks B)
+    INFO("m=" << m << " n=" << n << " k=" << k << " (mc=" << bp.mc << " nc=" << bp.nc << ")");
+    for (unsigned nt : {4u, 8u}) {   // budget>=4 -> 2x2 grid; pool caps to its size
+        CHECK(mt_matches<TestType>(m, n, k, true,  true,  nt, TestType(1),    TestType(0),    300 + nt));
+        CHECK(mt_matches<TestType>(m, n, k, true,  false, nt, TestType(-0.75),TestType(1.25), 400 + nt));
+    }
+}
