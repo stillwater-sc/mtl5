@@ -29,6 +29,15 @@ target_link_libraries(bench_superlu PRIVATE MTL5::mtl5)
 target_include_directories(bench_superlu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(bench_superlu PROPERTIES FOLDER "Benchmarks")
 
+# Sparse triangular-solve scaling scoreboard (#297 phase 2): measures the
+# level-scheduled solve() phase of the native sparse Cholesky/LDLT/LU and
+# supernodal solvers across MTL5_NUM_THREADS. Native-only; needs no external
+# library. Run under benchmarks/run_scaling.sh with SUITE=sparse-solve.
+add_executable(bench_sparse bench_sparse.cpp)
+target_link_libraries(bench_sparse PRIVATE MTL5::mtl5)
+target_include_directories(bench_sparse PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_target_properties(bench_sparse PROPERTIES FOLDER "Benchmarks")
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)
