@@ -131,6 +131,7 @@ static void print_usage() {
         "Suites: all, blas (=l1+l2+l3), lapack,\n"
         "        l1 (dot+nrm2+axpy+scal), l2 (gemv+ger+symv+trmv+trsv), l3 (gemm+trmm+trsm+symm+syrk+syr2k),\n"
         "        gemm-rect (rectangular GEMM shapes: multi-loop 2D grid, #297),\n"
+        "        ewise (element-wise vector/matrix expression sweeps, #297),\n"
         "        dot, nrm2, axpy, scal, gemv, ger, symv, trmv, trsv,\n        gemm, trmm, trsm, symm, syrk, syr2k,\n"
         "        lu, qr, cholesky, eig\n";
 }
@@ -254,6 +255,8 @@ int main(int argc, char* argv[]) {
         b::bench_gemm(rep, label, blas_sizes);
     } else if (suite == "gemm-rect") {
         b::bench_gemm_rect(rep, label);
+    } else if (suite == "ewise") {
+        b::bench_ewise(rep, label);
     } else if (suite == "trmm") {
         b::bench_trmm(rep, label, blas_sizes);
     } else if (suite == "trsm") {
