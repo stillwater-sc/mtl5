@@ -184,6 +184,39 @@ inline void bench_gemm(reporter& rep, const std::string& label,
     }
 }
 
+// Rectangular GEMM shapes exercising the BLIS multi-loop (2D jc x ic) grid
+// (#297 batch 9 / #311). Wide/short matrices have too few ic-blocks for the
+// ic-only parallelization to fill the pool, so scaling there is the multi-loop
+// payoff; tall/thin and square are the ic-parallel reference. Each shape is one
+// CSV row keyed by `n` (the jc axis the 2D grid partitions) -- the shapes below
+// have DISTINCT n so analyze_scaling.py (which groups series by the integer
+// `size`) recovers each as its own speedup curve. The human-readable MxNxK is
+// carried in the operation field. Row-major operands -> native GEMM path.
+inline void bench_gemm_rect(reporter& rep, const std::string& label,
+                            std::size_t warmup = 3, std::size_t iterations = 10) {
+    struct shape { std::size_t m, n, k; };
+    static const shape shapes[] = {
+        {1024, 1024, 1024},   // square (baseline)
+        {2048, 2048, 1024},   // square, larger
+        {  32, 8192, 1024},   // wide/short: few ic-blocks -> jc-parallel (multi-loop)
+        {  64, 4096, 1024},   // wide/short
+        {8192,   64, 1024},   // tall/thin: many ic-blocks -> ic-parallel reference
+    };
+    for (const auto& s : shapes) {
+        auto A = make_random_matrix<double>(s.m, s.k);
+        auto B = make_random_matrix<double>(s.k, s.n, 99);
+        mat::dense2D<double> C(s.m, s.n);
+        const double flops = 2.0 * static_cast<double>(s.m)
+                                 * static_cast<double>(s.n)
+                                 * static_cast<double>(s.k);
+        const std::string op = "gemm " + std::to_string(s.m) + "x"
+                             + std::to_string(s.n) + "x" + std::to_string(s.k);
+        auto t = measure([&]{ mtl::mult(A, B, C); },
+                         op, label, s.n, flops, warmup, iterations);
+        rep.add(t);
+    }
+}
+
 inline void bench_trmm(reporter& rep, const std::string& label,
                        const std::vector<std::size_t>& sizes,
                        std::size_t warmup = 3, std::size_t iterations = 10) {
