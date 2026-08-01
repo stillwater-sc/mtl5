@@ -64,6 +64,7 @@ const FILE_MAP = {
   'design/multicore-scaling-investigation.md':  'design/multicore-scaling-investigation.md',
   'design/parallelization-patterns-and-pitfalls.md': 'design/parallelization-patterns-and-pitfalls.md',
   'design/issue-297-threading-benchmark-plan.md': 'design/issue-297-threading-benchmark-plan.md',
+  'design/issue-297-threading-results.md': 'design/issue-297-threading-results.md',
   'design/mixed-precision-custom-types-SIMD.md': 'design/mixed-precision-custom-types-SIMD.md',
 
   // ── Modernization ──────────────────────────────────────────────────────
