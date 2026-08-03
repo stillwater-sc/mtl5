@@ -29,22 +29,6 @@ namespace mtl {
 template <Matrix M>
 auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10,
                                   typename M::size_type max_iter = 0) {
-    // A similarity transform needs A -> H*A*H^-1. This routine applies
-    // H*A*H, which is correct only because a REAL Householder reflector is
-    // symmetric and involutory (H^-1 == H^T == H). A complex reflector is
-    // unitary but NOT Hermitian, so H^-1 == H^H != H, and the same code would
-    // silently compute a non-similar matrix -- different eigenvalues, no
-    // diagnostic.
-    //
-    // householder() and apply_householder_* became complex-capable in #353, so
-    // this would now COMPILE for complex where it previously did not. Reject it
-    // explicitly rather than let a fix elsewhere open a silent-wrong-answer
-    // path here; the Hermitian reduction (real subdiagonal, phase accumulation)
-    // is its own piece of work.
-    static_assert(!is_complex_v<typename M::value_type>,
-        "eigenvalue_symmetric_generic applies H*A*H, a similarity transform only for REAL Householder "
-        "reflectors, which are Hermitian. Complex element types need the unitary "
-        "reduction A -> H*A*H^H and are not supported yet (#353).");
 
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -199,6 +183,23 @@ auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
 template <Matrix M>
 auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
                      typename M::size_type max_iter = 0) {
+    // A similarity transform needs A -> H*A*H^-1. This routine applies
+    // H*A*H, which is correct only because a REAL Householder reflector is
+    // symmetric and involutory (H^-1 == H^T == H). A complex reflector is
+    // unitary but NOT Hermitian, so H^-1 == H^H != H, and the same code would
+    // silently compute a non-similar matrix -- different eigenvalues, no
+    // diagnostic.
+    //
+    // householder() and apply_householder_* became complex-capable in #353, so
+    // this would now COMPILE for complex where it previously did not. Reject it
+    // explicitly rather than let a fix elsewhere open a silent-wrong-answer
+    // path here; the Hermitian reduction (real subdiagonal, phase accumulation)
+    // is its own piece of work.
+    static_assert(!is_complex_v<typename M::value_type>,
+        "eigen_symmetric applies H*A*H, a similarity transform only for REAL Householder "
+        "reflectors, which are Hermitian. Complex element types need the unitary "
+        "reduction A -> H*A*H^H and are not supported yet (#353).");
+
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
     using std::abs;

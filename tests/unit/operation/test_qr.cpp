@@ -385,3 +385,75 @@ TEST_CASE("Complex Householder: H*x = beta*e_1 with beta real, and H is unitary 
     for (std::size_t i = 1; i < n; ++i)
         REQUIRE(std::abs(x(i) - tau * v(i) * vhx) < 1e-12);   // tail annihilated
 }
+
+TEST_CASE("Complex Householder edge cases: negligible tail and n == 1 (#353)",
+          "[operation][qr][regression]") {
+    // Found in review. The `sigma == 0` shortcut ran BEFORE the real/complex
+    // split, so a vector whose tail vanishes but whose leading entry is complex
+    // returned tau = 0 -- the identity reflection, leaving H*x = x(0)*e_1 with a
+    // COMPLEX leading entry and breaking the documented "beta is real"
+    // guarantee. Silent, because Q stayed unitary and Q*R still reproduced A;
+    // the only visible symptom was a complex R diagonal.
+    SECTION("negligible tail, complex leading entry") {
+        vec::dense_vector<cd> x(4);
+        x[0] = cd(1.0, 1.0); x[1] = cd(0,0); x[2] = cd(0,0); x[3] = cd(0,0);
+
+        auto [v, tau] = householder(x);
+        cd vhx(0,0);
+        for (std::size_t i = 0; i < 4; ++i) vhx += std::conj(v(i)) * x(i);
+        const cd h0 = x(0) - tau * v(0) * vhx;
+
+        REQUIRE(std::abs(h0.imag()) < 1e-12);                        // beta REAL
+        REQUIRE(std::abs(std::abs(h0) - std::abs(x(0))) < 1e-12);    // |beta| == |x0|
+        for (std::size_t i = 1; i < 4; ++i)
+            REQUIRE(std::abs(x(i) - tau * v(i) * vhx) < 1e-12);
+    }
+
+    SECTION("real leading entry keeps the identity shortcut") {
+        // The complement of the case above: when x(0) is already real there is
+        // nothing to rotate, and tau must still be exactly zero.
+        vec::dense_vector<cd> x(3);
+        x[0] = cd(2.0, 0.0); x[1] = cd(0,0); x[2] = cd(0,0);
+        auto [v, tau] = householder(x);
+        REQUIRE(tau == cd(0,0));
+    }
+
+    SECTION("n == 1") {
+        vec::dense_vector<cd> y(1);
+        y[0] = cd(-2.0, 0.5);
+        auto [v1, tau1] = householder(y);
+        REQUIRE(v1.size() == 1);
+        REQUIRE(std::abs(v1(0) - cd(1,0)) < 1e-15);
+        // A 1-element reflector still removes the phase: H*y = beta, beta real.
+        const cd h0 = y(0) - tau1 * v1(0) * (std::conj(v1(0)) * y(0));
+        REQUIRE(std::abs(h0.imag()) < 1e-12);
+        REQUIRE(std::abs(std::abs(h0) - std::abs(y(0))) < 1e-12);
+    }
+
+    SECTION("n == 0") {
+        vec::dense_vector<cd> z(0);
+        auto [v0, tau0] = householder(z);
+        REQUIRE(v0.size() == 0);
+        REQUIRE(tau0 == cd(0,0));
+    }
+}
+
+TEST_CASE("Complex QR produces a real R diagonal (#353)", "[operation][qr][regression]") {
+    // The consequence of the fix above, and the property LAPACK guarantees.
+    // This is what a caller relying on a real triangular diagonal would notice.
+    const std::size_t n = 5;
+    mat::dense2D<cd> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) A(i,j) = cd(cx_next(), cx_next());
+    // Force the awkward shape too: a column already along e_1 with complex head.
+    A(0,0) = cd(1.0, 1.0);
+    for (std::size_t i = 1; i < n; ++i) A(i,0) = cd(0,0);
+
+    vec::dense_vector<cd> tau;
+    REQUIRE(qr_factor(A, tau) == 0);
+    auto R = qr_extract_R(A);
+    for (std::size_t i = 0; i < n; ++i) {
+        INFO("R(" << i << "," << i << ") = " << R(i,i).real() << " + " << R(i,i).imag() << "i");
+        REQUIRE(std::abs(R(i,i).imag()) < 1e-12);
+    }
+}

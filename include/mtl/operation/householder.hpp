@@ -21,6 +21,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/functor/scalar/real.hpp>
+#include <mtl/functor/scalar/imag.hpp>
 #include <mtl/detail/thread_pool.hpp>
 
 namespace mtl {
@@ -78,8 +79,27 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
         sigma += functor::scalar::real<T>::apply(T(xs * conj_t::apply(xs)));
     }
 
-    if (sigma == mag_t(0))
-        return {v, math::zero<T>()};   // x is already along e_1
+    // x is already along e_1. For a real T that IS the identity reflection.
+    // For a complex T it is not, unless x(0) happens to be real: this function
+    // promises a REAL beta, and a complex x(0) still has a phase to remove.
+    // Returning tau = 0 here would leave H*x = x(0)*e_1 with a complex leading
+    // entry, which propagates straight into a complex R diagonal from qr_factor
+    // and a complex L diagonal from lq_factor -- silent, because Q stays
+    // unitary and the reconstruction still holds. LAPACK zlarfg draws the line
+    // in the same place: tau = 0 only when the tail vanishes AND alpha is real.
+    //
+    // Falling through is correct and needs no special case: with sigma == 0 the
+    // complex branch gets nrm = |x0|, a well-conditioned d = x0 - beta of
+    // magnitude 2|x0| (beta takes the opposite sign of Re(x0)), and a tail loop
+    // that writes only zeros. x0 cannot be zero here -- scale > 0 and sigma == 0
+    // force |x0| == scale.
+    if (sigma == mag_t(0)) {
+        if constexpr (!is_complex_v<T>) {
+            return {v, math::zero<T>()};
+        } else if (functor::scalar::imag<T>::apply(x(0)) == mag_t(0)) {
+            return {v, math::zero<T>()};
+        }
+    }
 
     const T x0 = x(0) / scale;
 
