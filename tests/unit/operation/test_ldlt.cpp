@@ -372,6 +372,83 @@ TEST_CASE("LDL^H over random Hermitian matrices (#352)", "[operation][ldlt][regr
     }
 }
 
+TEST_CASE("LDL^T refuses Hermitian input that is Hermitian only to rounding (#352)",
+          "[operation][ldlt][regression]") {
+    // A matrix assembled in floating point is Hermitian to rounding, not
+    // bit-exactly. An exact structure test misses those: ONE ULP in one entry
+    // was enough to slip past it into the LDL^T path and return an answer wrong
+    // in the first significant digit under info == 0 -- the very failure #352
+    // is about. The guard is scale-relative for that reason.
+    using cd = std::complex<double>;
+    mat::dense2D<cd> H(2, 2);
+    const cd off(1.0, 2.0);
+    H(0,0) = cd(4, 0); H(0,1) = std::conj(off);
+    H(1,0) = off;      H(1,1) = cd(5, 0);
+
+    mat::dense2D<cd> exact(H);
+    REQUIRE(ldlt_factor(exact) == LDLT_NOT_SYMMETRIC);
+
+    // Perturb one entry by a single ULP: still Hermitian for any practical
+    // purpose, and must still be refused.
+    mat::dense2D<cd> noisy(H);
+    noisy(1,0) = cd(std::nextafter(off.real(), 2.0), off.imag());
+    REQUIRE(ldlt_factor(noisy) == LDLT_NOT_SYMMETRIC);
+}
+
+TEST_CASE("LDL^H refuses input with a non-real diagonal (#352)",
+          "[operation][ldlt][regression]") {
+    // Mirror of the guard on ldlt_factor. A Hermitian matrix cannot have a
+    // non-real diagonal, so complex-symmetric input reaching ldlt_h_factor is a
+    // caller mistake; taking Re() of the diagonal would silently discard the
+    // imaginary part and return a wrong factorization under info == 0.
+    using cd = std::complex<double>;
+    mat::dense2D<cd> S(2, 2);
+    S(0,0) = cd(4, 1); S(0,1) = cd(1, 2);
+    S(1,0) = cd(1, 2); S(1,1) = cd(5,-1);      // symmetric, non-real diagonal
+
+    mat::dense2D<cd> LD(S);
+    REQUIRE(ldlt_h_factor(LD) == LDLT_NOT_HERMITIAN);
+
+    // ...and the routine that input actually belongs to still accepts it.
+    mat::dense2D<cd> LT(S);
+    REQUIRE(ldlt_factor(LT) == 0);
+}
+
+TEST_CASE("LDL^H handles the degenerate sizes (#352)", "[operation][ldlt][regression]") {
+    SECTION("empty") {
+        mat::dense2D<double> A(0, 0);
+        vec::dense_vector<double> x(0), b(0);
+        REQUIRE(ldlt_h_factor(A) == 0);
+        REQUIRE_NOTHROW(ldlt_h_solve(A, x, b));
+    }
+    SECTION("1x1 real") {
+        mat::dense2D<double> A(1, 1);
+        A(0,0) = 4.0;
+        vec::dense_vector<double> x(1), b(1);
+        b[0] = 8.0;
+        REQUIRE(ldlt_h_factor(A) == 0);
+        ldlt_h_solve(A, x, b);
+        REQUIRE(std::abs(x(0) - 2.0) < 1e-14);
+    }
+    SECTION("1x1 Hermitian complex") {
+        using cd = std::complex<double>;
+        mat::dense2D<cd> A(1, 1);
+        A(0,0) = cd(4, 0);                      // a 1x1 Hermitian matrix is real
+        vec::dense_vector<cd> x(1), b(1);
+        b[0] = cd(8, 4);
+        REQUIRE(ldlt_h_factor(A) == 0);
+        REQUIRE(std::abs(A(0,0).imag()) < 1e-14);
+        ldlt_h_solve(A, x, b);
+        REQUIRE(std::abs(x(0) - cd(2, 1)) < 1e-14);
+    }
+    SECTION("1x1 with a non-real diagonal is refused") {
+        using cd = std::complex<double>;
+        mat::dense2D<cd> A(1, 1);
+        A(0,0) = cd(4, 1);
+        REQUIRE(ldlt_h_factor(A) == LDLT_NOT_HERMITIAN);
+    }
+}
+
 TEST_CASE("LDL^H equals LDL^T for real symmetric input (#352)",
           "[operation][ldlt][regression]") {
     // Conjugation is the identity for real types, so the two must agree exactly.
@@ -392,6 +469,15 @@ TEST_CASE("LDL^H equals LDL^T for real symmetric input (#352)",
     REQUIRE(ldlt_h_factor(L2) == 0);
     ldlt_solve(L1, x1, b);
     ldlt_h_solve(L2, x2, b);
+
+    // Deliberately EXACT, not epsilon-based. The claim under test is not "these
+    // two agree numerically" -- that is too weak to be worth asserting -- but
+    // "for a real type the LDL^H path IS the LDL^T path", conj<T>::apply being
+    // the identity. The two bodies are the same expression tree, so any
+    // contraction or scheduling the compiler applies, it applies to both. A
+    // difference of even one ULP here means the arithmetic in one path diverged
+    // from the other, which is exactly what this test exists to catch. Do not
+    // relax it to a tolerance; that would silently retire the invariant.
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE(x1(i) == x2(i));
 }

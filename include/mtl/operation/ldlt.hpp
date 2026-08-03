@@ -21,13 +21,22 @@
 // For real elements conjugation is the identity, so the two agree. For complex
 // elements they diverge, and feeding a Hermitian matrix to the LDL^T form used
 // to run to completion and return a plausible but wrong answer under info == 0.
-// ldlt_factor now rejects that input rather than computing the wrong
-// factorization; see LDLT_NOT_SYMMETRIC.
+// Each routine now rejects the other's input rather than computing the wrong
+// factorization:
+//
+//   ldlt_factor    -> LDLT_NOT_SYMMETRIC  on Hermitian, non-symmetric input
+//   ldlt_h_factor  -> LDLT_NOT_HERMITIAN  on input with a non-real diagonal
+//
+// Both tests are scale-relative, not exact: matrices assembled in floating
+// point carry their structure only to rounding, and an exact test lets a
+// one-ULP perturbation through into the silently-wrong-answer path.
 //
 // Reference: Golub & Van Loan, "Matrix Computations", Section 4.1.2
 
 #include <cassert>
 #include <cstddef>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
@@ -35,6 +44,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/functor/scalar/real.hpp>
+#include <mtl/functor/scalar/imag.hpp>
 
 namespace mtl {
 
@@ -43,6 +53,36 @@ namespace mtl {
 /// a silently wrong LDL^T. Negative so it cannot collide with the k+1 zero-pivot
 /// codes. Use ldlt_h_factor for that input.
 inline constexpr int LDLT_NOT_SYMMETRIC = -1;
+
+/// Returned by ldlt_h_factor when the input is complex and has a non-real
+/// diagonal, which a Hermitian matrix cannot have -- i.e. the caller wanted
+/// LDL^T and would otherwise have received a silently wrong LDL^H. Use
+/// ldlt_factor for that input.
+inline constexpr int LDLT_NOT_HERMITIAN = -2;
+
+namespace detail {
+
+/// LAPACK's CABS1: |Re z| + |Im z|. Within a factor of sqrt(2) of |z| and free
+/// of the sqrt/hypot that abs() would cost, which is what a structural
+/// noise threshold wants -- see ldlt_structure_tol.
+template <typename T>
+constexpr magnitude_t<T> ldlt_cabs1(const T& z) {
+    using std::abs;
+    return abs(functor::scalar::real<T>::apply(z))
+         + abs(functor::scalar::imag<T>::apply(z));
+}
+
+/// Threshold separating "this matrix has this structure" from "rounding noise",
+/// scaled by the size of the problem and the magnitude of the data.
+///
+/// For a type without a std::numeric_limits specialization epsilon() is 0, so
+/// this degrades to an exact test rather than to something arbitrary.
+template <typename Mag>
+constexpr Mag ldlt_structure_tol(std::size_t n, Mag scale) {
+    return static_cast<Mag>(n) * std::numeric_limits<Mag>::epsilon() * scale;
+}
+
+}  // namespace detail
 
 /// LDL^T factorization: A = L * D * L^T.
 /// The strictly lower triangle of A is overwritten with L (unit diagonal implicit).
@@ -59,21 +99,37 @@ int ldlt_factor(M& A) {
     // matrix; it used to run to completion and return a wrong answer under
     // info == 0 (#352). Callers with Hermitian input want ldlt_h_factor.
     //
-    // The test is exact (no tolerance): A(i,j) == conj(A(j,i)) for some pair
-    // while A(i,j) != A(j,i). Only a matrix that is genuinely Hermitian and
-    // genuinely not symmetric is refused, so complex SYMMETRIC input -- which
-    // this routine handles correctly -- is untouched.
+    // The test is scale-relative, NOT exact. A matrix assembled in floating
+    // point -- from an FEM pass, or from a blocked B^H*B whose (i,j) and (j,i)
+    // sums accumulate in different orders -- is Hermitian to rounding but not
+    // bit-exactly so. An exact test misses those: one ULP in one entry is
+    // enough to slip past it and get the wrong answer under info == 0, which is
+    // precisely the bug being fixed. So compare the symmetry and Hermitian
+    // residuals against a threshold set by the data.
+    //
+    // Refuse only "Hermitian within tolerance AND not symmetric within
+    // tolerance". Complex SYMMETRIC input -- which this routine handles
+    // correctly -- has a zero symmetry residual and is untouched, as is a
+    // matrix that is neither (the caller is then relying on the documented
+    // lower-triangle convention, and the upper triangle is not ours to judge).
     if constexpr (is_complex_v<value_type>) {
-        bool asym = false, herm = true;
-        for (std::size_t i = 0; i < n && herm; ++i)
-            for (std::size_t j = 0; j < n; ++j) {
-                if (A(i, j) != A(j, i)) asym = true;
-                if (A(i, j) != functor::scalar::conj<value_type>::apply(A(j, i))) {
-                    herm = false;
-                    break;
-                }
+        using mag_t  = magnitude_t<value_type>;
+        using conj_t = functor::scalar::conj<value_type>;
+        mag_t scale(0), sym_err(0), herm_err(0);
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = i; j < n; ++j) {   // each pair once; j == i covers
+                                                    // the diagonal, which must be
+                                                    // real for a Hermitian A
+                const mag_t a = detail::ldlt_cabs1(A(i, j));
+                if (a > scale) scale = a;
+                const mag_t s = detail::ldlt_cabs1(value_type(A(i, j) - A(j, i)));
+                if (s > sym_err) sym_err = s;
+                const mag_t h = detail::ldlt_cabs1(
+                    value_type(A(i, j) - conj_t::apply(A(j, i))));
+                if (h > herm_err) herm_err = h;
             }
-        if (asym && herm) return LDLT_NOT_SYMMETRIC;
+        const mag_t tol = detail::ldlt_structure_tol(n, scale);
+        if (herm_err <= tol && sym_err > tol) return LDLT_NOT_SYMMETRIC;
     }
 
     // Algorithm: column-outer LDL^T (Golub & Van Loan, Algorithm 4.1.2)
@@ -149,7 +205,9 @@ void ldlt_solve(const M& A, VecX& x, const VecB& b) {
 /// Only the lower triangle of A is read, so the caller's upper triangle is
 /// irrelevant and need not be populated consistently.
 ///
-/// Returns 0 on success, k+1 if D(k) is zero (zero pivot).
+/// Returns 0 on success, k+1 if D(k) is zero (zero pivot), or
+/// LDLT_NOT_HERMITIAN if the diagonal is not real (see below) -- a Hermitian
+/// matrix cannot have one, so that input belongs to ldlt_factor.
 ///
 /// For real element types conjugation is the identity and this is exactly
 /// ldlt_factor. For complex elements it is the factorization a Hermitian matrix
@@ -161,6 +219,28 @@ int ldlt_h_factor(M& A) {
     using conj_t     = functor::scalar::conj<value_type>;
     const std::size_t n = A.num_rows();
     assert(A.num_cols() == n);
+
+    // A Hermitian matrix has a REAL diagonal. If the caller passed a complex-
+    // symmetric matrix here by mistake, the Re() below would silently discard
+    // its imaginary diagonal and return a wrong factorization under info == 0 --
+    // the exact mirror of the ldlt_factor bug this file fixes (#352).
+    //
+    // This routine reads only the lower triangle, so the full Hermitian check
+    // done in ldlt_factor is not available without reading the upper triangle
+    // and breaking that contract. The diagonal alone is O(n), touches nothing
+    // outside the documented region, and catches the case that actually loses
+    // information here.
+    if constexpr (is_complex_v<value_type>) {
+        mag_t dscale(0), dimag(0);
+        for (std::size_t j = 0; j < n; ++j) {
+            const mag_t a = detail::ldlt_cabs1(A(j, j));
+            if (a > dscale) dscale = a;
+            using std::abs;
+            const mag_t im = abs(functor::scalar::imag<value_type>::apply(A(j, j)));
+            if (im > dimag) dimag = im;
+        }
+        if (dimag > detail::ldlt_structure_tol(n, dscale)) return LDLT_NOT_HERMITIAN;
+    }
 
     // For j = 0..n-1:
     //   D(j)   = Re( A(j,j) - sum_{k<j} |L(j,k)|^2 * D(k) )
