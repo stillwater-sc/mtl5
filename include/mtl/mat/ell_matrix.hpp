@@ -1,11 +1,14 @@
 #pragma once
 // MTL5 -- ELLPACK sparse matrix format
-// Fixed-width per-row storage. Good for GPU and matrices with uniform row lengths.
+// Fixed-width per-ROW storage, and now enforced -- see the static_assert below
+// (#355). Good for GPU and matrices with uniform row lengths.
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <type_traits>
 #include <vector>
 
+#include <mtl/tag/orientation.hpp>
 #include <mtl/tag/sparsity.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
@@ -21,12 +24,33 @@ namespace mtl::mat {
 template <typename Value, typename Parameters = parameters<>>
 class ell_matrix {
 public:
+    using param_type      = Parameters;   // as compressed2D exposes it
     using value_type      = Value;
     using size_type       = typename Parameters::size_type;
     using const_reference = const Value&;
     using reference       = Value&;
 
     static constexpr size_type invalid = size_type(-1);
+
+    // ELL here is row-padded, unconditionally: both arrays are nrows*width and
+    // every access is indices_[r * width_ + k]. Nothing in this container has
+    // ever read Parameters::orientation, so a col_major instantiation was
+    // accepted silently while being byte-for-byte a row-major ELL -- the same
+    // inert-tag defect as compressed2D (#355).
+    //
+    // The severity here is lower, and worth stating precisely rather than by
+    // analogy: the ONLY fill path is the compressed2D constructor below, which
+    // for col_major parameters is now itself a compile error, so no col_major
+    // ELL can currently be populated and none can be returning wrong answers.
+    // What it can do today is be constructed, empty, while claiming a layout it
+    // does not implement -- and the moment an inserter or a setter is added,
+    // the hole reopens silently. Close it now, at the point of misuse, rather
+    // than leaving callers to hit a confusing diagnostic about compressed2D.
+    static_assert(std::is_same_v<typename Parameters::orientation, tag::row_major>,
+        "ell_matrix is row-padded ELLPACK storage only; a col_major instantiation "
+        "would be byte-identical to the row-major layout and silently misdescribe "
+        "it (#355). Use the default parameters, and mtl::trans for a transposed "
+        "sparse product.");
 
     /// Default: empty
     ell_matrix() : nrows_(0), ncols_(0), width_(0) {}

@@ -188,7 +188,7 @@ MTL5's ndarray design is informed by [xtensor](https://github.com/xtensor-stack/
 | Dynamic rank | `xt::xarray<T>` | `xarray<T>` |
 | Custom scalars | Limited | First-class (posit, lns, cfloat, ...) |
 | Linear algebra | Separate (xtensor-blas) | Integrated (MTL5 operations + BLAS dispatch) |
-| Sparse matrices | No | Full support (CSR, CSC, COO, ELLPACK) |
+| Sparse matrices | No | CSR, COO, ELLPACK (CSC only as a conversion utility) |
 | Iterative solvers | No | Integrated (CG, GMRES, BiCGSTAB, ...) |
 | Tensor algebra | No | Separate `tensor<>` with Einstein notation |
 | Expression templates | Yes (lazy) | Yes (lazy, compatible with MTL5 expressions) |
