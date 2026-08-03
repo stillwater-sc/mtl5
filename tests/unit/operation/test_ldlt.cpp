@@ -2,6 +2,10 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <stdexcept>
+#include <complex>
+#include <cmath>
+#include <cstdint>
+#include <mtl/operation/mult.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/ldlt.hpp>
@@ -261,4 +265,133 @@ TEST_CASE("LDL^T on empty (0x0) matrix", "[operation][ldlt]") {
     mat::dense2D<double> A(0, 0);
     int info = ldlt_factor(A);
     REQUIRE(info == 0);
+}
+
+// ---------------------------------------------------------------------------
+// Regression: #352 -- ldlt returned a wrong solution for a Hermitian complex
+// matrix while reporting info == 0.
+//
+// operation/ldlt.hpp contains no conjugation, so it computes A = L*D*L^T. That
+// is the CORRECT factorization for a complex symmetric matrix (A == A^T) and the
+// WRONG one for a Hermitian matrix (A == A^H) -- and nothing distinguished the
+// two, so Hermitian input ran to completion and returned a plausible but wrong
+// answer. Max element error on the reported 2x2 was 9.5e-01.
+//
+// The existing cases above are all real-valued, where conjugation is the
+// identity, which is why this survived.
+//
+// Resolution: ldlt_factor now refuses Hermitian-but-not-symmetric complex input
+// with LDLT_NOT_SYMMETRIC, and ldlt_h_factor/ldlt_h_solve provide the LDL^H
+// factorization that input actually has.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("LDL^T refuses Hermitian complex input instead of answering wrongly (#352)",
+          "[operation][ldlt][regression]") {
+    using cd = std::complex<double>;
+    mat::dense2D<cd> H(2, 2);
+    H(0,0) = cd(2, 0); H(0,1) = cd(1,-1);
+    H(1,0) = cd(1, 1); H(1,1) = cd(3, 0);      // Hermitian, not symmetric
+
+    mat::dense2D<cd> LD(H);
+    REQUIRE(ldlt_factor(LD) == LDLT_NOT_SYMMETRIC);
+}
+
+TEST_CASE("LDL^T still handles complex SYMMETRIC input (#352)",
+          "[operation][ldlt][regression]") {
+    // The guard must not catch this case: A == A^T is exactly what LDL^T is for,
+    // and it was already correct.
+    using cd = std::complex<double>;
+    const std::size_t n = 2;
+    mat::dense2D<cd> S(n, n);
+    S(0,0) = cd(2, 1); S(0,1) = cd(1,-1);
+    S(1,0) = cd(1,-1); S(1,1) = cd(3, 2);      // symmetric, not Hermitian
+
+    vec::dense_vector<cd> xt(n), b(n), x(n);
+    xt[0] = cd(1, 0); xt[1] = cd(0, 1);
+    mult(S, xt, b);
+
+    mat::dense2D<cd> LD(S);
+    REQUIRE(ldlt_factor(LD) == 0);
+    ldlt_solve(LD, x, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE(std::abs(x(i) - xt(i)) < 1e-12);
+}
+
+TEST_CASE("LDL^H solves the Hermitian system the reporter's case describes (#352)",
+          "[operation][ldlt][regression]") {
+    using cd = std::complex<double>;
+    const std::size_t n = 2;
+    mat::dense2D<cd> H(n, n);
+    H(0,0) = cd(2, 0); H(0,1) = cd(1,-1);
+    H(1,0) = cd(1, 1); H(1,1) = cd(3, 0);
+
+    vec::dense_vector<cd> xt(n), b(n), x(n);
+    xt[0] = cd(1, 0); xt[1] = cd(0, 1);
+    mult(H, xt, b);
+
+    mat::dense2D<cd> LD(H);
+    REQUIRE(ldlt_h_factor(LD) == 0);
+    ldlt_h_solve(LD, x, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE(std::abs(x(i) - xt(i)) < 1e-12);
+
+    // D must come out real for a Hermitian A.
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE(std::abs(LD(i,i).imag()) < 1e-14);
+}
+
+TEST_CASE("LDL^H over random Hermitian matrices (#352)", "[operation][ldlt][regression]") {
+    using cd = std::complex<double>;
+    std::uint64_t seed = 20260803u;
+    auto next = [&seed]() {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>((seed >> 11) % 2000001) / 1000000.0 - 1.0;
+    };
+
+    for (std::size_t n : {3u, 5u, 8u}) {
+        mat::dense2D<cd> A(n, n);
+        for (std::size_t i = 0; i < n; ++i) {
+            A(i,i) = cd(next() + static_cast<double>(n), 0.0);   // real diagonal, diagonally dominant
+            for (std::size_t j = i + 1; j < n; ++j) {
+                const cd v(next(), next());
+                A(i,j) = v;
+                A(j,i) = std::conj(v);
+            }
+        }
+
+        vec::dense_vector<cd> xt(n), b(n), x(n);
+        for (std::size_t i = 0; i < n; ++i) xt[i] = cd(next(), next());
+        mult(A, xt, b);
+
+        mat::dense2D<cd> LD(A);
+        INFO("n = " << n);
+        REQUIRE(ldlt_h_factor(LD) == 0);
+        ldlt_h_solve(LD, x, b);
+        for (std::size_t i = 0; i < n; ++i)
+            REQUIRE(std::abs(x(i) - xt(i)) < 1e-9);
+    }
+}
+
+TEST_CASE("LDL^H equals LDL^T for real symmetric input (#352)",
+          "[operation][ldlt][regression]") {
+    // Conjugation is the identity for real types, so the two must agree exactly.
+    const std::size_t n = 4;
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i) {
+        A(i,i) = 4.0 + static_cast<double>(i);
+        for (std::size_t j = i + 1; j < n; ++j) {
+            const double v = 0.5 + 0.25 * static_cast<double>(i + j);
+            A(i,j) = v; A(j,i) = v;
+        }
+    }
+    vec::dense_vector<double> b(n), x1(n), x2(n);
+    for (std::size_t i = 0; i < n; ++i) b[i] = 1.0 + static_cast<double>(i);
+
+    mat::dense2D<double> L1(A), L2(A);
+    REQUIRE(ldlt_factor(L1) == 0);
+    REQUIRE(ldlt_h_factor(L2) == 0);
+    ldlt_solve(L1, x1, b);
+    ldlt_h_solve(L2, x2, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE(x1(i) == x2(i));
 }
