@@ -74,7 +74,7 @@ include/mtl/
 │   │   ├── factor_result.hpp        # Factorization result types (symbolic + numeric)
 │   │   └── triangular_solve.hpp     # Sparse triangular solve (reach + solve)
 │   ├── util/
-│   │   ├── csc.hpp                  # CSC view/adapter for compressed2D
+│   │   ├── csc.hpp                  # Owning csc_matrix + CRS<->CSC conversion
 │   │   ├── permutation.hpp          # Permutation vector operations
 │   │   ├── dulmage_mendelsohn.hpp   # BTF decomposition
 │   │   └── scatter.hpp              # Sparse accumulator (scatter/gather)
@@ -207,7 +207,7 @@ Build the reusable infrastructure that all three factorizations depend on.
 
 | Component | File | Description |
 |-----------|------|-------------|
-| CSC adapter | `sparse/util/csc.hpp` | Zero-cost CSC view over `compressed2D` with col-major parameters; CRS-to-CSC conversion |
+| CSC adapter | `sparse/util/csc.hpp` | Standalone owning `csc_matrix` struct plus CRS-to-CSC / CSC-to-CRS conversion |
 | Permutation | `sparse/util/permutation.hpp` | Apply/invert/compose permutation vectors; permuted matrix views |
 | Scatter | `sparse/util/scatter.hpp` | Sparse accumulator for column assembly (the workhorse of sparse arithmetic) |
 | Elimination tree | `sparse/analysis/elimination_tree.hpp` | O(nnz) etree construction from CSC |

@@ -1,12 +1,15 @@
 #pragma once
 // MTL5 -- CRS (Compressed Row Storage) sparse matrix
-// Row-major only for Phase 4. Three-array storage: data_, indices_, starts_.
+// Row-major ONLY, and now enforced -- see the static_assert below (#355).
+// Three-array storage: data_, indices_, starts_.
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <type_traits>
 #include <vector>
 
 #include <mtl/config.hpp>
+#include <mtl/tag/orientation.hpp>
 #include <mtl/tag/sparsity.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
@@ -25,6 +28,25 @@ public:
     using size_type       = typename Parameters::size_type;
     using const_reference = const Value&;
     using reference       = Value&;
+
+    // compressed2D is CSR, unconditionally: `starts_` is indexed by ROW
+    // everywhere -- operator(), the array constructor's own assert, the
+    // inserter and every mult kernel. Nothing in this container has ever read
+    // Parameters::orientation.
+    //
+    // A col_major instantiation was therefore accepted silently and was
+    // byte-for-byte a CSR matrix. That is worse than unsupported: a caller who
+    // populated it from genuine CSC arrays got the TRANSPOSE while the
+    // constructor reported success -- mult returned A^T*x, and A(0,2) returned
+    // the value belonging at A(2,0), with no diagnostic anywhere (#355).
+    //
+    // Reject it at compile time instead. This costs existing callers nothing:
+    // no col_major compressed2D can have been correct, so none can exist.
+    static_assert(std::is_same_v<typename Parameters::orientation, tag::row_major>,
+        "compressed2D is CSR (row-major) storage only; a col_major instantiation "
+        "would be byte-identical to CSR and would silently read CSC input as its "
+        "transpose (#355). Convert CSC to CSR at the boundary, and use mtl::trans "
+        "for a transposed sparse product.");
 
     // -- Constructors ----------------------------------------------------
 

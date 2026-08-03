@@ -51,3 +51,44 @@ compile_all("true" "tensor" "Tests/tensor" "MTL5::mtl5;Catch2::Catch2WithMain" $
 
 file(GLOB UTIL_SRC "util/*.cpp")
 compile_all("true" "util" "Tests/util" "MTL5::mtl5;Catch2::Catch2WithMain" ${UTIL_SRC})
+
+# -- Compile-failure tests ---------------------------------------------------
+# Each source in compile_fail/ MUST NOT compile. The targets are
+# EXCLUDE_FROM_ALL and are built on demand by ctest, so a normal build is
+# unaffected.
+#
+# These use PASS_REGULAR_EXPRESSION rather than WILL_FAIL deliberately: WILL_FAIL
+# passes whenever the build returns non-zero, so a typo in the test source would
+# make it pass green while proving nothing. Matching the expected diagnostic
+# instead means the test only passes when compilation fails for the RIGHT reason.
+# Each source declares that diagnostic in an "// EXPECT-ERROR: <regex>" line.
+if(CMAKE_CONFIGURATION_TYPES)
+    set(_cf_config --config $<CONFIG>)
+else()
+    set(_cf_config "")
+endif()
+
+file(GLOB COMPILE_FAIL_SRC "compile_fail/*.cpp")
+foreach(cf_src ${COMPILE_FAIL_SRC})
+    get_filename_component(cf_stem ${cf_src} NAME_WE)
+    set(cf_target compile_fail_${cf_stem})
+
+    file(STRINGS ${cf_src} cf_expect REGEX "^// EXPECT-ERROR: ")
+    if(NOT cf_expect)
+        message(FATAL_ERROR
+            "${cf_src} has no '// EXPECT-ERROR: <regex>' line; a compile-failure "
+            "test without one cannot verify why it failed.")
+    endif()
+    string(REGEX REPLACE "^// EXPECT-ERROR: " "" cf_expect "${cf_expect}")
+
+    add_executable(${cf_target} EXCLUDE_FROM_ALL ${cf_src})
+    target_link_libraries(${cf_target} PRIVATE MTL5::mtl5)
+    set_target_properties(${cf_target} PROPERTIES FOLDER "Tests/compile_fail")
+
+    add_test(NAME ${cf_target}
+             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}
+                     --target ${cf_target} ${_cf_config})
+    set_tests_properties(${cf_target} PROPERTIES
+        PASS_REGULAR_EXPRESSION "${cf_expect}"
+        LABELS "compile_fail")
+endforeach()

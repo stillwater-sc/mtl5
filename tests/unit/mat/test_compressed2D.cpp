@@ -135,3 +135,93 @@ TEST_CASE("Transposed sparse matvec correctness", "[mat][compressed2D][trans][ma
     REQUIRE_THAT(y(0), Catch::Matchers::WithinAbs(22.0, 1e-12));
     REQUIRE_THAT(y(1), Catch::Matchers::WithinAbs(28.0, 1e-12));
 }
+
+// ---------------------------------------------------------------------------
+// #355: compressed2D accepted tag::col_major and ignored it.
+//
+// The container is CSR unconditionally -- starts_ is indexed by row in
+// operator(), in the array constructor's assert, in the inserter and in every
+// mult kernel -- but nothing ever read Parameters::orientation. A col_major
+// instantiation was therefore byte-for-byte a CSR matrix, so a caller who fed
+// it genuine CSC arrays silently got the transpose while the constructor
+// reported success.
+//
+// It is now a compile error. The rejection itself is pinned by the
+// compile-failure test tests/unit/compile_fail/compressed2d_col_major.cpp,
+// which cannot be expressed here; what these cases pin is the other half of the
+// contract -- that the row-major layout the container actually implements is
+// the one it documents.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("compressed2D is explicitly row-major (#355)", "[mat][compressed2D][regression]") {
+    static_assert(std::is_same_v<
+        typename mat::compressed2D<double>::param_type::orientation,
+        tag::row_major>, "the default parameter bundle must be row-major");
+
+    // Spelling row_major explicitly must be accepted and identical to the default.
+    using explicit_row = mat::compressed2D<double, mat::parameters<tag::row_major>>;
+    static_assert(std::is_same_v<
+        typename explicit_row::param_type::orientation, tag::row_major>);
+
+    // The major array is indexed by ROW: its length is nrows+1, not ncols+1.
+    // This is the invariant that a col_major instantiation violated silently --
+    // the issue's reproducer built a 2x3 matrix and got 3 starts where CSC
+    // needs 4.
+    const std::size_t nrows = 2, ncols = 3;
+    mat::compressed2D<double> A(nrows, ncols);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][0] << 1.0; ins[0][1] << 2.0;
+        ins[1][1] << 3.0; ins[1][2] << 4.0;
+    }
+    REQUIRE(A.ref_major().size() == nrows + 1);
+    REQUIRE(A.ref_major().size() != ncols + 1);
+    REQUIRE(A.nnz() == 4);
+
+    // Row-major reading of the raw arrays: row r occupies [major[r], major[r+1]).
+    REQUIRE(A.ref_major()[0] == 0);
+    REQUIRE(A.ref_major()[1] == 2);   // row 0 has 2 entries
+    REQUIRE(A.ref_major()[2] == 4);   // row 1 has 2 entries
+
+    // Element access agrees with that reading, and is NOT transposed.
+    REQUIRE_THAT(A(0, 1), Catch::Matchers::WithinAbs(2.0, 1e-12));
+    REQUIRE_THAT(A(1, 2), Catch::Matchers::WithinAbs(4.0, 1e-12));
+    REQUIRE_THAT(A(0, 2), Catch::Matchers::WithinAbs(0.0, 1e-12));
+}
+
+TEST_CASE("compressed2D built from raw CSR arrays is not transposed (#355)",
+          "[mat][compressed2D][regression]") {
+    // The issue's second symptom: real CSC arrays fed to a col_major matrix came
+    // back as the transpose, with mult returning A^T*x. The same arrays read as
+    // CSR -- which is what the container has always done -- must give the
+    // row-major matrix, and the two are genuinely different matrices here.
+    //
+    //   as CSR: [[1,5,0],[1,2,0],[0,3,4]]
+    const std::size_t nrows = 3, ncols = 3, nnz = 6;
+    std::size_t starts[4]  = {0, 2, 4, 6};
+    std::size_t indices[6] = {0, 1, 0, 1, 1, 2};
+    double      data[6]    = {1, 5, 1, 2, 3, 4};
+
+    mat::compressed2D<double> A(nrows, ncols, nnz, starts, indices, data);
+
+    REQUIRE_THAT(A(0, 1), Catch::Matchers::WithinAbs(5.0, 1e-12));
+    REQUIRE_THAT(A(1, 0), Catch::Matchers::WithinAbs(1.0, 1e-12));
+    REQUIRE_THAT(A(2, 2), Catch::Matchers::WithinAbs(4.0, 1e-12));
+    REQUIRE_THAT(A(0, 2), Catch::Matchers::WithinAbs(0.0, 1e-12));
+
+    // A*x, not A^T*x.  A*[1,2,3] = [1+10, 1+4, 6+12] = [11, 5, 18]
+    vec::dense_vector<double> x = {1.0, 2.0, 3.0};
+    auto y = A * x;
+    REQUIRE(y.size() == nrows);
+    REQUIRE_THAT(y(0), Catch::Matchers::WithinAbs(11.0, 1e-12));
+    REQUIRE_THAT(y(1), Catch::Matchers::WithinAbs( 5.0, 1e-12));
+    REQUIRE_THAT(y(2), Catch::Matchers::WithinAbs(18.0, 1e-12));
+
+    // And the transposed product, which is what CSC would have been reached for,
+    // is available correctly through trans().
+    // A^T*[1,2,3] = [1+2, 5+4+9, 12] = [3, 18, 12]
+    auto yt = trans(A) * x;
+    REQUIRE_THAT(yt(0), Catch::Matchers::WithinAbs( 3.0, 1e-12));
+    REQUIRE_THAT(yt(1), Catch::Matchers::WithinAbs(18.0, 1e-12));
+    REQUIRE_THAT(yt(2), Catch::Matchers::WithinAbs(12.0, 1e-12));
+}
