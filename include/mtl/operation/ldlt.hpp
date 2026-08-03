@@ -45,6 +45,7 @@
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/functor/scalar/real.hpp>
 #include <mtl/functor/scalar/imag.hpp>
+#include <mtl/detail/structure_tol.hpp>
 
 namespace mtl {
 
@@ -60,29 +61,6 @@ inline constexpr int LDLT_NOT_SYMMETRIC = -1;
 /// ldlt_factor for that input.
 inline constexpr int LDLT_NOT_HERMITIAN = -2;
 
-namespace detail {
-
-/// LAPACK's CABS1: |Re z| + |Im z|. Within a factor of sqrt(2) of |z| and free
-/// of the sqrt/hypot that abs() would cost, which is what a structural
-/// noise threshold wants -- see ldlt_structure_tol.
-template <typename T>
-constexpr magnitude_t<T> ldlt_cabs1(const T& z) {
-    using std::abs;
-    return abs(functor::scalar::real<T>::apply(z))
-         + abs(functor::scalar::imag<T>::apply(z));
-}
-
-/// Threshold separating "this matrix has this structure" from "rounding noise",
-/// scaled by the size of the problem and the magnitude of the data.
-///
-/// For a type without a std::numeric_limits specialization epsilon() is 0, so
-/// this degrades to an exact test rather than to something arbitrary.
-template <typename Mag>
-constexpr Mag ldlt_structure_tol(std::size_t n, Mag scale) {
-    return static_cast<Mag>(n) * std::numeric_limits<Mag>::epsilon() * scale;
-}
-
-}  // namespace detail
 
 /// LDL^T factorization: A = L * D * L^T.
 /// The strictly lower triangle of A is overwritten with L (unit diagonal implicit).
@@ -120,15 +98,15 @@ int ldlt_factor(M& A) {
             for (std::size_t j = i; j < n; ++j) {   // each pair once; j == i covers
                                                     // the diagonal, which must be
                                                     // real for a Hermitian A
-                const mag_t a = detail::ldlt_cabs1(A(i, j));
+                const mag_t a = detail::cabs1(A(i, j));
                 if (a > scale) scale = a;
-                const mag_t s = detail::ldlt_cabs1(value_type(A(i, j) - A(j, i)));
+                const mag_t s = detail::cabs1(value_type(A(i, j) - A(j, i)));
                 if (s > sym_err) sym_err = s;
-                const mag_t h = detail::ldlt_cabs1(
+                const mag_t h = detail::cabs1(
                     value_type(A(i, j) - conj_t::apply(A(j, i))));
                 if (h > herm_err) herm_err = h;
             }
-        const mag_t tol = detail::ldlt_structure_tol(n, scale);
+        const mag_t tol = detail::structure_tol(n, scale);
         if (herm_err <= tol && sym_err > tol) return LDLT_NOT_SYMMETRIC;
     }
 
@@ -233,13 +211,13 @@ int ldlt_h_factor(M& A) {
     if constexpr (is_complex_v<value_type>) {
         mag_t dscale(0), dimag(0);
         for (std::size_t j = 0; j < n; ++j) {
-            const mag_t a = detail::ldlt_cabs1(A(j, j));
+            const mag_t a = detail::cabs1(A(j, j));
             if (a > dscale) dscale = a;
             using std::abs;
             const mag_t im = abs(functor::scalar::imag<value_type>::apply(A(j, j)));
             if (im > dimag) dimag = im;
         }
-        if (dimag > detail::ldlt_structure_tol(n, dscale)) return LDLT_NOT_HERMITIAN;
+        if (dimag > detail::structure_tol(n, dscale)) return LDLT_NOT_HERMITIAN;
     }
 
     // For j = 0..n-1:
