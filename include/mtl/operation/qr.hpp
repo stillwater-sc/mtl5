@@ -11,6 +11,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/householder.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
@@ -71,7 +72,9 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
 }
 
 /// Extract explicit Q (m x m) from QR factorization stored in A and tau.
-/// Q = H_0 * H_1 * ... * H_{k-1} where H_j = I - tau(j) * v_j * v_j^T
+/// Q = H_0^H * H_1^H * ... * H_{k-1}^H where H_j = I - tau(j) * v_j * v_j^H.
+/// (For real element types conj is the identity and this is the familiar
+/// Q = H_0 * H_1 * ... * H_{k-1}.)
 template <Matrix M>
 auto qr_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
@@ -96,8 +99,15 @@ auto qr_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& t
         for (size_type i = 1; i < len; ++i)
             v(i) = A(j + i, j);
 
-        // Apply H_j to Q from the left: Q = (I - tau*v*v^T) * Q
-        apply_householder_left(Q, v, tau(j), j, 0);
+        // Apply H_j^H to Q from the left.
+        //
+        // qr_factor formed R = H_{k-1}...H_0 A, so A = H_0^-1 ... H_{k-1}^-1 R
+        // and therefore Q = H_0^H ... H_{k-1}^H. The reflectors are UNITARY but
+        // not Hermitian for complex tau, so the inverse is H^H = I -
+        // conj(tau)*v*v^H, NOT H. Passing tau here instead of conj(tau) would
+        // silently return the wrong Q for complex input while remaining exactly
+        // right for real input, where conj is the identity (#353).
+        apply_householder_left(Q, v, functor::scalar::conj<value_type>::apply(tau(j)), j, 0);
     }
     return Q;
 }
@@ -141,10 +151,12 @@ void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
         for (size_type i = 1; i < len; ++i)
             v(i) = QR(j + i, j);
 
-        // Apply H_j to y(j:m-1): y -= beta * v * (v^T * y)
+        // Apply H_j to y(j:m-1): y -= tau * v * (v^H * y).
+        // Here we want Q^H b = H_{k-1}...H_0 b, so the reflectors are applied
+        // as H (not H^H) in forward order -- the mirror of qr_extract_Q above.
         value_type dot = math::zero<value_type>();
         for (size_type i = 0; i < len; ++i)
-            dot += v(i) * y(j + i);
+            dot += functor::scalar::conj<value_type>::apply(v(i)) * y(j + i);
         for (size_type i = 0; i < len; ++i)
             y(j + i) -= tau(j) * v(i) * dot;
     }

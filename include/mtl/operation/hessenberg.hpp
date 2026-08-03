@@ -6,6 +6,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/householder.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl {
@@ -20,6 +21,23 @@ void hessenberg_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using size_type  = typename M::size_type;
     const size_type n = A.num_rows();
     if (n < 3) { tau.change_dim(0); return; }
+    // A similarity transform needs A -> H*A*H^-1. This routine applies
+    // H*A*H, which is correct only because a REAL Householder reflector is
+    // symmetric and involutory (H^-1 == H^T == H). A complex reflector is
+    // unitary but NOT Hermitian, so H^-1 == H^H != H, and the same code would
+    // silently compute a non-similar matrix -- different eigenvalues, no
+    // diagnostic.
+    //
+    // householder() and apply_householder_* became complex-capable in #353, so
+    // this would now COMPILE for complex where it previously did not. Reject it
+    // explicitly rather than let a fix elsewhere open a silent-wrong-answer
+    // path here; the Hermitian reduction (real subdiagonal, phase accumulation)
+    // is its own piece of work.
+    static_assert(!is_complex_v<typename M::value_type>,
+        "hessenberg_factor applies H*A*H, a similarity transform only for REAL Householder "
+        "reflectors, which are Hermitian. Complex element types need the unitary "
+        "reduction A -> H*A*H^H and are not supported yet (#353).");
+
 
     const size_type k = n - 2;
     tau.change_dim(k);

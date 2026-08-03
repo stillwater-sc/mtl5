@@ -1,20 +1,33 @@
 #pragma once
 // MTL5 -- Householder reflections for QR factorization
-// Computes v, beta such that (I - beta*v*v^T)*x = ||x||*e_1
+//
+// The reflector is H = I - tau * v * v^H, with v(0) == 1 implicit, chosen so
+// that H*x = beta*e_1. Writing it with v^H rather than v^T is what makes the
+// complex case work, and costs the real case nothing: conjugation is the
+// identity there, so H = I - tau*v*v^T exactly as before (#353).
+//
+// H is UNITARY but, for complex tau, NOT Hermitian -- so H^-1 = H^H, not H.
+// That distinction is invisible in the real case and is the whole reason the
+// consumers need conj(tau) in some places: see qr_extract_Q / lq_extract_Q.
 #include <algorithm>
 #include <cmath>
 #include <cassert>
 #include <cstddef>
+#include <type_traits>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/matrix.hpp>
+#include <mtl/concepts/magnitude.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/functor/scalar/conj.hpp>
+#include <mtl/functor/scalar/real.hpp>
 #include <mtl/detail/thread_pool.hpp>
 
 namespace mtl {
 
-/// Compute Householder vector v and scalar beta for a column vector x.
-/// The reflection (I - beta*v*v^T) zeroes out x(1:end), leaving x(0) = -sign(x0)*||x||.
-/// v(0) is always 1 (implicit). Returns {v, beta}.
+/// Compute Householder vector v and scalar tau for a column vector x, such
+/// that H = I - tau*v*v^H satisfies H*x = beta*e_1. v(0) is always 1
+/// (implicit). Returns {v, tau}. For complex x, beta is real by construction.
 template <typename T>
 std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     using std::sqrt;
@@ -36,9 +49,16 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     // poison an already-correct answer with NaN (#337). Scaling keeps the
     // squares O(1), so the only way sigma vanishes now is that x(1:) really is
     // negligible against x(0) -- which is the genuine "already along e_1" case.
-    T scale = math::zero<T>();
+    // Magnitudes live in magnitude_t<T>, not T. For a real T the two are the
+    // same type and this is a no-op; for a complex T it is the difference
+    // between compiling and not -- `axi > scale` on two complex values was one
+    // of the errors reported in #353, and the fix is a type, not a cast.
+    using mag_t = magnitude_t<T>;
+    using conj_t = functor::scalar::conj<T>;
+
+    mag_t scale = mag_t(0);
     for (size_type i = 0; i < n; ++i) {
-        const T axi = abs(x(i));
+        const mag_t axi = abs(x(i));
         if (axi > scale) scale = axi;
     }
 
@@ -46,47 +66,85 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
         v(i) = x(i);
     v(0) = math::one<T>();
 
-    if (scale == math::zero<T>())
+    if (scale == mag_t(0))
         return {v, math::zero<T>()};   // x is the zero vector
 
-    // sigma = sum((x(i)/scale)^2) for i >= 1, computed in the scaled variables
-    T sigma = math::zero<T>();
+    // sigma = sum |x(i)/scale|^2 for i >= 1, in the scaled variables.
+    // |z|^2, NOT z^2: the squared modulus is what a norm needs, and for real T
+    // the two coincide, which is why the unconjugated form survived this long.
+    mag_t sigma = mag_t(0);
     for (size_type i = 1; i < n; ++i) {
         const T xs = x(i) / scale;
-        sigma += xs * xs;
+        sigma += functor::scalar::real<T>::apply(T(xs * conj_t::apply(xs)));
     }
 
-    if (sigma == math::zero<T>())
+    if (sigma == mag_t(0))
         return {v, math::zero<T>()};   // x is already along e_1
 
     const T x0 = x(0) / scale;
-    const T norm_x = sqrt(x0 * x0 + sigma);
-    T v0;
-    if (x0 <= math::zero<T>())
-        v0 = x0 - norm_x;
-    else
-        v0 = -sigma / (x0 + norm_x);
 
-    const T beta = T(2) * v0 * v0 / (sigma + v0 * v0);
+    if constexpr (!is_complex_v<T>) {
+        // Real path, arithmetic UNCHANGED. Kept verbatim rather than folded
+        // into the general formulation so that the existing results stay
+        // bit-identical -- see the agreement test in test_householder.cpp.
+        const T norm_x = sqrt(x0 * x0 + sigma);
+        T v0;
+        if (x0 <= math::zero<T>())
+            v0 = x0 - norm_x;
+        else
+            v0 = -sigma / (x0 + norm_x);
 
-    // beta == 0 means the reflection is the identity, so v carries no
-    // information -- and computing it would divide by a v0 small enough to
-    // overflow. Return a clean unit v: qr_factor STORES v below the diagonal,
-    // so letting huge or infinite entries through would poison the factor and
-    // every later use of it.
-    if (beta == math::zero<T>())
-        return {v, math::zero<T>()};
+        const T beta = T(2) * v0 * v0 / (sigma + v0 * v0);
 
-    // Normalize so that v(0) = 1. Both numerator and denominator are in the
-    // scaled variables, so the ratio is the same as before the scaling.
-    for (size_type i = 1; i < n; ++i)
-        v(i) = (x(i) / scale) / v0;
-    v(0) = math::one<T>();
+        // beta == 0 means the reflection is the identity, so v carries no
+        // information -- and computing it would divide by a v0 small enough to
+        // overflow. Return a clean unit v: qr_factor STORES v below the diagonal,
+        // so letting huge or infinite entries through would poison the factor and
+        // every later use of it.
+        if (beta == math::zero<T>())
+            return {v, math::zero<T>()};
 
-    return {v, beta};
+        // Normalize so that v(0) = 1. Both numerator and denominator are in the
+        // scaled variables, so the ratio is the same as before the scaling.
+        for (size_type i = 1; i < n; ++i)
+            v(i) = (x(i) / scale) / v0;
+        v(0) = math::one<T>();
+
+        return {v, beta};
+    } else {
+        // Complex path (LAPACK zlarfg's construction).
+        //
+        // With v = [1; u], x = [a; y] and H = I - tau*v*v^H, requiring
+        // H*x = beta*e_1 with beta REAL gives, after substituting
+        // |a|^2 + ||y||^2 = beta^2,
+        //
+        //     u   = y / (a - beta)
+        //     tau = (beta - conj(a)) / beta
+        //
+        // beta's SIGN is the free choice, and it is chosen to keep a - beta
+        // away from cancellation -- the complex analogue of the real branch's
+        // `x0 <= 0` test. Picking the opposite sign of Re(a) makes |a - beta|
+        // >= beta, so the division below never amplifies rounding.
+        const mag_t ax0  = abs(x0);
+        const mag_t nrm  = sqrt(ax0 * ax0 + sigma);
+        const mag_t beta = (functor::scalar::real<T>::apply(x0) > mag_t(0)) ? -nrm : nrm;
+        const T     d    = x0 - T(beta);          // a - beta, no cancellation
+        const T     tau  = (T(beta) - conj_t::apply(x0)) / T(beta);
+
+        // Identity reflection -- same reasoning as the real branch.
+        if (tau == math::zero<T>())
+            return {v, math::zero<T>()};
+
+        for (size_type i = 1; i < n; ++i)
+            v(i) = (x(i) / scale) / d;
+        v(0) = math::one<T>();
+
+        return {v, tau};
+    }
 }
 
-/// Apply Householder reflection (I - beta*v*v^T) to columns col..ncols-1
+/// Apply Householder reflection H = I - beta*v*v^H on the LEFT (A := H*A)
+/// to columns col..ncols-1
 /// of matrix A, rows row..nrows-1. Modifies A in-place.
 template <Matrix M, typename T>
 void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
@@ -114,10 +172,11 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
         [&](std::size_t b, std::size_t e) {
             for (std::size_t t = b; t < e; ++t) {
                 const size_type j = col + static_cast<size_type>(t);
-                // w = v^T * A(:,j)
+                // w = v^H * A(:,j).  conj on v, not on A: for a real T this
+                // is the identity and the arithmetic is unchanged.
                 T w = math::zero<T>();
                 for (size_type i = 0; i < vlen; ++i)
-                    w += v(i) * A(row + i, j);
+                    w += functor::scalar::conj<T>::apply(v(i)) * A(row + i, j);
                 // A(:,j) -= beta * v * w
                 for (size_type i = 0; i < vlen; ++i)
                     A(row + i, j) -= beta * v(i) * w;
@@ -125,7 +184,9 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
         });
 }
 
-/// Apply Householder reflection on the right: A * (I - beta*v*v^T)
+/// Apply Householder reflection on the right: A := A * (I - beta*v*v^H).
+/// NOTE this is A*H, not A*H^H -- for complex tau those differ, and a caller
+/// wanting the inverse/adjoint must pass conj(beta) itself.
 /// Modifies columns col..col+vlen-1 of rows row..nrows-1.
 template <Matrix M, typename T>
 void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
@@ -155,9 +216,11 @@ void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
                 T w = math::zero<T>();
                 for (size_type j = 0; j < vlen; ++j)
                     w += A(i, col + j) * v(j);
-                // A(i,:) -= beta * w * v^T
+                // A(i,:) -= beta * w * v^H.  A*H = A - beta*(A*v)*v^H, so the
+                // conjugate lands on the OUTER v here, mirroring the inner one
+                // in apply_householder_left. Identity for a real T.
                 for (size_type j = 0; j < vlen; ++j)
-                    A(i, col + j) -= beta * w * v(j);
+                    A(i, col + j) -= beta * w * functor::scalar::conj<T>::apply(v(j));
             }
         });
 }

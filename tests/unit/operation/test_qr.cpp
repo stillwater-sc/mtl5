@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <complex>
+#include <cstdint>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/qr.hpp>
@@ -233,4 +235,153 @@ TEST_CASE("QR on randsvd with known condition number", "[operation][qr][generato
             double expected = (i == j) ? 1.0 : 0.0;
             REQUIRE_THAT(QtQ(i, j), Catch::Matchers::WithinAbs(expected, 1e-10));
         }
+}
+
+// ---------------------------------------------------------------------------
+// #353: qr did not compile for complex element types.
+//
+// householder() failed on `axi > scale` and `x0 <= 0` -- relational operators
+// applied to a complex where a MAGNITUDE was meant. But the gap was larger than
+// the comparisons: sigma accumulated z^2 instead of |z|^2, and the reflector was
+// written I - beta*v*v^T rather than I - tau*v*v^H, so repairing only the types
+// would have produced something that compiles and computes a wrong Q.
+//
+// The reflector is now H = I - tau*v*v^H with H*x = beta*e_1, beta real. H is
+// unitary but NOT Hermitian for complex tau, so H^-1 = H^H -- which is why
+// qr_extract_Q applies conj(tau) and lq_factor applies H^H while lq_extract_Q
+// applies H. Those adjoints are the whole content of the fix; every one of them
+// is invisible for real input, where conj is the identity.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::uint64_t cx_seed = 4242u;
+double cx_next() {
+    cx_seed = cx_seed * 6364136223846793005ull + 1442695040888963407ull;
+    return static_cast<double>((cx_seed >> 11) % 2000001) / 1000000.0 - 1.0;
+}
+
+using cd = std::complex<double>;
+
+/// max |Q^H Q - I| over the whole matrix
+double unitarity_error(const mat::dense2D<cd>& Q) {
+    const std::size_t n = Q.num_rows();
+    double worst = 0.0;
+    for (std::size_t a = 0; a < n; ++a)
+        for (std::size_t b = 0; b < n; ++b) {
+            cd s(0, 0);
+            for (std::size_t c = 0; c < n; ++c) s += std::conj(Q(c,a)) * Q(c,b);
+            worst = std::max(worst, std::abs(s - (a == b ? cd(1,0) : cd(0,0))));
+        }
+    return worst;
+}
+
+}  // namespace
+
+TEST_CASE("Complex QR: Q is unitary and Q*R reproduces A (#353)",
+          "[operation][qr][regression]") {
+    for (auto shape : {std::pair<std::size_t,std::size_t>{4,4},
+                       {6,3},      // tall  -- least squares shape
+                       {3,6},      // wide
+                       {5,5}}) {
+        const std::size_t m = shape.first, n = shape.second;
+        mat::dense2D<cd> A(m, n), A0(m, n);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n; ++j) { A(i,j) = cd(cx_next(), cx_next()); A0(i,j) = A(i,j); }
+
+        vec::dense_vector<cd> tau;
+        INFO("m = " << m << ", n = " << n);
+        REQUIRE(qr_factor(A, tau) == 0);
+        auto Q = qr_extract_Q(A, tau);
+        auto R = qr_extract_R(A);
+
+        REQUIRE(unitarity_error(Q) < 1e-12);
+
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n; ++j) {
+                cd s(0, 0);
+                for (std::size_t c = 0; c < m; ++c) s += Q(i,c) * R(c,j);
+                REQUIRE(std::abs(s - A0(i,j)) < 1e-12);
+            }
+
+        // R is upper triangular.
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n && j < i; ++j)
+                REQUIRE(std::abs(R(i,j)) < 1e-14);
+    }
+}
+
+TEST_CASE("Complex QR solves a square system (#353)", "[operation][qr][regression]") {
+    const std::size_t n = 5;
+    mat::dense2D<cd> A(n, n), A0(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            A(i,j) = cd(cx_next(), cx_next()) + (i == j ? cd(4,0) : cd(0,0));
+            A0(i,j) = A(i,j);
+        }
+    vec::dense_vector<cd> xt(n), b(n), x(n), tau;
+    for (std::size_t i = 0; i < n; ++i) xt[i] = cd(cx_next(), cx_next());
+    for (std::size_t i = 0; i < n; ++i) {
+        cd s(0,0);
+        for (std::size_t j = 0; j < n; ++j) s += A0(i,j) * xt[j];
+        b[i] = s;
+    }
+    REQUIRE(qr_factor(A, tau) == 0);
+    qr_solve(A, tau, x, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE(std::abs(x(i) - xt(i)) < 1e-10);
+}
+
+TEST_CASE("Complex LQ: Q is unitary and L*Q reproduces A (#353)",
+          "[operation][lq][regression]") {
+    // LQ is NOT symmetric with QR here, and the difference is the substance of
+    // the fix. householder() annihilates a COLUMN; LQ annihilates a ROW, so the
+    // reflector is built from the conjugated row and applied as H^H. Getting
+    // only one of those two right leaves Q perfectly unitary while L*Q differs
+    // from A by O(1) -- which is what the first attempt produced, and why the
+    // reconstruction check below matters more than the unitarity check.
+    for (auto shape : {std::pair<std::size_t,std::size_t>{4,4}, {3,6}, {6,3}}) {
+        const std::size_t m = shape.first, n = shape.second;
+        mat::dense2D<cd> A(m, n), A0(m, n);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n; ++j) { A(i,j) = cd(cx_next(), cx_next()); A0(i,j) = A(i,j); }
+
+        vec::dense_vector<cd> tau;
+        INFO("m = " << m << ", n = " << n);
+        REQUIRE(lq_factor(A, tau) == 0);
+        auto Q = lq_extract_Q(A, tau);
+        auto L = lq_extract_L(A);
+
+        REQUIRE(unitarity_error(Q) < 1e-12);
+
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n; ++j) {
+                cd s(0, 0);
+                for (std::size_t c = 0; c < n; ++c) s += L(i,c) * Q(c,j);
+                REQUIRE(std::abs(s - A0(i,j)) < 1e-12);
+            }
+    }
+}
+
+TEST_CASE("Complex Householder: H*x = beta*e_1 with beta real, and H is unitary (#353)",
+          "[operation][qr][regression]") {
+    const std::size_t n = 4;
+    vec::dense_vector<cd> x(n);
+    x[0] = cd(1.5,-2.0); x[1] = cd(0.5,1.0); x[2] = cd(-2.0,0.25); x[3] = cd(3.0,-1.5);
+
+    auto [v, tau] = householder(x);
+    REQUIRE(std::abs(v(0) - cd(1,0)) < 1e-15);      // v(0) is implicit 1
+
+    cd vhx(0,0);
+    for (std::size_t i = 0; i < n; ++i) vhx += std::conj(v(i)) * x(i);
+
+    double nx2 = 0.0;
+    for (std::size_t i = 0; i < n; ++i) nx2 += std::norm(x(i));
+    const double nrm = std::sqrt(nx2);
+
+    const cd h0 = x(0) - tau * v(0) * vhx;
+    REQUIRE(std::abs(h0.imag()) < 1e-12);            // beta is REAL
+    REQUIRE(std::abs(std::abs(h0) - nrm) < 1e-12);   // |beta| == ||x||
+    for (std::size_t i = 1; i < n; ++i)
+        REQUIRE(std::abs(x(i) - tau * v(i) * vhx) < 1e-12);   // tail annihilated
 }
