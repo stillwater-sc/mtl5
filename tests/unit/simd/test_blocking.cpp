@@ -23,12 +23,45 @@ TEST_CASE("constexpr integer helpers", "[simd][blocking]") {
 
 TEST_CASE("AVX2 double derivation matches published Haswell-class values", "[simd][blocking]") {
     // Nvec=4 (AVX2 double), default Haswell-class traits.
+    //
+    // 6x8, not the 4x8 this pinned before #351. The tile is now sized against
+    // the REGISTER FILE (12 accumulator vectors of 16 ymm) rather than at the
+    // dependent-FMA latency floor, which is a lower bound the old derivation
+    // used as a target. 6x8 is also BLIS's hand-written Haswell dgemm tile, and
+    // it measured +17% single-core over 4x8 on an i7-12700K.
     constexpr blocking_params bp = derive_blocking<double>(4);
-    STATIC_REQUIRE(bp.mr == 4);
-    STATIC_REQUIRE(bp.nr == 8);     // multiple of Nvec=4; matches OpenBLAS Haswell 4x8
+    STATIC_REQUIRE(bp.mr == 6);
+    STATIC_REQUIRE(bp.nr == 8);     // NRVEC=2 vectors of Nvec=4; matches BLIS Haswell 6x8
     STATIC_REQUIRE(bp.kc == 256);   // (32KB/2)/(8*8)
-    STATIC_REQUIRE(bp.mc == 64);    // (256KB/2)/(256*8), multiple of mr
+    STATIC_REQUIRE(bp.mc == 60);    // (256KB/2)/(256*8) rounded down to a multiple of mr=6
     STATIC_REQUIRE(bp.nc == 4096);  // 8MB/(256*8), multiple of nr
+
+    // The accumulators fit the file with room for the B panel and the A
+    // broadcast -- the constraint the old derivation did not model at all.
+    constexpr std::size_t acc_vectors = bp.mr * (bp.nr / 4);
+    STATIC_REQUIRE(acc_vectors == 12);
+    STATIC_REQUIRE(acc_vectors + 2 + 1 <= default_hw_traits.vec_registers);
+
+    // ...and still clear the latency floor it used to sit exactly on.
+    STATIC_REQUIRE(bp.mr * bp.nr
+                   > 4 * default_hw_traits.fma_latency * default_hw_traits.fma_units);
+}
+
+TEST_CASE("register-file budget binds above the latency floor (#351)", "[simd][blocking]") {
+    // The floor is a LOWER bound, not a target. On a register-poor target it
+    // binds and the tile falls back; on a normal one the file budget governs.
+    hw_traits poor = default_hw_traits;
+    poor.vec_registers = 8;
+    const blocking_params bp_poor = derive_blocking<double>(4, poor);
+    CHECK(bp_poor.mr * bp_poor.nr >= 4 * poor.fma_latency * poor.fma_units);
+
+    // A 32-register file (AVX-512, NEON, SVE) buys a wider tile, at the same
+    // ~3/4 occupancy that measured best on 16.
+    hw_traits wide = default_hw_traits;
+    wide.vec_registers = 32;
+    const blocking_params bp_wide = derive_blocking<double>(8, wide);
+    CHECK(bp_wide.mr * (bp_wide.nr / 8) == 24);
+    CHECK(bp_wide.mr * (bp_wide.nr / 8) <= wide.vec_registers);
 }
 
 namespace {
@@ -66,6 +99,7 @@ TEST_CASE("derivation adapts to a different hardware profile (AVX-512 / bigger c
         /*l2_bytes*/ 1024u * 1024,           // 1 MB L2 (Skylake-X)
         /*l3_bytes*/ 16u * 1024 * 1024,
         /*page_bytes*/ 4096,
+        /*vec_registers*/ 32,          // AVX-512: 32 zmm
     };
     constexpr blocking_params bp = derive_blocking<double>(8, avx512);   // 8 doubles = AVX-512
     STATIC_REQUIRE(bp.nr % 8 == 0);

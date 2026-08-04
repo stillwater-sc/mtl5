@@ -46,17 +46,26 @@ struct hw_traits {
     std::size_t l2_bytes;      // per-core L2
     std::size_t l3_bytes;      // shared L3 (per core group)
     std::size_t page_bytes;    // page size (TLB reasoning)
+    // APPENDED, not inserted (#351). hw_traits is a public aggregate and is
+    // initialized positionally in tests and downstream code; inserting a field
+    // mid-struct silently shifts every later one -- during this change that
+    // turned an l1_bytes of 32 KB into 8 bytes with no diagnostic. Appending
+    // means an initializer that predates this field value-initializes it to 0,
+    // which derive_blocking treats as "unknown" and falls back to the
+    // latency-floor tile, i.e. the pre-#351 behaviour.
+    std::size_t vec_registers; // Nreg: architectural vector registers (0 = unknown)
 };
 
 /// Generic modern-x86 (AVX2-class) default; override per architecture.
 /// Matches a Haswell-class core: 32 KB/8-way L1, 256 KB L2, 8 MB L3,
-/// FMA latency 4, 2 FMA units.
+/// FMA latency 4, 2 FMA units, 16 ymm registers.
 inline constexpr hw_traits default_hw_traits{
     /*fma_latency*/ 4, /*fma_units*/ 2,
     /*l1_bytes*/ 32u * 1024, /*l1_assoc*/ 8, /*line_bytes*/ 64,
     /*l2_bytes*/ 256u * 1024,
     /*l3_bytes*/ 8u * 1024 * 1024,
     /*page_bytes*/ 4096,
+    /*vec_registers*/ 16,
 };
 
 /// GEMM blocking parameters: mr x nr register microtile, kc/mc/nc cache blocks.
@@ -73,13 +82,65 @@ constexpr blocking_params derive_blocking(std::size_t nvec,
     const std::size_t sdata = sizeof(T);
     if (nvec == 0) nvec = 1;
 
-    // Register block (Eqs. 1-3): area >= Nvec*Lvfma*Nvfma, near-square, nr a
-    // multiple of the SIMD width (nr is the vectorized dimension).
-    const std::size_t area = nvec * hw.fma_latency * hw.fma_units;
-    std::size_t nr = round_up(isqrt_ceil(area), nvec);
-    if (nr == 0) nr = nvec;
-    std::size_t mr = ceil_div(area, nr);
-    if (mr == 0) mr = 1;
+    // Register block. Two constraints, and which one BINDS is the whole point:
+    //
+    //   floor    mr*nr >= Nvec*Lvfma*Nvfma -- enough accumulators to cover
+    //            dependent-FMA latency at the issue width. Eq. 1 of the BLIS
+    //            analytical model. It is a LOWER bound.
+    //   ceiling  the accumulators, plus the operands they are multiplied by,
+    //            must FIT the architectural vector register file. Exceed it and
+    //            the microkernel spills every k step.
+    //
+    // This used to size the tile at exactly the floor -- `area` was used as the
+    // target rather than the minimum -- and there was no register-file term at
+    // all. On an AVX2 core that gave 4x8 for double: 8 accumulator vectors out
+    // of 16 ymm, half the file idle. Measured cost (#351, i7-12700K, one pinned
+    // P-core, fp64, median of 3):
+    //
+    //     tile   acc vectors   N=1024   N=2048
+    //     4x8         8         57.90    56.90     <- floor-sized, was default
+    //     5x8        10         63.41    64.16
+    //     6x8        12         67.57    66.96     <- +17%
+    //     8x8        16         57.68    57.03     <- fills the file, spills
+    //     8x12       24         55.31    55.72
+    //
+    // Both directions cost: too few accumulators cannot hide latency, too many
+    // leave nothing for operands. The peak sits at ~3/4 of the register file,
+    // which is also where BLIS's hand-written Haswell dgemm kernel sits (6x8),
+    // and where its AVX-512 kernel sits (8x24 = 24 of 32).
+    //
+    // So: budget 3/4 of the file for accumulators, hold the B micro-panel in
+    // NRVEC vector registers, and let the floor raise mr if a narrow file would
+    // otherwise put us under it.
+    constexpr std::size_t NRVEC = 2;                 // B panel width, in vectors
+    const std::size_t area_floor = nvec * hw.fma_latency * hw.fma_units;
+
+    std::size_t nr, mr;
+    if (hw.vec_registers == 0) {
+        // Register file unknown (an initializer predating this field): fall back
+        // to the pre-#351 near-square tile sized at the latency floor.
+        nr = round_up(isqrt_ceil(area_floor), nvec);
+        if (nr == 0) nr = nvec;
+        mr = ceil_div(area_floor, nr);
+        if (mr == 0) mr = 1;
+    } else {
+        nr = nvec * NRVEC;
+        if (nr == 0) nr = nvec;
+        // Accumulator budget, leaving room for the B panel and the A broadcast.
+        std::size_t acc_budget = (hw.vec_registers * 3) / 4;
+        if (acc_budget < NRVEC + 1) acc_budget = NRVEC + 1;
+        mr = acc_budget / NRVEC;
+        if (mr == 0) mr = 1;
+        // The floor is a floor: if a narrow file put us under it, fall back to
+        // the near-square shape rather than growing mr alone into a degenerate
+        // aspect ratio.
+        if (mr * nr < area_floor) {
+            nr = round_up(isqrt_ceil(area_floor), nvec);
+            if (nr == 0) nr = nvec;
+            mr = ceil_div(area_floor, nr);
+            if (mr == 0) mr = 1;
+        }
+    }
 
     // kc: B micro-panel (kc x nr) occupies ~half of L1.
     std::size_t kc = (hw.l1_bytes / 2) / (nr * sdata);
