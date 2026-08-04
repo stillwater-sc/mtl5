@@ -131,10 +131,15 @@ sweep (varying only `l2_bytes`, so `mr/nr/kc/nc` stay fixed):
 
 Two findings, both against the plan:
 
-- **`T=1` falls monotonically with `mc`.** The premise — that `mc` wants to grow
-  for cache reasons and parallelism starves it — is false here. Growing `mc` is
-  worse with no threading involved at all, so the region all three options would
-  unlock is the region that measures badly.
+- **No `mc` above the shipping 64 is better at `T=1`.** The premise — that `mc`
+  wants to grow for cache reasons and parallelism starves it — is false here.
+  Throughput falls from 57.32 at `mc=32` to 47.89 at `mc=256`, rebounds slightly
+  to 48.80 at `mc=320`, and is never within 13% of `mc=64` again. So growing
+  `mc` is worse with no threading involved at all, and the region all three
+  options would unlock is the region that measures badly.
+  (An earlier draft of this log called the `T=1` column *monotonic*; it is not —
+  the last point rises. The conclusion is unchanged, since every `mc > 64` is
+  worse than `mc=64` either way, but the stronger word was not the measured one.)
 - **The coupling is real but harmless.** The two imbalanced points collapse
   exactly as the issue predicts, while every balanced point sits at 86–91%. The
   mechanism was right; the inference that it cost anything was not.
