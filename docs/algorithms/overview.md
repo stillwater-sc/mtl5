@@ -28,6 +28,9 @@ effort tracking its performance, but the characterization stands on its own.
   the entry point to MTL5's reason for existing: storing narrow while accumulating
   wide, the Element → Accumulate → Result model, and the SIMD *widening* GEMM as a
   worked example of how a mixed-precision kernel is made fast.
+- **[Choosing a Symmetric or Hermitian Factorization](choosing-a-factorization.md)** —
+  which of `cholesky_factor` / `cholesky_h_factor` / `ldlt_factor` / `ldlt_h_factor`
+  to call, and why the `_h` forms are the generic answer for real *and* complex.
 - **[Measuring Solver Accuracy](measuring-solver-accuracy.md)** — the residual,
   norms, absolute vs relative error, and backward vs forward error linked by the
   condition number. The foundation for how every solver's correctness is judged.

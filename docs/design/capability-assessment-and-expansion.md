@@ -68,6 +68,13 @@ must add.
 - **Eigen:** no generalized problem `A x = λ B x`; no public Schur decomposition;
   symmetric path is QR-iteration only (no divide-and-conquer / MRRR); the Krylov
   eigensolvers have **no implicit restart** (no IRAM/IRLM/Krylov–Schur).
+- **Complex element types:** the dense factorizations are covered — `cholesky_h`,
+  `ldlt_h`, `qr` and `lq` all handle Hermitian/complex input, and the guards make
+  a mismatched call fail loudly rather than return a plausible wrong answer (see
+  [Choosing a Symmetric or Hermitian Factorization](../algorithms/choosing-a-factorization.md)).
+  The **eigenproblem is not**: `hessenberg_factor` and `eigen_symmetric` reject
+  complex, because they apply `H·A·H`, a similarity transform only for a *real*
+  reflector. The unitary reduction `A → H·A·Hᴴ` is tracked in #362.
 - **Matrix functions:** no `expm`/`logm`/`sqrtm`, polar decomposition, or
   pseudo-inverse; no condition-number estimator API.
 - **Preconditioners:** no algebraic multigrid (AMG), no sparse approximate inverse
