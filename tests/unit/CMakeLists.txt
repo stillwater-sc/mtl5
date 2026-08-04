@@ -43,6 +43,34 @@ compile_all("true" "iface" "Tests/interface" "MTL5::mtl5;Catch2::Catch2WithMain"
 file(GLOB SPARSE_SRC "sparse/*.cpp")
 compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" ${SPARSE_SRC})
 
+# The threaded solve tests assert BIT-IDENTITY against their serial counterparts
+# (#381). That claim is about ACCUMULATION ORDER -- the level-scheduled gather
+# visits each row's entries in the same increasing-column order the serial CSC
+# scatter does -- and it is true at the source level.
+#
+# FP contraction does not change that order; it fuses a multiply and an add. But
+# it is applied per-expression, so the compiler may contract one of the two loop
+# nests and not the other, and the results then differ in the last ulp. Measured
+# under -O3 -march=native: half the entries differ, by ~1 eps relative to the
+# solution norm. With contraction off, 0 entries differ on both GCC and Clang.
+#
+# So these targets pin contraction, which is what makes the order claim testable
+# rather than a claim about the optimizer. MSVC needs nothing: /fp:precise is the
+# default and does not contract across statements.
+#
+# The invariants that hold under ANY flags -- determinism across repeated
+# threaded runs, and agreement with the serial solve to a measured bound -- are
+# asserted inside the tests themselves and are not affected by this.
+if(NOT MSVC)
+    foreach(mt_target sparse_test_supernodal_ldlt_mt
+                      sparse_test_supernodal_lu_mt
+                      sparse_test_trisolve_level_schedule_mt)
+        if(TARGET ${mt_target})
+            target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
+        endif()
+    endforeach()
+endif()
+
 file(GLOB ARRAY_SRC "array/*.cpp")
 compile_all("true" "array" "Tests/array" "MTL5::mtl5;Catch2::Catch2WithMain" ${ARRAY_SRC})
 

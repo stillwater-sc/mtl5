@@ -91,6 +91,20 @@ std::vector<double> random_rhs(std::size_t n, std::uint64_t seed) {
 }
 
 // Assert level_scheduled_lower_solve == dense_lower_solve, bit-for-bit.
+//
+// Two distinct invariants, and they need different justification (#381):
+//
+//   ORDER      got == ref exactly. A source-level claim: the level-scheduled
+//              gather visits each row in the same increasing-column order the
+//              serial CSC scatter does. True regardless of thread count -- but
+//              only observable with FP contraction pinned, since the compiler
+//              may fuse a multiply-add in one loop nest and not the other. The
+//              target pins it (see tests/unit/CMakeLists.txt).
+//   DETERMINISM the threaded solve returns bit-identical results across repeated
+//              runs. Same function, same expression tree, so this holds under
+//              ANY optimization flags -- and it is the invariant that actually
+//              guards against a racing or order-dependent reduction, which is
+//              what threading threatens.
 void require_bit_identical(const csc_matrix<double>& L, std::uint64_t rhs_seed) {
     const std::size_t n = L.ncols;
     auto ref = random_rhs(n, rhs_seed);
@@ -99,6 +113,14 @@ void require_bit_identical(const csc_matrix<double>& L, std::uint64_t rhs_seed) 
     auto sched = factorization::build_lower_solve_schedule(L);
     factorization::level_scheduled_lower_solve(L, sched, got);       // level-scheduled
     for (std::size_t i = 0; i < n; ++i) REQUIRE(got[i] == ref[i]);
+
+    // DETERMINISM: independent of contraction, and of how the pool happened to
+    // schedule the first run.
+    for (int rep = 0; rep < 3; ++rep) {
+        auto again = random_rhs(n, rhs_seed);
+        factorization::level_scheduled_lower_solve(L, sched, again);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(again[i] == got[i]);
+    }
 }
 
 } // namespace

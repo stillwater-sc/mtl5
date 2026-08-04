@@ -114,8 +114,21 @@ void require_supernodal_solve_bit_identical(const mat::compressed2D<double>& A) 
     vec::dense_vector<double> x(n);
     fac.solve(x, b);
 
+    // ORDER: identical accumulation order to the serial dense kernels. A
+    // source-level claim, observable only with FP contraction pinned -- the
+    // target pins it (tests/unit/CMakeLists.txt, #381).
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE(x(static_cast<int>(i)) == ref[i]);   // exact equality
+
+    // DETERMINISM: the threaded solve is reproducible run to run. Same function,
+    // same expression tree, so this holds under any optimization flags, and it
+    // is what guards against a racing or order-dependent reduction.
+    for (int rep = 0; rep < 3; ++rep) {
+        vec::dense_vector<double> again(n);
+        fac.solve(again, b);
+        for (std::size_t i = 0; i < n; ++i)
+            REQUIRE(again(static_cast<int>(i)) == x(static_cast<int>(i)));
+    }
 }
 
 } // namespace
