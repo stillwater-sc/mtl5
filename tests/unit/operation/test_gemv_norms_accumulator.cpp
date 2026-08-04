@@ -1,6 +1,7 @@
 // MTL5 -- accumulator policy for gemv and the sum-of-squares norms (#160, #162).
 // Mirrors dot/gemm: an explicit Accumulator sums in a precision distinct from the
 // element type, with the result delivered in the natural output/magnitude type.
+#include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -189,16 +190,40 @@ TEST_CASE("accumulator_round_type names the accumulator's own precision (#324)",
 // caller is choosing between.
 // ---------------------------------------------------------------------------
 
+namespace {
+// Exact sum of squares in double-double, via FMA. Portable: needs only IEEE
+// double, unlike a `long double` reference, which is 80-bit on x86-64 and only
+// 64-bit on Apple ARM64 -- where it is no better than the values under test and
+// WORSE than a compensated accumulator, so the more accurate answer scores as
+// the less accurate one. That is precisely how the first version of this test
+// failed on macOS ARM64 while passing on x86-64.
+struct dd { double hi{}, lo{}; };
+inline void dd_add(dd& a, double x) {          // Knuth two-sum
+    double s = a.hi + x;
+    double bb = s - a.hi;
+    a.lo += (a.hi - (s - bb)) + (x - bb);
+    a.hi = s;
+}
+inline double exact_sum_of_squares(const float* p, std::size_t n) {
+    dd acc;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double x = static_cast<double>(p[i]);
+        const double prod = x * x;                       // exact: 24-bit input
+        const double err  = std::fma(x, x, -prod);       // the rounded-off part
+        dd_add(acc, prod);
+        dd_add(acc, err);
+    }
+    return acc.hi + acc.lo;
+}
+}  // namespace
+
 TEST_CASE("two_norm/frobenius_norm Result parameter (#379)",
           "[operation][norms][accumulator][regression]") {
     const std::size_t n = 20000;
     vec::dense_vector<float> v(n);
     for (std::size_t i = 0; i < n; ++i) v[i] = 1.0f + static_cast<float>(i % 7) * 1e-6f;
 
-    long double ref = 0.0L;
-    for (std::size_t i = 0; i < n; ++i)
-        ref += static_cast<long double>(v[i]) * static_cast<long double>(v[i]);
-    const double exact = static_cast<double>(std::sqrt(ref));
+    const double exact = std::sqrt(exact_sum_of_squares(v.data(), n));
     const auto rel = [&](double x) { return std::abs(x - exact) / exact; };
 
     SECTION("Result = void is byte-for-byte today's behaviour") {
@@ -232,19 +257,23 @@ TEST_CASE("two_norm/frobenius_norm Result parameter (#379)",
         // ...and better, not worse. Implementing Result as only the final cast
         // would have made the exact accumulator LESS accurate than the fp64 one
         // (2.4e-08 against 1.4e-14), inverting the choice.
+        //
+        // Ordering, not an exact value. `REQUIRE(rel(d) == 0.0)` held on x86-64
+        // and failed on macOS ARM64: it asserted a rounding coincidence of the
+        // reference rather than anything about the feature.
         REQUIRE(rel(d) <= rel(c));
-        REQUIRE(rel(d) == 0.0);        // exact sum, rounded once, at the sqrt
     }
 
     SECTION("frobenius_norm behaves the same way") {
         mat::dense2D<float> m(100, 200);
-        long double fref = 0.0L;
+        std::vector<float> flat;
+        flat.reserve(100 * 200);
         for (std::size_t i = 0; i < 100; ++i)
             for (std::size_t j = 0; j < 200; ++j) {
                 m(i, j) = 1.0f + static_cast<float>((i + j) % 7) * 1e-6f;
-                fref += static_cast<long double>(m(i, j)) * static_cast<long double>(m(i, j));
+                flat.push_back(m(i, j));
             }
-        const double fexact = static_cast<double>(std::sqrt(fref));
+        const double fexact = std::sqrt(exact_sum_of_squares(flat.data(), flat.size()));
 
         const auto f0 = frobenius_norm<double>(m);
         const auto f1 = frobenius_norm<double, double>(m);
