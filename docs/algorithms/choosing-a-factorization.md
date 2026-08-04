@@ -76,6 +76,31 @@ exactly what `cholesky_h_factor` computes.
 The asymmetry between the two is therefore principled, not historical: `ldlt` has
 two genuinely different complex factorizations, and `cholesky` has one.
 
+### Design note: why `cholesky_factor` rejects rather than dispatches
+
+Since `L·Lᴴ` is the *only* meaningful Cholesky for a complex matrix, there is no
+ambiguity for a restriction to protect against — so `cholesky_factor` could
+simply dispatch to the Hermitian algorithm for complex input and "just work" for
+generic callers. That was considered and **deliberately rejected**
+([#366](https://github.com/stillwater-sc/mtl5/issues/366)). The reasons, recorded
+here so the question does not get re-opened by each new consumer:
+
+- **The caller should name the factorization they are getting.** `A = L·Lᵀ` and
+  `A = L·Lᴴ` are different objects; having one spelling silently mean either
+  depending on the element type makes generic code harder to reason about, not
+  easier.
+- **Consistency with `ldlt`.** There, dispatch is not available even in
+  principle — both complex forms are meaningful — so `_h` must be explicit. One
+  naming convention across both families beats a special case in one.
+- **It follows the rule that produced these routines.**
+  [#352](https://github.com/stillwater-sc/mtl5/issues/352) and
+  [#353](https://github.com/stillwater-sc/mtl5/issues/353) were both cases of a
+  routine quietly doing something adjacent to what was asked. Restricting and
+  naming the alternative is the habit that fixed them.
+
+The cost is one line at each call site, and the `static_assert` names the
+replacement, so the compiler tells you what to write.
+
 ## Which factorization, not which spelling
 
 Orthogonal to the `_h` question:
