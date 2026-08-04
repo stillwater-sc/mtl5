@@ -91,24 +91,58 @@ TEST_CASE("frobenius_norm accumulator policy", "[operation][norms][accumulator]"
 // These are primarily compile-time pins: the failure was at instantiation.
 // ---------------------------------------------------------------------------
 
+namespace {
+// Exact sum of squares in double-double, via FMA. Portable: needs only IEEE
+// double, unlike a `long double` reference, which is 80-bit on x86-64 and only
+// 64-bit on Apple ARM64 -- where it is no better than the values under test and
+// WORSE than a compensated accumulator, so the more accurate answer scores as
+// the less accurate one. That is precisely how the first version of this test
+// failed on macOS ARM64 while passing on x86-64.
+struct dd { double hi{}, lo{}; };
+inline void dd_add(dd& a, double x) {          // Knuth two-sum
+    double s = a.hi + x;
+    double bb = s - a.hi;
+    a.lo += (a.hi - (s - bb)) + (x - bb);
+    a.hi = s;
+}
+inline double exact_sum_of_squares(const float* p, std::size_t n) {
+    dd acc;
+    for (std::size_t i = 0; i < n; ++i) {
+        const double x = static_cast<double>(p[i]);
+        const double prod = x * x;                       // exact: 24-bit input
+        const double err  = std::fma(x, x, -prod);       // the rounded-off part
+        dd_add(acc, prod);
+        dd_add(acc, err);
+    }
+    return acc.hi + acc.lo;
+}
+}  // namespace
+
 // Configuration 3 stand-in: an exact compensated super-accumulator, playing the
 // role of a Universal quire. MTL5 stays free of any external number library, so
 // the real quire specialization lives in the peer repo; this exercises the same
 // contract -- a custom Acc with no sqrt of its own.
+//
+// Accumulates in `double`, deliberately NOT `long double`. `long double` is
+// 80-bit on x86-64, 64-bit (i.e. plain double) on Apple ARM64 and MSVC, and
+// 128-bit on ARM64 Linux -- three different precisions across lanes this repo
+// already builds on. Compensated summation recovers roughly twice the base
+// type's precision on its own, so this is bit-identically accurate here without
+// depending on a type whose width varies by ~60 bits between targets.
 namespace {
-struct kahan_acc { long double sum{}, c{}; };
+struct kahan_acc { double sum{}, c{}; };
 }
 namespace mtl::math {
 template <typename Value>
 struct accumulator_traits<kahan_acc, Value> {
     using Acc = kahan_acc;
     static void clear(Acc& a) { a.sum = 0; a.c = 0; }
-    static void assign(Acc& a, const Value& v) { a.sum = static_cast<long double>(v); a.c = 0; }
+    static void assign(Acc& a, const Value& v) { a.sum = static_cast<double>(v); a.c = 0; }
     template <typename Result = Value>
     static Result value(const Acc& a) { return static_cast<Result>(a.sum); }
     static void add_product(Acc& a, const Value& m, const Value& v) {
-        long double y = static_cast<long double>(m) * static_cast<long double>(v) - a.c;
-        long double t = a.sum + y;
+        double y = static_cast<double>(m) * static_cast<double>(v) - a.c;
+        double t = a.sum + y;
         a.c = (t - a.sum) - y;
         a.sum = t;
     }
@@ -121,10 +155,7 @@ TEST_CASE("two_norm/frobenius_norm accept every accumulator configuration (#324)
     vec::dense_vector<float> v(n);
     for (std::size_t i = 0; i < n; ++i) v[i] = 1.0f + static_cast<float>(i % 7) * 1e-6f;
 
-    long double ref = 0.0L;
-    for (std::size_t i = 0; i < n; ++i)
-        ref += static_cast<long double>(v[i]) * static_cast<long double>(v[i]);
-    const double exact = static_cast<double>(std::sqrt(ref));
+    const double exact = std::sqrt(exact_sum_of_squares(v.data(), n));
 
     // Configuration 1: plain arithmetic accumulator (already worked).
     const auto c1 = two_norm<double>(v);
@@ -150,11 +181,11 @@ TEST_CASE("two_norm/frobenius_norm accept every accumulator configuration (#324)
         for (std::size_t c = 0; c < 120; ++c)
             M(r, c) = 1.0f + static_cast<float>((r + c) % 5) * 1e-6f;
 
-    long double fref = 0.0L;
+    std::vector<float> Mflat;
+    Mflat.reserve(120 * 120);
     for (std::size_t r = 0; r < 120; ++r)
-        for (std::size_t c = 0; c < 120; ++c)
-            fref += static_cast<long double>(M(r, c)) * static_cast<long double>(M(r, c));
-    const double fexact = static_cast<double>(std::sqrt(fref));
+        for (std::size_t c = 0; c < 120; ++c) Mflat.push_back(M(r, c));
+    const double fexact = std::sqrt(exact_sum_of_squares(Mflat.data(), Mflat.size()));
 
     const auto f1 = frobenius_norm<double>(M);
     const auto f2 = frobenius_norm<math::fma_accumulator<double>>(M);
@@ -190,32 +221,6 @@ TEST_CASE("accumulator_round_type names the accumulator's own precision (#324)",
 // caller is choosing between.
 // ---------------------------------------------------------------------------
 
-namespace {
-// Exact sum of squares in double-double, via FMA. Portable: needs only IEEE
-// double, unlike a `long double` reference, which is 80-bit on x86-64 and only
-// 64-bit on Apple ARM64 -- where it is no better than the values under test and
-// WORSE than a compensated accumulator, so the more accurate answer scores as
-// the less accurate one. That is precisely how the first version of this test
-// failed on macOS ARM64 while passing on x86-64.
-struct dd { double hi{}, lo{}; };
-inline void dd_add(dd& a, double x) {          // Knuth two-sum
-    double s = a.hi + x;
-    double bb = s - a.hi;
-    a.lo += (a.hi - (s - bb)) + (x - bb);
-    a.hi = s;
-}
-inline double exact_sum_of_squares(const float* p, std::size_t n) {
-    dd acc;
-    for (std::size_t i = 0; i < n; ++i) {
-        const double x = static_cast<double>(p[i]);
-        const double prod = x * x;                       // exact: 24-bit input
-        const double err  = std::fma(x, x, -prod);       // the rounded-off part
-        dd_add(acc, prod);
-        dd_add(acc, err);
-    }
-    return acc.hi + acc.lo;
-}
-}  // namespace
 
 TEST_CASE("two_norm/frobenius_norm Result parameter (#379)",
           "[operation][norms][accumulator][regression]") {
