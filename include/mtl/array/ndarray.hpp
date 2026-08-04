@@ -120,9 +120,40 @@ public:
                mem_.category() == detail::memory_category::external;
     }
 
-    /// Check if memory is contiguous (enables BLAS dispatch, reshape, etc.)
+    /// True when the elements occupy a dense block of `size()` values, in
+    /// EITHER C or F order.
+    ///
+    /// This is the right question for anything order-INdependent -- BLAS
+    /// dispatch, fill, a commutative reduction -- and the WRONG one for
+    /// anything that walks memory as though it were logical order. A transpose
+    /// of a C-order array is F-contiguous, so this returns true while
+    /// memory order and logical order disagree (#359). Use
+    /// is_c_contiguous() / is_f_contiguous() when the distinction matters.
     bool is_contiguous() const {
         return ::mtl::array::is_contiguous(shape_, strides_);
+    }
+
+    /// True when memory is contiguous in C (row-major) order.
+    bool is_c_contiguous() const {
+        return ::mtl::array::is_contiguous_c(shape_, strides_);
+    }
+
+    /// True when memory is contiguous in F (column-major) order.
+    /// For N <= 1 this coincides with is_c_contiguous().
+    bool is_f_contiguous() const {
+        return ::mtl::array::is_contiguous_f(shape_, strides_);
+    }
+
+    /// True when memory order matches THIS array's logical iteration order,
+    /// i.e. the order its own `Order` parameter implies. This is the predicate
+    /// every order-dependent operation wants, and the one whose absence caused
+    /// reshape and flatten to return elements in memory order (#359).
+    bool is_contiguous_in_own_order() const {
+        if constexpr (std::is_same_v<Order, c_order>) {
+            return is_c_contiguous();
+        } else {
+            return is_f_contiguous();
+        }
     }
 
     // -- Element access ------------------------------------------------------
@@ -203,7 +234,12 @@ public:
     template <std::size_t M>
     ndarray<Value, M, Order> reshape(::mtl::array::shape<M> new_shape) const {
         assert(new_shape.total_size() == size() && "Reshape must preserve total size");
-        if (!is_contiguous()) {
+        // Must be contiguous in THIS array's own order, not merely in one of
+        // the two. The result is built with `Order` strides over the same
+        // memory, so an F-contiguous c_order array (any transpose of a C-order
+        // array) would be re-read in the wrong order and silently return
+        // elements in memory order rather than logical order (#359).
+        if (!is_contiguous_in_own_order()) {
             throw std::runtime_error("Cannot reshape non-contiguous array without copy");
         }
         return ndarray<Value, M, Order>(
@@ -256,7 +292,12 @@ public:
     /// Apply f to every element (respects strides for non-contiguous arrays).
     template <typename F>
     void for_each_element(F&& f) {
-        if (is_contiguous()) {
+        // The flat path walks raw memory, so it is only equivalent to logical
+        // iteration when memory order IS this array's order. Order-independent
+        // callers (the compound assignments, a commutative reduction) would be
+        // fine either way; order-dependent ones -- flatten, most obviously --
+        // are not (#359).
+        if (is_contiguous_in_own_order()) {
             for (size_type i = 0; i < size(); ++i) {
                 f(mem_[i]);
             }
@@ -269,7 +310,12 @@ public:
 
     template <typename F>
     void for_each_element(F&& f) const {
-        if (is_contiguous()) {
+        // The flat path walks raw memory, so it is only equivalent to logical
+        // iteration when memory order IS this array's order. Order-independent
+        // callers (the compound assignments, a commutative reduction) would be
+        // fine either way; order-dependent ones -- flatten, most obviously --
+        // are not (#359).
+        if (is_contiguous_in_own_order()) {
             for (size_type i = 0; i < size(); ++i) {
                 f(mem_[i]);
             }

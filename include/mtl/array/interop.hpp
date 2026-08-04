@@ -71,7 +71,9 @@ auto as_ndarray(const mat::dense2D<Value, Params>& m) {
 // -- ndarray -> vector view ------------------------------------------
 
 /// Create a dense_vector view over a 1D ndarray (zero-copy).
-/// Requires contiguous storage.
+/// Requires contiguous storage. The either-order predicate is correct here:
+/// for N == 1 the C and F strides are both {1}, so the distinction that broke
+/// as_matrix and reshape (#359) does not exist at rank 1.
 template <typename Value, typename Order>
 vec::dense_vector<Value> as_vector(ndarray<Value, 1, Order>& a) {
     assert(a.is_contiguous() && "as_vector requires contiguous ndarray");
@@ -87,18 +89,24 @@ vec::dense_vector<const Value> as_vector(const ndarray<Value, 1, Order>& a) {
 // -- ndarray -> matrix view ------------------------------------------
 
 /// Create a dense2D view over a 2D ndarray (zero-copy).
-/// Requires contiguous C-order (row-major) storage.
+///
+/// Requires contiguous C-order (row-major) storage, and now CHECKS for it.
+/// The precondition used to be spelled `is_contiguous()`, which is true for an
+/// F-contiguous array too -- so any transpose of a C-order array passed here
+/// aliased its memory as row-major and silently produced the TRANSPOSE (#359).
+/// dense2D is row-major, so C-contiguity is the only layout that can be aliased
+/// without a copy; pass `flatten`ed or explicitly copied data otherwise.
 template <typename Value, typename Order>
     requires std::is_same_v<Order, c_order>
 mat::dense2D<Value> as_matrix(ndarray<Value, 2, Order>& a) {
-    assert(a.is_contiguous() && "as_matrix requires contiguous ndarray");
+    assert(a.is_c_contiguous() && "as_matrix requires C-contiguous ndarray (#359)");
     return mat::dense2D<Value>(a.extent(0), a.extent(1), a.data());
 }
 
 template <typename Value, typename Order>
     requires std::is_same_v<Order, c_order>
 mat::dense2D<const Value> as_matrix(const ndarray<Value, 2, Order>& a) {
-    assert(a.is_contiguous() && "as_matrix requires contiguous ndarray");
+    assert(a.is_c_contiguous() && "as_matrix requires C-contiguous ndarray (#359)");
     return mat::dense2D<const Value>(
         a.extent(0), a.extent(1), const_cast<const Value*>(a.data()));
 }

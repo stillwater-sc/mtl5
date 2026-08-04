@@ -170,3 +170,58 @@ TEST_CASE("flatten matrix via ndarray", "[interop][algorithm]") {
     REQUIRE(flat(0) == 1);
     REQUIRE(flat(5) == 6);
 }
+
+// ---------------------------------------------------------------------------
+// #359: flatten inherited the memory-order bug through for_each_element, and
+// as_matrix aliased an F-contiguous array as row-major dense2D -- silently the
+// transpose. as_vector is unaffected: at rank 1 the C and F strides coincide.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("flatten returns logical order for an F-contiguous array (#359)",
+          "[array][interop][regression]") {
+    ndarray<double, 2> a(shape<2>{2, 3});
+    double v = 1.0;
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) a(i, j) = v++;
+
+    // a   = [[1,2,3],[4,5,6]]        memory: 1 2 3 4 5 6
+    // a^T = [[1,4],[2,5],[3,6]]      NumPy: a.T.flatten() == [1,4,2,5,3,6]
+    auto t = a.transpose();
+    auto f = flatten(t);
+
+    REQUIRE(f.size() == 6);
+    const double expected[6] = {1, 4, 2, 5, 3, 6};
+    for (std::size_t i = 0; i < 6; ++i) {
+        INFO("i = " << i);
+        REQUIRE(f(i) == Catch::Approx(expected[i]));
+    }
+
+    // The C-contiguous case is unchanged.
+    auto g = flatten(a);
+    for (std::size_t i = 0; i < 6; ++i)
+        REQUIRE(g(i) == Catch::Approx(static_cast<double>(i + 1)));
+}
+
+TEST_CASE("as_matrix aliases a C-contiguous ndarray correctly (#359)",
+          "[array][interop][regression]") {
+    // The positive direction. The negative one -- an F-contiguous array passed
+    // to as_matrix -- is a precondition violation caught by assert in debug
+    // builds, so it cannot be expressed as a runtime test here.
+    ndarray<double, 2> a(shape<2>{2, 3});
+    double v = 1.0;
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) a(i, j) = v++;
+
+    REQUIRE(a.is_c_contiguous());
+    auto M = as_matrix(a);
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) {
+            INFO("i = " << i << ", j = " << j);
+            REQUIRE(M(i, j) == Catch::Approx(a(i, j)));
+        }
+
+    // And the transpose is exactly the case the precondition now rejects.
+    auto t = a.transpose();
+    REQUIRE(t.is_contiguous());          // the old, too-weak predicate
+    REQUIRE_FALSE(t.is_c_contiguous());  // the one as_matrix now requires
+}

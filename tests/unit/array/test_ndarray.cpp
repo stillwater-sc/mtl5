@@ -402,3 +402,89 @@ TEST_CASE("ndarray copy is deep", "[array][copy]") {
     REQUIRE(a(0) == 1);  // original unchanged
     REQUIRE(b(0) == 99);
 }
+
+// ---------------------------------------------------------------------------
+// #359: reshape and flatten returned MEMORY order, not LOGICAL order, for an
+// F-contiguous array -- which is what any transpose of a C-order array is.
+//
+// One root cause: is_contiguous() answers "contiguous in EITHER C or F order",
+// which is the right question for order-INdependent work (fill, BLAS dispatch,
+// a commutative reduction) and the wrong one for anything that walks memory as
+// though it were logical order. Two callers used it as though it meant
+// "memory order == logical order", which only holds for the C-contiguous case.
+//
+// NumPy is the reference: a.T.reshape(6) and a.T.flatten() are [1,4,2,5,3,6].
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ndarray contiguity predicates distinguish C, F and own order (#359)",
+          "[array][ndarray][regression]") {
+    ndarray<double, 2> a(shape<2>{2, 3});
+    double v = 1.0;
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) a(i, j) = v++;
+
+    // A freshly built C-order array is contiguous in every sense.
+    REQUIRE(a.is_contiguous());
+    REQUIRE(a.is_c_contiguous());
+    REQUIRE(a.is_contiguous_in_own_order());
+
+    // Its transpose is F-contiguous but NOT C-contiguous. is_contiguous() is
+    // still true -- that is the trap, and it is correct for what it means.
+    auto t = a.transpose();
+    REQUIRE(t.is_contiguous());
+    REQUIRE_FALSE(t.is_c_contiguous());
+    REQUIRE(t.is_f_contiguous());
+    REQUIRE_FALSE(t.is_contiguous_in_own_order());   // Order is still c_order
+
+    // Rank 1 has no distinction: the C and F strides coincide.
+    ndarray<double, 1> u(shape<1>{4});
+    REQUIRE(u.is_c_contiguous());
+    REQUIRE(u.is_f_contiguous());
+}
+
+TEST_CASE("ndarray reshape refuses an F-contiguous c_order array (#359)",
+          "[array][ndarray][regression]") {
+    ndarray<double, 2> a(shape<2>{2, 3});
+    double v = 1.0;
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) a(i, j) = v++;
+
+    // Previously this returned a view that read the memory in C order and
+    // silently produced [1 2 3 4 5 6] instead of the logical [1 4 2 5 3 6].
+    auto t = a.transpose();
+    REQUIRE_THROWS_AS(t.reshape(shape<1>{6}), std::runtime_error);
+
+    // The C-contiguous case must still succeed, and still be a view.
+    auto r = a.reshape(shape<1>{6});
+    REQUIRE(r.size() == 6);
+    for (std::size_t i = 0; i < 6; ++i)
+        REQUIRE(r(i) == Catch::Approx(static_cast<double>(i + 1)));
+    r(0) = 99.0;
+    REQUIRE(a(0, 0) == Catch::Approx(99.0));   // aliases, not a copy
+}
+
+TEST_CASE("ndarray order-independent operations are unaffected (#359)",
+          "[array][ndarray][regression]") {
+    // Stated explicitly so the fix stays narrow: these visit every element and
+    // do not care in what order, so they were correct before and after.
+    ndarray<double, 2> a(shape<2>{2, 3});
+    double v = 1.0;
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) a(i, j) = v++;
+
+    auto t = a.transpose();
+    REQUIRE(sum(t) == Catch::Approx(21.0));
+
+    auto s1 = sum_axis(t, 1);
+    REQUIRE(s1(0) == Catch::Approx(5.0));
+    REQUIRE(s1(1) == Catch::Approx(7.0));
+    REQUIRE(s1(2) == Catch::Approx(9.0));
+
+    // Compound assignment through a transposed view must still reach every
+    // element -- it now takes the strided path rather than the flat one.
+    auto t2 = a.transpose();
+    t2 += 10.0;
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j)
+            REQUIRE(a(i, j) == Catch::Approx(static_cast<double>(i * 3 + j + 11)));
+}
