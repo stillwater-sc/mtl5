@@ -5,6 +5,31 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+#### Complex (Hermitian) dense factorizations (#353)
+`cholesky`, `qr` and `lq` did not compile for `std::complex`, failing first on relational operators applied to a complex where a *magnitude* was meant. Repairing only those comparisons would have produced routines that compile and compute the **wrong** factorization — the unconjugated inner product yields `L·Lᵀ`, not `L·Lᴴ` — so neither fix repairs a comparison.
+- **`mtl::cholesky_h_factor` / `mtl::cholesky_h_solve`** (`operation/cholesky.hpp`) — `A = L·Lᴴ` for Hermitian positive definite input. The pivot is accumulated in the **magnitude** type rather than the element type, which is what makes the positivity test well-formed: an ordering is exactly what the element type lacks. Rejects a non-real diagonal with `CHOLESKY_NOT_HERMITIAN`. `cholesky_factor` is now restricted to real element types with a diagnostic naming the alternative — unlike `ldlt` there is no complex-symmetric variant to offer, since "positive definite" is a statement about an ordering (#360)
+- **Complex Householder, QR and LQ** (`operation/householder.hpp`, `qr.hpp`, `lq.hpp`) — the reflector is now `H = I − τ·v·vᴴ` with `H·x = β·e₁` and β real, built as in LAPACK `zlarfg`. `H` is unitary but **not Hermitian** for complex τ, so `H⁻¹ = Hᴴ`; that lands as `conj(tau)` in `qr_extract_Q`, plain `tau` in `lq_extract_Q`, and a conjugated row plus `Hᴴ` on the LQ factor side. Verified `‖QᴴQ−I‖ ≤ 7.8e-16` and `‖QR−A‖ ≤ 7.0e-16` over square, tall and wide shapes (#361)
+- `hessenberg_factor` and `eigen_symmetric` now **reject** complex element types. They apply `H·A·H`, a similarity transform only because a real reflector is Hermitian and involutory; making `householder()` complex-capable would otherwise have let them compute a non-similar matrix. The Hermitian reduction is tracked in #362 (#361)
+
+#### Compile-failure test harness
+- **`tests/unit/compile_fail/`** — sources that must *not* compile, built on demand by ctest (`EXCLUDE_FROM_ALL`) so ordinary builds are unaffected. Each declares an `// EXPECT-ERROR: <regex>` line and is matched with `PASS_REGULAR_EXPRESSION` rather than CMake's `WILL_FAIL`, which passes on *any* non-zero build exit and would go green on a typo in the test source. The distinction is not theoretical: removing the `cholesky` guard leaves the file still failing to compile via the old `operator<=` error, so `WILL_FAIL` would have been green while the regex catches the regression to the worse diagnostic (#358)
+
+#### Platform Performance Engineering lab
+- **`ppe/`** — a progression of GEMM implementations (naive → loop order → blocking/packing → register tiling → compile-time microtile) measured across `int8/16/32/64` and `fp16/32/64`, with hypotheses recorded before the experiments that test them. Documents the *vectorization cliff*: the compile-time-unrolled microtile is **5× slower** than a plain loop reorder for `fp32`, because full unrolling removes the loop structure the vectorizer needs and 32 scalar accumulators then spill — while being the *best* kernel for `int32`, whose SIMD headroom is small (#354)
+
+### Fixed
+- **`ldlt` returned a wrong answer for Hermitian complex input** under `info == 0`. Added `ldlt_h_factor` / `ldlt_h_solve` for `A = L·D·Lᴴ`, and guards in both directions: `LDLT_NOT_SYMMETRIC` when Hermitian input reaches the LDLᵀ form, `LDLT_NOT_HERMITIAN` when a non-real diagonal reaches the LDLᴴ form. Both tests are **scale-relative** (`n · eps · scale`, via LAPACK's `CABS1` to avoid an O(n²) sweep of `hypot`), because an exact test only catches matrices that are bit-exactly Hermitian — a one-ULP perturbation slipped past the first version and produced an answer wrong in the first significant digit. Shared thresholds live in `detail/structure_tol.hpp` (#352, #356)
+- **`compressed2D` accepted `tag::col_major` and ignored it.** The container is CSR unconditionally, so a `col_major` instance was byte-for-byte a CSR matrix and genuine CSC input came back as its **transpose** while the constructor reported success. Now rejected at compile time; `ell_matrix` carried the same inert-orientation hole and is rejected too. `coordinate2D` is deliberately untouched — it stores explicit `(row, col, value)` triplets, so orientation cannot change a result (#355, #358)
+- **`householder` broke its own real-β guarantee** for a complex vector with a vanishing tail and a complex leading entry, returning `tau = 0` and leaving a complex `R`/`L` diagonal — silent, since `Q` stayed unitary and `Q·R` still reproduced `A`. The identity shortcut is now taken only when it is exact (#361)
+
+### Performance
+- **Blocked GEMM parallel efficiency 79% → 91%** on 8 physical cores. The shared B panel was packed by each jc-team's leader while the rest of the team waited on the barrier — a serial region proportional to `kc·nc` per `pc` step (at N=2048 with a team of 8, one thread packed ~67 MB while seven idled). The team now splits the NR-column panels; packing is pure data movement into disjoint offsets, so the packed bytes and the result are unchanged (#348)
+
+### Changed
+- `docs/sparse-direct-solvers-design.md` no longer advertises a "zero-cost CSC view over `compressed2D` with col-major parameters" — never implemented; `sparse/util/csc.hpp` uses a standalone owning `csc_matrix`. `docs/architecture/aggregate-types.md` no longer claims "Full support (CSR, CSC, COO, ELLPACK)"; CSC exists only as a conversion utility (#358)
+
 ## [5.8.0] - 2026-08-02
 
 ### Added
