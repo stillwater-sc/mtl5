@@ -40,12 +40,31 @@ auto one_norm(const V& v) {
 /// Mixed precision: pass an explicit `Accumulator` to sum the squares in a wider
 /// precision than the element magnitude (e.g. `two_norm<double>(v)` over a
 /// bfloat16/float vector), guarding the long reduction against overflow and
-/// precision loss; the result is returned as the element magnitude type. Default
-/// `Accumulator = void` keeps the BLAS / SIMD / loop dispatch unchanged.
-template <typename Accumulator = void, Vector V>
+/// precision loss. Default `Accumulator = void` keeps the BLAS / SIMD / loop
+/// dispatch unchanged.
+///
+/// `Result` is the delivery type, as in `dot` (#379). It defaults to void,
+/// meaning the element magnitude type -- today's behaviour, byte for byte.
+///
+/// Note what `Result` governs: NOT just the final cast. It also selects the
+/// type the accumulator is rounded out to before the square root. That
+/// distinction is the whole feature. `accumulator_round_type_t<Acc, Mag>` maps a
+/// non-arithmetic accumulator (a quire, a compensated sum) to `Mag`, so leaving
+/// it at the magnitude type would round an exact accumulation down to the
+/// element's precision BEFORE the sqrt, and a wider return type could not
+/// recover it -- `two_norm<quire, double>` would then be no better than
+/// `two_norm<>`, and strictly worse than `two_norm<double, double>`. Measured
+/// on a 20000-element float vector: 2.372e-08 relative error that way, against
+/// 0.0 when `Result` feeds the round-out as it does here.
+template <typename Accumulator = void, typename Result = void, Vector V>
 auto two_norm(const V& v) {
     using mag_t = magnitude_t<typename V::value_type>;
+    static_assert(!std::is_void_v<Accumulator> || std::is_void_v<Result>,
+        "two_norm: Result without an Accumulator would be silently ignored -- the "
+        "default path dispatches to BLAS/SIMD and has no accumulator to round out. "
+        "Pass an Accumulator too, e.g. two_norm<double, double>(v) (#379).");
     if constexpr (!std::is_void_v<Accumulator>) {
+        using out_t = std::conditional_t<std::is_void_v<Result>, mag_t, Result>;
         using AT = math::accumulator_traits<Accumulator, mag_t>;
         Accumulator acc{};
         AT::clear(acc);
@@ -59,8 +78,13 @@ auto two_norm(const V& v) {
         // accumulator TYPE: the latter is a no-op for a plain arithmetic
         // accumulator but yields an fma_accumulator or a quire otherwise, and
         // neither has a sqrt (#324).
-        using round_t = math::accumulator_round_type_t<Accumulator, mag_t>;
-        return static_cast<mag_t>(sqrt(AT::template value<round_t>(acc)));
+        //
+        // The second argument is `out_t`, not `mag_t` (#379): for a custom
+        // accumulator this is what decides the precision the exact sum is
+        // rounded to before the sqrt, and hence whether the accumulator is
+        // observable at all.
+        using round_t = math::accumulator_round_type_t<Accumulator, out_t>;
+        return static_cast<out_t>(sqrt(AT::template value<round_t>(acc)));
     } else {
 #ifdef MTL5_HAS_BLAS
     // BLAS takes int; fall back to the loop for vectors larger than INT_MAX.
@@ -112,12 +136,18 @@ auto infinity_norm(const V& v) {
 /// frobenius_norm(m) = sqrt(sum(|m[i,j]|^2)).
 ///
 /// Mixed precision: pass an explicit `Accumulator` to sum the squares in a wider
-/// precision than the element magnitude; the result is returned as the element
-/// magnitude type. Default `Accumulator = void` is unchanged.
-template <typename Accumulator = void, Matrix M>
+/// precision than the element magnitude. Default `Accumulator = void` is
+/// unchanged. `Result` is the delivery type and defaults to the element
+/// magnitude type; it also selects the round-out type ahead of the square root
+/// -- see the note on two_norm (#379).
+template <typename Accumulator = void, typename Result = void, Matrix M>
 auto frobenius_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
+    static_assert(!std::is_void_v<Accumulator> || std::is_void_v<Result>,
+        "frobenius_norm: Result without an Accumulator would be silently ignored. "
+        "Pass an Accumulator too, e.g. frobenius_norm<double, double>(m) (#379).");
     if constexpr (!std::is_void_v<Accumulator>) {
+        using out_t = std::conditional_t<std::is_void_v<Result>, mag_t, Result>;
         using AT = math::accumulator_traits<Accumulator, mag_t>;
         Accumulator acc{};
         AT::clear(acc);
@@ -133,8 +163,8 @@ auto frobenius_norm(const M& m) {
         // accumulator TYPE: the latter is a no-op for a plain arithmetic
         // accumulator but yields an fma_accumulator or a quire otherwise, and
         // neither has a sqrt (#324).
-        using round_t = math::accumulator_round_type_t<Accumulator, mag_t>;
-        return static_cast<mag_t>(sqrt(AT::template value<round_t>(acc)));
+        using round_t = math::accumulator_round_type_t<Accumulator, out_t>;
+        return static_cast<out_t>(sqrt(AT::template value<round_t>(acc)));
     } else {
         auto acc = math::zero<mag_t>();
         for (typename M::size_type r = 0; r < m.num_rows(); ++r) {

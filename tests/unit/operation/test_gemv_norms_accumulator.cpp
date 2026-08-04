@@ -175,3 +175,94 @@ TEST_CASE("accumulator_round_type names the accumulator's own precision (#324)",
     // the magnitude type -- external specializations need supply nothing new.
     STATIC_REQUIRE(std::is_same_v<math::accumulator_round_type_t<kahan_acc, float>, float>);
 }
+
+// ---------------------------------------------------------------------------
+// #379: two_norm/frobenius_norm gain a Result parameter, as dot already has.
+//
+// The subtle part is what Result governs. It is NOT only the final cast.
+// accumulator_round_type_t<Acc, Mag> maps a non-arithmetic accumulator to Mag,
+// so if the round-out stayed at the element magnitude type, an exact
+// accumulation would be flattened to element precision BEFORE the sqrt and no
+// return type could recover it. Result therefore feeds BOTH the round-out and
+// the cast -- otherwise `two_norm<quire, double>` is not merely unhelpful, it is
+// strictly WORSE than `two_norm<double, double>`, which inverts the ordering a
+// caller is choosing between.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("two_norm/frobenius_norm Result parameter (#379)",
+          "[operation][norms][accumulator][regression]") {
+    const std::size_t n = 20000;
+    vec::dense_vector<float> v(n);
+    for (std::size_t i = 0; i < n; ++i) v[i] = 1.0f + static_cast<float>(i % 7) * 1e-6f;
+
+    long double ref = 0.0L;
+    for (std::size_t i = 0; i < n; ++i)
+        ref += static_cast<long double>(v[i]) * static_cast<long double>(v[i]);
+    const double exact = static_cast<double>(std::sqrt(ref));
+    const auto rel = [&](double x) { return std::abs(x - exact) / exact; };
+
+    SECTION("Result = void is byte-for-byte today's behaviour") {
+        // The whole change must be additive: no existing call may move.
+        const auto a = two_norm<double>(v);
+        const auto b = two_norm<kahan_acc>(v);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(a)>, float>);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(b)>, float>);
+        // Both bottleneck on the float delivery type -- which is exactly the
+        // observation that motivated #379.
+        REQUIRE(a == b);
+    }
+
+    SECTION("Result widens the delivery type") {
+        const auto c = two_norm<double, double>(v);
+        const auto d = two_norm<kahan_acc, double>(v);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(c)>, double>);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(d)>, double>);
+
+        // Both are far better than the float-delivered versions.
+        REQUIRE(rel(c) < 1e-12);
+        REQUIRE(rel(d) < 1e-12);
+    }
+
+    SECTION("the accumulator becomes observable, and in the right direction") {
+        const auto c = two_norm<double, double>(v);     // fp64 accumulation
+        const auto d = two_norm<kahan_acc, double>(v);  // exact accumulation
+
+        // Observable at all: this is what #379 asked for.
+        REQUIRE(d != c);
+        // ...and better, not worse. Implementing Result as only the final cast
+        // would have made the exact accumulator LESS accurate than the fp64 one
+        // (2.4e-08 against 1.4e-14), inverting the choice.
+        REQUIRE(rel(d) <= rel(c));
+        REQUIRE(rel(d) == 0.0);        // exact sum, rounded once, at the sqrt
+    }
+
+    SECTION("frobenius_norm behaves the same way") {
+        mat::dense2D<float> m(100, 200);
+        long double fref = 0.0L;
+        for (std::size_t i = 0; i < 100; ++i)
+            for (std::size_t j = 0; j < 200; ++j) {
+                m(i, j) = 1.0f + static_cast<float>((i + j) % 7) * 1e-6f;
+                fref += static_cast<long double>(m(i, j)) * static_cast<long double>(m(i, j));
+            }
+        const double fexact = static_cast<double>(std::sqrt(fref));
+
+        const auto f0 = frobenius_norm<double>(m);
+        const auto f1 = frobenius_norm<double, double>(m);
+        const auto f2 = frobenius_norm<kahan_acc, double>(m);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(f0)>, float>);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(f1)>, double>);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(f2)>, double>);
+
+        REQUIRE(std::abs(f1 - fexact) / fexact < 1e-12);
+        REQUIRE(std::abs(f2 - fexact) / fexact <= std::abs(f1 - fexact) / fexact);
+    }
+
+    SECTION("Result also works with the fma_accumulator configuration") {
+        // accumulator_round_type_t<fma_accumulator<T>, Mag> is T regardless of
+        // Mag, which is correct: the accumulator really does hold T precision,
+        // so Result widens the delivery without falsely claiming more.
+        const auto e = two_norm<math::fma_accumulator<double>, double>(v);
+        STATIC_REQUIRE(std::is_same_v<std::decay_t<decltype(e)>, double>);
+        REQUIRE(rel(e) < 1e-12);
+    }
+}
