@@ -36,7 +36,7 @@
 //
 // NOTE solve() overwrites the caller's x, so this is a preconditioner and not a
 // smoother. The smoother, which relaxes an existing iterate, is a separate
-// class: itl::smoother::symmetric_sor in <mtl/itl/smoother/sor.hpp>.
+// class: mtl::itl::smoother::symmetric_sor in <mtl/itl/smoother/sor.hpp>.
 #include <cassert>
 #include <cstddef>
 #include <mtl/vec/dense_vector.hpp>

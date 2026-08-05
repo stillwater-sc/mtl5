@@ -136,7 +136,11 @@ TEST_CASE("ssor adjoint identity (#398)", "[itl][pc][adjoint][ssor][regression]"
     // Before #398 the sweeps started from x = b, adding a G_B G_F term that is
     // not symmetric even when A and M both are (because M^-1 A is not), and
     // this violation measured 1.1e-01.
-    {
+    //
+    // SECTIONs are safe here, unlike in the case above: there is no enclosing
+    // loop for Catch2's per-section re-entry to interact with, so each case
+    // names itself at the assertion site.
+    SECTION("symmetric A is self-adjoint") {
         const auto A = pc_matrix(12, true);
         itl::pc::ssor<SMat> M(A);
         const double v = adjoint_violation(M, A.num_rows());
@@ -145,7 +149,7 @@ TEST_CASE("ssor adjoint identity (#398)", "[itl][pc][adjoint][ssor][regression]"
     }
     // Both omegas, since the scalar factor and the D/w terms only separate for
     // w != 1 -- and symmetry must not depend on the relaxation parameter.
-    {
+    SECTION("symmetric A is self-adjoint at omega = 1.4") {
         const auto A = pc_matrix(12, true);
         itl::pc::ssor<SMat> M(A, 1.4);
         const double v = adjoint_violation(M, A.num_rows());
@@ -156,7 +160,11 @@ TEST_CASE("ssor adjoint identity (#398)", "[itl][pc][adjoint][ssor][regression]"
     // for a remaining bug: SSOR of a NON-symmetric A has U != L^T, so M is not
     // symmetric and no rearrangement of the sweeps yields M^-H. bicg/qmr must
     // use ilu_0 there. This is a statement about the method, not the code.
-    {
+    //
+    // Note this asserts a LOWER bound on an error, so it fires if ssor ever
+    // gains a true M^-H for non-Hermitian A -- at which point the right move is
+    // to delete this section, not to loosen it.
+    SECTION("non-Hermitian A is NOT self-adjoint -- a property of the method") {
         const auto A = pc_matrix(12, false);
         itl::pc::ssor<SMat> M(A);
         const double v = adjoint_violation(M, A.num_rows());
