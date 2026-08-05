@@ -23,7 +23,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
     vec::dense_vector<value_type> r(n), v_tilde(n), w_tilde(n);
     vec::dense_vector<value_type> v(n), w(n), y(n), z(n);
-    vec::dense_vector<value_type> p(n), q(n), d(n), s(n), p_tilde(n);
+    vec::dense_vector<value_type> p(n), q(n), d(n), s(n), p_tilde(n), z_tilde(n);
 
     // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
@@ -36,9 +36,22 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         s(i) = value_type(0);
     }
 
-    // y = M^{-1} v_tilde;  z = M^{-T} w_tilde
+    // Left preconditioning, i.e. the split M = M1*M2 with M1 = M and M2 = I
+    // (Barrett et al., Templates Alg. 7.3):
+    //
+    //     y = M1^-1 v~ = M^-1 v~        z  = M2^-T w~ = w~
+    //     y~ = M2^-1 y = y              z~ = M1^-T z  = M^-T z
+    //
+    // z is therefore the UNpreconditioned w~, and the adjoint solve belongs on
+    // z~ inside the loop. Applying M^-T here instead put it on the wrong side of
+    // the delta = z^T y inner product, making it w~^T M^-1 M^-1 v~ where the
+    // algorithm needs w~^T M^-1 v~ -- the preconditioner applied twice, which is
+    // the same error #392 fixed in bicg. With pc::identity the two coincide,
+    // which is why identity was the only preconditioner qmr converged with
+    // (#393).
     M.solve(y, v_tilde);
-    M.adjoint_solve(z, w_tilde);
+    for (size_type i = 0; i < n; ++i)
+        z(i) = w_tilde(i);
 
     value_type rho = mtl::two_norm(y);
     value_type xi = mtl::two_norm(z);
@@ -72,19 +85,22 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             return iter;
         }
 
-        // For left-only preconditioning: y_tilde = y, z_tilde = z
-        // p = y_tilde - (xi*delta/epsilon)*p;  q = z_tilde - (rho*delta/epsilon)*q
+        // Left preconditioning (M1 = M, M2 = I):
+        //   y~ = M2^-1 y = y            -- no work
+        //   z~ = M1^-T z = M^-T z       -- the adjoint solve lives HERE
+        // p = y~ - (xi*delta/epsilon)*p;  q = z~ - (rho*delta/epsilon)*q
+        M.adjoint_solve(z_tilde, z);
         if (iter.first()) {
             for (size_type i = 0; i < n; ++i) {
                 p(i) = y(i);
-                q(i) = z(i);
+                q(i) = z_tilde(i);
             }
         } else {
             value_type pcoeff = xi * delta / epsilon;
             value_type qcoeff = rho * delta / epsilon;
             for (size_type i = 0; i < n; ++i) {
                 p(i) = y(i) - pcoeff * p(i);
-                q(i) = z(i) - qcoeff * q(i);
+                q(i) = z_tilde(i) - qcoeff * q(i);
             }
         }
 
@@ -114,8 +130,10 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         for (size_type i = 0; i < n; ++i)
             w_tilde(i) = Atq(i) - beta * w(i);
 
-        // z = M^{-T} w_tilde
-        M.adjoint_solve(z, w_tilde);
+        // z = M2^-T w~ = w~ for left preconditioning; the adjoint solve is
+        // applied to z~ at the top of the next iteration.
+        for (size_type i = 0; i < n; ++i)
+            z(i) = w_tilde(i);
 
         value_type xi_new = mtl::two_norm(z);
 
