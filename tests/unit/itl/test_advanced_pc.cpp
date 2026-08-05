@@ -209,8 +209,17 @@ TEST_CASE("SSOR preconditioner routes through accumulator_traits (#405)",
     g_ssor_addproduct_calls = 0;
     pc.solve(x, b);
 
-    // The accumulator was actually used -- not merely accepted as a parameter.
-    REQUIRE(g_ssor_addproduct_calls > 0);
+    // The accumulator was actually used, and BOTH sweeps ran. An exact count,
+    // not just > 0: solve() now DELEGATES rather than running two visible
+    // loops, so losing one of the two sweeps is exactly the regression this
+    // refactor makes possible, and > 0 would sail straight past it.
+    //
+    // add_product fires once per STORED off-diagonal entry (the diagonal is
+    // skipped by index, not by value). This tridiagonal A holds 1 off-diagonal
+    // in each of rows 0 and n-1 and 2 in each of the n-2 interior rows, so
+    // 2*(n-1) per sweep and 4*(n-1) for the forward+backward pair.
+    INFO("add_product calls = " << g_ssor_addproduct_calls);
+    REQUIRE(g_ssor_addproduct_calls == static_cast<int>(4 * (n - 1)));
 
     // And it still computes M^-1 b: applying M to the result returns b.
     // M = (D + L) D^-1 (D + U) at omega = 1, so M x is three triangular
@@ -235,6 +244,33 @@ TEST_CASE("SSOR preconditioner routes through accumulator_traits (#405)",
     g_ssor_addproduct_calls = 0;
     pc_default.solve(x2, b);
     REQUIRE(g_ssor_addproduct_calls == 0);
+}
+
+TEST_CASE("SSOR preconditioner on a 1x1 matrix (#405)",
+          "[itl][pc][ssor][accumulator][edge]") {
+    // The one case where the accumulator branch yields a result without ever
+    // accumulating: with no off-diagonal entries the row sum is empty, so
+    // add_product is never called and sigma comes from AT::value on a freshly
+    // cleared accumulator. If clear() and value() disagreed about what an empty
+    // sum means, every other size would hide it behind real terms.
+    mat::compressed2D<float> A(1, 1);
+    { mat::inserter<mat::compressed2D<float>> ins(A); ins[0][0] << 4.0f; }
+    vec::dense_vector<float> b(1, 1.0f), x(1, 0.0f);
+
+    itl::pc::ssor<mat::compressed2D<float>, counting_wide_acc> pc(A, 1.0f);
+    g_ssor_addproduct_calls = 0;
+    pc.solve(x, b);
+
+    REQUIRE(g_ssor_addproduct_calls == 0);       // nothing to accumulate
+    // M = (D + L) D^-1 (D + U) collapses to D = 4, so M^-1 b = 1/4 exactly.
+    REQUIRE_THAT(x(0), Catch::Matchers::WithinAbs(0.25f, 1e-6f));
+
+    // Same answer without the accumulator, so the empty-sum path agrees with
+    // the naive one rather than merely being self-consistent.
+    itl::pc::ssor<mat::compressed2D<float>> pc_default(A, 1.0f);
+    vec::dense_vector<float> x2(1, 0.0f);
+    pc_default.solve(x2, b);
+    REQUIRE_THAT(x2(0), Catch::Matchers::WithinAbs(0.25f, 1e-6f));
 }
 
 TEST_CASE("SSOR applies exactly the classical SSOR operator (#398)",
