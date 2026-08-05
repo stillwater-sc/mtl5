@@ -1,0 +1,12 @@
+label=mkl
+cpu_brand=12th Gen Intel(R) Core(TM) i7-12700K
+cpu_vendor=GenuineIntel
+cpu_arch=x86_64
+cpu_logical_cores=20
+cpu_simd=SSE2 AVX AVX2 FMA
+os_name=Linux
+os_version=Ubuntu 24.04.4 LTS (6.8.0-136-generic)
+compiler=GCC
+compiler_version=13.3.0
+cpp_standard=202002
+build_type=Release

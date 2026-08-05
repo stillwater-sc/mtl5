@@ -229,7 +229,9 @@ benchmarks/analyze_gate.py benchmarks/data/blas_sweep_native-fast.csv \
 The median is the primary assertion because the epic's target — "within 10–20%
 of OpenBLAS" — is an aggregate claim, and because it is the only statistic here
 that reproduces. Two runs of the identical protocol on the same idle machine
-gave:
+gave — **2026-08-01 measurements, before #382 raised native-fast to ~97% of
+OpenBLAS; the figures are retained because they are the evidence for the rule,
+not a current result**:
 
 | statistic | run A | run B | swing |
 |---|---:|---:|---:|
