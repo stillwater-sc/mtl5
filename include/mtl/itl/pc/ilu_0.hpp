@@ -7,6 +7,7 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl::itl::pc {
 
@@ -46,10 +47,42 @@ public:
         }
     }
 
-    /// adjoint_solve: same as solve (approximate)
+    /// Solve (L*U)^H * x = b, i.e. x = U^-H (L^-H b).
+    ///
+    /// This used to delegate to solve(), commented "approximate". It is not an
+    /// approximation -- M = L*U is not self-adjoint unless A is symmetric, so
+    /// delegating applies the wrong operator entirely. bicg and qmr are the only
+    /// callers, and with a non-symmetric A both failed to converge at all rather
+    /// than converging slowly (#394).
+    ///
+    /// L and U are stored row-wise, but the adjoint needs COLUMN access:
+    /// (U^H)(j,i) = conj(U(i,j)). Both triangular solves are therefore written
+    /// in scatter form -- once a component is final, push its contribution into
+    /// the entries that depend on it -- which reads the row storage exactly as
+    /// it is laid out and needs no transposed copy.
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);
+        using conj_t = functor::scalar::conj<value_type>;
+
+        for (size_type i = 0; i < n_; ++i)
+            x(i) = b(i);
+
+        // U^H y = b. U^H is LOWER triangular with diagonal conj(U(i,i)), so this
+        // is a forward substitution, scattered: finalize y(i), then subtract
+        // (U^H)(j,i) * y(i) = conj(U(i,j)) * y(i) from every later j.
+        for (size_type i = 0; i < n_; ++i) {
+            x(i) = x(i) / conj_t::apply(u_diag_[i]);
+            for (size_type k = u_starts_[i]; k < u_starts_[i + 1]; ++k)
+                x(u_indices_[k]) -= conj_t::apply(u_data_[k]) * x(i);
+        }
+
+        // L^H x = y. L^H is UPPER triangular with UNIT diagonal, so this is a
+        // backward substitution; x(i) is already final when reached.
+        for (size_type ii = 0; ii < n_; ++ii) {
+            const size_type i = n_ - 1 - ii;
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                x(l_indices_[k]) -= conj_t::apply(l_data_[k]) * x(i);
+        }
     }
 
 private:
