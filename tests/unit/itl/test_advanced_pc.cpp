@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
+#include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -8,6 +10,7 @@
 #include <mtl/operation/operators.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/dot.hpp>
+#include <mtl/operation/lu.hpp>
 #include <mtl/itl/pc/identity.hpp>
 #include <mtl/itl/pc/ilut.hpp>
 #include <mtl/itl/pc/ildl.hpp>
@@ -162,6 +165,74 @@ TEST_CASE("Block diagonal preconditioned BiCGSTAB converges", "[itl][pc][block_d
 }
 
 // --- SSOR tests ---
+
+TEST_CASE("SSOR applies exactly the classical SSOR operator (#398)",
+          "[itl][pc][ssor][regression]") {
+    // The sharpest statement of the fix, and the reason it is a fix rather than
+    // a change of preconditioner: run from x = 0, the forward + backward sweeps
+    // ARE the classical operator
+    //
+    //     M = w/(2-w) (D/w + L) D^-1 (D/w + U)
+    //
+    // to the last bit, scalar factor included. So this compares pc::ssor's
+    // output against a dense M solved by LU. Before #398 the sweeps started
+    // from x = b, adding a G_B G_F b term, and this test fails outright
+    // (measured relative error 3.7e-01 at w = 1.0).
+    //
+    // Two omegas: w = 1 collapses the scalar factor to 1 and would not catch a
+    // wrong one, so w = 1.3 carries that part of the claim.
+    for (double omega : {1.0, 1.3}) {
+        const std::size_t n = 24;
+        const auto A = make_tridiagonal(n, 4.0, -1.0);
+
+        // Dense M = w/(2-w) (D/w + L) D^-1 (D/w + U), from A's own entries.
+        mat::dense2D<double> F(n, n), B(n, n), M(n, n);
+        vec::dense_vector<double> d(n, 0.0);
+        for (std::size_t i = 0; i < n; ++i) {
+            for (std::size_t j = 0; j < n; ++j) { F(i, j) = 0.0; B(i, j) = 0.0; }
+            d(i) = A(i, i);
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j) {
+                const double a = A(i, j);
+                if (i == j)     { F(i, j) = a / omega; B(i, j) = a / omega; }
+                else if (j < i) { F(i, j) = a; }        // L
+                else            { B(i, j) = a; }        // U
+            }
+        const double c = omega / (2.0 - omega);
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j) {
+                double s = 0.0;
+                for (std::size_t k = 0; k < n; ++k) s += F(i, k) * B(k, j) / d(k);
+                M(i, j) = c * s;
+            }
+
+        vec::dense_vector<double> b(n);
+        for (std::size_t i = 0; i < n; ++i)
+            b(i) = 1.0 + 0.5 * std::sin(static_cast<double>(3 * i));
+
+        // Reference: solve M y = b densely.
+        vec::dense_vector<double> y(n, 0.0);
+        std::vector<mat::dense2D<double>::size_type> pivot;
+        mat::dense2D<double> Mf(M);
+        REQUIRE(lu_factor(Mf, pivot) == 0);
+        lu_solve(Mf, pivot, y, b);
+
+        // The preconditioner must produce the same vector.
+        vec::dense_vector<double> x(n, 0.0);
+        itl::pc::ssor<mat::compressed2D<double>> pc(A, omega);
+        pc.solve(x, b);
+
+        double num = 0.0, den = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            num += (x(i) - y(i)) * (x(i) - y(i));
+            den += y(i) * y(i);
+        }
+        const double rel = std::sqrt(num) / std::sqrt(den);
+        INFO("omega = " << omega << ", ||x - M^-1 b|| / ||M^-1 b|| = " << rel);
+        REQUIRE(rel < 1e-12);
+    }
+}
 
 TEST_CASE("SSOR preconditioned BiCGSTAB converges", "[itl][pc][ssor]") {
     const std::size_t n = 20;

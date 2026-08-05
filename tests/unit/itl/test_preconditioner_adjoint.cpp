@@ -25,6 +25,7 @@
 #include <mtl/itl/pc/ilu_0.hpp>
 #include <mtl/itl/pc/ic_0.hpp>
 #include <mtl/itl/pc/block_diagonal.hpp>
+#include <mtl/itl/pc/ssor.hpp>
 
 using namespace mtl;
 
@@ -123,4 +124,43 @@ TEST_CASE("ic_0 adjoint identity (#394)", "[itl][pc][adjoint][regression]") {
     const auto A = pc_matrix(12, true);
     itl::pc::ic_0<double> M(A);
     REQUIRE(adjoint_violation(M, A.num_rows()) < 1e-12);
+}
+
+TEST_CASE("ssor adjoint identity (#398)", "[itl][pc][adjoint][ssor][regression]") {
+    // ssor's sweeps now start from x = 0, so they apply
+    // M = w/(2-w) (D/w + L) D^-1 (D/w + U) exactly. For a SYMMETRIC A that is
+    // c X D^-1 X^T -- self-adjoint by construction, which is the whole reason
+    // Sheldon (1955) introduced the symmetric variant -- so delegating
+    // adjoint_solve to solve is right, not lucky.
+    //
+    // Before #398 the sweeps started from x = b, adding a G_B G_F term that is
+    // not symmetric even when A and M both are (because M^-1 A is not), and
+    // this violation measured 1.1e-01.
+    {
+        const auto A = pc_matrix(12, true);
+        itl::pc::ssor<SMat> M(A);
+        const double v = adjoint_violation(M, A.num_rows());
+        INFO("ssor, symmetric A, violation = " << v);
+        CHECK(v < 1e-12);
+    }
+    // Both omegas, since the scalar factor and the D/w terms only separate for
+    // w != 1 -- and symmetry must not depend on the relaxation parameter.
+    {
+        const auto A = pc_matrix(12, true);
+        itl::pc::ssor<SMat> M(A, 1.4);
+        const double v = adjoint_violation(M, A.num_rows());
+        INFO("ssor, symmetric A, omega = 1.4, violation = " << v);
+        CHECK(v < 1e-12);
+    }
+    // And the property that SURVIVES the fix, asserted so it is not mistaken
+    // for a remaining bug: SSOR of a NON-symmetric A has U != L^T, so M is not
+    // symmetric and no rearrangement of the sweeps yields M^-H. bicg/qmr must
+    // use ilu_0 there. This is a statement about the method, not the code.
+    {
+        const auto A = pc_matrix(12, false);
+        itl::pc::ssor<SMat> M(A);
+        const double v = adjoint_violation(M, A.num_rows());
+        INFO("ssor, NON-symmetric A, violation = " << v << " (expected: large)");
+        CHECK(v > 1e-3);
+    }
 }
