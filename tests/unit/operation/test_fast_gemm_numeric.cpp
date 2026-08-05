@@ -60,11 +60,13 @@ using colmaj = mtl::mat::parameters<mtl::tag::col_major>;
 //
 //   Note two things. The bound is against sum|x_i||y_i|, NOT against |x.y|,
 //   and this test compares relative to (|ref| + 1). The ratio between them is
-//   the dot product's condition number, ~sqrt(k) for the random +-1 data used
-//   here, so the worst-case RELATIVE error is ~k^1.5 * u. No modest multiple of
-//   k*eps dominates that as k grows.
+//   the dot product's condition number. For the zero-mean uniform [-1, 1]
+//   entries this file generates that is ~sqrt(k) -- E|x*y| = 1/4 gives
+//   sum|x_i y_i| ~ k/4, while the sum itself is ~sqrt(k)/3 -- so the worst-case
+//   RELATIVE error is ~k^1.5 * u. No modest multiple of k*eps dominates that as
+//   k grows.
 //
-// What justifies the number is measurement, not the bound: random data
+// What justifies the number is measurement, not the bound: uniform [-1, 1] data
 // accumulates far below the worst case because the rounding errors partially
 // cancel, giving ~sqrt(k)*u in practice. Every configuration in this file
 // passes at a factor of 0.125, so 4 leaves roughly 32x over the worst measured

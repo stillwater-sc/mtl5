@@ -146,3 +146,50 @@ TEMPLATE_TEST_CASE("mult() native-fast dispatch matches naive (row- and col-majo
     CHECK(mult_matches<mtl::mat::dense2D<TestType, rowmaj>>(A, B, m, n, k));  // row-major C
     CHECK(mult_matches<mtl::mat::dense2D<TestType, colmaj>>(A, B, m, n, k));  // col-major C
 }
+
+// ---------------------------------------------------------------------------
+// Zero-dimension GEMM (#386 review).
+//
+// kEdge starts at 1, so no test anywhere covered m, n or k == 0 for GEMM.
+// test_gemv.cpp does cover them for GEMV -- its kDims starts at 0 -- so this
+// closes the matching gap on the matrix side.
+//
+// The behaviour is already correct; these pin it. k == 0 is the interesting
+// one: the product is empty, so C must be the zero matrix for mult (which
+// assigns rather than accumulates), and gemm_blocked must still apply beta to
+// the incoming C rather than skipping the scaling along with the contraction.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("gemm: zero dimensions", "[operation][gemm][edge]") {
+    using Mat = mtl::mat::dense2D<double>;
+
+    SECTION("k == 0 gives the zero matrix, not untouched C") {
+        Mat A(3, 0), B(0, 4), C(3, 4);
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 4; ++j) C(i, j) = 7.0;
+        mtl::mult(A, B, C);
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 4; ++j) {
+                INFO("i=" << i << " j=" << j);
+                CHECK(C(i, j) == 0.0);
+            }
+    }
+
+    SECTION("m == 0 and n == 0 are no-ops that do not crash") {
+        { Mat A(0, 5), B(5, 4), C(0, 4); CHECK_NOTHROW(mtl::mult(A, B, C)); }
+        { Mat A(3, 5), B(5, 0), C(3, 0); CHECK_NOTHROW(mtl::mult(A, B, C)); }
+        { Mat A(0, 0), B(0, 0), C(0, 0); CHECK_NOTHROW(mtl::mult(A, B, C)); }
+    }
+
+    SECTION("gemm_blocked applies beta even when k == 0") {
+        // The contraction contributes nothing, but C <- beta*C must still run.
+        std::vector<double> A, B, C(6, 5.0);
+        mtl::detail::gemm_blocked<double, double>(
+            2, 3, 0, /*alpha=*/1.5, A.data(), 0, 1, B.data(), 0, 1,
+            /*beta=*/-0.75, C.data(), 3);
+        for (std::size_t t = 0; t < 6; ++t) {
+            INFO("t=" << t);
+            CHECK(C[t] == -3.75);   // -0.75 * 5.0, exact in binary
+        }
+    }
+}
