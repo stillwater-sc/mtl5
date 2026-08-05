@@ -4,11 +4,22 @@
 // floating-point rounding across orientations, alpha/beta, rectangular and
 // multi-block sizes.
 //
-// Reference: the same T-rounded inputs accumulated in long double (the trusted
-// high-precision generic triple product). native-fast accumulates in T, so it
-// may differ by up to ~k * eps(T); we allow a generous multiple of that and
-// take the worst element per configuration (one assertion each). A real bug is
-// O(1) off and trips this immediately.
+// Reference: the same T-rounded inputs accumulated in DOUBLE-DOUBLE via FMA --
+// an exact two-product plus a Knuth two-sum, giving ~106 bits. native-fast
+// accumulates in T, so it may differ by up to ~k * eps(T); we allow a multiple
+// of that and take the worst element per configuration (one assertion each). A
+// real bug is O(1) off and trips this immediately.
+//
+// The reference used to be `long double`, which is 80-bit on x86-64, 64-bit --
+// i.e. plain double -- on Apple ARM64 and MSVC, and 128-bit on ARM64 Linux.
+// That is a ~60-bit spread across targets this repo already builds on, for a
+// value described as "the trusted high-precision" reference. Double-double
+// needs only IEEE double and is therefore identical everywhere (#386).
+//
+// Measured before the change: the observed error sits at ~0.002 of the
+// tolerance, so no assertion was ever at risk from the reference width -- the
+// portability problem was real but the exposure was not. What the exact
+// reference DOES buy is room to tighten: see tol_for below.
 //
 // MTL5_NATIVE_FAST_GEMM is defined before mult.hpp so mtl::mult routes through
 // gemm_blocked / gemv for this translation unit.
@@ -38,11 +49,56 @@ using rowmaj = mtl::mat::parameters<mtl::tag::row_major>;
 using colmaj = mtl::mat::parameters<mtl::tag::col_major>;
 
 // Relative tolerance for a length-k contraction accumulated in T.
+//
+// This is an EMPIRICAL tolerance calibrated to the data this file generates,
+// not a worst-case bound. Saying so matters, because the obvious citation does
+// not actually support a bound here:
+//
+//   Higham (Accuracy and Stability of Numerical Algorithms, 3.1) gives
+//       |fl(x.y) - x.y|  <=  gamma_k * sum_i |x_i||y_i|,
+//       gamma_k = k*u/(1 - k*u) ~ k*u,   u = unit roundoff = eps/2
+//
+//   Note two things. The bound is against sum|x_i||y_i|, NOT against |x.y|,
+//   and this test compares relative to (|ref| + 1). The ratio between them is
+//   the dot product's condition number, ~sqrt(k) for the random +-1 data used
+//   here, so the worst-case RELATIVE error is ~k^1.5 * u. No modest multiple of
+//   k*eps dominates that as k grows.
+//
+// What justifies the number is measurement, not the bound: random data
+// accumulates far below the worst case because the rounding errors partially
+// cancel, giving ~sqrt(k)*u in practice. Every configuration in this file
+// passes at a factor of 0.125, so 4 leaves roughly 32x over the worst measured
+// case.
+//
+// 4 * k * eps is therefore 16x TIGHTER THAN THE PREVIOUS 64 -- that is the only
+// comparison being claimed -- while keeping deliberate headroom for targets
+// that cannot be measured here (ARM64, MSVC, and the FP-contract lane, where
+// contraction changes the rounding). It is not, and should not be read as, a
+// proven bound.
 template <typename T>
-long double tol_for(std::size_t k) {
-    return 64.0L * static_cast<long double>(k) *
-           static_cast<long double>(std::numeric_limits<T>::epsilon());
+double tol_for(std::size_t k) {
+    return 4.0 * static_cast<double>(k) *
+           static_cast<double>(std::numeric_limits<T>::epsilon());
 }
+
+// Exact-ish accumulation in double-double: Knuth two-sum plus an FMA-based
+// exact two-product. Needs only IEEE double, so it is bit-identical on every
+// target -- unlike long double.
+struct dd_acc {
+    double hi{}, lo{};
+    void add(double x) {                       // two-sum
+        const double s  = hi + x;
+        const double bb = s - hi;
+        lo += (hi - (s - bb)) + (x - bb);
+        hi = s;
+    }
+    void add_product(double a, double b) {     // exact a*b, both halves
+        const double p = a * b;
+        add(p);
+        add(std::fma(a, b, -p));
+    }
+    double value() const { return hi + lo; }
+};
 
 // C = A*B via mtl::mult (native-fast) vs a long-double reference over the same
 // T-rounded inputs. MatA/MatB/MatC fix the orientations. Returns true if every
@@ -60,14 +116,15 @@ bool gemm_ok(std::size_t m, std::size_t n, std::size_t k, std::uint64_t seed) {
 
     mtl::mult(A, B, C);
 
-    const long double tol = tol_for<T>(k);
+    const double tol = tol_for<T>(k);
     for (std::size_t i = 0; i < m; ++i)
         for (std::size_t j = 0; j < n; ++j) {
-            long double ref = 0.0L;
+            dd_acc acc;
             for (std::size_t p = 0; p < k; ++p)
-                ref += static_cast<long double>(A(i, p)) * static_cast<long double>(B(p, j));
-            const long double err = std::fabs(static_cast<long double>(C(i, j)) - ref);
-            if (err > tol * (std::fabs(ref) + 1.0L)) return false;
+                acc.add_product(static_cast<double>(A(i, p)), static_cast<double>(B(p, j)));
+            const double ref = acc.value();
+            const double err = std::fabs(static_cast<double>(C(i, j)) - ref);
+            if (err > tol * (std::fabs(ref) + 1.0)) return false;
         }
     return true;
 }
@@ -86,12 +143,13 @@ bool gemv_ok(std::size_t m, std::size_t n, std::uint64_t seed) {
 
     mtl::mult(A, x, y);
 
-    const long double tol = tol_for<T>(n);
+    const double tol = tol_for<T>(n);
     for (std::size_t i = 0; i < m; ++i) {
-        long double ref = 0.0L;
+        dd_acc acc;
         for (std::size_t j = 0; j < n; ++j)
-            ref += static_cast<long double>(A(i, j)) * static_cast<long double>(x(j));
-        if (std::fabs(static_cast<long double>(y(i)) - ref) > tol * (std::fabs(ref) + 1.0L))
+            acc.add_product(static_cast<double>(A(i, j)), static_cast<double>(x(j)));
+        const double ref = acc.value();
+        if (std::fabs(static_cast<double>(y(i)) - ref) > tol * (std::fabs(ref) + 1.0))
             return false;
     }
     return true;
@@ -151,16 +209,17 @@ TEMPLATE_TEST_CASE("fast GEMM: alpha/beta numeric (gemm_blocked)", "[operation][
     mtl::detail::gemm_blocked<TestType>(m, n, k, alpha, A.data(), (std::ptrdiff_t)k, 1,
                                         B.data(), (std::ptrdiff_t)n, 1, beta, C.data(), n);
 
-    const long double tol = tol_for<TestType>(k);
+    const double tol = tol_for<TestType>(k);
     bool ok = true;
     for (std::size_t i = 0; i < m && ok; ++i)
         for (std::size_t j = 0; j < n && ok; ++j) {
-            long double prod = 0.0L;
+            dd_acc acc;
             for (std::size_t p = 0; p < k; ++p)
-                prod += static_cast<long double>(A[i * k + p]) * static_cast<long double>(B[p * n + j]);
-            const long double ref = static_cast<long double>(beta) * static_cast<long double>(C0[i * n + j])
-                                  + static_cast<long double>(alpha) * prod;
-            if (std::fabs(static_cast<long double>(C[i * n + j]) - ref) > tol * (std::fabs(ref) + 1.0L))
+                acc.add_product(static_cast<double>(A[i * k + p]), static_cast<double>(B[p * n + j]));
+            // beta*C0 + alpha*(A*B), the scalings applied to the exact product.
+            const double ref = static_cast<double>(beta) * static_cast<double>(C0[i * n + j])
+                             + static_cast<double>(alpha) * acc.value();
+            if (std::fabs(static_cast<double>(C[i * n + j]) - ref) > tol * (std::fabs(ref) + 1.0))
                 ok = false;
         }
     CHECK(ok);
