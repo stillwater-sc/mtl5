@@ -22,6 +22,7 @@
 #include <mtl/mat/expr/mat_scal_op_expr.hpp>
 #include <mtl/mat/expr/mat_negate_expr.hpp>
 #include <mtl/mat/expr/mat_mat_times_expr.hpp>
+#include <mtl/operation/spgemm.hpp>
 
 namespace mtl::mat {
 
@@ -120,6 +121,23 @@ auto operator*(const M1& A, const M2& B) {
         }
     }
     return C;
+}
+
+// -- Sparse * sparse: compressed2D * compressed2D -> compressed2D -------
+//
+// More specialized than the generic matrix-matrix operator* above, so partial
+// ordering picks it for two CSR operands -- the same mechanism by which the
+// compressed2D * dense_vector overload below wins over operator*(M, V).
+//
+// This CHANGES the result type of an existing expression: `A * B` for two
+// compressed2D used to yield dense2D. Verified before the change that no call
+// site in the repository multiplied two sparse matrices, so nothing relied on
+// the dense result. Keeping it dense would in any case be the surprising
+// choice: the generic path materialises an n x n intermediate and reaches
+// every element through compressed2D::operator()(r, c), a binary search (#402).
+template <typename V1, typename P1, typename V2, typename P2>
+auto operator*(const compressed2D<V1, P1>& A, const compressed2D<V2, P2>& B) {
+    return mtl::spgemm(A, B);
 }
 
 // -- Sparse (CRS) matvec: compressed2D * dense_vector (stays eager) -----
