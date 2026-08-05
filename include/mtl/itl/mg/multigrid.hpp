@@ -8,6 +8,14 @@
 #include <functional>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/compressed2D.hpp>
+// vcycle/wcycle form the residual with `levels_[l] * x`, whose operator* lives
+// in mat/operators.hpp. Without this the header compiled only when the caller
+// happened to have included that first, which made it order-dependent (#401).
+//
+// The failure needs INSTANTIATION to surface: A*x is a dependent expression
+// inside a class template, so merely including this header succeeded and hid
+// the problem.
+#include <mtl/mat/operators.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/itl/mg/restriction.hpp>
 #include <mtl/itl/mg/prolongation.hpp>
