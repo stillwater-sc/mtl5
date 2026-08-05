@@ -258,6 +258,29 @@ TEST_CASE("spgemm edge cases (#402)", "[operation][spgemm][sparse][edge]") {
         REQUIRE(C.num_rows() == 0u);
         REQUIRE(C.num_cols() == 0u);
         REQUIRE(C.nnz() == 0u);
+        REQUIRE(C.ref_major().size() == 1u);       // starts_ is always n+1
+    }
+    SECTION("inner dimension zero") {
+        // (2x0) * (0x3): the contraction is over nothing, so C is 2x3 of
+        // zeros -- shaped from the OUTER dimensions, which a result sized off
+        // the wrong operand would get wrong.
+        SMat A(2, 0), B(0, 3);
+        const auto C = mtl::spgemm(A, B);
+        require_well_formed(C);
+        REQUIRE(C.num_rows() == 2u);
+        REQUIRE(C.num_cols() == 3u);
+        REQUIRE(C.nnz() == 0u);
+    }
+    SECTION("zero output columns") {
+        // n == 0 is the case the accumulator is sized `n ? n : 1` for: a
+        // zero-length workspace would be an invalid allocation to index into,
+        // even though nothing is ever scattered.
+        SMat A(2, 3), B(3, 0);
+        const auto C = mtl::spgemm(A, B);
+        REQUIRE(C.num_rows() == 2u);
+        REQUIRE(C.num_cols() == 0u);
+        REQUIRE(C.nnz() == 0u);
+        REQUIRE(C.ref_major().size() == 3u);
     }
     SECTION("exact cancellation keeps the structural entry") {
         // (1, 1) * (1, -1)^T in the (0,0) slot cancels to exactly zero. The

@@ -108,9 +108,18 @@ auto spgemm(const mat::compressed2D<V1, P1>& A,
         c_starts[i + 1] = static_cast<size_type>(c_indices.size());
     }
 
-    // Empty ranges below: vector::data() may be null for an empty vector, and
-    // `null + 0` is well-defined, so the raw-CSR constructor's copies are fine.
     const size_type nnz = static_cast<size_type>(c_data.size());
+
+    // A structurally empty result takes the (rows, cols) constructor, which
+    // builds the same all-zero starts_ this function just computed. The raw
+    // constructor would also be correct -- vector::data() may be null for an
+    // empty vector, and since C++17 (CWG 232) `null + 0` is a null pointer,
+    // so its `indices + nnz_count` is well-defined and the copied range is
+    // empty. But that is a rule readers have to know and that did not always
+    // hold, so state the empty case instead of relying on it.
+    if (nnz == 0)
+        return mat::compressed2D<result_t>(m, n);
+
     return mat::compressed2D<result_t>(m, n, nnz,
                                        c_starts.data(), c_indices.data(), c_data.data());
 }
