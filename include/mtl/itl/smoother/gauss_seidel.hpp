@@ -44,19 +44,19 @@ public:
 
     /// Forward sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+    VecX& operator()(VecX& x, const VecB& b) const { return forward(x, b); }
 
     /// Forward sweep: rows iterated in ascending order.
     template <typename VecX, typename VecB>
-    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+    VecX& forward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/true); }
 
     /// Backward sweep: rows iterated in descending order (n-1..0).
     template <typename VecX, typename VecB>
-    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+    VecX& backward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/false); }
 
 private:
     template <typename VecX, typename VecB>
-    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) const {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         for (size_type step = 0; step < n; ++step) {
@@ -113,19 +113,19 @@ public:
 
     /// Forward sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+    VecX& operator()(VecX& x, const VecB& b) const { return forward(x, b); }
 
     /// Forward sweep: rows iterated in ascending order.
     template <typename VecX, typename VecB>
-    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+    VecX& forward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/true); }
 
     /// Backward sweep: rows iterated in descending order (n-1..0).
     template <typename VecX, typename VecB>
-    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+    VecX& backward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/false); }
 
 private:
     template <typename VecX, typename VecB>
-    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) const {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         const auto& starts  = A_.ref_major();
@@ -170,7 +170,7 @@ public:
     explicit backward_gauss_seidel(const Matrix& A) : gs_(A) {}
 
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) { return gs_.backward(x, b); }
+    VecX& operator()(VecX& x, const VecB& b) const { return gs_.backward(x, b); }
 
 private:
     gauss_seidel<Matrix, Accumulator> gs_;
@@ -187,7 +187,7 @@ public:
     explicit symmetric_gauss_seidel(const Matrix& A) : gs_(A) {}
 
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) const {
         gs_.forward(x, b);
         return gs_.backward(x, b);
     }

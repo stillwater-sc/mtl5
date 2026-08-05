@@ -32,6 +32,11 @@ namespace mtl::itl::smoother {
 /// operator() runs a forward (ascending-row) relaxed sweep; forward()/backward()
 /// expose the sweep direction explicitly (backward_sor / symmetric_sor build on
 /// them). All variants carry the optional Accumulator unchanged.
+///
+/// The sweeps are const: they mutate only the caller's x, never a member (A_,
+/// omega_ and dia_inv_ are all read-only during a sweep). That is what lets
+/// pc::ssor hold one as a member and still expose a const solve() (#405),
+/// without reaching for `mutable`. Applies to jacobi and gauss_seidel too.
 template <typename Matrix, typename Accumulator = void>
 class sor {
     using value_type = typename Matrix::value_type;
@@ -46,19 +51,19 @@ public:
 
     /// Forward relaxed sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+    VecX& operator()(VecX& x, const VecB& b) const { return forward(x, b); }
 
     /// Forward relaxed sweep: rows iterated in ascending order.
     template <typename VecX, typename VecB>
-    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+    VecX& forward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/true); }
 
     /// Backward relaxed sweep: rows iterated in descending order (n-1..0).
     template <typename VecX, typename VecB>
-    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+    VecX& backward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/false); }
 
 private:
     template <typename VecX, typename VecB>
-    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) const {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         for (size_type step = 0; step < n; ++step) {
@@ -118,19 +123,19 @@ public:
 
     /// Forward relaxed sweep (rows 0..n-1). Default application.
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) { return forward(x, b); }
+    VecX& operator()(VecX& x, const VecB& b) const { return forward(x, b); }
 
     /// Forward relaxed sweep: rows iterated in ascending order.
     template <typename VecX, typename VecB>
-    VecX& forward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/true); }
+    VecX& forward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/true); }
 
     /// Backward relaxed sweep: rows iterated in descending order (n-1..0).
     template <typename VecX, typename VecB>
-    VecX& backward(VecX& x, const VecB& b) { return sweep(x, b, /*ascending=*/false); }
+    VecX& backward(VecX& x, const VecB& b) const { return sweep(x, b, /*ascending=*/false); }
 
 private:
     template <typename VecX, typename VecB>
-    VecX& sweep(VecX& x, const VecB& b, bool ascending) {
+    VecX& sweep(VecX& x, const VecB& b, bool ascending) const {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         const auto& starts  = A_.ref_major();
@@ -177,7 +182,7 @@ public:
     explicit backward_sor(const Matrix& A, value_type omega = value_type(1)) : sor_(A, omega) {}
 
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) { return sor_.backward(x, b); }
+    VecX& operator()(VecX& x, const VecB& b) const { return sor_.backward(x, b); }
 
 private:
     sor<Matrix, Accumulator> sor_;
@@ -196,7 +201,7 @@ public:
     explicit symmetric_sor(const Matrix& A, value_type omega = value_type(1)) : sor_(A, omega) {}
 
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) const {
         sor_.forward(x, b);
         return sor_.backward(x, b);
     }

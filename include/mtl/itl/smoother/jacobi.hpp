@@ -31,7 +31,7 @@ public:
     }
 
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) const {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         vec::dense_vector<value_type> x_new(n);
@@ -88,7 +88,7 @@ public:
     }
 
     template <typename VecX, typename VecB>
-    VecX& operator()(VecX& x, const VecB& b) {
+    VecX& operator()(VecX& x, const VecB& b) const {
         const size_type n = A_.num_rows();
         assert(x.size() == n && b.size() == n);
         const auto& starts  = A_.ref_major();

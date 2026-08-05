@@ -37,23 +37,38 @@
 // NOTE solve() overwrites the caller's x, so this is a preconditioner and not a
 // smoother. The smoother, which relaxes an existing iterate, is a separate
 // class: mtl::itl::smoother::symmetric_sor in <mtl/itl/smoother/sor.hpp>.
+//
+// This class is the ADAPTER onto that smoother, not a second implementation of
+// the sweeps (#405). One application of symmetric_sor from a zeroed x is
+// exactly M^-1 b, which is the identity derived above, so the preconditioner is
+// three lines over the smoother rather than a parallel copy of it. Keeping one
+// implementation is not only tidiness: the x = b bug fixed in #398 lived in the
+// duplicate, and could not have been written here.
 #include <cassert>
 #include <cstddef>
-#include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
-#include <mtl/mat/compressed2D.hpp>
+#include <mtl/itl/smoother/sor.hpp>
 
 namespace mtl::itl::pc {
 
-/// SSOR preconditioner: symmetric SOR (forward + backward sweep).
-/// Generic version using A(i,j) element access.
-template <typename Matrix>
+/// SSOR preconditioner: one symmetric-SOR application from a zeroed vector.
+///
+/// `Accumulator` is forwarded to the underlying smoother and selects the
+/// accumulation type for the off-diagonal row sum (see
+/// math/accumulator_traits.hpp). The default `void` keeps the naive value_type
+/// accumulation, so this is a widening of the old single-parameter interface
+/// rather than a change to it.
+///
+/// The matrix-type specialization lives in the smoother -- `smoother::sor` has
+/// an O(nnz) `compressed2D` form -- so this template needs only one definition
+/// and picks up sparse handling automatically.
+template <typename Matrix, typename Accumulator = void>
 class ssor {
     using value_type = typename Matrix::value_type;
     using size_type  = typename Matrix::size_type;
 public:
     explicit ssor(const Matrix& A, value_type omega = value_type(1))
-        : A_(A), omega_(omega), n_(A.num_rows())
+        : n_(A.num_rows()), sm_(A, omega)
     {
         assert(A.num_rows() == A.num_cols());
     }
@@ -62,33 +77,13 @@ public:
     void solve(VecX& x, const VecB& b) const {
         assert(x.size() == n_ && b.size() == n_);
 
-        // Start the sweeps from ZERO -- see the header note. Anything else
-        // adds a G x0 term and the result is not M^-1 b.
+        // Start from ZERO -- see the header note. Anything else adds a G x0
+        // term and the result is not M^-1 b. This zeroing is the ONLY thing
+        // that separates the preconditioner from the smoother.
         for (size_type i = 0; i < n_; ++i)
             x(i) = math::zero<value_type>();
 
-        // Forward SOR sweep: rows 0 to n-1
-        for (size_type i = 0; i < n_; ++i) {
-            auto sigma = math::zero<value_type>();
-            for (size_type j = 0; j < n_; ++j) {
-                if (j != i)
-                    sigma += A_(i, j) * x(j);
-            }
-            x(i) = omega_ * (b(i) - sigma) / A_(i, i)
-                 + (value_type(1) - omega_) * x(i);
-        }
-
-        // Backward SOR sweep: rows n-1 to 0
-        for (size_type ii = 0; ii < n_; ++ii) {
-            size_type i = n_ - 1 - ii;
-            auto sigma = math::zero<value_type>();
-            for (size_type j = 0; j < n_; ++j) {
-                if (j != i)
-                    sigma += A_(i, j) * x(j);
-            }
-            x(i) = omega_ * (b(i) - sigma) / A_(i, i)
-                 + (value_type(1) - omega_) * x(i);
-        }
+        sm_(x, b);          // forward sweep then backward sweep == M^-1 b
     }
 
     /// adjoint_solve delegates to solve(), which is correct exactly when M is
@@ -98,7 +93,7 @@ public:
     /// M^-H either.
     ///
     /// Measured against <M^-1 b, c> == <b, M^-H c> on a 144x144 Laplacian:
-    /// 3.4e-16 for a symmetric A, 2.6e-01 for a non-symmetric one. The second
+    /// 3.5e-16 for a symmetric A, 2.6e-01 for a non-symmetric one. The second
     /// number is a property of the method, not a defect -- SSOR of a
     /// non-symmetric A simply is not self-adjoint.
     ///
@@ -107,111 +102,14 @@ public:
     ///     are unaffected either way.
     ///   - bicg and qmr do call it, so ssor is usable with them for Hermitian A
     ///     only. For a non-Hermitian A use ilu_0, which has a real adjoint.
-    ///
-    /// Both numbers above were 1.1e-01 and 4.1e-01 before #398, when the sweeps
-    /// started from x = b: the extra G_B G_F term is not symmetric even when A
-    /// and M both are, because M^-1 A is not.
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
         solve(x, b);   // self-adjoint iff A is Hermitian -- see above (#394, #398)
     }
 
 private:
-    const Matrix& A_;
-    value_type omega_;
     size_type n_;
-};
-
-/// Specialization for compressed2D: O(nnz) per sweep.
-template <typename Value, typename Parameters>
-class ssor<mat::compressed2D<Value, Parameters>> {
-    using matrix_type = mat::compressed2D<Value, Parameters>;
-    using value_type  = Value;
-    using size_type   = typename matrix_type::size_type;
-public:
-    explicit ssor(const matrix_type& A, value_type omega = value_type(1))
-        : A_(A), omega_(omega), n_(A.num_rows()), dia_(A.num_rows())
-    {
-        assert(A.num_rows() == A.num_cols());
-        const auto& starts  = A.ref_major();
-        const auto& indices = A.ref_minor();
-        const auto& data    = A.ref_data();
-        for (size_type i = 0; i < n_; ++i) {
-            for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
-                if (indices[k] == i) {
-                    dia_(i) = data[k];
-                    break;
-                }
-            }
-        }
-    }
-
-    template <typename VecX, typename VecB>
-    void solve(VecX& x, const VecB& b) const {
-        assert(x.size() == n_ && b.size() == n_);
-        const auto& starts  = A_.ref_major();
-        const auto& indices = A_.ref_minor();
-        const auto& data    = A_.ref_data();
-
-        // Start the sweeps from ZERO -- see the header note. Anything else
-        // adds a G x0 term and the result is not M^-1 b.
-        for (size_type i = 0; i < n_; ++i)
-            x(i) = math::zero<value_type>();
-
-        // Forward SOR sweep
-        for (size_type i = 0; i < n_; ++i) {
-            auto sigma = math::zero<value_type>();
-            for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
-                if (indices[k] != i)
-                    sigma += data[k] * x(indices[k]);
-            }
-            x(i) = omega_ * (b(i) - sigma) / dia_(i)
-                 + (value_type(1) - omega_) * x(i);
-        }
-
-        // Backward SOR sweep
-        for (size_type ii = 0; ii < n_; ++ii) {
-            size_type i = n_ - 1 - ii;
-            auto sigma = math::zero<value_type>();
-            for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
-                if (indices[k] != i)
-                    sigma += data[k] * x(indices[k]);
-            }
-            x(i) = omega_ * (b(i) - sigma) / dia_(i)
-                 + (value_type(1) - omega_) * x(i);
-        }
-    }
-
-    /// adjoint_solve delegates to solve(), which is correct exactly when M is
-    /// self-adjoint -- that is, when A is Hermitian and omega is real, giving
-    /// M = c X D^-1 X^H (see the header note). It is NOT correct for a
-    /// non-Hermitian A, where U != L^H and no rearrangement of the sweeps gives
-    /// M^-H either.
-    ///
-    /// Measured against <M^-1 b, c> == <b, M^-H c> on a 144x144 Laplacian:
-    /// 3.4e-16 for a symmetric A, 2.6e-01 for a non-symmetric one. The second
-    /// number is a property of the method, not a defect -- SSOR of a
-    /// non-symmetric A simply is not self-adjoint.
-    ///
-    /// Consequences:
-    ///   - cg, gmres and the other eight solvers never call adjoint_solve and
-    ///     are unaffected either way.
-    ///   - bicg and qmr do call it, so ssor is usable with them for Hermitian A
-    ///     only. For a non-Hermitian A use ilu_0, which has a real adjoint.
-    ///
-    /// Both numbers above were 1.1e-01 and 4.1e-01 before #398, when the sweeps
-    /// started from x = b: the extra G_B G_F term is not symmetric even when A
-    /// and M both are, because M^-1 A is not.
-    template <typename VecX, typename VecB>
-    void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);   // self-adjoint iff A is Hermitian -- see above (#394, #398)
-    }
-
-private:
-    const matrix_type& A_;
-    value_type omega_;
-    size_type n_;
-    vec::dense_vector<value_type> dia_;
+    smoother::symmetric_sor<Matrix, Accumulator> sm_;
 };
 
 } // namespace mtl::itl::pc
