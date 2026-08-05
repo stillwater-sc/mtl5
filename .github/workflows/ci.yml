@@ -279,6 +279,68 @@ jobs:
         env:
           MTL5_NUM_THREADS: 4
 
+  # -- Fixed-baseline FP-contraction lane ----------------------------------
+  # No other test lane compiles with an elevated ISA baseline, so no test lane
+  # enables FP contraction -- while the release preset and the benchmark lanes
+  # do. The configuration a performance-minded user is most likely to build is
+  # the one the suite never ran in, and #381 was found by hand because of it.
+  #
+  # x86-64-v3 (AVX2 + FMA), NOT -march=native. native would pin the build to
+  # whatever microarchitecture the runner happens to be, so a red result would
+  # not be reproducible; v3 is a fixed target that still enables the contraction
+  # this lane exists to exercise. Verified equivalent for the purpose: with the
+  # #381 contraction pin removed, v3 reproduces that failure exactly -- 4
+  # assertions in trisolve_level_schedule_mt and 1 in supernodal_ldlt_mt, the
+  # same counts -march=native gives.
+  #
+  # Release, because contraction is an optimizer transformation and -O0 would
+  # not exercise it. GCC because its default is -ffp-contract=fast, the more
+  # aggressive of the two defaults, so a single job gets the stronger check.
+  # Highway is deliberately not enabled: this is compiler behaviour, and #381
+  # reproduced with no SIMD backend at all.
+  #
+  # Note this lane would NOT catch #381 today -- those targets now pin
+  # -ffp-contract=off. Its value is prospective: the next latent case, such as
+  # the long double references tracked in #386.
+  #
+  # Requires runners at Haswell or newer. All current GitHub-hosted x64 runners
+  # qualify; a fleet change would surface here as a build failure, not a flake.
+  fp-contract:
+    name: Linux x64 FP-contract (x86-64-v3)
+    runs-on: ubuntu-24.04
+
+    env:
+      SCCACHE_LAUNCHER: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'sccache' || '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up sccache
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER=gcc-13
+          -DCMAKE_CXX_COMPILER=g++-13
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DMTL5_BUILD_EXAMPLES=OFF
+          -DCMAKE_CXX_FLAGS="-march=x86-64-v3"
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
   # -- ThreadSanitizer lane: race-check the threading-tagged tests ----------
   # Builds the *_mt tests with -DMTL5_SANITIZE=thread (Clang) and runs them
   # under MTL5_NUM_THREADS=4 to catch data races the plain threaded run can
