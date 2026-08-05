@@ -176,3 +176,79 @@ TEST_CASE("LU inverse of Pascal matrix", "[operation][lu][generator]") {
             REQUIRE_THAT(I_approx(i, j), Catch::Matchers::WithinAbs(expected, 1e-10));
         }
 }
+
+// ---------------------------------------------------------------------------
+// #394: lu_adjoint_solve -- solve A^H x = b from the LU of A.
+//
+// lu_factor gives P*A = L*U, so A = P^-1*L*U and A^H = U^H*L^H*P (P is a real
+// permutation, so P^-H = P). The solve is therefore the mirror of lu_solve: the
+// triangular factors conjugated and in the opposite order, and the permutation
+// moved to the END and inverted -- the same interchanges in reverse.
+//
+// Needed by bicg and qmr, the only solvers that ask for M^-H, via the
+// block_diagonal preconditioner.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("lu_adjoint_solve solves A^H x = b (#394)", "[operation][lu][regression]") {
+    // Sizes chosen to span the pivoting behaviour: n = 1 and 2 exercise the
+    // degenerate paths, the larger ones actually permute rows.
+    for (std::size_t n : {std::size_t{1}, std::size_t{2}, std::size_t{5},
+                          std::size_t{17}, std::size_t{40}}) {
+        INFO("n = " << n);
+        mat::dense2D<double> A(n, n);
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j)
+                A(i, j) = std::sin(static_cast<double>(3 * i + 7 * j + 1))
+                        + (i == j ? 4.0 * static_cast<double>(n) : 0.0);
+
+        mat::dense2D<double> LU(A);
+        std::vector<std::size_t> pivot;
+        REQUIRE(lu_factor(LU, pivot) == 0);
+
+        vec::dense_vector<double> b(n), x(n);
+        for (std::size_t i = 0; i < n; ++i)
+            b[i] = 1.0 + 0.5 * std::cos(static_cast<double>(i));
+
+        lu_adjoint_solve(LU, pivot, x, b);
+
+        // Residual of A^H x - b, computed directly from the ORIGINAL A. For a
+        // real A, A^H is A^T, so column i of A dotted with x.
+        double bnorm = 0.0, resid = 0.0;
+        for (std::size_t i = 0; i < n; ++i) bnorm = std::max(bnorm, std::abs(b(i)));
+        for (std::size_t i = 0; i < n; ++i) {
+            double s = 0.0;
+            for (std::size_t j = 0; j < n; ++j) s += A(j, i) * x(j);
+            resid = std::max(resid, std::abs(s - b(i)));
+        }
+        REQUIRE(resid / bnorm < 1e-10);
+    }
+}
+
+TEST_CASE("lu_adjoint_solve is the adjoint of lu_solve (#394)",
+          "[operation][lu][regression]") {
+    // The defining property, which is sharper than a residual check and is what
+    // the preconditioners are ultimately relied on for:
+    //     <A^-1 b, c> == <b, A^-H c>
+    const std::size_t n = 24;
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = std::sin(static_cast<double>(5 * i + 2 * j))
+                    + (i == j ? 8.0 : 0.0);
+
+    mat::dense2D<double> LU(A);
+    std::vector<std::size_t> pivot;
+    REQUIRE(lu_factor(LU, pivot) == 0);
+
+    vec::dense_vector<double> b(n), c(n), Ab(n), AHc(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        b[i] = std::cos(static_cast<double>(i) * 1.7);
+        c[i] = std::sin(static_cast<double>(i) * 0.9);
+    }
+    lu_solve(LU, pivot, Ab, b);
+    lu_adjoint_solve(LU, pivot, AHc, c);
+
+    double lhs = 0.0, rhs = 0.0;
+    for (std::size_t i = 0; i < n; ++i) { lhs += Ab(i) * c(i); rhs += b(i) * AHc(i); }
+    REQUIRE(std::abs(lhs - rhs) / std::max(1.0, std::abs(lhs)) < 1e-12);
+}

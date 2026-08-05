@@ -13,6 +13,7 @@
 #include <mtl/concepts/vector.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/upper_trisolve.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
@@ -131,6 +132,63 @@ void lu_solve(const M& LU, const std::vector<typename M::size_type>& pivot,
 
     // Back substitution: U*x = y
     upper_trisolve(LU, x, /*unit_diag=*/false);
+}
+
+/// Solve A^H * x = b using the precomputed LU factorization of A.
+///
+/// lu_factor produces P*A = L*U, so A = P^-1*L*U and
+///
+///     A^H = U^H * L^H * P^-H = U^H * L^H * P
+///
+/// because P is a real permutation, hence P^-H = P. The solve is therefore the
+/// mirror image of lu_solve: the triangular factors are applied conjugated, in
+/// the opposite order, and the permutation moves to the END and is inverted.
+///
+/// The permutation in lu_solve is a forward sequence of row interchanges, so
+/// its inverse is the same interchanges applied in reverse order.
+///
+/// Needed by bicg and qmr, the only solvers that ask a preconditioner for
+/// M^-H (#394).
+template <Matrix M, Vector VecX, Vector VecB>
+void lu_adjoint_solve(const M& LU, const std::vector<typename M::size_type>& pivot,
+                      VecX& x, const VecB& b) {
+    using size_type  = typename M::size_type;
+    using value_type = typename M::value_type;
+    using conj_t     = functor::scalar::conj<value_type>;
+    const size_type n = LU.num_rows();
+    assert(LU.num_cols() == n && x.size() == n && b.size() == n);
+
+    for (size_type i = 0; i < n; ++i)
+        x(i) = b(i);
+
+    // U^H z = b. U^H is LOWER triangular with diagonal conj(U(i,i)), and
+    // (U^H)(i,j) = conj(U(j,i)) = conj(LU(j,i)) for j < i.
+    for (size_type i = 0; i < n; ++i) {
+        auto sum = math::zero<value_type>();
+        for (size_type j = 0; j < i; ++j)
+            sum += conj_t::apply(LU(j, i)) * x(j);
+        x(i) = (x(i) - sum) / conj_t::apply(LU(i, i));
+    }
+
+    // L^H w = z. L^H is UPPER triangular with UNIT diagonal, and
+    // (L^H)(i,j) = conj(L(j,i)) = conj(LU(j,i)) for j > i.
+    for (size_type ii = 0; ii < n; ++ii) {
+        const size_type i = n - 1 - ii;
+        auto sum = math::zero<value_type>();
+        for (size_type j = i + 1; j < n; ++j)
+            sum += conj_t::apply(LU(j, i)) * x(j);
+        x(i) = x(i) - sum;
+    }
+
+    // x = P^-1 w: the interchanges of lu_solve, in reverse.
+    for (size_type ii = 0; ii < n; ++ii) {
+        const size_type i = n - 1 - ii;
+        if (pivot[i] != i) {
+            auto tmp = x(i);
+            x(i) = x(pivot[i]);
+            x(pivot[i]) = tmp;
+        }
+    }
 }
 
 /// Convenience: factor and solve A*x = b in one call.

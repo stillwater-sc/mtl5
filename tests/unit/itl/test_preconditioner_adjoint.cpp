@@ -24,6 +24,7 @@
 #include <mtl/itl/pc/diagonal.hpp>
 #include <mtl/itl/pc/ilu_0.hpp>
 #include <mtl/itl/pc/ic_0.hpp>
+#include <mtl/itl/pc/block_diagonal.hpp>
 
 using namespace mtl;
 
@@ -90,6 +91,15 @@ TEST_CASE("preconditioner adjoint_solve really is the adjoint (#394)",
             itl::pc::diagonal<SMat> M(A);
             const double v = adjoint_violation(M, n);
             INFO("diagonal, " << what << ", violation = " << v);
+            CHECK(v < 1e-12);
+        }
+        {
+            // Also #394. A diagonal BLOCK of a non-symmetric A is itself
+            // non-symmetric, so delegating to solve() applied the wrong
+            // operator; now each block uses lu_adjoint_solve.
+            itl::pc::block_diagonal<SMat> M(A, 4);
+            const double v = adjoint_violation(M, n);
+            INFO("block_diagonal, " << what << ", violation = " << v);
             CHECK(v < 1e-12);
         }
         {

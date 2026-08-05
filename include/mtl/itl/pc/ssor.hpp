@@ -1,6 +1,11 @@
 #pragma once
-// MTL5 -- SSOR (Symmetric Successive Over-Relaxation) preconditioner
-// Forward SOR sweep followed by backward SOR sweep.
+// MTL5 -- SSOR-style preconditioner: a forward SOR sweep followed by a backward
+// SOR sweep, both starting from x = b.
+//
+// NOTE this is the two-sweep smoother, not the classical factored operator
+// M = (D/w + L)(D/w)^-1(D/w + U) applied as triangular solves. It is an
+// effective preconditioner but it is NOT self-adjoint, so adjoint_solve cannot
+// simply delegate to solve -- see the note on adjoint_solve below (#394, #398).
 #include <cassert>
 #include <cstddef>
 #include <mtl/vec/dense_vector.hpp>
@@ -54,9 +59,36 @@ public:
         }
     }
 
+    /// adjoint_solve delegates to solve(), and that is NOT because the operator
+    /// is self-adjoint. Measured against <M^-1 b, c> == <b, M^-H c> on a
+    /// 144x144 Laplacian, the relative violation is 1.1e-01 for a SYMMETRIC A
+    /// and 4.1e-01 for a non-symmetric one (#394). Reversing the sweep order
+    /// does not give the adjoint either (8.2e-02).
+    ///
+    /// The reason is that solve() above is not the classical SSOR operator. It
+    /// runs two SOR SWEEPS starting from x = b, whereas
+    ///
+    ///     M = (D/w + L) (D/w)^-1 (D/w + U)
+    ///
+    /// is applied as two TRIANGULAR SOLVES. The implemented operator is a
+    /// two-sweep smoother, which is a perfectly good preconditioner -- cg
+    /// converges in 17 iterations with it against 33 with pc::diagonal, and
+    /// gmres in 13 -- but it has no simple adjoint because it is not that
+    /// factorization.
+    ///
+    /// Consequences, all measured:
+    ///   - cg, gmres and the other eight solvers do not call adjoint_solve and
+    ///     are unaffected.
+    ///   - bicg and qmr do call it. They converge with ssor on a SYMMETRIC A
+    ///     (17 iterations), and do NOT converge on a non-symmetric one.
+    ///
+    /// So: ssor is usable with bicg/qmr only for symmetric A. Reimplementing it
+    /// in the classical factored form would make it genuinely self-adjoint and
+    /// give it a real adjoint, at the cost of changing the iteration counts of
+    /// every solver that uses it; that is tracked separately (#398).
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);  // SSOR is symmetric
+        solve(x, b);   // NOT self-adjoint -- see the note above (#394)
     }
 
 private:
@@ -124,9 +156,36 @@ public:
         }
     }
 
+    /// adjoint_solve delegates to solve(), and that is NOT because the operator
+    /// is self-adjoint. Measured against <M^-1 b, c> == <b, M^-H c> on a
+    /// 144x144 Laplacian, the relative violation is 1.1e-01 for a SYMMETRIC A
+    /// and 4.1e-01 for a non-symmetric one (#394). Reversing the sweep order
+    /// does not give the adjoint either (8.2e-02).
+    ///
+    /// The reason is that solve() above is not the classical SSOR operator. It
+    /// runs two SOR SWEEPS starting from x = b, whereas
+    ///
+    ///     M = (D/w + L) (D/w)^-1 (D/w + U)
+    ///
+    /// is applied as two TRIANGULAR SOLVES. The implemented operator is a
+    /// two-sweep smoother, which is a perfectly good preconditioner -- cg
+    /// converges in 17 iterations with it against 33 with pc::diagonal, and
+    /// gmres in 13 -- but it has no simple adjoint because it is not that
+    /// factorization.
+    ///
+    /// Consequences, all measured:
+    ///   - cg, gmres and the other eight solvers do not call adjoint_solve and
+    ///     are unaffected.
+    ///   - bicg and qmr do call it. They converge with ssor on a SYMMETRIC A
+    ///     (17 iterations), and do NOT converge on a non-symmetric one.
+    ///
+    /// So: ssor is usable with bicg/qmr only for symmetric A. Reimplementing it
+    /// in the classical factored form would make it genuinely self-adjoint and
+    /// give it a real adjoint, at the cost of changing the iteration counts of
+    /// every solver that uses it; that is tracked separately (#398).
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);  // SSOR is symmetric
+        solve(x, b);   // NOT self-adjoint -- see the note above (#394)
     }
 
 private:

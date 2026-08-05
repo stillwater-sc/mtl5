@@ -48,9 +48,32 @@ public:
         }
     }
 
+    /// Solve M^H x = b, block by block.
+    ///
+    /// This used to delegate to solve(), commented "approximate". It is not an
+    /// approximation: a diagonal block of a non-symmetric A is itself
+    /// non-symmetric, so the wrong operator was applied outright. bicg and qmr
+    /// are the only callers and both failed to converge (#394).
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);  // approximate
+        // M is block DIAGONAL, so M^H is block diagonal with each block
+        // conjugate-transposed -- the blocks stay independent and no coupling
+        // appears between them.
+        for (size_type blk = 0; blk < nb_; ++blk) {
+            size_type start = blk * bs_;
+            size_type end   = std::min(start + bs_, n_);
+            size_type bsize = end - start;
+
+            vec::dense_vector<value_type> bsub(bsize);
+            vec::dense_vector<value_type> xsub(bsize);
+            for (size_type i = 0; i < bsize; ++i)
+                bsub(i) = b(start + i);
+
+            lu_adjoint_solve(blocks_[blk], pivots_[blk], xsub, bsub);
+
+            for (size_type i = 0; i < bsize; ++i)
+                x(start + i) = xsub(i);
+        }
     }
 
 private:
