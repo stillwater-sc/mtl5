@@ -43,7 +43,16 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     M.solve(z, r);
     M.adjoint_solve(z_tilde, r_tilde);
 
-    value_type rho = mtl::dot<Accumulator, value_type>(z_tilde, z);
+    // rho = z^T r~ : the PRECONDITIONED residual against the UNpreconditioned
+    // shadow residual (Barrett et al., Templates, section 2.3.5; Saad,
+    // Iterative Methods, Alg. 7.1).
+    //
+    // This used to be dot(z_tilde, z), which applies the preconditioner twice:
+    //   z~ . z = (M^-T r~) . (M^-1 r) = r~^T M^-1 M^-1 r
+    // where the algorithm needs r~^T M^-1 r. With pc::identity, z == r and
+    // z~ == r~, so the two coincide -- which is exactly why identity was the
+    // only preconditioner bicg converged with (#392).
+    value_type rho = mtl::dot<Accumulator, value_type>(r_tilde, z);
     value_type rho_1{};
 
     while (!iter.finished(r)) {
@@ -87,7 +96,7 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         M.adjoint_solve(z_tilde, r_tilde);
 
         rho_1 = rho;
-        rho = mtl::dot<Accumulator, value_type>(z_tilde, z);
+        rho = mtl::dot<Accumulator, value_type>(r_tilde, z);   // z^T r~, see above (#392)
 
         // rho == 0 is ambiguous between a true Lanczos breakdown and exact
         // convergence (r == 0 drives z == z_tilde == 0, hence rho == 0).
