@@ -60,6 +60,43 @@ using packed_buffer = std::vector<T, aligned_allocator<T>>;
 /// Default GEMM thread count: the persistent pool's size (env MTL5_NUM_THREADS,
 /// clamped to hardware concurrency; 1 when unset/invalid). Using the pool as the
 /// single source of truth guarantees the GEMM's team never exceeds the pool.
+/// Choose the ic-block size that balances the threaded m-partition (#408).
+///
+/// `mc_max` is an UPPER bound set by the L2 budget -- any smaller value is still
+/// cache-legal -- so we are free to trade a little block size for a partition
+/// that divides evenly across the team. The threaded nest hands ic-blocks to the
+/// `ic_nt` members round-robin, so the most-loaded thread gets
+/// `ceil(nib / ic_nt)` blocks and the critical path is minimised when `nib` is a
+/// MULTIPLE of `ic_nt`. This picks the largest `mc <= mc_max` achieving that.
+///
+/// Why this is needed at all: `mc` used to be rounded down to a multiple of `mr`
+/// in derive_blocking, which coupled the L2 block size to the register tile. The
+/// #382 tile change (mr 4 -> 6) therefore moved mc 64 -> 60, turning nib = 16 at
+/// m = 1024 (exactly 2.00 blocks per thread on 8 threads) into nib = 18 (2.25,
+/// a 1.41x critical path). That converted a +21.5% single-thread win into a
+/// -7.4% eight-thread REGRESSION. The rounding is gone and the balance is chosen
+/// here, where `m` and the thread count are actually known.
+///
+/// Returns `mc_max` unchanged for the serial case, where there is nothing to
+/// balance and the largest cache-legal block is best.
+inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt,
+                               std::size_t mr = 1) {
+    // Serial: nothing to balance, so take the largest cache-legal block -- and
+    // round it to a whole number of mr-row panels, which is worth ~3% here
+    // because it removes the ragged panel from every A block rather than only
+    // the last one. That rounding is only harmful when it perturbs the THREADED
+    // partition, which is the case below.
+    if (ic_nt <= 1 || m == 0 || mc_max == 0) {
+        if (mr > 1 && mc_max >= mr) return (mc_max / mr) * mr;
+        return mc_max;
+    }
+    std::size_t nib = (m + mc_max - 1) / mc_max;        // fewest blocks the bound allows
+    nib = ((nib + ic_nt - 1) / ic_nt) * ic_nt;          // round up to a multiple of ic_nt
+    if (nib == 0) return mc_max;
+    const std::size_t mc = (m + nib - 1) / nib;         // rows per block; <= mc_max
+    return mc == 0 ? mc_max : mc;
+}
+
 inline unsigned gemm_default_threads() {
     return thread_pool::instance().size();
 }
@@ -112,6 +149,11 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     constexpr std::size_t MR = bp.mr;
     constexpr std::size_t NR = bp.nr;
     const std::size_t KC = bp.kc, MC = bp.mc, NC = bp.nc;
+    // The ic-block size actually used. Equal to the cache bound MC everywhere
+    // except the threaded nest, which lowers it to balance the m-partition once
+    // ic_nt is known (#408). Captured by reference below and finalized before
+    // any call, so the serial paths see MC unchanged.
+    std::size_t MC_eff = balanced_mc(m, MC, 1, MR);
 
     // beta: scale (or zero) C once up front; the nest then purely accumulates.
     if (beta == TC(0)) {
@@ -134,7 +176,7 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     auto do_ic_block = [&](std::size_t ic, std::size_t jc, std::size_t nci,
                            std::size_t npanels, std::size_t kci, std::size_t pc,
                            const TAB* Bpack, TAB* Acbuf) {
-        const std::size_t mci = std::min(MC, m - ic);
+        const std::size_t mci = std::min(MC_eff, m - ic);
         pack_A<TAB, MR>(A + static_cast<std::ptrdiff_t>(ic) * a_rs
                           + static_cast<std::ptrdiff_t>(pc) * a_cs,
                         a_rs, a_cs, mci, kci, Acbuf);
@@ -186,7 +228,11 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                 pack_B<TAB, NR>(B + static_cast<std::ptrdiff_t>(pc) * b_rs
                                   + static_cast<std::ptrdiff_t>(jc) * b_cs,
                                 b_rs, b_cs, kci, nci, Bc.data());
-                for (std::size_t ic = 0; ic < m; ic += MC)
+                // MUST step by MC_eff, not MC: do_ic_block sizes its block as
+                // min(MC_eff, m - ic), so stepping by the larger cache bound
+                // would skip (MC - MC_eff) rows per block and silently drop
+                // them from C.
+                for (std::size_t ic = 0; ic < m; ic += MC_eff)
                     do_ic_block(ic, jc, nci, npanels, kci, pc, Bc.data(), Ac.data());
             }
         }
@@ -222,6 +268,22 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     const unsigned grid = ic_nt * jc_nt;
 
     if (grid <= 1) { serial_nest(); return; }
+
+    // Now that ic_nt is fixed, re-block the m dimension so the round-robin
+    // partition divides evenly (#408). balanced_mc only ever LOWERS mc, so the
+    // new block count is >= nib >= ic_nt and the grid stays valid; the packed-A
+    // buffers sized from mc_max = min(MC, m) stay large enough for the same
+    // reason. Rebuilding ic_starts is the only state that depends on it.
+    //
+    // This changes neither the result nor its bit-identity to the serial nest:
+    // the FMA order for a given C element is fixed by the pc (k) loop, which is
+    // untouched, and ic blocking only decides which rows are grouped together.
+    MC_eff = balanced_mc(m, MC, ic_nt, MR);
+    if (MC_eff != MC) {
+        ic_starts.clear();
+        for (std::size_t ic = 0; ic < m; ic += MC_eff) ic_starts.push_back(ic);
+    }
+    const std::size_t nib_eff = ic_starts.size();
 
     // Pre-allocate ALL scratch outside the parallel region: one packed-B per
     // jc-team (shared within the team), one packed-A per grid thread, and one
@@ -294,7 +356,7 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                 bar.wait();                                       // publish B to the team
                 if (!failed.load(std::memory_order_relaxed)) {
                     try {
-                        for (std::size_t ib = ic_id; ib < nib; ib += ic_nt)
+                        for (std::size_t ib = ic_id; ib < nib_eff; ib += ic_nt)
                             do_ic_block(ic_starts[ib], jc, nci, npanels, kci, pc, Bteam, Aloc);
                     } catch (...) { record_failure(std::current_exception()); }
                 }

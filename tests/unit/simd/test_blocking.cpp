@@ -33,7 +33,13 @@ TEST_CASE("AVX2 double derivation matches published Haswell-class values", "[sim
     STATIC_REQUIRE(bp.mr == 6);
     STATIC_REQUIRE(bp.nr == 8);     // NRVEC=2 vectors of Nvec=4; matches BLIS Haswell 6x8
     STATIC_REQUIRE(bp.kc == 256);   // (32KB/2)/(8*8)
-    STATIC_REQUIRE(bp.mc == 60);    // (256KB/2)/(256*8) rounded down to a multiple of mr=6
+    // (256KB/2)/(256*8) = 64, NOT rounded to a multiple of mr (#408). It was 60
+    // here until that rounding was removed: coupling the L2 block size to the
+    // register tile meant #382's mr 4 -> 6 silently re-blocked the m dimension,
+    // which cost -7.4% on 8 threads at m = 1024. mc is a cache quantity and now
+    // derives from the cache alone; detail::balanced_mc lowers it against the
+    // thread count at runtime.
+    STATIC_REQUIRE(bp.mc == 64);
     STATIC_REQUIRE(bp.nc == 4096);  // 8MB/(256*8), multiple of nr
 
     // The accumulators fit the file with room for the B panel and the A
@@ -76,7 +82,16 @@ void check_valid(const blocking_params& bp, std::size_t nvec, std::size_t sdata,
     CHECK(bp.mr * bp.nr >= nvec * hw.fma_latency * hw.fma_units);  // enough accumulators (Eq.1)
     CHECK(bp.nr % nvec == 0);                                      // vector dimension
     CHECK(bp.kc >= 1);
-    CHECK(bp.mc % bp.mr == 0);
+    // mc is deliberately NOT required to be a multiple of mr (#408). It is a
+    // CACHE quantity; tying it to the register tile meant #382's mr 4 -> 6 also
+    // re-blocked the m dimension (mc 64 -> 60), which broke the threaded
+    // partition's divisibility and cost -7.4% on 8 threads at m = 1024. pack_A
+    // already handles a ragged final panel -- it must, since m is not generally
+    // a multiple of mr -- so the constraint bought nothing and cost that.
+    //
+    // nc keeps its multiple-of-nr requirement: the jc partition is over whole
+    // nr-column panels, and nc is L3-sized so it is nowhere near as sensitive.
+    CHECK(bp.mc >= 1);
     CHECK(bp.nc % bp.nr == 0);
     CHECK(bp.kc * bp.nr * sdata <= hw.l1_bytes);   // B micro-panel resident in L1
     CHECK(bp.mc * bp.kc * sdata <= hw.l2_bytes);   // packed A block resident in L2

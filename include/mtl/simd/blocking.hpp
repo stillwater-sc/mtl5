@@ -146,8 +146,23 @@ constexpr blocking_params derive_blocking(std::size_t nvec,
     std::size_t kc = (hw.l1_bytes / 2) / (nr * sdata);
     if (kc == 0) kc = 1;
 
-    // mc: packed A block (mc x kc) occupies ~half of L2; multiple of mr.
-    std::size_t mc = round_down((hw.l2_bytes / 2) / (kc * sdata), mr);
+    // mc: packed A block (mc x kc) occupies ~half of L2.
+    //
+    // NOT rounded to a multiple of mr (#408). That coupling made a CACHE
+    // quantity depend on the REGISTER TILE, and the dependency is destructive:
+    // the L2 budget here yields exactly 64, which survives mr = 4 but drops to
+    // 60 under #382's mr = 6. That moved the ic-block count at m = 1024 from 16
+    // (exactly 2.00 blocks per thread on 8 threads) to 18 (2.25), a 1.41x
+    // critical path that turned #382's +21.5% single-thread win into a -7.4%
+    // eight-thread regression.
+    //
+    // The rounding was never a correctness requirement -- pack_A already handles
+    // a ragged final panel, since m is not a multiple of mr in general. Dropping
+    // it costs one partial panel per block instead of one per matrix, which
+    // measured within noise single-threaded, and it lets detail::balanced_mc
+    // choose the block size against the thread count at runtime, where m and
+    // ic_nt are actually known.
+    std::size_t mc = (hw.l2_bytes / 2) / (kc * sdata);
     if (mc == 0) mc = mr;
 
     // nc: packed B panel (kc x nc) occupies ~L3; multiple of nr.
