@@ -10,8 +10,11 @@
 //
 //     That second failure is close to invisible. Measured by removing the sort
 //     from spgemm: nnz stays correct, row sums off the raw CSR arrays stay
-//     correct to 4.4e-16, and a sparse matvec stays EXACTLY correct -- it sums
-//     data[k]*x(indices[k]) in storage order, which does not care about order.
+//     correct to 4.4e-16, and a sparse matvec stays correct TO ROUNDING -- it
+//     sums data[k]*x(indices[k]) over whatever order the row is in, and
+//     reordering preserves the set of products, so the sum is still right.
+//     (Not bit-identical -- floating-point addition is not associative -- but
+//     wrong at eps, which no residual check will flag.)
 //     Only reading elements back, or inspecting the index arrays, sees it. So
 //     the natural tests for a matrix product -- residual of A*x, nnz, row sums
 //     -- all pass on a corrupt result. require_well_formed below is what

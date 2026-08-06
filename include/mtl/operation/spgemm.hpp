@@ -32,11 +32,15 @@
 // Measured with the sort removed, 12x12 at 30% density: nnz is correct, row
 // sums computed from the raw CSR arrays are correct to 4.4e-16, and element
 // access through operator()(r, c) is wrong by 3.2 absolute. A sparse matvec is
-// wrong by NOTHING -- it sums data[k]*x(indices[k]) in storage order, which is
-// order-independent. So the failure is invisible to nnz checks, row sums, and
-// A*x alike, and only a test that reads elements back or inspects the index
-// arrays will see it. That is why test_spgemm.cpp asserts the structure
-// directly rather than trusting a residual.
+// wrong only to ROUNDING -- it sums data[k]*x(indices[k]) over whatever order
+// the row happens to be in, and reordering preserves the set of products, so it
+// still computes the right sum. (Not bit-identical: floating-point addition is
+// not associative, so a different summation order can round differently. The
+// point is that the difference is at eps, not that there is none.) So the
+// failure is invisible to nnz checks, row sums, and A*x alike, and only a test
+// that reads elements back or inspects the index arrays will see it. That is
+// why test_spgemm.cpp asserts the structure directly rather than trusting a
+// residual.
 //
 // Structural zeros are KEPT: an entry whose accumulated value cancels to
 // exactly zero stays in the pattern. That is the conventional choice, and the

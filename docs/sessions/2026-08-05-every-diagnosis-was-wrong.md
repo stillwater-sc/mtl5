@@ -38,7 +38,7 @@ The issue was filed claiming `ssor` ran "two SOR sweeps, not the classical
 factored operator", needing a reimplementation. Wrong on the second half. The
 sweeps **are** the factored operator — provided they start from `x = 0`:
 
-```
+```text
 forward from 0:  F x1 = b                     F = D/w + L,  B = D/w + U
 backward:        B x2 = b + (B - A) x1
 so               x2 = B^-1 ((B - A) + F) F^-1 b,   (B - A) + F = D (2-w)/w
@@ -73,12 +73,15 @@ and the accumulator returns them in scatter order. Measured with the sort remove
 |---|---|
 | `nnz` | correct |
 | row sums from raw CSR | correct to 4.4e-16 |
-| sparse matvec `A*x` | **exactly** correct |
+| sparse matvec `A*x` | correct **to rounding** |
 | element access `C(i,j)` | **wrong by 3.2** |
 
-The matvec is exact because it sums in storage order, which is order-independent.
-Every natural test for a matrix product passes on a corrupt matrix. So the tests
-assert index structure directly rather than trusting a residual.
+The matvec sums the same set of products whatever order the row is in, so it
+still computes the right sum — correct *to rounding*, not bit-identical, since
+floating-point addition is not associative. Either way it cannot detect the
+corruption, which is the point: every natural test for a matrix product passes
+on a corrupt matrix. So the tests assert index structure directly rather than
+trusting a residual.
 
 ### The benchmark refresh that found a regression (#409)
 
@@ -101,7 +104,7 @@ The obvious cause was a cold P-core; direct measurement killed it. Recorded as
 
 ### The regression, root-caused (#408 → #410)
 
-#382's +22% single-thread win decayed with thread count and went **negative** at
+`#382`'s +22% single-thread win decayed with thread count and went **negative** at
 N=1024/T=8. The filed hypothesis was cache pressure. The actual cause:
 
 `mc = round_down((L2/2)/(kc·8), mr)` — the L2 budget gives exactly **64**, which
