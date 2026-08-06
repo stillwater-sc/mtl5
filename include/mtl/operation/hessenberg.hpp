@@ -1,12 +1,13 @@
 #pragma once
 // MTL5 -- Hessenberg reduction via Householder reflections
-// Reduces A to upper Hessenberg form H = Q^T * A * Q
+// Reduces A to upper Hessenberg form H = Q^H * A * Q via a unitary similarity.
 #include <algorithm>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/householder.hpp>
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl {
@@ -21,24 +22,16 @@ void hessenberg_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using size_type  = typename M::size_type;
     const size_type n = A.num_rows();
     if (n < 3) { tau.change_dim(0); return; }
-    // A similarity transform needs A -> H*A*H^-1. This routine applies
-    // H*A*H, which is correct only because a REAL Householder reflector is
-    // symmetric and involutory (H^-1 == H^T == H). A complex reflector is
-    // unitary but NOT Hermitian, so H^-1 == H^H != H, and the same code would
-    // silently compute a non-similar matrix -- different eigenvalues, no
-    // diagnostic.
+    // A similarity transform needs A -> H*A*H^-1. A Householder reflector H is
+    // UNITARY, so H^-1 == H^H and A -> H*A*H^H is a genuine similarity for any
+    // element type. The left factor stays H (I - beta*v*v^H); the right factor
+    // must be H^H == I - conj(beta)*v*v^H, so apply_householder_right is passed
+    // conj(beta) below -- the same adjoint bookkeeping #361 worked out for
+    // qr_extract_Q / lq_extract_Q.
     //
-    // householder() and apply_householder_* became complex-capable in #353, so
-    // this would now COMPILE for complex where it previously did not. Reject it
-    // explicitly rather than let a fix elsewhere open a silent-wrong-answer
-    // path here; the Hermitian reduction (real subdiagonal, phase accumulation)
-    // is its own piece of work.
-    static_assert(!is_complex_v<typename M::value_type>,
-        "hessenberg_factor applies H*A*H, a similarity transform only for REAL Householder "
-        "reflectors, which are Hermitian. Complex element types need the unitary "
-        "reduction A -> H*A*H^H and are not supported yet (#353).");
-
-
+    // For a REAL element type conj is the identity, so this is bit-identical to
+    // the earlier H*A*H formulation: a real reflector is Hermitian (H^H == H),
+    // which is why the unconjugated code was correct there and only there.
     const size_type k = n - 2;
     tau.change_dim(k);
 
@@ -52,11 +45,13 @@ void hessenberg_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
         auto [v, beta] = householder(col);
         tau(j) = beta;
 
-        // Apply from left: A(j+1:n-1, j:n-1) = (I - beta*v*v^T) * A(j+1:n-1, j:n-1)
+        // Apply from left: A(j+1:n-1, j:n-1) = H * A(j+1:n-1, j:n-1)
         apply_householder_left(A, v, beta, j + 1, j);
 
-        // Apply from right: A(0:n-1, j+1:n-1) = A(0:n-1, j+1:n-1) * (I - beta*v*v^T)
-        apply_householder_right(A, v, beta, 0, j + 1);
+        // Apply from right: A(0:n-1, j+1:n-1) = A(0:n-1, j+1:n-1) * H^H.
+        // apply_householder_right computes A*(I - s*v*v^H); passing conj(beta)
+        // makes s == conj(beta), i.e. A*H^H, completing the similarity.
+        apply_householder_right(A, v, functor::scalar::conj<value_type>::apply(beta), 0, j + 1);
 
         // Store Householder vector below subdiagonal
         for (size_type i = 1; i < len; ++i)
@@ -95,9 +90,11 @@ auto hessenberg(const M& A) {
     return hessenberg_extract_H(H);
 }
 
-/// Reduce a symmetric matrix to tridiagonal form in-place.
-/// After this call, the diagonal and subdiagonal of A contain the tridiagonal matrix.
-/// (For a symmetric matrix, Hessenberg reduction produces a tridiagonal matrix.)
+/// Reduce a symmetric (or Hermitian) matrix to tridiagonal form in-place.
+/// After this call, the diagonal and subdiagonal of A contain the tridiagonal
+/// matrix. Hessenberg reduction of a symmetric matrix is tridiagonal; of a
+/// Hermitian matrix it is Hermitian tridiagonal (real diagonal, conjugate
+/// off-diagonals), so the subdiagonal entries may carry a phase.
 template <Matrix M>
 void tridiagonalize(M& A, vec::dense_vector<typename M::value_type>& tau) {
     hessenberg_factor(A, tau);

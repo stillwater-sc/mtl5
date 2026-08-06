@@ -3,14 +3,18 @@
 // Tridiagonalize via Householder, then apply Wilkinson-shifted QR iterations.
 // Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <cmath>
+#include <complex>
 #include <algorithm>
 #include <cassert>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/concepts/magnitude.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/hessenberg.hpp>
+#include <mtl/functor/scalar/real.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
@@ -19,19 +23,29 @@
 
 namespace mtl {
 
-/// Generic (LAPACK-free) symmetric eigenvalue solver: tridiagonalize, then run
-/// implicit QR with Wilkinson shifts on the tridiagonal form. Returns the
-/// eigenvalues as a dense_vector sorted in ascending order.
+/// Generic (LAPACK-free) symmetric/Hermitian eigenvalue solver: tridiagonalize,
+/// then run implicit QR with Wilkinson shifts on the tridiagonal form. Returns
+/// the eigenvalues as a dense_vector sorted in ascending order. The eigenvalues
+/// of a Hermitian matrix are real, so the result element type is the magnitude
+/// type magnitude_t<value_type> (== value_type for a real matrix).
+///
+/// For a complex Hermitian A the reduction yields a Hermitian tridiagonal whose
+/// subdiagonal carries an arbitrary phase. Replacing each subdiagonal entry by
+/// its modulus is a diagonal unitary similarity D^H T D, which leaves the
+/// spectrum unchanged -- so eigenVALUES need no phase bookkeeping. (Eigenvectors
+/// do: see eigen_symmetric, which accumulates D.)
 ///
 /// This is the C++ reference path. `eigenvalue_symmetric` dispatches to LAPACK
 /// when available and otherwise calls this; benchmarks and tests can call this
 /// directly to exercise the generic algorithm regardless of MTL5_HAS_LAPACK.
 template <Matrix M>
-auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10,
+auto eigenvalue_symmetric_generic(const M& A,
+                                  magnitude_t<typename M::value_type> tol = 1e-10,
                                   typename M::size_type max_iter = 0) {
 
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
+    using real_t     = magnitude_t<value_type>;
     using std::abs;
     using std::sqrt;
     const size_type n = A.num_rows();
@@ -48,13 +62,22 @@ auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10
     vec::dense_vector<value_type> tau;
     tridiagonalize(T, tau);
 
-    // Extract diagonal (d) and subdiagonal (e) from tridiagonal T
-    vec::dense_vector<value_type> d(n), e(n);
+    // Extract the real diagonal (d) and real subdiagonal (e) of the tridiagonal.
+    // The diagonal of a Hermitian tridiagonal is real; real() is the identity
+    // for a real value_type, so this stays bit-exact there. The subdiagonal of a
+    // complex Hermitian tridiagonal has a phase -- take its modulus (the D^H T D
+    // similarity above). For a real value_type abs(...) would drop the sign and
+    // change the arithmetic, so the real branch keeps the signed entry verbatim.
+    vec::dense_vector<real_t> d(n), e(n);
     for (size_type i = 0; i < n; ++i)
-        d(i) = T(i, i);
-    for (size_type i = 0; i + 1 < n; ++i)
-        e(i) = T(i + 1, i);
-    e(n - 1) = math::zero<value_type>();
+        d(i) = functor::scalar::real<value_type>::apply(T(i, i));
+    for (size_type i = 0; i + 1 < n; ++i) {
+        if constexpr (is_complex_v<value_type>)
+            e(i) = abs(T(i + 1, i));
+        else
+            e(i) = T(i + 1, i);
+    }
+    e(n - 1) = math::zero<real_t>();
 
     // Implicit QR iteration (symmetric tridiagonal QR with Wilkinson shift)
     for (size_type iter = 0; iter < max_iter; ++iter) {
@@ -65,7 +88,7 @@ auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10
         // Find trailing block of zeros (converged eigenvalues)
         for (size_type i = n; i > 1; --i) {
             if (abs(e(i - 2)) > tol * (abs(d(i - 2)) + abs(d(i - 1)))) break;
-            e(i - 2) = math::zero<value_type>();
+            e(i - 2) = math::zero<real_t>();
             q++;
         }
         if (q >= n - 1) break; // all converged
@@ -75,7 +98,7 @@ auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10
         // Find start of active block
         for (size_type i = end - 1; i > 0; --i) {
             if (abs(e(i - 1)) <= tol * (abs(d(i - 1)) + abs(d(i)))) {
-                e(i - 1) = math::zero<value_type>();
+                e(i - 1) = math::zero<real_t>();
                 p = i;
                 break;
             }
@@ -83,32 +106,34 @@ auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10
 
         if (end - p < 2) continue;
 
-        // Wilkinson shift: eigenvalue of trailing 2x2 block closest to d[end-1]
-        value_type a = d(end - 2);
-        value_type b = e(end - 2);
-        value_type c = d(end - 1);
-        value_type delta = (a - c) / value_type(2);
-        value_type sign_delta = (delta >= 0) ? value_type(1) : value_type(-1);
-        value_type mu = c - b * b / (delta + sign_delta * sqrt(delta * delta + b * b));
+        // Wilkinson shift: eigenvalue of trailing 2x2 block closest to d[end-1].
+        // The tridiagonal is real by construction, so all iteration scalars are
+        // real_t (== value_type for a real matrix, so the arithmetic is unchanged).
+        real_t a = d(end - 2);
+        real_t b = e(end - 2);
+        real_t c = d(end - 1);
+        real_t delta = (a - c) / real_t(2);
+        real_t sign_delta = (delta >= 0) ? real_t(1) : real_t(-1);
+        real_t mu = c - b * b / (delta + sign_delta * sqrt(delta * delta + b * b));
 
         // Implicit QR step with Givens rotations (Golub-Van Loan Algorithm 8.3.2)
-        value_type x = d(p) - mu;
-        value_type z = e(p);
+        real_t x = d(p) - mu;
+        real_t z = e(p);
 
         for (size_type k = p; k + 1 < end; ++k) {
             // Compute Givens rotation to zero z
-            value_type r = sqrt(x * x + z * z);
-            value_type cs = x / r;
-            value_type sn = z / r;
+            real_t r = sqrt(x * x + z * z);
+            real_t cs = x / r;
+            real_t sn = z / r;
 
             if (k > p) e(k - 1) = r;
 
-            value_type d0 = d(k);
-            value_type d1 = d(k + 1);
-            value_type ek = e(k);
+            real_t d0 = d(k);
+            real_t d1 = d(k + 1);
+            real_t ek = e(k);
 
-            d(k)     = cs * cs * d0 + value_type(2) * cs * sn * ek + sn * sn * d1;
-            d(k + 1) = sn * sn * d0 - value_type(2) * cs * sn * ek + cs * cs * d1;
+            d(k)     = cs * cs * d0 + real_t(2) * cs * sn * ek + sn * sn * d1;
+            d(k + 1) = sn * sn * d0 - real_t(2) * cs * sn * ek + cs * cs * d1;
             e(k)     = cs * sn * (d1 - d0) + (cs * cs - sn * sn) * ek;
 
             if (k + 2 < end) {
@@ -120,23 +145,25 @@ auto eigenvalue_symmetric_generic(const M& A, typename M::value_type tol = 1e-10
     }
 
     // Sort eigenvalues
-    std::vector<value_type> eigs(n);
+    std::vector<real_t> eigs(n);
     for (size_type i = 0; i < n; ++i)
         eigs[i] = d(i);
     std::sort(eigs.begin(), eigs.end());
 
-    vec::dense_vector<value_type> result(n);
+    vec::dense_vector<real_t> result(n);
     for (size_type i = 0; i < n; ++i)
         result(i) = eigs[i];
     return result;
 }
 
-/// Compute eigenvalues of a symmetric matrix via implicit QR on tridiagonal form.
-/// Returns eigenvalues as a dense_vector sorted in ascending order.
-/// Dispatches to LAPACK syev when available and the type qualifies; otherwise
-/// uses eigenvalue_symmetric_generic.
+/// Compute eigenvalues of a symmetric/Hermitian matrix via implicit QR on
+/// tridiagonal form. Returns eigenvalues (real: magnitude_t<value_type>) sorted
+/// in ascending order. Dispatches to LAPACK syev when available and the type
+/// qualifies (real float/double); complex Hermitian input falls through to
+/// eigenvalue_symmetric_generic.
 template <Matrix M>
-auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
+auto eigenvalue_symmetric(const M& A,
+                          magnitude_t<typename M::value_type> tol = 1e-10,
                           typename M::size_type max_iter = 0) {
 #ifdef MTL5_HAS_LAPACK
     if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
@@ -172,47 +199,41 @@ auto eigenvalue_symmetric(const M& A, typename M::value_type tol = 1e-10,
     return eigenvalue_symmetric_generic(A, tol, max_iter);
 }
 
-/// Compute eigenvalues and eigenvectors of a symmetric matrix.
+/// Compute eigenvalues and eigenvectors of a symmetric or Hermitian matrix.
 /// Returns {eigenvalues, eigenvectors} where:
-///   eigenvalues:  dense_vector of size n, sorted ascending
+///   eigenvalues:  dense_vector of size n, sorted ascending. The eigenvalues of
+///                 a Hermitian matrix are real, so the element type is the
+///                 magnitude type magnitude_t<value_type> (== value_type real).
 ///   eigenvectors: dense2D of size n x n, column k = eigenvector for eigenvalues(k)
 ///
-/// The algorithm accumulates similarity transforms (Householder reflectors
-/// from tridiagonalization + Givens rotations from QR iteration) into Q,
-/// so that A = Q * diag(eigenvalues) * Q^T.
+/// so that A = Q * diag(eigenvalues) * Q^H (Q^T for a real matrix).
+///
+/// For complex Hermitian A the reduction is the UNITARY similarity A -> H*A*H^H
+/// (H^H = H^-1), and the Hermitian tridiagonal's phased subdiagonal is made real
+/// by a diagonal unitary D so the real symmetric QR can run. D preserves the
+/// eigenVALUES but rotates each eigenVECTOR by a per-row phase, so it must be
+/// folded into Q -- skip it and eigenvalues still look right while A*v != lambda*v.
+/// For a real value_type conj() is the identity, D is the identity, real_t is
+/// value_type, and the arithmetic is bit-identical to the earlier H*A*H code.
 template <Matrix M>
-auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
+auto eigen_symmetric(const M& A,
+                     magnitude_t<typename M::value_type> tol = 1e-10,
                      typename M::size_type max_iter = 0) {
-    // A similarity transform needs A -> H*A*H^-1. This routine applies
-    // H*A*H, which is correct only because a REAL Householder reflector is
-    // symmetric and involutory (H^-1 == H^T == H). A complex reflector is
-    // unitary but NOT Hermitian, so H^-1 == H^H != H, and the same code would
-    // silently compute a non-similar matrix -- different eigenvalues, no
-    // diagnostic.
-    //
-    // householder() and apply_householder_* became complex-capable in #353, so
-    // this would now COMPILE for complex where it previously did not. Reject it
-    // explicitly rather than let a fix elsewhere open a silent-wrong-answer
-    // path here; the Hermitian reduction (real subdiagonal, phase accumulation)
-    // is its own piece of work.
-    static_assert(!is_complex_v<typename M::value_type>,
-        "eigen_symmetric applies H*A*H, a similarity transform only for REAL Householder "
-        "reflectors, which are Hermitian. Complex element types need the unitary "
-        "reduction A -> H*A*H^H and are not supported yet (#353).");
-
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
+    using real_t     = magnitude_t<value_type>;
+    using conj_t     = functor::scalar::conj<value_type>;
     using std::abs;
     using std::sqrt;
     const size_type n = A.num_rows();
     assert(n == A.num_cols());
 
     struct EigenResult {
-        vec::dense_vector<value_type> eigenvalues;
+        vec::dense_vector<real_t> eigenvalues;
         mat::dense2D<value_type> eigenvectors;
     };
 
-    if (n == 0) return EigenResult{vec::dense_vector<value_type>(0), mat::dense2D<value_type>(0, 0)};
+    if (n == 0) return EigenResult{vec::dense_vector<real_t>(0), mat::dense2D<value_type>(0, 0)};
 
     if (max_iter == 0) max_iter = 30 * n;
 
@@ -240,23 +261,44 @@ auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
 
             auto [v, beta] = householder(col);
 
-            // Apply from left: T = (I - beta*v*v^T) * T
+            // T -> H*T*H^H: left factor H (I - beta*v*v^H), right factor H^H
+            // (conj(beta)); conj is the identity for a real value_type.
             apply_householder_left(T, v, beta, j + 1, j);
-            // Apply from right: T = T * (I - beta*v*v^T)
-            apply_householder_right(T, v, beta, 0, j + 1);
+            apply_householder_right(T, v, conj_t::apply(beta), 0, j + 1);
 
-            // Accumulate into Q: Q = Q * (I - beta*v*v^T)
-            apply_householder_right(Q, v, beta, 0, j + 1);
+            // Accumulate Q = H_0^H * H_1^H * ... so that A = Q*T*Q^H. Building it
+            // by right-multiplication in forward order gives Q *= H_j^H, i.e.
+            // conj(beta) again -- the qr_extract_Q / lq_extract_Q adjoint pattern.
+            apply_householder_right(Q, v, conj_t::apply(beta), 0, j + 1);
         }
     }
 
-    // Extract diagonal (d) and subdiagonal (e) from tridiagonal T
-    vec::dense_vector<value_type> d(n), e(n);
+    // Extract the real diagonal (d) and real subdiagonal (e) of the tridiagonal.
+    // For a complex Hermitian T the subdiagonal T(i+1,i) carries a phase; scaling
+    // it to its modulus is the diagonal unitary similarity D^H*T*D. D is folded
+    // into Q column by column (Q(:,m) *= d_m) so the eigenvectors come out with
+    // the right phase; without it A*v != lambda*v even though the eigenvalues are
+    // correct. For a real value_type D is the identity, real() and abs-avoidance
+    // keep the signed subdiagonal, and this is bit-identical to the old code.
+    vec::dense_vector<real_t> d(n), e(n);
     for (size_type i = 0; i < n; ++i)
-        d(i) = T(i, i);
-    for (size_type i = 0; i + 1 < n; ++i)
-        e(i) = T(i + 1, i);
-    e(n - 1) = math::zero<value_type>();
+        d(i) = functor::scalar::real<value_type>::apply(T(i, i));
+    if constexpr (is_complex_v<value_type>) {
+        value_type phase = math::one<value_type>();   // d_0 = 1, Q(:,0) unchanged
+        for (size_type m = 1; m < n; ++m) {
+            const value_type sub = T(m, m - 1);        // e_{m-1}
+            const real_t     mag = abs(sub);
+            e(m - 1) = mag;
+            if (mag > real_t(0))
+                phase = phase * (sub / value_type(mag)); // d_m = d_{m-1}*e/|e|
+            for (size_type i = 0; i < n; ++i)
+                Q(i, m) = Q(i, m) * phase;
+        }
+    } else {
+        for (size_type i = 0; i + 1 < n; ++i)
+            e(i) = T(i + 1, i);
+    }
+    e(n - 1) = math::zero<real_t>();
 
     // === Phase 2: Implicit QR iteration, accumulating Givens rotations into Q ===
     for (size_type iter = 0; iter < max_iter; ++iter) {
@@ -266,7 +308,7 @@ auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
         // Find trailing block of zeros (converged eigenvalues)
         for (size_type i = n; i > 1; --i) {
             if (abs(e(i - 2)) > tol * (abs(d(i - 2)) + abs(d(i - 1)))) break;
-            e(i - 2) = math::zero<value_type>();
+            e(i - 2) = math::zero<real_t>();
             q++;
         }
         if (q >= n - 1) break;
@@ -276,7 +318,7 @@ auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
         // Find start of active block
         for (size_type i = end - 1; i > 0; --i) {
             if (abs(e(i - 1)) <= tol * (abs(d(i - 1)) + abs(d(i)))) {
-                e(i - 1) = math::zero<value_type>();
+                e(i - 1) = math::zero<real_t>();
                 p = i;
                 break;
             }
@@ -284,31 +326,32 @@ auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
 
         if (end - p < 2) continue;
 
-        // Wilkinson shift
-        value_type a = d(end - 2);
-        value_type b = e(end - 2);
-        value_type c = d(end - 1);
-        value_type delta = (a - c) / value_type(2);
-        value_type sign_delta = (delta >= 0) ? value_type(1) : value_type(-1);
-        value_type mu = c - b * b / (delta + sign_delta * sqrt(delta * delta + b * b));
+        // Wilkinson shift. The tridiagonal is real, so every iteration scalar is
+        // real_t (== value_type for a real matrix, so the arithmetic is unchanged).
+        real_t a = d(end - 2);
+        real_t b = e(end - 2);
+        real_t c = d(end - 1);
+        real_t delta = (a - c) / real_t(2);
+        real_t sign_delta = (delta >= 0) ? real_t(1) : real_t(-1);
+        real_t mu = c - b * b / (delta + sign_delta * sqrt(delta * delta + b * b));
 
         // Implicit QR step with Givens rotations
-        value_type x = d(p) - mu;
-        value_type z = e(p);
+        real_t x = d(p) - mu;
+        real_t z = e(p);
 
         for (size_type k = p; k + 1 < end; ++k) {
-            value_type r = sqrt(x * x + z * z);
-            value_type cs = x / r;
-            value_type sn = z / r;
+            real_t r = sqrt(x * x + z * z);
+            real_t cs = x / r;
+            real_t sn = z / r;
 
             if (k > p) e(k - 1) = r;
 
-            value_type d0 = d(k);
-            value_type d1 = d(k + 1);
-            value_type ek = e(k);
+            real_t d0 = d(k);
+            real_t d1 = d(k + 1);
+            real_t ek = e(k);
 
-            d(k)     = cs * cs * d0 + value_type(2) * cs * sn * ek + sn * sn * d1;
-            d(k + 1) = sn * sn * d0 - value_type(2) * cs * sn * ek + cs * cs * d1;
+            d(k)     = cs * cs * d0 + real_t(2) * cs * sn * ek + sn * sn * d1;
+            d(k + 1) = sn * sn * d0 - real_t(2) * cs * sn * ek + cs * cs * d1;
             e(k)     = cs * sn * (d1 - d0) + (cs * cs - sn * sn) * ek;
 
             if (k + 2 < end) {
@@ -317,8 +360,9 @@ auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
                 e(k + 1) *= cs;
             }
 
-            // Accumulate Givens rotation into Q: Q = Q * G(k, k+1, theta)
-            // Q(:,k) and Q(:,k+1) updated
+            // Accumulate the (real) Givens rotation into Q: Q = Q * G(k,k+1).
+            // cs/sn are real_t; Q may be complex (it already carries the unitary
+            // reduction and the phase D), and real*complex is well-formed.
             for (size_type i = 0; i < n; ++i) {
                 value_type qik  = Q(i, k);
                 value_type qik1 = Q(i, k + 1);
@@ -329,12 +373,12 @@ auto eigen_symmetric(const M& A, typename M::value_type tol = 1e-10,
     }
 
     // === Phase 3: Sort eigenvalues and reorder eigenvectors to match ===
-    std::vector<std::pair<value_type, size_type>> eig_idx(n);
+    std::vector<std::pair<real_t, size_type>> eig_idx(n);
     for (size_type i = 0; i < n; ++i)
         eig_idx[i] = {d(i), i};
     std::sort(eig_idx.begin(), eig_idx.end());
 
-    vec::dense_vector<value_type> eigenvalues(n);
+    vec::dense_vector<real_t> eigenvalues(n);
     mat::dense2D<value_type> eigenvectors(n, n);
     for (size_type k = 0; k < n; ++k) {
         eigenvalues(k) = eig_idx[k].first;
