@@ -51,6 +51,10 @@ auto eigenvalue_symmetric_generic(const M& A,
     const size_type n = A.num_rows();
     assert(n == A.num_cols());
 
+    // No eigenvalues for a 0x0 matrix. Return before the e(n-1) sentinel write
+    // below, which would otherwise underflow the unsigned index to n == 0.
+    if (n == 0) return vec::dense_vector<real_t>(0);
+
     if (max_iter == 0) max_iter = 30 * n;
 
     // Copy diagonal and subdiagonal from tridiagonalized matrix

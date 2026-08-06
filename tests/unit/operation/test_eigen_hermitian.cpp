@@ -197,6 +197,24 @@ TEST_CASE("hermitian eigen: eigenvalue_symmetric matches eigen_symmetric values"
     REQUIRE(max_eigenpair_residual(A, eigs, V) < 1e-11);
 }
 
+TEST_CASE("hermitian eigen: 0x0 complex input returns empty", "[operation][eigen][complex]") {
+    // eigenvalue_symmetric routes complex to eigenvalue_symmetric_generic, whose
+    // subdiagonal sentinel write e(n-1) would underflow the unsigned index at
+    // n == 0. Both the dispatcher and the generic path must return empty.
+    Mat A(0, 0);
+
+    auto values = eigenvalue_symmetric(A);
+    REQUIRE(values.size() == 0);
+
+    auto values_generic = eigenvalue_symmetric_generic(A);
+    REQUIRE(values_generic.size() == 0);
+
+    auto [eigs, V] = eigen_symmetric(A);
+    REQUIRE(eigs.size() == 0);
+    REQUIRE(V.num_rows() == 0);
+    REQUIRE(V.num_cols() == 0);
+}
+
 TEST_CASE("hessenberg: complex reduction preserves the trace (similarity)",
           "[operation][hessenberg][complex]") {
     // General (non-Hermitian) complex matrix. A -> H*A*H^H is a unitary
