@@ -33,20 +33,44 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     tau.change_dim(k);
 
 #ifdef MTL5_HAS_LAPACK
-    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
-        int m_int = static_cast<int>(m);
-        int n_int = static_cast<int>(n);
-        // Workspace query
-        value_type work_opt;
-        interface::lapack::geqrf(m_int, n_int,
-            const_cast<value_type*>(A.data()), m_int,
-            tau.data(), &work_opt, -1);
-        int lwork = static_cast<int>(work_opt);
-        std::vector<value_type> work(lwork);
-        int info = interface::lapack::geqrf(m_int, n_int,
-            const_cast<value_type*>(A.data()), m_int,
-            tau.data(), work.data(), lwork);
-        return info;
+    if constexpr (interface::BlasDenseMatrix<M>) {
+        // A zero dimension makes lda == 0, which LAPACK rejects (XERBLA); an
+        // empty factorization is trivial, so skip the call and fall through.
+        if (m > 0 && n > 0) {
+            int m_int = static_cast<int>(m);
+            int n_int = static_cast<int>(n);
+            // geqrf works in-place on a column-major buffer. A column-major
+            // dense2D IS that buffer -- point straight at A.data(). A row-major
+            // dense2D is not, so copy it into a column-major scratch through the
+            // (i,j) accessor, factor there, and copy the result (R + packed
+            // reflectors) back through (i,j); the generic qr_extract_Q / qr_solve
+            // then read it exactly as on the column-major path, and tau is filled
+            // the same way (#417).
+            std::vector<value_type> buf;
+            value_type* aptr;
+            if constexpr (interface::is_row_major_v<M>) {
+                buf.resize(static_cast<std::size_t>(m) * static_cast<std::size_t>(n));
+                for (size_type i = 0; i < m; ++i)
+                    for (size_type j = 0; j < n; ++j)
+                        buf[static_cast<std::size_t>(j) * m + i] = A(i, j);
+                aptr = buf.data();
+            } else {
+                aptr = const_cast<value_type*>(A.data());
+            }
+            // Workspace query
+            value_type work_opt;
+            interface::lapack::geqrf(m_int, n_int, aptr, m_int, tau.data(), &work_opt, -1);
+            int lwork = static_cast<int>(work_opt);
+            std::vector<value_type> work(lwork);
+            int info = interface::lapack::geqrf(m_int, n_int, aptr, m_int,
+                tau.data(), work.data(), lwork);
+            if constexpr (interface::is_row_major_v<M>) {
+                for (size_type i = 0; i < m; ++i)
+                    for (size_type j = 0; j < n; ++j)
+                        A(i, j) = buf[static_cast<std::size_t>(j) * m + i];
+            }
+            return info;
+        }
     }
 #endif
 

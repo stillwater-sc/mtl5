@@ -29,6 +29,17 @@
 
 using namespace mtl;
 
+// Element type for the factorization determinism checks below. Their point is
+// that MTL5's parallel_for LU/Cholesky kernels are BIT-IDENTICAL to a serial
+// reference -- a property of the GENERIC path. Since #417 routes float/double
+// dense factorizations to LAPACK (a different algorithm, so not bit-identical to
+// the reference), use a non-BLAS element type: long double is never float/double,
+// so is_blas_scalar_v is false, BlasDenseMatrix<dense2D<det_t>> is false, and the
+// generic parallel_for path is taken in LAPACK and non-LAPACK builds alike. The
+// apply_householder_* tests further below stay double -- those kernels never
+// dispatch to LAPACK.
+using det_t = long double;
+
 namespace {
 
 // Size the process-wide pool multithreaded before its first (lazy) use.
@@ -81,8 +92,9 @@ void ref_chol(mat::dense2D<T>& A) {
     }
 }
 
-// Row-major dense2D exercises the generic (parallelized) path even when LAPACK
-// is linked (the LAPACK LU/Cholesky dispatch fires only for column-major).
+// Instantiated with det_t (a non-BLAS element type), so dense2D<T> takes the
+// generic parallel_for factorization path even when LAPACK is linked -- #417
+// routes float/double dense factorizations to LAPACK regardless of orientation.
 template <typename T>
 mat::dense2D<T> random_diagdom(std::size_t n, std::uint64_t seed) {
     mat::dense2D<T> A(n, n);
@@ -122,11 +134,11 @@ TEST_CASE("Threaded LU factorization is bit-identical to serial (#297)",
         WARN("single-core runner: threading not exercised");
     }
     const std::size_t n = 512;   // large enough that the trailing update splits
-    auto A = random_diagdom<double>(n, 12345);
+    auto A = random_diagdom<det_t>(n, 12345);
     auto Aref = A;               // copy for the serial reference
 
-    std::vector<mat::dense2D<double>::size_type> piv;
-    int info = lu_factor(A, piv);              // library (threaded) path
+    std::vector<mat::dense2D<det_t>::size_type> piv;
+    int info = lu_factor(A, piv);              // library (threaded) generic path
     REQUIRE(info == 0);
 
     std::vector<std::size_t> rpiv;
@@ -140,13 +152,13 @@ TEST_CASE("Threaded LU factorization is bit-identical to serial (#297)",
     }
 
     // Correctness: the factorization solves a system to a tiny residual.
-    vec::dense_vector<double> xexact(n), b(n, 0.0);
-    for (std::size_t i = 0; i < n; ++i) xexact[i] = 1.0 + 0.001 * double(i % 13);
-    auto A0 = random_diagdom<double>(n, 12345);
-    for (std::size_t i = 0; i < n; ++i) { double s = 0.0; for (std::size_t j = 0; j < n; ++j) s += A0(i, j) * xexact[j]; b[i] = s; }
-    vec::dense_vector<double> x(n, 0.0);
+    vec::dense_vector<det_t> xexact(n), b(n, det_t(0));
+    for (std::size_t i = 0; i < n; ++i) xexact[i] = det_t(1.0 + 0.001 * double(i % 13));
+    auto A0 = random_diagdom<det_t>(n, 12345);
+    for (std::size_t i = 0; i < n; ++i) { det_t s = det_t(0); for (std::size_t j = 0; j < n; ++j) s += A0(i, j) * xexact[j]; b[i] = s; }
+    vec::dense_vector<det_t> x(n, det_t(0));
     lu_solve(A, piv, x, b);
-    double err = 0.0;
+    det_t err = det_t(0);
     for (std::size_t i = 0; i < n; ++i) err = std::max(err, std::abs(x[i] - xexact[i]));
     REQUIRE(err < 1e-9);
 }
@@ -157,10 +169,10 @@ TEST_CASE("Threaded Cholesky factorization is bit-identical to serial (#297)",
         WARN("single-core runner: threading not exercised");
     }
     const std::size_t n = 768;   // large enough that the column update splits
-    auto A = random_spd<double>(n, 6789);
+    auto A = random_spd<det_t>(n, 6789);
     auto Aref = A;
 
-    int info = cholesky_factor(A);             // library (threaded) path
+    int info = cholesky_factor(A);             // library (threaded) generic path
     REQUIRE(info == 0);
 
     ref_chol(Aref);                            // serial golden reference
@@ -171,13 +183,13 @@ TEST_CASE("Threaded Cholesky factorization is bit-identical to serial (#297)",
             REQUIRE(A(i, j) == Aref(i, j));
 
     // Correctness: L*L^T reconstructs the original SPD matrix.
-    auto A0 = random_spd<double>(n, 6789);
-    double resid = 0.0;
+    auto A0 = random_spd<det_t>(n, 6789);
+    det_t resid = det_t(0);
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = 0; j <= i; ++j) {
-            double llt = 0.0;
+            det_t llt = det_t(0);
             for (std::size_t k = 0; k <= j; ++k) llt += A(i, k) * A(j, k);
-            resid = std::max(resid, std::abs(llt - double(A0(i, j))));
+            resid = std::max(resid, std::abs(llt - A0(i, j)));
         }
     REQUIRE(resid < 1e-8);
 }
@@ -189,9 +201,9 @@ TEST_CASE("Threaded factorizations degrade correctly at the single-chunk boundar
     // reference bit-for-bit. Explicit (deterministic) tiny matrices so the SPD /
     // diagonally-dominant property never depends on the RNG.
 
-    auto check_lu = [](mat::dense2D<double> A) {
+    auto check_lu = [](mat::dense2D<det_t> A) {
         auto Aref = A;
-        std::vector<mat::dense2D<double>::size_type> piv;
+        std::vector<mat::dense2D<det_t>::size_type> piv;
         REQUIRE(lu_factor(A, piv) == 0);
         std::vector<std::size_t> rpiv;
         ref_lu(Aref, rpiv);
@@ -201,7 +213,7 @@ TEST_CASE("Threaded factorizations degrade correctly at the single-chunk boundar
             for (std::size_t j = 0; j < n; ++j) REQUIRE(A(i, j) == Aref(i, j));
         }
     };
-    auto check_chol = [](mat::dense2D<double> A) {
+    auto check_chol = [](mat::dense2D<det_t> A) {
         auto Aref = A;
         REQUIRE(cholesky_factor(A) == 0);
         ref_chol(Aref);
@@ -211,14 +223,14 @@ TEST_CASE("Threaded factorizations degrade correctly at the single-chunk boundar
     };
 
     SECTION("1x1") {
-        mat::dense2D<double> A(1, 1); A(0, 0) = 4.0;
+        mat::dense2D<det_t> A(1, 1); A(0, 0) = det_t(4);
         check_lu(A);
         check_chol(A);
     }
     SECTION("2x2") {
-        mat::dense2D<double> A(2, 2);
-        A(0, 0) = 4.0; A(0, 1) = 1.0;
-        A(1, 0) = 1.0; A(1, 1) = 3.0;   // symmetric, SPD, diagonally dominant
+        mat::dense2D<det_t> A(2, 2);
+        A(0, 0) = det_t(4); A(0, 1) = det_t(1);
+        A(1, 0) = det_t(1); A(1, 1) = det_t(3);   // symmetric, SPD, diagonally dominant
         check_lu(A);
         check_chol(A);
     }

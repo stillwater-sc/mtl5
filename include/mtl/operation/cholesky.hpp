@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstddef>
 #include <type_traits>
+#include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/magnitude.hpp>
@@ -78,11 +79,33 @@ int cholesky_factor(M& A) {
         "which compute A = L*L^H (#353).");
 
 #ifdef MTL5_HAS_LAPACK
-    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
-        int n_int = static_cast<int>(n);
-        int info = interface::lapack::potrf('L', n_int,
-                       const_cast<value_type*>(A.data()), n_int);
-        return (info > 0) ? info : 0;
+    if constexpr (interface::BlasDenseMatrix<M>) {
+        // potrf('L') factors the lower triangle in place into L (A = L*L^T). A
+        // column-major dense2D is a valid column-major buffer; a row-major one is
+        // factored via a column-major scratch built through the (i,j) accessor
+        // and copied back through (i,j), so cholesky_solve reads L(i,j) exactly
+        // as on the column-major path. For a symmetric A the copied-in lower
+        // triangle is the same matrix either way (#417).
+        // n == 0 would make lda == 0, which LAPACK rejects (XERBLA); an empty
+        // matrix is trivially factored, so skip the call and fall through.
+        if (n > 0) {
+            int n_int = static_cast<int>(n);
+            int info;
+            if constexpr (interface::is_row_major_v<M>) {
+                std::vector<value_type> buf(static_cast<std::size_t>(n) * static_cast<std::size_t>(n));
+                for (size_type i = 0; i < n; ++i)
+                    for (size_type j = 0; j < n; ++j)
+                        buf[static_cast<std::size_t>(j) * n + i] = A(i, j);
+                info = interface::lapack::potrf('L', n_int, buf.data(), n_int);
+                for (size_type i = 0; i < n; ++i)
+                    for (size_type j = 0; j < n; ++j)
+                        A(i, j) = buf[static_cast<std::size_t>(j) * n + i];
+            } else {
+                info = interface::lapack::potrf('L', n_int,
+                           const_cast<value_type*>(A.data()), n_int);
+            }
+            return (info > 0) ? info : 0;
+        }
     }
 #endif
 
@@ -172,6 +195,20 @@ int cholesky_h_factor(M& A) {
     using std::sqrt;
     const size_type n = A.num_rows();
     assert(A.num_cols() == n);
+
+#ifdef MTL5_HAS_LAPACK
+    // For a REAL element type A = L*L^H is exactly A = L*L^T, so reuse
+    // cholesky_factor. This keeps the two entry points BIT-IDENTICAL -- the
+    // invariant test_cholesky.cpp pins with == -- now that cholesky_factor
+    // dispatches to LAPACK potrf (#417); factoring here independently would
+    // diverge from it in the low bits. It also gives cholesky_h_factor the same
+    // dispatch (row- and column-major). Complex Hermitian types are not
+    // BlasDenseMatrix (float/double only), so they skip this and take the
+    // generic L*L^H below -- the only correct path for them.
+    if constexpr (interface::BlasDenseMatrix<M>) {
+        return cholesky_factor(A);
+    }
+#endif
 
     // A Hermitian matrix has a REAL diagonal. If a complex-symmetric matrix
     // arrives here by mistake, taking the real part below would silently

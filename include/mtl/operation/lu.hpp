@@ -38,14 +38,33 @@ int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
 
 #ifdef MTL5_HAS_LAPACK
     if constexpr (interface::BlasDenseMatrix<M>) {
-        // LAPACK getrf expects column-major. For column-major dense2D, dispatch directly.
-        // For row-major, factoring A_row is equivalent to factoring A_col^T = U^T * L^T,
-        // which gives an LU of the transpose. We dispatch only for column-major.
-        if constexpr (!interface::is_row_major_v<M>) {
+        // getrf works in-place on a column-major buffer, overwriting it with L\U
+        // and returning a forward interchange sequence in ipiv (the same pivot
+        // convention lu_solve expects, once shifted 1->0 based). A column-major
+        // dense2D IS that buffer; a row-major one is factored via a column-major
+        // scratch built through the (i,j) accessor, then copied back through
+        // (i,j) so the accessor-based lu_solve / lu_adjoint_solve read it exactly
+        // as they read the column-major path (#417). Direct-dispatch on the raw
+        // row-major buffer would factor A^T instead -- hence the copy.
+        // n == 0 would make lda == 0, which LAPACK rejects (XERBLA); an empty
+        // matrix is trivially factored, so skip the call and fall through.
+        if (n > 0) {
             int m_int = static_cast<int>(n);
             std::vector<int> ipiv(n);
-            int info = interface::lapack::getrf(m_int, m_int,
+            int info;
+            if constexpr (interface::is_row_major_v<M>) {
+                std::vector<value_type> buf(static_cast<std::size_t>(n) * static_cast<std::size_t>(n));
+                for (size_type i = 0; i < n; ++i)
+                    for (size_type j = 0; j < n; ++j)
+                        buf[static_cast<std::size_t>(j) * n + i] = A(i, j);
+                info = interface::lapack::getrf(m_int, m_int, buf.data(), m_int, ipiv.data());
+                for (size_type i = 0; i < n; ++i)
+                    for (size_type j = 0; j < n; ++j)
+                        A(i, j) = buf[static_cast<std::size_t>(j) * n + i];
+            } else {
+                info = interface::lapack::getrf(m_int, m_int,
                            const_cast<value_type*>(A.data()), m_int, ipiv.data());
+            }
             // Convert 1-based Fortran pivots to 0-based size_type pivots
             for (size_type i = 0; i < n; ++i)
                 pivot[i] = static_cast<size_type>(ipiv[i] - 1);
