@@ -162,9 +162,11 @@ auto eigenvalue_symmetric_generic(const M& A,
 
 /// Compute eigenvalues of a symmetric/Hermitian matrix via implicit QR on
 /// tridiagonal form. Returns eigenvalues (real: magnitude_t<value_type>) sorted
-/// in ascending order. Dispatches to LAPACK syev when available and the type
-/// qualifies (real float/double); complex Hermitian input falls through to
-/// eigenvalue_symmetric_generic.
+/// in ascending order. When MTL5_HAS_LAPACK is defined and the type qualifies,
+/// dispatches to LAPACK syev (real float/double) or heev == cheev/zheev (complex
+/// Hermitian); otherwise uses the in-house eigenvalue_symmetric_generic. The
+/// LAPACK Hermitian path is what test_lapack_dispatch cross-checks the native
+/// complex reduction against.
 template <Matrix M>
 auto eigenvalue_symmetric(const M& A,
                           magnitude_t<typename M::value_type> tol = 1e-10,
@@ -194,6 +196,40 @@ auto eigenvalue_symmetric(const M& A,
 
         // LAPACK returns eigenvalues in ascending order
         vec::dense_vector<value_type> result(n);
+        for (size_type i = 0; i < n; ++i)
+            result(i) = W[i];
+        return result;
+    } else if constexpr (interface::BlasHermitianMatrix<M> && !interface::is_row_major_v<M>) {
+        using value_type = typename M::value_type;         // std::complex<T>
+        using size_type  = typename M::size_type;
+        using real_t     = magnitude_t<value_type>;
+        const size_type n = A.num_rows();
+        assert(n == A.num_cols());
+        if (n == 0) return vec::dense_vector<real_t>(0);
+        // LAPACK zheev/cheev: eigenvalues only ('N'), lower triangle ('L').
+        // Work on a column-major copy; a Hermitian A is its own conjugate
+        // transpose, so 'L' reads a consistent triangle regardless of the copy's
+        // orientation. Eigenvalues W are REAL; heev also needs a real rwork array
+        // of length max(1, 3n-2) alongside the complex work.
+        std::vector<value_type> A_copy(n * n);
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < n; ++j)
+                A_copy[j * n + i] = A(i, j);
+
+        std::vector<real_t> W(n);
+        std::vector<real_t> rwork(std::max<size_type>(size_type(1), 3 * n - 2));
+        // Workspace query: the optimal lwork comes back in the real part of work_opt.
+        value_type work_opt;
+        interface::lapack::heev('N', 'L', static_cast<int>(n),
+            A_copy.data(), static_cast<int>(n), W.data(), &work_opt, -1, rwork.data());
+        int lwork = static_cast<int>(work_opt.real());
+        if (lwork < 1) lwork = 1;
+        std::vector<value_type> work(static_cast<size_type>(lwork));
+        interface::lapack::heev('N', 'L', static_cast<int>(n),
+            A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork, rwork.data());
+
+        // LAPACK returns eigenvalues in ascending order (real for Hermitian).
+        vec::dense_vector<real_t> result(n);
         for (size_type i = 0; i < n; ++i)
             result(i) = W[i];
         return result;

@@ -3,6 +3,7 @@
 // Used by operation files to select hardware-accelerated paths when available.
 
 #include <type_traits>
+#include <complex>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/mat/compressed2D.hpp>
 
@@ -12,6 +13,13 @@ namespace mtl::interface {
 template <typename T>
 inline constexpr bool is_blas_scalar_v =
     std::is_same_v<T, float> || std::is_same_v<T, double>;
+
+/// True for complex scalar types backed by LAPACK (complex<float>, complex<double>).
+/// These route Hermitian eigensolves to cheev/zheev.
+template <typename T>
+inline constexpr bool is_lapack_complex_v = false;
+template <typename T>
+inline constexpr bool is_lapack_complex_v<std::complex<T>> = is_blas_scalar_v<T>;
 
 /// Whether the requested accumulator policy permits a hardware-fixed BLAS /
 /// native-fast path. External BLAS/LAPACK (and the blocked native GEMM)
@@ -29,6 +37,19 @@ inline constexpr bool accumulator_allows_blas_v = std::is_void_v<Accumulator>;
 template <typename M>
 concept BlasDenseMatrix =
     is_blas_scalar_v<typename M::value_type> &&
+    requires(const M& m) {
+        { m.data() } -> std::convertible_to<const typename M::value_type*>;
+        { m.num_rows() };
+        { m.num_cols() };
+    };
+
+/// Concept satisfied by dense matrix types eligible for complex-Hermitian
+/// LAPACK dispatch (cheev/zheev). Same shape as BlasDenseMatrix but for a
+/// complex<float/double> value_type. The caller is responsible for the matrix
+/// actually being Hermitian; only the storage/scalar shape is checked here.
+template <typename M>
+concept BlasHermitianMatrix =
+    is_lapack_complex_v<typename M::value_type> &&
     requires(const M& m) {
         { m.data() } -> std::convertible_to<const typename M::value_type*>;
         { m.num_rows() };

@@ -6,6 +6,7 @@
 #ifdef MTL5_HAS_LAPACK
 
 #include <cstddef>
+#include <complex>
 
 // -- Fortran LAPACK declarations ----------------------------------------
 extern "C" {
@@ -43,6 +44,15 @@ void ssyev_(const char* jobz, const char* uplo, const int* n,
 void dsyev_(const char* jobz, const char* uplo, const int* n,
             double* A, const int* lda, double* W,
             double* work, const int* lwork, int* info);
+
+// Hermitian eigenvalue (complex Hermitian). Eigenvalues W are REAL; WORK is
+// complex and there is an extra REAL rwork array of length max(1, 3n-2).
+void cheev_(const char* jobz, const char* uplo, const int* n,
+            std::complex<float>* A, const int* lda, float* W,
+            std::complex<float>* work, const int* lwork, float* rwork, int* info);
+void zheev_(const char* jobz, const char* uplo, const int* n,
+            std::complex<double>* A, const int* lda, double* W,
+            std::complex<double>* work, const int* lwork, double* rwork, int* info);
 
 // General (non-symmetric) eigenvalue + optional left/right eigenvectors
 void sgeev_(const char* jobvl, const char* jobvr, const int* n,
@@ -166,6 +176,21 @@ inline int syev(char jobz, char uplo, int n, double* A, int lda,
                 double* W, double* work, int lwork) {
     int info = 0;
     dsyev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, &info);
+    return info;
+}
+
+// -- Hermitian eigenvalue (complex) -------------------------------------
+
+inline int heev(char jobz, char uplo, int n, std::complex<float>* A, int lda,
+                float* W, std::complex<float>* work, int lwork, float* rwork) {
+    int info = 0;
+    cheev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, rwork, &info);
+    return info;
+}
+inline int heev(char jobz, char uplo, int n, std::complex<double>* A, int lda,
+                double* W, std::complex<double>* work, int lwork, double* rwork) {
+    int info = 0;
+    zheev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, rwork, &info);
     return info;
 }
 
