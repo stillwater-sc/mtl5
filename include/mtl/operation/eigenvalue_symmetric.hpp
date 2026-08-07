@@ -172,7 +172,11 @@ auto eigenvalue_symmetric(const M& A,
                           magnitude_t<typename M::value_type> tol = 1e-10,
                           typename M::size_type max_iter = 0) {
 #ifdef MTL5_HAS_LAPACK
-    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+    // No orientation guard: the branch builds an explicit column-major copy
+    // through the (i,j) accessor below, so it is correct for a row-major OR a
+    // column-major M. (dense2D defaults to row-major; gating on !is_row_major_v
+    // would leave the default matrix type on the generic path -- see #417.)
+    if constexpr (interface::BlasDenseMatrix<M>) {
         using value_type = typename M::value_type;
         using size_type  = typename M::size_type;
         const size_type n = A.num_rows();
@@ -199,7 +203,7 @@ auto eigenvalue_symmetric(const M& A,
         for (size_type i = 0; i < n; ++i)
             result(i) = W[i];
         return result;
-    } else if constexpr (interface::BlasHermitianMatrix<M> && !interface::is_row_major_v<M>) {
+    } else if constexpr (interface::BlasHermitianMatrix<M>) {
         using value_type = typename M::value_type;         // std::complex<T>
         using size_type  = typename M::size_type;
         using real_t     = magnitude_t<value_type>;

@@ -182,8 +182,8 @@ void eig_lu_solve(const std::vector<Complex>& M, const std::vector<std::size_t>&
 /// Throws std::runtime_error if the QR iteration fails to converge.
 ///
 /// Dispatches to LAPACK geev when MTL5_HAS_LAPACK is defined and the type
-/// qualifies (column-major dense2D<float/double>); otherwise uses the in-house
-/// path above, which also serves custom number types (posits, LNS, ...).
+/// qualifies (dense2D<float/double>, either orientation); otherwise uses the
+/// in-house path above, which also serves custom number types (posits, LNS, ...).
 template <Matrix M>
 auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
                 typename M::size_type max_iter = 0) {
@@ -199,10 +199,12 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     if (n == 0) return eigs;
 
 #ifdef MTL5_HAS_LAPACK
-    // Accelerate real float/double column-major dense matrices via LAPACK geev
-    // (mirrors the symmetric syev dispatch). Custom number types and other
-    // orientations fall through to the in-house double-shift QR below.
-    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+    // Accelerate real float/double dense matrices via LAPACK geev (mirrors the
+    // symmetric syev dispatch). lapack_geev builds its column-major copy through
+    // the (i,j) accessor, so this is correct for any orientation of M -- no
+    // !is_row_major_v guard (see #417). Custom number types fall through to the
+    // in-house double-shift QR below.
+    if constexpr (interface::BlasDenseMatrix<M>) {
         detail::lapack_geev(A, eigs, static_cast<mat::dense2D<complex_type>*>(nullptr));
         return eigs;
     }
@@ -387,8 +389,8 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 /// spectra of strongly non-normal matrices are resolved accurately here too.
 ///
 /// Dispatches to LAPACK geev (eigenvalues + right eigenvectors) when
-/// MTL5_HAS_LAPACK is defined and the type qualifies (column-major
-/// dense2D<float/double>); otherwise uses the in-house path above.
+/// MTL5_HAS_LAPACK is defined and the type qualifies (dense2D<float/double>,
+/// either orientation); otherwise uses the in-house path above.
 template <Matrix M>
 auto eigen(const M& A, typename M::value_type tol = 1e-10,
            typename M::size_type max_iter = 0) {
@@ -411,8 +413,10 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
 
 #ifdef MTL5_HAS_LAPACK
     // LAPACK geev computes eigenvalues and right eigenvectors together for real
-    // float/double column-major dense matrices (mirrors the eigenvalue dispatch).
-    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+    // float/double dense matrices (mirrors the eigenvalue dispatch). lapack_geev
+    // copies through the (i,j) accessor, so any orientation of M is correct --
+    // no !is_row_major_v guard (see #417).
+    if constexpr (interface::BlasDenseMatrix<M>) {
         vec::dense_vector<complex_type> eigs_l(n);
         mat::dense2D<complex_type> V_l(n, n);
         detail::lapack_geev(A, eigs_l, &V_l);

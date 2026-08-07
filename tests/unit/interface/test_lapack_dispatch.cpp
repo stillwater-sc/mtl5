@@ -11,6 +11,7 @@
 #include <mtl/operation/cholesky.hpp>
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
+#include <mtl/operation/eigenvalue.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/operators.hpp>
@@ -272,4 +273,70 @@ TEST_CASE("heev vs native: eigenvalues agree on a dense 5x5 Hermitian",
     // Both ascending; compare elementwise. Under LAPACK this is native vs zheev.
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE_THAT(disp(i), WithinAbs(native(i), 1e-9));
+}
+
+// -- #417: the DEFAULT (row-major) dense2D now dispatches to LAPACK too -------
+// The eigen/SVD/geev dispatches build a column-major copy through the (i,j)
+// accessor, so the old !is_row_major_v guard was redundant and only kept the
+// default matrix type on the generic path. These tests use the DEFAULT
+// (row-major) dense2D -- no col_params -- and check the LAPACK result matches the
+// in-house path. (Verified out-of-band that a row-major-only eigen translation
+// unit references dsyev_/zheev_ after the guard drop; before it, none did, so the
+// dispatch really was dead for row-major.)
+
+TEST_CASE("row-major dispatch: real symmetric eigenvalues match generic",
+          "[interface][lapack][rowmajor]") {
+    constexpr std::size_t n = 4;
+    mat::dense2D<double> A(n, n);   // default row-major
+    for (std::size_t i = 0; i < n; ++i) {
+        A(i, i) = double(i + 1);
+        for (std::size_t j = i + 1; j < n; ++j) {
+            double v = 0.3 * double(i + 1) - 0.1 * double(j);
+            A(i, j) = v; A(j, i) = v;
+        }
+    }
+    auto disp = eigenvalue_symmetric(A);            // dsyev under LAPACK (row-major now)
+    auto gen  = eigenvalue_symmetric_generic(A);    // in-house
+    REQUIRE(disp.size() == n);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE_THAT(disp(i), WithinAbs(gen(i), 1e-9));
+}
+
+TEST_CASE("row-major dispatch: complex Hermitian eigenvalues match generic",
+          "[interface][lapack][rowmajor][complex]") {
+    constexpr std::size_t n = 4;
+    mat::dense2D<cplxd> A(n, n);   // default row-major -- the case #416 could not cover
+    for (std::size_t i = 0; i < n; ++i) {
+        A(i, i) = cplxd(double(i + 2), 0.0);
+        for (std::size_t j = i + 1; j < n; ++j) {
+            cplxd z(0.4 * double(i + 1) - 0.1 * double(j),
+                    0.25 * double(j) - 0.15 * double(i + 1));
+            A(i, j) = z; A(j, i) = std::conj(z);
+        }
+    }
+    auto disp = eigenvalue_symmetric(A);            // zheev under LAPACK (row-major now)
+    auto gen  = eigenvalue_symmetric_generic(A);    // in-house reduction + QR
+    REQUIRE(disp.size() == n);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE_THAT(disp(i), WithinAbs(gen(i), 1e-9));
+}
+
+TEST_CASE("row-major dispatch: general eigenvalue (geev) known real spectrum",
+          "[interface][lapack][rowmajor]") {
+    // Upper-triangular, so the eigenvalues are the diagonal {2, 3, 5}. Not
+    // symmetric -> exercises the general geev dispatch, not syev.
+    mat::dense2D<double> A(3, 3);   // default row-major
+    A(0,0)=2; A(0,1)=1; A(0,2)=0;
+    A(1,0)=0; A(1,1)=3; A(1,2)=1;
+    A(2,0)=0; A(2,1)=0; A(2,2)=5;
+
+    auto eigs = eigenvalue(A);      // geev under LAPACK (row-major now), else in-house QR
+    REQUIRE(eigs.size() == 3);
+    std::vector<double> re{ eigs(0).real(), eigs(1).real(), eigs(2).real() };
+    std::sort(re.begin(), re.end());
+    REQUIRE_THAT(re[0], WithinAbs(2.0, 1e-9));
+    REQUIRE_THAT(re[1], WithinAbs(3.0, 1e-9));
+    REQUIRE_THAT(re[2], WithinAbs(5.0, 1e-9));
+    for (std::size_t i = 0; i < 3; ++i)
+        REQUIRE_THAT(eigs(i).imag(), WithinAbs(0.0, 1e-9));
 }

@@ -51,7 +51,10 @@ void svd(const M& A,
     const size_type mn = std::min(m, n);
 
 #ifdef MTL5_HAS_LAPACK
-    if constexpr (interface::BlasDenseMatrix<M> && !interface::is_row_major_v<M>) {
+    // No orientation guard: the branch copies A into a column-major buffer via
+    // the (i,j) accessor and writes U/S/V back via (i,j), so it is correct for
+    // row-major and column-major M alike (see #417).
+    if constexpr (interface::BlasDenseMatrix<M>) {
         // LAPACK gesdd: A_copy is overwritten, returns U, S_vec, VT
         U.change_dim(m, m);
         S.change_dim(m, n);
