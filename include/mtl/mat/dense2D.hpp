@@ -152,12 +152,13 @@ public:
         : dense2D(static_cast<size_type>(expr.num_rows()),
                    static_cast<size_type>(expr.num_cols()))
     {
-        // Element-wise sweep over rows: each (r,c) element is independent, so the
-        // contiguous row chunking is bit-identical to the serial nested loop
-        // (serial at MTL5_NUM_THREADS=1). See mtl/detail/ewise.hpp.
-        detail::parallel_ewise(num_rows(), num_cols(), [&](std::size_t r) {
-            for (size_type c = 0; c < num_cols(); ++c)
-                (*this)(r, c) = static_cast<Value>(expr(r, c));
+        // Element-wise sweep over the FLATTENED (r,c) space: each element is
+        // independent, so the contiguous element chunking is bit-identical to the
+        // serial nested loop, and a wide/short expression splits just like a tall
+        // one (serial at MTL5_NUM_THREADS=1). See mtl/detail/ewise.hpp.
+        detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
+                                  [&](std::size_t r, std::size_t c) {
+            (*this)(r, c) = static_cast<Value>(expr(r, c));
         });
     }
 
@@ -167,9 +168,9 @@ public:
     dense2D& operator=(const Expr& expr) {
         change_dim(static_cast<size_type>(expr.num_rows()),
                    static_cast<size_type>(expr.num_cols()));
-        detail::parallel_ewise(num_rows(), num_cols(), [&](std::size_t r) {
-            for (size_type c = 0; c < num_cols(); ++c)
-                (*this)(r, c) = static_cast<Value>(expr(r, c));
+        detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
+                                  [&](std::size_t r, std::size_t c) {
+            (*this)(r, c) = static_cast<Value>(expr(r, c));
         });
         return *this;
     }
@@ -179,9 +180,9 @@ public:
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator+=(const Expr& expr) {
         assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
-        detail::parallel_ewise(num_rows(), num_cols(), [&](std::size_t r) {
-            for (size_type c = 0; c < num_cols(); ++c)
-                (*this)(r, c) += static_cast<Value>(expr(r, c));
+        detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
+                                  [&](std::size_t r, std::size_t c) {
+            (*this)(r, c) += static_cast<Value>(expr(r, c));
         });
         return *this;
     }
@@ -191,9 +192,9 @@ public:
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator-=(const Expr& expr) {
         assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
-        detail::parallel_ewise(num_rows(), num_cols(), [&](std::size_t r) {
-            for (size_type c = 0; c < num_cols(); ++c)
-                (*this)(r, c) -= static_cast<Value>(expr(r, c));
+        detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
+                                  [&](std::size_t r, std::size_t c) {
+            (*this)(r, c) -= static_cast<Value>(expr(r, c));
         });
         return *this;
     }

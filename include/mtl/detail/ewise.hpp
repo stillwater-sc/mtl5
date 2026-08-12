@@ -31,4 +31,36 @@ inline void parallel_ewise(std::size_t n, std::size_t work_per_elem, Body&& body
     });
 }
 
+/// Run body(r, c) for every element of a rows x cols index space, in row-major
+/// order, across the pool. The 2D space is FLATTENED to a linear element index
+/// [0, rows*cols) before chunking, so the work splits on the element count rather
+/// than the row count: a wide/short expression (1 x N) parallelizes exactly like a
+/// tall one (N x 1), which a row-per-unit decomposition cannot do (#313).
+///
+/// `work_per_elem` estimates the per-ELEMENT cost (1 for an ordinary element-wise
+/// expression), so the grain targets ~64K work units per chunk -- the same chunk
+/// size in elements the row-per-unit form produced for tall matrices.
+///
+/// Each chunk walks (r, c) incrementally from one division at its start, so the
+/// per-element cost is an increment and a compare, not a div/mod. The visit order
+/// within a chunk is the serial nested loop's, every element is produced by
+/// exactly one chunk, and the per-element computation does not depend on which
+/// thread runs it -- so the result is BIT-IDENTICAL to the serial loop and to any
+/// other thread count. Serial (a single body call) at MTL5_NUM_THREADS=1.
+template <typename Body>
+inline void parallel_ewise_2d(std::size_t rows, std::size_t cols,
+                              std::size_t work_per_elem, Body&& body) {
+    if (rows == 0 || cols == 0) return;   // nothing to sweep; keeps the % below safe
+    const std::size_t w = work_per_elem < 1 ? 1 : work_per_elem;
+    const std::size_t grain = std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / w);
+    thread_pool::instance().parallel_for(
+        rows * cols, grain, [&](std::size_t b, std::size_t e) {
+            std::size_t r = b / cols, c = b % cols;
+            for (std::size_t t = b; t < e; ++t) {
+                body(r, c);
+                if (++c == cols) { c = 0; ++r; }
+            }
+        });
+}
+
 } // namespace mtl::detail
