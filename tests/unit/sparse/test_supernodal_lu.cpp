@@ -130,6 +130,72 @@ TEST_CASE("Supernodal LU refactor reuses the pattern", "[sparse][lu][supernodal]
     }
 }
 
+// ---- schedule reuse across refactor (#310) --------------------------------
+// refactor installs the recomputed values through set_factor_values, keeping the
+// prior forward/upper solve schedules. Those schedules are value-agnostic
+// (positions into the factors' value arrays) and the pattern is unchanged, so a
+// rebuild would reproduce them entry for entry -- asserted here by comparing the
+// solve against the same factors installed through the rebuilding set_factor.
+TEST_CASE("Supernodal LU refactor reuses the solve schedules",
+          "[sparse][lu][supernodal][refactor][schedule]") {
+    auto A1 = random_unsym(50, 0.08, 11);
+    auto sym = factorization::supernodal_lu_symbolic_analyze(A1, ordering::colamd{});
+    auto fac = factorization::supernodal_lu_numeric(A1, sym);
+
+    auto A2 = A1;   // same pattern, perturbed values
+    { auto& d = const_cast<std::vector<double>&>(A2.ref_data());
+      for (std::size_t k = 0; k < d.size(); ++k) d[k] *= (1.0 + 0.05 * std::cos(0.7 * k)); }
+
+    auto re = factorization::supernodal_lu_refactor(A2, fac);   // reuses schedules
+
+    // Pattern carried over untouched -- what makes the reuse valid.
+    REQUIRE(re.factorL().col_ptr == fac.factorL().col_ptr);
+    REQUIRE(re.factorL().row_ind == fac.factorL().row_ind);
+    REQUIRE(re.factorU().col_ptr == fac.factorU().col_ptr);
+    REQUIRE(re.factorU().row_ind == fac.factorU().row_ind);
+
+    // Same factors installed through set_factor, which REBUILDS both schedules.
+    factorization::supernodal_lu_factor<double> rebuilt;
+    rebuilt.symbolic = re.symbolic;
+    rebuilt.row_perm = re.row_perm;
+    rebuilt.row_pinv = re.row_pinv;
+    rebuilt.lsuper_first = re.lsuper_first;
+    rebuilt.row_scale = re.row_scale;
+    rebuilt.set_factor(re.factorL(), re.factorU());
+
+    const std::size_t n = A2.num_rows();
+    vec::dense_vector<double> b(n), x_re(n, 0.0), x_rb(n, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+        b(static_cast<int>(i)) = 1.0 + 0.125 * static_cast<double>(i % 7);
+    re.solve(x_re, b);
+    rebuilt.solve(x_rb, b);
+    for (std::size_t i = 0; i < n; ++i)   // exact: identical schedules, identical values
+        REQUIRE(x_re(static_cast<int>(i)) == x_rb(static_cast<int>(i)));
+
+    // The in-place form (no copy at all) produces the identical factorization.
+    auto inplace = fac;
+    factorization::supernodal_lu_refactor_in_place(A2, inplace);
+    REQUIRE(inplace.factorL().values == re.factorL().values);
+    REQUIRE(inplace.factorU().values == re.factorU().values);
+    vec::dense_vector<double> x_ip(n, 0.0);
+    inplace.solve(x_ip, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE(x_ip(static_cast<int>(i)) == x_re(static_cast<int>(i)));
+
+    // A value install that would leave the schedules stale is rejected, and so is
+    // a refactor from a factor-less prior.
+    auto Lx = re.factorL().values;
+    auto Ux = re.factorU().values;
+    REQUIRE_NOTHROW(re.set_factor_values(Lx, Ux));
+    Lx.push_back(1.0);
+    REQUIRE_THROWS_AS(re.set_factor_values(Lx, Ux), std::invalid_argument);
+
+    factorization::supernodal_lu_factor<double> empty;
+    empty.symbolic = sym;
+    REQUIRE_THROWS_AS(empty.set_factor_values({}, {}), std::logic_error);
+    REQUIRE_THROWS_AS(factorization::supernodal_lu_refactor(A2, empty), std::logic_error);
+}
+
 // ---- row equilibration / scaling (#185) -----------------------------------
 TEST_CASE("Supernodal LU row scaling", "[sparse][lu][supernodal][scale]") {
     // Badly row-scaled SPD-ish matrix: rows multiplied by a large dynamic range.

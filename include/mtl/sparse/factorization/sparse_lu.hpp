@@ -96,6 +96,33 @@ struct lu_numeric {
         has_factor_ = true;              // commit last: solve() is now valid
     }
 
+    /// True once factors (and their coupled schedules) have been installed.
+    bool has_factor() const { return has_factor_; }
+
+    /// Install recomputed VALUES on the already-installed factor pattern, keeping
+    /// the existing solve schedules. The schedules are value-agnostic -- they cache
+    /// positions into L_.values / U_.values, not the values -- so a same-pattern
+    /// refactorization can swap in new numbers and skip the O(nnz) schedule rebuild
+    /// set_factor pays. Only the value arrays change; col_ptr / row_ind are kept.
+    ///
+    /// Requires a factor already installed, and value arrays of exactly the
+    /// installed nnz -- a PATTERN change must go through set_factor. The schedules'
+    /// built_nnz staleness guards (the ones the solves assert on) are re-checked
+    /// here, so a schedule can never be left silently stale.
+    /// Strongly exception safe: all validation precedes any member replacement.
+    void set_factor_values(std::vector<Value> Lvals, std::vector<Value> Uvals) {
+        if (!has_factor_)
+            throw std::logic_error(
+                "lu_numeric::set_factor_values: no factor installed (call set_factor first)");
+        if (Lvals.size() != L_.values.size() || Uvals.size() != U_.values.size() ||
+            fwd_sched_.built_nnz != Lvals.size() || up_sched_.built_nnz != Uvals.size())
+            throw std::invalid_argument(
+                "lu_numeric::set_factor_values: value count does not match the installed "
+                "factor pattern (use set_factor for a pattern change)");
+        L_.values = std::move(Lvals);   // noexcept
+        U_.values = std::move(Uvals);   // noexcept
+    }
+
     /// Solve A*x = b using the LU factorization.
     /// P*A*Q = L*U, so A = P^T * L * U * Q^T
     /// A*x = b => P^T * L * U * Q^T * x = b
@@ -503,40 +530,58 @@ lu_numeric<Value> sparse_lu_numeric(
     return result;
 }
 
-/// Refactorize a matrix with the SAME sparsity pattern as a prior factorization,
-/// reusing that factorization's symbolic structure and pivot sequence. Only the
-/// numeric values are recomputed -- no BTF/ordering, no reach DFS, and no pivot
-/// search -- which is the fast path for repeated solves of a fixed pattern with
-/// changing values (e.g. SPICE transient analysis: one factor, many refactor).
+/// Refactorize IN PLACE: recompute `fac`'s numeric values from a matrix with the
+/// SAME sparsity pattern, reusing its symbolic structure and pivot sequence --
+/// no BTF/ordering, no reach DFS, no pivot search -- and install them while
+/// KEEPING the factor pattern and the coupled solve schedules (#310). This is the
+/// allocation-light form of the fast path for repeated solves of a fixed pattern
+/// with changing values (e.g. SPICE transient analysis: one factor, many
+/// refactor); nothing is copied but the recomputed values.
 ///
-/// Preconditions: A has the same column ordering (prev.symbolic) and the same
-/// nonzero pattern that produced prev. Relies on prev.L / prev.U columns being
+/// Preconditions: A has the same column ordering (fac.symbolic) and the same
+/// nonzero pattern that produced fac. Relies on fac.L / fac.U columns being
 /// stored in ascending row order (as sparse_lu_numeric produces).
+///
+/// Strong exception guarantee: the values are computed into scratch arrays and
+/// installed only after the last column succeeds, so a throw leaves `fac` exactly
+/// as it was -- still solvable with its previous values.
 ///
 /// \throws std::runtime_error if a reused pivot is numerically zero for the new
 ///         values (the prior pivot sequence is no longer valid).
 template <typename Value, typename Parameters>
     requires OrderedField<Value>
-lu_numeric<Value> sparse_lu_refactor(
+void sparse_lu_refactor_in_place(
     const mat::compressed2D<Value, Parameters>& A,
-    const lu_numeric<Value>& prev)
+    lu_numeric<Value>& fac)
 {
     using size_type = std::size_t;
-    size_type n = prev.symbolic.n;
+    size_type n = fac.symbolic.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
             "sparse_lu_refactor: matrix dimensions do not match prior factorization");
     }
+    // The replay below indexes fac's factor pattern; with no factor installed
+    // those arrays are empty and the walk would run off the end.
+    if (!fac.has_factor()) {
+        throw std::logic_error(
+            "sparse_lu_refactor: prior factorization has no factor installed");
+    }
 
-    auto AQ = util::column_permute(A, prev.symbolic.col_perm);
+    auto AQ = util::column_permute(A, fac.symbolic.col_perm);
     auto C  = util::crs_to_csc(AQ);
 
-    const auto& pinv = prev.row_pinv;    // original row -> pivot position (fixed)
-    // Local mutable copies of the prior factors: same pattern, values recomputed
-    // in place below, then installed via set_factor (which rebuilds the coupled
-    // solve schedules). refactor throws on a zero pivot; no perturbation.
-    auto L = prev.factorL();
-    auto U = prev.factorU();
+    const auto& pinv = fac.row_pinv;     // original row -> pivot position (fixed)
+    // The installed factors' PATTERN is reused verbatim (read-only); only the
+    // values are recomputed, into scratch arrays laid out on that pattern. Every
+    // position is written by the column that owns it before any later column reads
+    // it, so the zero-initialization is just placeholder storage. Installing these
+    // via set_factor_values keeps the existing solve schedules (value-agnostic,
+    // and valid for an unchanged pattern) instead of rebuilding them. Throws on a
+    // zero pivot; no perturbation.
+    const util::csc_matrix<Value>& L = fac.factorL();
+    const util::csc_matrix<Value>& U = fac.factorU();
+    std::vector<Value> Lx(L.values.size(), Value{0});
+    std::vector<Value> Ux(U.values.size(), Value{0});
 
     std::vector<Value> x(n, Value{0});
 
@@ -554,9 +599,10 @@ lu_numeric<Value> sparse_lu_refactor(
             size_type j = U.row_ind[p];
             Value xj = x[j];
             if (xj == Value{0}) continue;
-            // L(:,j): diagonal (row j, value 1) is first -> skip it.
+            // L(:,j): diagonal (row j, value 1) is first -> skip it. j < k, so
+            // Lx(:,j) already holds this refactorization's values.
             for (size_type q = L.col_ptr[j] + 1; q < L.col_ptr[j + 1]; ++q)
-                x[L.row_ind[q]] -= L.values[q] * xj;
+                x[L.row_ind[q]] -= Lx[q] * xj;
         }
 
         Value pivot = x[k];
@@ -568,12 +614,12 @@ lu_numeric<Value> sparse_lu_refactor(
 
         // Write U(:,k) values (all rows <= k, including the diagonal = pivot).
         for (size_type p = ubeg; p < uend; ++p)
-            U.values[p] = x[U.row_ind[p]];
+            Ux[p] = x[U.row_ind[p]];
 
         // Write L(:,k): unit diagonal first, then x[row]/pivot below.
         for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) {
             size_type r = L.row_ind[p];
-            L.values[p] = (r == k) ? Value{1} : x[r] / pivot;
+            Lx[p] = (r == k) ? Value{1} : x[r] / pivot;
         }
 
         // Clear the workspace. Clear the U/L pattern AND the scattered A column:
@@ -586,14 +632,30 @@ lu_numeric<Value> sparse_lu_refactor(
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) x[pinv[C.row_ind[p]]] = Value{0};
     }
 
-    // Reuse the prior symbolic analysis and permutations; install the recomputed
-    // factors, which rebuilds the coupled solve schedules for the new values.
-    lu_numeric<Value> result;
-    result.symbolic = prev.symbolic;
-    result.row_perm = prev.row_perm;
-    result.row_pinv = prev.row_pinv;
-    result.num_perturbed = 0;   // refactor recomputes values without perturbing
-    result.set_factor(std::move(L), std::move(U));
+    // Install only the values: the symbolic analysis, permutations, factor pattern
+    // and both solve schedules stay exactly as they were. The schedules are
+    // value-agnostic and the pattern is unchanged, so rebuilding them here would
+    // reproduce them entry for entry at O(nnz) cost per refactor.
+    // The validating install goes first: everything after it is noexcept, so a
+    // rejected install leaves `fac` wholly unchanged.
+    fac.set_factor_values(std::move(Lx), std::move(Ux));
+    fac.num_perturbed = 0;      // refactor recomputes values without perturbing
+}
+
+/// Refactorize into a NEW factorization object, leaving `prev` untouched: a copy
+/// of prev (symbolic analysis, permutations, factor pattern and solve schedules)
+/// refactorized in place. Prefer sparse_lu_refactor_in_place in a transient loop
+/// that overwrites its factorization anyway -- it skips this copy.
+/// Same preconditions and exceptions as sparse_lu_refactor_in_place; on a throw
+/// `prev` is untouched (the copy is discarded).
+template <typename Value, typename Parameters>
+    requires OrderedField<Value>
+lu_numeric<Value> sparse_lu_refactor(
+    const mat::compressed2D<Value, Parameters>& A,
+    const lu_numeric<Value>& prev)
+{
+    lu_numeric<Value> result = prev;
+    sparse_lu_refactor_in_place(A, result);
     return result;
 }
 

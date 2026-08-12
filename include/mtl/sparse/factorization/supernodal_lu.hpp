@@ -99,6 +99,31 @@ struct supernodal_lu_factor {
         has_factor_ = true;              // commit last: solve() is now valid
     }
 
+    /// True once factors (and their coupled schedules) have been installed.
+    bool has_factor() const { return has_factor_; }
+
+    /// Install recomputed VALUES on the already-installed factor pattern, keeping
+    /// the existing solve schedules (see lu_numeric::set_factor_values). The
+    /// schedules cache positions into L_.values / U_.values, not the values, so a
+    /// same-pattern refactorization skips the O(nnz) rebuild set_factor pays.
+    /// Requires a factor already installed and value arrays of exactly the
+    /// installed nnz; the schedules' built_nnz staleness guards are re-checked, so
+    /// a pattern change cannot slip through (use set_factor for that).
+    /// Strongly exception safe: all validation precedes any member replacement.
+    void set_factor_values(std::vector<Value> Lvals, std::vector<Value> Uvals) {
+        if (!has_factor_)
+            throw std::logic_error(
+                "supernodal_lu_factor::set_factor_values: no factor installed "
+                "(call set_factor first)");
+        if (Lvals.size() != L_.values.size() || Uvals.size() != U_.values.size() ||
+            fwd_sched_.built_nnz != Lvals.size() || up_sched_.built_nnz != Uvals.size())
+            throw std::invalid_argument(
+                "supernodal_lu_factor::set_factor_values: value count does not match the "
+                "installed factor pattern (use set_factor for a pattern change)");
+        L_.values = std::move(Lvals);   // noexcept
+        U_.values = std::move(Uvals);   // noexcept
+    }
+
     /// Solve A*x = b.  P*A*Q = L*U (identical to lu_numeric::solve).
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
@@ -526,37 +551,47 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     return result;
 }
 
-/// Refactorize a matrix with the SAME sparsity pattern as a prior factorization,
-/// reusing its analyze + pivot/supernode pattern. Only numeric values are
-/// recomputed: no ordering, no reach DFS, no pivot search, no supernode
-/// detection -- the fast path for repeated solves of a fixed pattern with
-/// changing values (transient SPICE: one analyze+factor, many refactors). The
-/// stored L/U columns are in topological (ascending-row) order, so the values
-/// replay directly. Mirrors sparse_lu_refactor.
+/// Refactorize IN PLACE: recompute `fac`'s numeric values from a matrix with the
+/// SAME sparsity pattern, reusing its analyze + pivot/supernode pattern -- no
+/// ordering, no reach DFS, no pivot search, no supernode detection -- and install
+/// them while KEEPING the factor pattern and the coupled solve schedules (#310).
+/// The allocation-light fast path for repeated solves of a fixed pattern with
+/// changing values (transient SPICE: one analyze+factor, many refactors); nothing
+/// is copied but the recomputed values. The stored L/U columns are in topological
+/// (ascending-row) order, so the values replay directly. Mirrors
+/// sparse_lu_refactor_in_place.
 ///
-/// Preconditions: A uses prev's column ordering and the same nonzero pattern.
+/// Preconditions: A uses fac's column ordering and the same nonzero pattern.
+/// Strong exception guarantee: values are computed into scratch arrays and
+/// installed only after the last column succeeds, so a throw leaves `fac` exactly
+/// as it was.
 /// \throws std::runtime_error if a reused pivot is numerically zero for the new
 ///         values (the prior pivot sequence is no longer valid).
 template <typename Value, typename Parameters>
     requires OrderedField<Value>
-supernodal_lu_factor<Value> supernodal_lu_refactor(
+void supernodal_lu_refactor_in_place(
     const mat::compressed2D<Value, Parameters>& A,
-    const supernodal_lu_factor<Value>& prev)
+    supernodal_lu_factor<Value>& fac)
 {
     using size_type = std::size_t;
-    const size_type n = prev.symbolic.n;
+    const size_type n = fac.symbolic.n;
     if (A.num_rows() != n || A.num_cols() != n)
         throw std::invalid_argument(
             "supernodal_lu_refactor: matrix dimensions do not match prior factorization");
+    // The replay below indexes fac's factor pattern; with no factor installed
+    // those arrays are empty and the walk would run off the end.
+    if (!fac.has_factor())
+        throw std::logic_error(
+            "supernodal_lu_refactor: prior factorization has no factor installed");
 
     using std::abs;
-    auto C = util::crs_to_csc(util::column_permute(A, prev.symbolic.col_perm));
-    const auto& pinv = prev.row_pinv;        // original row -> pivot position (fixed)
+    auto C = util::crs_to_csc(util::column_permute(A, fac.symbolic.col_perm));
+    const auto& pinv = fac.row_pinv;         // original row -> pivot position (fixed)
 
     // If the prior factorization was row-equilibrated, re-equilibrate the new
     // values (same pattern) and factor R*A; solve() row-scales the RHS by R.
-    std::vector<Value> row_scale;            // empty unless prev was equilibrated
-    if (!prev.row_scale.empty()) {
+    std::vector<Value> row_scale;            // empty unless fac was equilibrated
+    if (!fac.row_scale.empty()) {
         std::vector<Value> rmax(n, Value{0});
         for (size_type p = 0; p < C.values.size(); ++p) {
             Value a = abs(C.values[p]);
@@ -569,11 +604,17 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
             C.values[p] *= row_scale[C.row_ind[p]];
     }
 
-    // Local mutable copies of the prior factors: same pattern, values recomputed
-    // in place below, then installed via set_factor (which rebuilds the coupled
-    // solve schedules). refactor throws on a zero pivot; no perturbation.
-    auto L = prev.factorL();
-    auto U = prev.factorU();
+    // The installed factors' PATTERN is reused verbatim (read-only); only the
+    // values are recomputed, into scratch arrays laid out on that pattern. Every
+    // position is written by the column that owns it before any later column reads
+    // it, so the zero-initialization is just placeholder storage. Installing these
+    // via set_factor_values keeps the existing solve schedules (value-agnostic,
+    // and valid for an unchanged pattern) instead of rebuilding them. Throws on a
+    // zero pivot; no perturbation.
+    const util::csc_matrix<Value>& L = fac.factorL();
+    const util::csc_matrix<Value>& U = fac.factorU();
+    std::vector<Value> Lx(L.values.size(), Value{0});
+    std::vector<Value> Ux(U.values.size(), Value{0});
 
     std::vector<Value> x(n, Value{0});
     for (size_type k = 0; k < n; ++k) {
@@ -589,8 +630,9 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
             const size_type j = U.row_ind[p];
             const Value xj = x[j];
             if (xj == Value{0}) continue;
+            // j < k, so Lx(:,j) already holds this refactorization's values.
             for (size_type q = L.col_ptr[j] + 1; q < L.col_ptr[j + 1]; ++q)  // skip unit diagonal
-                x[L.row_ind[q]] -= L.values[q] * xj;
+                x[L.row_ind[q]] -= Lx[q] * xj;
         }
 
         const Value pivot = x[k];
@@ -599,10 +641,10 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
                 "supernodal_lu_refactor: zero pivot at column " + std::to_string(k)
                 + " (prior pivot sequence invalid for the new values)");
 
-        for (size_type p = ubeg; p < uend; ++p) U.values[p] = x[U.row_ind[p]];
+        for (size_type p = ubeg; p < uend; ++p) Ux[p] = x[U.row_ind[p]];
         for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) {
             const size_type r = L.row_ind[p];
-            L.values[p] = (r == k) ? Value{1} : x[r] / pivot;
+            Lx[p] = (r == k) ? Value{1} : x[r] / pivot;
         }
 
         // Clear the workspace over the touched positions (U/L pattern and the
@@ -612,16 +654,31 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) x[pinv[C.row_ind[p]]] = Value{0};
     }
 
-    // Reuse the prior symbolic analysis, permutations, and supernode boundaries;
-    // install the recomputed factors, which rebuilds the coupled solve schedules.
-    supernodal_lu_factor<Value> result;
-    result.symbolic = prev.symbolic;
-    result.row_perm = prev.row_perm;
-    result.row_pinv = prev.row_pinv;
-    result.lsuper_first = prev.lsuper_first;
-    result.row_scale = std::move(row_scale);
-    result.num_perturbed = 0;    // refactor replays values without perturbing (throws on zero pivot)
-    result.set_factor(std::move(L), std::move(U));
+    // Install only the values: the symbolic analysis, permutations, supernode
+    // boundaries, factor pattern and both solve schedules stay as they were. The
+    // schedules are value-agnostic and the pattern is unchanged, so rebuilding
+    // them here would reproduce them entry for entry at O(nnz) cost per refactor.
+    // The validating install goes first: everything after it is noexcept, so a
+    // rejected install leaves `fac` wholly unchanged (row scaling included).
+    fac.set_factor_values(std::move(Lx), std::move(Ux));
+    fac.row_scale = std::move(row_scale);   // recomputed above (empty if unscaled)
+    fac.num_perturbed = 0;   // refactor replays values without perturbing (throws on zero pivot)
+}
+
+/// Refactorize into a NEW factor object, leaving `prev` untouched: a copy of prev
+/// (symbolic analysis, permutations, supernode boundaries, factor pattern and
+/// solve schedules) refactorized in place. Prefer supernodal_lu_refactor_in_place
+/// in a transient loop that overwrites its factorization anyway -- it skips this
+/// copy. Same preconditions and exceptions as supernodal_lu_refactor_in_place; on
+/// a throw `prev` is untouched (the copy is discarded).
+template <typename Value, typename Parameters>
+    requires OrderedField<Value>
+supernodal_lu_factor<Value> supernodal_lu_refactor(
+    const mat::compressed2D<Value, Parameters>& A,
+    const supernodal_lu_factor<Value>& prev)
+{
+    supernodal_lu_factor<Value> result = prev;
+    supernodal_lu_refactor_in_place(A, result);
     return result;
 }
 
