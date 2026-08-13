@@ -342,6 +342,50 @@ a "blis" factorization curve would silently be the generic native path wearing a
 vendor label. BLIS therefore appears in BLAS results and is absent from LAPACK
 results by construction, not by oversight.
 
+## Running the cache-blocking A/B on a new machine
+
+Cache detection is opt-in (`MTL5_ENABLE_CACHE_DETECTION`) because it measured
+**slower** than the compile-time defaults on the i7-12700K. That verdict is one
+machine's; this is how to establish it for another. See #430 for the wider
+experiment this feeds.
+
+```bash
+cmake --preset release -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON
+cmake --build build-release --target bench_blocking_ab_detected bench_blocking_ab_default -j4
+
+BENCH_PCPUS=<one logical id per physical core> THREADS="1 <ncores>" ROUNDS=5 \
+    ./benchmarks/run_blocking_ab.sh
+
+./benchmarks/analyze_blocking_ab.py benchmarks/data/blocking_ab_{detected,default}.csv
+```
+
+Four things decide whether the result means anything:
+
+- **`-DMTL5_NATIVE_ARCH=ON` is not optional.** Without it Highway compiles for the
+  baseline 128-bit target rather than the machine's real ISA, and since `kc`, `mc`
+  and `nc` all divide by the SIMD width, you would be measuring blocking for a
+  vector length the production build never uses.
+- **`BENCH_PCPUS` must list one logical id per *physical* core**, in the order to
+  use — `lscpu -e=CPU,CORE` gives the map. On a hybrid CPU it does more than
+  control noise: it fixes *which cache hierarchy gets detected at all* (#432), so
+  an unpinned run there is ambiguous rather than merely noisy. The script rejects
+  a `THREADS` larger than the list rather than quietly over-subscribing.
+- **The shape list is derived from the machine**, once, from the detected arm, and
+  handed to both. Do not substitute a fixed list: the regime where the jc loop
+  parallelizes needs `nib <= T/2` and `njb >= 2`, and both bounds contain that
+  machine's own `mc` and `nc`. A square-only list measures the one regime where
+  the thread-partition effects cannot appear.
+- **Commit the CSVs and their `.sysinfo` sidecars** to `benchmarks/data/`. The
+  sidecar records the hierarchy each arm was blocked for, which is what makes the
+  rows interpretable later — and on a hybrid part it is the evidence that the run
+  was pinned to the core class you intended.
+
+The analyzer refuses to compare incomplete or unevenly-sampled runs, declines any
+difference under 2%, and reports a **null run** when both arms compiled to
+identical blocking — which is the expected outcome on a machine whose L1/L2
+already match the defaults (`xeon-e5-2420v2`), and a useful self-test of the
+harness.
+
 ## Adding a system
 
 1. Add a row to the table at the top of this page and a section describing the
