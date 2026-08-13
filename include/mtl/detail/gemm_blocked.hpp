@@ -153,11 +153,16 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
     constexpr std::size_t MR = bp.mr;   // register tile: must match the compiled
     constexpr std::size_t NR = bp.nr;   // micro-kernel, so compile-time only
-    // Cache blocks from the detected hierarchy (#222). rbp.mr/rbp.nr are equal to
-    // MR/NR by construction -- detection overrides only the cache fields, never
-    // the register-file or FMA terms the tile is derived from.
+    // L1/L2-sized blocks from the detected hierarchy (#222). rbp.mr/rbp.nr equal
+    // MR/NR by construction -- detection overrides only cache fields, never the
+    // register-file or FMA terms the tile is derived from.
     const simd::blocking_params& rbp = simd::runtime_blocking<TC>();
-    const std::size_t KC = rbp.kc, MC = rbp.mc, NC = rbp.nc;
+    const std::size_t KC = rbp.kc, MC = rbp.mc;
+    // NC stays compile-time: it sets the jc BLOCK COUNT, and this nest hands jc
+    // blocks to teams round-robin, so changing it perturbs the thread partition
+    // (measured regression; see with_detected_caches). Detection of L3 is
+    // deliberately not applied until the jc loop has a balanced_nc.
+    const std::size_t NC = bp.nc;
     // The ic-block size actually used. Equal to the cache bound MC everywhere
     // except the threaded nest, which lowers it to balance the m-partition once
     // ic_nt is known (#408). Captured by reference below and finalized before

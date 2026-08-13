@@ -194,19 +194,29 @@ inline constexpr blocking_params default_blocking = derive_blocking<T>(width<T>)
 /// Overlay detected cache figures on a base description, field by field. Pure,
 /// so the fallback is testable with hierarchies the host does not have.
 ///
-/// A 0 field means NOT DETECTED and keeps the base value. That per-field guard is
-/// load-bearing, not defensive tidiness: `nc` is derived as l3_bytes/(kc*sdata),
-/// so letting an undetected L3 through as a literal zero would floor nc at nr --
-/// 8 columns per jc block, re-streaming A for every 8 columns of C. Machines that
-/// report no L3 are ordinary (Apple M-series has no L3 in the sysctl sense, and a
-/// container without sysfs reports nothing at all), so this is a case the model
-/// meets in practice rather than a hypothetical.
+/// A 0 field means NOT DETECTED and keeps the base value.
+///
+/// L3 IS DELIBERATELY NOT APPLIED, though cache_info detects it. l3_bytes feeds
+/// only nc, and nc sets the jc BLOCK COUNT, njb = ceil(n/nc) -- which the
+/// threaded nest hands to jc-teams round-robin, so the critical path is
+/// ceil(njb/jc_nt) and an njb that is not a multiple of jc_nt leaves teams
+/// unequal. Measured (Xeon E5-2420 v2, 6 threads, m=96 n=16384 k=1024, fp64):
+/// applying the detected 15 MB L3 moved nc 2048 -> 3840 and njb 8 -> 5, so two
+/// teams took 3 and 2 blocks instead of 4 and 4 -- a 1.2x critical path and a
+/// measured 10-25% REGRESSION. kc and mc carry no such hazard: they size blocks
+/// within a partition rather than the number of partitioned units.
+///
+/// This is #408's failure mode one loop over -- there a register-tile change
+/// moved mc 64 -> 60 and nib 16 -> 18, unbalancing the ic partition. The ic loop
+/// has detail::balanced_mc to absorb it; the jc loop has no equivalent yet. Once
+/// a balanced_nc exists, L3 can be applied here. Tracked separately so that
+/// partition change gets its own measurement rather than riding along with cache
+/// detection.
 constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info& c) {
-    if (c.l1d_bytes  != 0) base.l1_bytes   = c.l1d_bytes;
+    if (c.l1d_bytes  != 0) base.l1_bytes   = c.l1d_bytes;   // -> kc
     if (c.l1d_assoc  != 0) base.l1_assoc   = c.l1d_assoc;
     if (c.line_bytes != 0) base.line_bytes = c.line_bytes;
-    if (c.l2_bytes   != 0) base.l2_bytes   = c.l2_bytes;
-    if (c.l3_bytes   != 0) base.l3_bytes   = c.l3_bytes;
+    if (c.l2_bytes   != 0) base.l2_bytes   = c.l2_bytes;    // -> mc
     return base;
 }
 
@@ -216,9 +226,10 @@ inline const hw_traits& detected_hw_traits() {
     return hw;
 }
 
-/// Blocking parameters for `T` derived against the DETECTED hardware. Use the
-/// kc/mc/nc from this; take mr/nr from `default_blocking<T>`, which is the tile
-/// the micro-kernel was instantiated with. Computed once per element type.
+/// Blocking parameters for `T` derived against the DETECTED hardware. Use kc and
+/// mc from this; take mr/nr from `default_blocking<T>` (the tile the micro-kernel
+/// was instantiated with) and nc from there too, since L3 is not overridden --
+/// see with_detected_caches. Computed once per element type.
 template <typename T>
 inline const blocking_params& runtime_blocking() {
     static const blocking_params bp = derive_blocking<T>(width<T>, detected_hw_traits());

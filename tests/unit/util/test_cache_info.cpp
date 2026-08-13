@@ -87,10 +87,16 @@ TEST_CASE("detected_hw_traits overrides only what was detected",
     else                   REQUIRE(hw.l1_bytes   == def.l1_bytes);
     if (c.l2_bytes   != 0) REQUIRE(hw.l2_bytes   == c.l2_bytes);
     else                   REQUIRE(hw.l2_bytes   == def.l2_bytes);
-    if (c.l3_bytes   != 0) REQUIRE(hw.l3_bytes   == c.l3_bytes);
-    else                   REQUIRE(hw.l3_bytes   == def.l3_bytes);
     if (c.line_bytes != 0) REQUIRE(hw.line_bytes == c.line_bytes);
     else                   REQUIRE(hw.line_bytes == def.line_bytes);
+
+    // L3 is detected but NOT applied, whatever the machine reports: it feeds only
+    // nc, and nc sets the jc block count that the threaded nest partitions
+    // round-robin. Applying a detected 15 MB L3 on this class of machine measured
+    // a 10-25% regression on wide/short threaded GEMM (njb 8 -> 5 across 2 teams).
+    // Unconditional, so it holds on a machine with a huge L3 as well as one with
+    // none -- if a future balanced_nc lets L3 back in, this is what fails first.
+    REQUIRE(hw.l3_bytes == def.l3_bytes);
 
     // Non-cache fields are never touched: they select the register tile, which
     // belongs to the compiled micro-kernel.
@@ -111,10 +117,15 @@ TEMPLATE_TEST_CASE("runtime_blocking keeps the compiled register tile",
          << " kc=" << dbp.kc << " mc=" << dbp.mc << " nc=" << dbp.nc);
 
     // The load-bearing invariant: gemm_blocked instantiates the micro-kernel on
-    // default_blocking's mr/nr while taking kc/mc/nc from here. If detection
-    // could move mr or nr, the packed panels would no longer match the kernel.
+    // default_blocking's mr/nr while taking kc/mc from here. If detection could
+    // move mr or nr, the packed panels would no longer match the kernel.
     REQUIRE(rbp.mr == dbp.mr);
     REQUIRE(rbp.nr == dbp.nr);
+
+    // nc must also be untouched by detection: it is the jc block count, and the
+    // threaded nest's team partition is sensitive to it. gemm_blocked takes NC
+    // from default_blocking, and this asserts the two cannot silently diverge.
+    REQUIRE(rbp.nc == dbp.nc);
 
     // Cache blocks stay well-formed whatever was detected.
     REQUIRE(rbp.kc >= 1);
@@ -144,9 +155,11 @@ TEST_CASE("an undetected cache level keeps the compile-time default",
     }
 
     SECTION("no L3 reported -> nc must not collapse to nr") {
-        // Apple M-series shape: a large L1/L2 and no L3 in the sysctl sense. If
-        // the zero reached derive_blocking, nc = l3/(kc*sdata) would floor at nr
-        // and the jc loop would re-stream A every nr columns.
+        // Apple M-series shape: a large L1/L2 and no L3 in the sysctl sense. Two
+        // guards keep the zero away from nc = l3/(kc*sdata), where it would floor
+        // at nr and make the jc loop re-stream A every nr columns: L3 is not
+        // applied at all today, and the per-field 0 check would hold it back even
+        // if it were. Asserted here so removing either one fails.
         util::cache_info m;
         m.l1d_bytes = 128u * 1024;
         m.l2_bytes  = 12u * 1024 * 1024;
