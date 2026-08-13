@@ -7,9 +7,10 @@
 // shape. Because each output element is produced by exactly one contiguous chunk
 // and the per-element computation is identical regardless of which thread runs
 // it, contiguous deterministic chunking makes the parallel result BIT-IDENTICAL
-// to the serial loop -- no accumulation order to preserve. Serial (a single body
-// call) at MTL5_NUM_THREADS=1, so the default build pays zero overhead and stays
-// byte-identical to a plain loop.
+// to the serial loop -- no accumulation order to preserve. At MTL5_NUM_THREADS=1
+// the whole index space is one chunk on the calling thread (no parallel
+// dispatch; body is still invoked per index), so the default build pays zero
+// overhead and stays byte-identical to a plain loop.
 
 #include <algorithm>
 #include <cstddef>
