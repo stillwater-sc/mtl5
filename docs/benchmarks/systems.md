@@ -15,6 +15,14 @@ with the system description here.
 |--------|-----|-----------|---------|
 | `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) |
 | `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) |
+| `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | pending — #430 |
+| `jetson-orin` | NVIDIA Jetson, ARM Cortex-A78AE | 8 cores | pending — #430 |
+
+A machine is registered here as soon as it is part of an experiment, which can
+precede its first result page: the bottom two rows exist because #430 needs the
+cache hierarchies and pinning policies of all four machines settled *before* it
+starts measuring. A row without a results link means the hardware is
+characterized and the suites have not been run on it yet.
 
 ## `i7-12700K` — desktop hybrid (Alder Lake)
 
@@ -131,6 +139,128 @@ The logical→physical map was confirmed with `GetLogicalProcessorInformationEx`
 vendor's threading to one thread (`OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`,
 `MKL_NUM_THREADS=1`, `MTL5_NUM_THREADS=1`).
 
+## `xeon-e5-2420v2` — server Ivy Bridge-EP
+
+The oldest machine in the set, and kept deliberately. It has **no AVX2 and no
+FMA**, so Highway selects its 128-bit target and the GEMM micro-kernel runs 2
+doubles wide at close to this core's arithmetic ceiling. That makes it the
+**negative control** for cache-blocking experiments (#430): a blocking change
+that appears to help here is almost certainly measuring something else.
+
+| | |
+|---|---|
+| CPU | Intel Xeon E5-2420 v2 @ 2.20 GHz |
+| Topology | 6 physical cores / 12 threads (SMT), 1 socket, 1 NUMA node |
+| Logical→physical | logical 0–5 = physical cores 0–5, logical 6–11 = their SMT siblings (confirmed with `lscpu -e`, not assumed) |
+| Clocks | 2.2 GHz base, 2.7 GHz max turbo, 1.2 GHz min |
+| Cache | L1d 32 KiB/core 8-way (192 KiB total), L2 256 KiB/core (1.5 MiB total), L3 15 MiB shared, 64 B line |
+| ISA | SSE4.2, AVX, AES, F16C — **no AVX2, no FMA** |
+| Memory | 15 GiB |
+| OS | Ubuntu 24.04.4 LTS, kernel 6.8.0-137 |
+| Compilers | GCC 13.3.0, Clang 18.1.3, `-O3 -DNDEBUG` (CMake `Release`) |
+| CPU governor | `ondemand` (`intel_cpufreq`; clocks are not pinned) |
+
+### Vendor libraries
+
+| Backend | Version | Notes |
+|---------|---------|-------|
+| Reference BLAS | 3.12.0 (`libblas3`) | netlib reference, **not** OpenBLAS |
+| Reference LAPACK | 3.12.0 (`liblapack3`) | netlib reference |
+| Google Highway | 1.4.0 | fetched by CMake (`-DMTL5_WITH_HIGHWAY=ON`) |
+
+OpenBLAS, BLIS and MKL are **not installed**. The `libblas.so.3` alternative
+resolves to the netlib reference implementation, so a `MTL5_WITH_BLAS=ON` build
+on this host links reference BLAS. Vendor-comparison numbers are therefore not
+meaningful here and should not be produced from this machine — it is a machine
+for measuring MTL5's own kernels against each other.
+
+### Blocking parameters
+
+Recorded because this machine is the reason #426's central claim went untested:
+its L1d and L2 happen to **equal** the hardcoded Haswell defaults, so runtime
+cache detection changes nothing here. Only its L3 differs (15 MiB against the
+8 MiB default), and L3 is not applied to `nc` (#429).
+
+| Backend | width\<double\> | fp64 `mr nr kc mc nc` | detected == default? |
+|---------|---------------|------------------------|----------------------|
+| Highway 1.4.0 (128-bit) | 2 | `6 4 512 32 2048` | yes, every field |
+| Scalar fallback | 1 | `6 2 1024 16 1024` | yes, every field |
+
+Measured GEMM ceiling for context (fp64, Highway, `n = 3072`, min of several):
+**9.2–9.4 GFLOP/s** single-threaded and **~46 GFLOP/s** on 6 threads. The
+single-thread figure sits against a non-FMA SSE2 arithmetic ceiling of 8.8
+GFLOP/s at the 2.2 GHz base clock and 10.8 at the 2.7 GHz single-core turbo —
+i.e. the kernel is compute-bound, which is exactly why it is the control.
+
+### Pinning policy
+
+Homogeneous cores (no P/E split), but SMT makes pinning mandatory for the same
+reason it does on the Zen 4: an unpinned single-thread run can share a physical
+core with its sibling and report a contended number.
+
+| Run type | Pinning | Rationale |
+|----------|---------|-----------|
+| Single-thread sweeps | `taskset -c 0` | one thread of physical core 0 (sibling 6 idle) |
+| Scaling runs, `T` threads | `taskset -c 0-(T-1)`, `T <= 6` | logical 0–5 are distinct physical cores |
+| SMT-inclusive runs | `taskset -c 0-11` | label explicitly; not the default |
+
+Single-threaded runs additionally force `MTL5_NUM_THREADS=1` (and the vendor
+equivalents where a vendor is linked).
+
+## `jetson-orin` — ARM Cortex-A78AE (pending characterization)
+
+> **This entry is incomplete on purpose.** The fields below have not been read
+> from the machine, and guessing them is worse than leaving them blank — the whole
+> point of this page is that performance claims do not travel between machines.
+> Fill them by running the commands below **on the Jetson** and replacing each
+> `TODO`; do not populate them from a datasheet, since the shipped configuration
+> (power mode, clock cap, memory) is what determines the numbers.
+
+| | |
+|---|---|
+| CPU | TODO — exact module (AGX Orin / Orin NX) and core count |
+| Topology | TODO — cores, clusters, SMT (expected: 8 cores, no SMT) |
+| Clocks | TODO — depends on the selected `nvpmodel` mode |
+| Cache | TODO — L1d, L2 per core, L3/SLC, line size |
+| ISA | TODO — NEON (expected); confirm whether SVE is exposed (relevant to #427) |
+| Memory | TODO — and note it is **shared with the GPU** |
+| OS | TODO — JetPack / L4T version and kernel |
+| Compilers | TODO |
+| Power mode | TODO — `nvpmodel -q` output |
+
+### Commands to fill this in
+
+```bash
+# identity, topology, clocks
+lscpu; lscpu -e; cat /proc/cpuinfo | head -20
+# cache hierarchy, exactly as MTL5 detects it (non-x86 -> sysfs path)
+for d in /sys/devices/system/cpu/cpu0/cache/index*; do \
+  echo "$(cat $d/level) $(cat $d/type) $(cat $d/size) $(cat $d/coherency_line_size)"; done
+# and what MTL5 itself derives from that
+ctest --test-dir build -R util_test_cache_info --output-on-failure -V | grep l1d=
+# power/thermal state -- the numbers are meaningless without these
+sudo nvpmodel -q; sudo jetson_clocks --show; cat /sys/devices/virtual/thermal/thermal_zone*/temp
+```
+
+### Pinning and thermal policy (applies regardless of the module)
+
+This is the part that differs from every x86 machine here, and it is not
+optional. A Jetson's clocks are governed by a **power mode** and are subject to
+thermal throttling, so an unpinned, unconfigured run measures the cooling
+solution rather than the code.
+
+| Requirement | Why |
+|---|---|
+| Fix `nvpmodel` to one mode and record it | mode selects online cores *and* clock caps; the default differs per module and per JetPack image |
+| Run `jetson_clocks` to disable DVFS ramping | otherwise early reps run at a lower clock than late ones, which reads as a warm-up effect |
+| Record temperature before and after each run | a run that throttles mid-sweep must be discarded, not averaged |
+| Pin with `taskset -c 0-(T-1)` | homogeneous cores, no SMT expected — confirm with `lscpu -e` before relying on it |
+| Allow a fixed idle gap between reps | sustained load will throttle where interleaved short runs do not |
+
+Interleave A/B variants **within one session** as on every other machine, and
+treat any run whose end temperature crossed the throttle point as invalid data
+rather than a slow result.
+
 ## Methodology
 
 One executable per backend. MTL5 dispatches to BLAS/LAPACK **at compile time**,
@@ -151,11 +281,20 @@ results by construction, not by oversight.
 
 ## Adding a system
 
-1. Run the suites documented in the [harness README](../../benchmarks/README.md) on the new machine.
-2. Add a result page `docs/benchmarks/<system>.md` following the existing one.
-3. Add a row to the table at the top of this page and a section describing the
-   hardware, libraries, and pinning policy.
+1. Add a row to the table at the top of this page and a section describing the
+   hardware, libraries, and pinning policy. Read every hardware figure **from the
+   machine** rather than from a datasheet — the shipped configuration (power mode,
+   clock cap, which BLAS the alternatives system actually resolves) is what
+   determines the numbers.
+2. Run the suites documented in the [harness README](../../benchmarks/README.md) on the new machine.
+3. Add a result page `docs/benchmarks/<system>.md` following the existing one.
 4. Register the page in `FILE_MAP` in `docs-site/sync-content.mjs`.
+
+Steps 1 and 2–4 can be separated: a machine may be registered (step 1) while its
+results are still pending, which is how `xeon-e5-2420v2` and `jetson-orin` stand
+today. A machine that is *part of an experiment* belongs on this page before the
+experiment runs, so that its pinning policy is agreed in advance rather than
+reconstructed from whatever the first run happened to do.
 
 The per-system pages are self-contained, so a new machine never requires editing
 an existing result page.
