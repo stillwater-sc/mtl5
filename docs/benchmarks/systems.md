@@ -349,11 +349,32 @@ Cache detection is opt-in (`MTL5_ENABLE_CACHE_DETECTION`) because it measured
 machine's; this is how to establish it for another. See #430 for the wider
 experiment this feeds.
 
+### What the A/B actually varies
+
+The `detected` arm applies **L1 → `kc`** and **L2 → `mc`**, and nothing else.
+Detected **L3 is deliberately not applied**: `l3_bytes` feeds only `nc`, `nc` sets
+the jc block count `njb = ceil(n/nc)`, and the nest hands jc blocks to teams
+round-robin — so an `njb` that is not a multiple of `jc_nt` unbalances them.
+Applying a detected L3 measured a 10–25% regression on a wide/short shape for
+exactly that reason, and `runtime_blocking` pins `nc` to the compile-time value
+so it cannot drift indirectly through `kc` either.
+
+So this experiment answers *"do detected `kc`/`mc` beat the hand-tuned
+constants?"* — **not** *"does cache detection help?"* in general. A machine whose
+L3 differs wildly from the 8 MiB default (most do) still has that half of the
+question untested here. Any conclusion about L3 or `nc` waits on the
+`balanced_nc` work in #429; until then, treat detected-L3 results as
+experimental and out of scope for this runbook.
+
 ```bash
 cmake --preset release -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON
 cmake --build build-release --target bench_blocking_ab_detected bench_blocking_ab_default -j4
 
-BENCH_PCPUS=<one logical id per physical core> THREADS="1 <ncores>" ROUNDS=5 \
+# BENCH_PCPUS is one logical id per PHYSICAL core -- REPLACE with this machine's
+# map, from `lscpu -e=CPU,CORE`. The values below are the i7-12700K's P-cores;
+# for the Xeon E5-2420 v2 it is 0,1,2,3,4,5. THREADS must not exceed that count
+# (the runner rejects it rather than over-subscribing).
+BENCH_PCPUS=0,2,4,6,8,10,12,14 THREADS="1 8" ROUNDS=5 \
     ./benchmarks/run_blocking_ab.sh
 
 ./benchmarks/analyze_blocking_ab.py benchmarks/data/blocking_ab_{detected,default}.csv
@@ -366,10 +387,11 @@ Four things decide whether the result means anything:
   and `nc` all divide by the SIMD width, you would be measuring blocking for a
   vector length the production build never uses.
 - **`BENCH_PCPUS` must list one logical id per *physical* core**, in the order to
-  use — `lscpu -e=CPU,CORE` gives the map. On a hybrid CPU it does more than
-  control noise: it fixes *which cache hierarchy gets detected at all* (#432), so
-  an unpinned run there is ambiguous rather than merely noisy. The script rejects
-  a `THREADS` larger than the list rather than quietly over-subscribing.
+  use — the example above is the i7's and must be replaced for any other machine.
+  On a hybrid CPU it does more than control noise: it fixes *which cache hierarchy
+  gets detected at all* (#432), so an unpinned run there is ambiguous rather than
+  merely noisy. The script rejects a `THREADS` larger than the list rather than
+  quietly over-subscribing.
 - **The shape list is derived from the machine**, once, from the detected arm, and
   handed to both. Do not substitute a fixed list: the regime where the jc loop
   parallelizes needs `nib <= T/2` and `njb >= 2`, and both bounds contain that
