@@ -45,24 +45,32 @@ This machine has **two different cache configurations in one socket**, and which
 one MTL5 detects depends on where the detecting thread is scheduled (#432). Both
 readings are recorded because neither is "the" answer for this CPU:
 
-| Pinned to | L1d | L2 | L3 | fp64 `kc` `mc` | fp32 `kc` `mc` |
+| Pinned to | L1d | L2 (raw / cores sharing) | L3 | fp64 `kc` `mc` | fp32 `kc` `mc` |
 |---|---|---|---|---|---|
-| P-core, `taskset -c 0` (Golden Cove) | 48 KiB, 12-way | 1.25 MiB **private** | 25 MiB | `768` `106` | `768` `213` |
-| E-core, `taskset -c 16` (Gracemont) | 32 KiB, 8-way | 2 MiB **shared by 4 cores** | 25 MiB | `512` `256` | `512` `512` |
+| P-core, `taskset -c 0` (Golden Cove) | 48 KiB, 12-way | 1.25 MiB / **1** | 25 MiB / 12 | `768` `106` | `768` `213` |
+| E-core, `taskset -c 16` (Gracemont) | 32 KiB, 8-way | 2 MiB / **4** | 25 MiB / 12 | `512` `64` | `512` `128` |
 | — Haswell defaults, for comparison | 32 KiB | 256 KiB | 8 MiB | `512` `32` | `512` `64` |
 
 Read with `util_test_cache_info -s` from a `ci`-preset build. Blocking figures are
 the 128-bit (SSE) build; an AVX2 build divides them by the wider SIMD width.
 
-Two things follow, and both matter when reading any result from this machine:
+Three things follow, and all matter when reading any result from this machine:
 
-1. **Unpinned detection is not reproducible here.** The same binary reports either
-   row depending on the scheduler. Every measurement on this machine must pin, and
-   must record which core class it pinned to.
-2. **The E-core L2 is shared by four cores**, so its 2 MiB supports about 512 KiB
-   per core — the `mc = 256` derived from it assumes roughly 4x the L2 a core
-   actually gets. The P-core's 1.25 MiB is genuinely private and needs no such
-   discount.
+1. **Detection is per-core-class and must be pinned.** The two rows are what the
+   detector reports under `taskset -c 0` and `taskset -c 16`; both are stable
+   across repeats since #432, but they are *different*, so every measurement must
+   record which class it pinned to. Unpinned, the detector reports the smallest
+   per-core budget across the cores the process may use — deterministic, and
+   chosen so blocks fit whichever kind the work lands on.
+2. **The E-core L2 is one 2 MiB instance shared by four cores**, so a core's share
+   is 512 KiB. The `mc` column reflects that discount: `64` rather than the `256`
+   the raw 2 MiB would give. Before #432 the raw figure was used, sizing the
+   packed A block for roughly 4x the L2 a core actually has.
+3. **Sharing is counted in physical cores, not logical CPUs.** The P-core L1d/L2
+   are shared by an SMT pair yet report `1`, because the pinning policy runs one
+   thread per physical core and leaves the sibling idle — counting CPUs would
+   halve both. The `25 MiB / 12` L3 is the same rule read the other way: 20
+   logical CPUs collapse to the 12 physical cores (8 P + 4 E) that share it.
 
 Under this page's pinning policy (P-cores, E-cores excluded) the relevant row is
 the first: against the Haswell defaults, detection blocks with a larger `kc` and
