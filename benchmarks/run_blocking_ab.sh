@@ -14,8 +14,10 @@
 #   * PINNED    -- one logical id per physical core. On a hybrid CPU this also
 #                  decides which cache hierarchy is detected at all (#432), so an
 #                  unpinned run here is not merely noisy, it is ambiguous.
-#   * INTERLEAVED -- arms alternate within one session. A ratio is only
-#                  defensible when both sides come from the same session.
+#   * INTERLEAVED -- arms alternate within one session, and the ORDER within a
+#                  round alternates too, so warm-up and thermal drift do not
+#                  accrue to one arm. A ratio is only defensible when both sides
+#                  come from the same session.
 #   * MIN of N  -- the binary reports the minimum of --reps runs per point.
 #   * SHAPES DERIVED ONCE -- the shape list comes from the detected arm and is
 #                  passed verbatim to both, so the arms are never compared on
@@ -66,8 +68,23 @@ pin_for() {
     echo "$BENCH_PCPUS" | cut -d, -f1-"$t"
 }
 
+# Every requested thread count must be positive and must fit BENCH_PCPUS. `cut`
+# silently returns the whole (shorter) list when asked for more fields than it
+# has, so an oversized THREADS would run more workers than pinned cores while the
+# CSV still recorded the larger count -- a wrong number that looks like a result.
+NPCPUS=$(echo "$BENCH_PCPUS" | tr ',' '\n' | grep -c .)
 TMAX=0
-for t in $THREADS; do [ "$t" -gt "$TMAX" ] && TMAX=$t; done
+for t in $THREADS; do
+    if ! [ "$t" -ge 1 ] 2>/dev/null; then
+        echo "THREADS: '$t' is not a positive integer" >&2; exit 2
+    fi
+    if [ "$t" -gt "$NPCPUS" ]; then
+        echo "THREADS=$t exceeds the $NPCPUS cpu id(s) in BENCH_PCPUS ($BENCH_PCPUS)." >&2
+        echo "Set BENCH_PCPUS to one logical id per physical core on this machine." >&2
+        exit 2
+    fi
+    [ "$t" -gt "$TMAX" ] && TMAX=$t
+done
 
 # Shapes: derived ONCE, from the detected arm, at the largest thread count (the
 # wide/short shapes depend on the thread budget). Both arms then get this list.
@@ -78,17 +95,26 @@ CSV_DET="$OUTDIR/blocking_ab_detected.csv"
 CSV_DEF="$OUTDIR/blocking_ab_default.csv"
 rm -f "$CSV_DET" "$CSV_DEF" "$CSV_DET.sysinfo" "$CSV_DEF.sysinfo"
 
+run_arm() {   # bin label csv cpus threads
+    MTL5_NUM_THREADS=$5 taskset -c "$4" "$1" \
+        --label "$2" --dtype "$DTYPE" --threads "$5" --reps "$REPS" \
+        --shapes "$SHAPES" --csv "$3"
+}
+
 for round in $(seq 1 "$ROUNDS"); do
     for t in $THREADS; do
         cpus=$(pin_for "$t")
         echo "== round $round, T=$t, cpus=$cpus"
-        # Interleaved: detected then default, back to back, same session.
-        MTL5_NUM_THREADS=$t taskset -c "$cpus" "$DET" \
-            --label detected --dtype "$DTYPE" --threads "$t" --reps "$REPS" \
-            --shapes "$SHAPES" --csv "$CSV_DET"
-        MTL5_NUM_THREADS=$t taskset -c "$cpus" "$DEF" \
-            --label default  --dtype "$DTYPE" --threads "$t" --reps "$REPS" \
-            --shapes "$SHAPES" --csv "$CSV_DEF"
+        # Interleaved AND order-alternated. Running one arm first every round
+        # would fold warm-up, frequency ramp and thermal drift into the ratio in
+        # a fixed direction; alternating cancels it to first order.
+        if [ $((round % 2)) -eq 1 ]; then
+            run_arm "$DET" detected "$CSV_DET" "$cpus" "$t"
+            run_arm "$DEF" default  "$CSV_DEF" "$cpus" "$t"
+        else
+            run_arm "$DEF" default  "$CSV_DEF" "$cpus" "$t"
+            run_arm "$DET" detected "$CSV_DET" "$cpus" "$t"
+        fi
     done
 done
 

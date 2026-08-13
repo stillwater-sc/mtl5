@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,15 @@ namespace {
 
 struct shape { std::size_t m, n, k; };
 
+bool mul_overflows(std::size_t a, std::size_t b) {
+    return a != 0 && b > std::numeric_limits<std::size_t>::max() / a;
+}
+
+/// Parse "m,n,k;m,n,k". Rejects anything whose buffer products would wrap: a
+/// wrapped m*k allocates a short vector while gemm_blocked still walks the
+/// original extents, which is an out-of-bounds write rather than a failed run.
+/// A shape that is merely too large for RAM is left alone -- that fails loudly
+/// as bad_alloc, which is a fine way to find out.
 std::vector<shape> parse_shapes(const std::string& spec) {
     std::vector<shape> out;
     std::size_t pos = 0;
@@ -52,8 +62,15 @@ std::vector<shape> parse_shapes(const std::string& spec) {
         if (end == std::string::npos) end = spec.size();
         const std::string one = spec.substr(pos, end - pos);
         std::size_t m = 0, n = 0, k = 0;
-        if (std::sscanf(one.c_str(), "%zu,%zu,%zu", &m, &n, &k) == 3 && m && n && k)
-            out.push_back({m, n, k});
+        if (std::sscanf(one.c_str(), "%zu,%zu,%zu", &m, &n, &k) != 3 || !m || !n || !k) {
+            std::fprintf(stderr, "bad shape '%s' (want m,n,k, all > 0)\n", one.c_str());
+            std::exit(2);
+        }
+        if (mul_overflows(m, k) || mul_overflows(k, n) || mul_overflows(m, n)) {
+            std::fprintf(stderr, "shape %zu,%zu,%zu overflows size_t\n", m, n, k);
+            std::exit(2);
+        }
+        out.push_back({m, n, k});
         pos = end + 1;
     }
     return out;
@@ -148,6 +165,22 @@ int main(int argc, char** argv) {
         }
         else if (!std::strcmp(argv[i], "--help")) { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option: %s\n", argv[i]); usage(); return 2; }
+    }
+
+    // Validate before anything reaches a measurement. Each of these otherwise
+    // fails silently in a way that still writes a plausible-looking CSV row:
+    // an empty --threads makes max_element dereference an empty range; --reps 0
+    // leaves the 1e30 sentinel as the "time"; an unrecognised --dtype runs the
+    // double path while labelling the rows with whatever was asked for.
+    if (threads.empty()) {
+        std::fprintf(stderr, "--threads: needs at least one count\n"); return 2;
+    }
+    for (unsigned t : threads)
+        if (t == 0) { std::fprintf(stderr, "--threads: counts must be > 0\n"); return 2; }
+    if (reps <= 0) { std::fprintf(stderr, "--reps must be > 0\n"); return 2; }
+    if (dtype != "double" && dtype != "float") {
+        std::fprintf(stderr, "--dtype must be double or float (got '%s')\n", dtype.c_str());
+        return 2;
     }
 
     const unsigned tmax = *std::max_element(threads.begin(), threads.end());

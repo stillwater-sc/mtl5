@@ -241,9 +241,10 @@ constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info&
 ///
 /// Three distinct causes, and only the first is about cache sizing:
 ///
-///   1. At T=1 the larger kc/mc are simply slower, everywhere, by ~9%. The
-///      analytical "half of L1, half of L2" sizing is beaten by the hand-tuned
-///      constants on this microarchitecture. No threading is involved.
+///   1. At T=1 the larger kc/mc are slower at every size -- 3.5% at 1024^3 and
+///      8-10% at the rest. The analytical "half of L1, half of L2" sizing is
+///      beaten by the hand-tuned constants on this microarchitecture. No
+///      threading is involved.
 ///   2. A larger mc means FEWER ic blocks, and gemm_blocked fixes
 ///      ic_nt = min(budget, nib) from nib BEFORE balanced_mc runs. At 1024^3,
 ///      mc 64 -> 213 takes nib 16 -> 5, so five threads of eight do the work.

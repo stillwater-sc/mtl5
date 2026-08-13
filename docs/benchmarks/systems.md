@@ -72,7 +72,8 @@ the first: against the Haswell defaults, detection blocks with a larger `kc` and
 
 `benchmarks/run_blocking_ab.sh`, AVX2 build (`MTL5_NATIVE_ARCH=ON`), fp64,
 P-cores pinned, 5 interleaved rounds, min of 5. Ratio is detected / default
-throughput, so below 1 is a loss:
+throughput; the analyzer does not call anything within **2%** of parity, so
+`0.985` counts as a tie and everything below `0.98` is a loss:
 
 | shape | T=1 | T=8 |
 |---|---|---|
@@ -85,9 +86,9 @@ throughput, so below 1 is a loss:
 `detected kc=384 mc=213` against `default kc=256 mc=64`. Nine losses, one tie,
 no wins. Three separate causes, and only the first is about cache sizing:
 
-1. **At T=1 the larger blocks are just slower, by ~9% at every size.** No
-   threading is involved: the analytical "half of L1, half of L2" sizing is
-   beaten by the hand-tuned constants on Golden Cove.
+1. **At T=1 the larger blocks are slower at every size** — by 3.5% at 1024³ and
+   8–10% at the other four. No threading is involved: the analytical "half of L1,
+   half of L2" sizing is beaten by the hand-tuned constants on Golden Cove.
 2. **A larger `mc` starves the thread partition.** `gemm_blocked` fixes
    `ic_nt = min(budget, nib)` from the *unbalanced* block count, so `mc` 64 → 213
    takes `nib` 16 → 5 at 1024³ and five threads of eight do the work.

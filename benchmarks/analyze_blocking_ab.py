@@ -61,9 +61,31 @@ def main(argv):
         print("*** no point is called. This is a useful harness self-test, not a result.")
     print()
 
+    # Integrity gate. An A/B is only an A/B if both arms measured the same points
+    # the same number of times; comparing the intersection, or a 5-round arm
+    # against a 2-round one, yields confident verdicts from a partial run. Fail
+    # loudly rather than analysing what happens to be present.
+    only_det = sorted(set(det) - set(dfl))
+    only_dfl = sorted(set(dfl) - set(det))
+    uneven = [(k, len(det[k]), len(dfl[k])) for k in sorted(set(det) & set(dfl))
+              if len(det[k]) != len(dfl[k])]
+    if only_det or only_dfl or uneven:
+        print("INCOMPLETE A/B -- refusing to compare.", file=sys.stderr)
+        for k in only_det:
+            print(f"  only in detected: {k}", file=sys.stderr)
+        for k in only_dfl:
+            print(f"  only in default:  {k}", file=sys.stderr)
+        for k, na, nb in uneven:
+            print(f"  unequal rounds:   {k} detected={na} default={nb}", file=sys.stderr)
+        print("Re-run both arms over the same shapes and rounds.", file=sys.stderr)
+        return 2
+
     hdr = f"{'shape':>22} {'T':>3} {'default':>10} {'detected':>10} {'ratio':>7}  verdict"
     print(hdr)
     print("-" * len(hdr))
+
+    def gflops(m, n, k, secs):
+        return 2.0 * m * n * k / secs / 1e9
 
     bad_checksum = []
     wins = losses = noise = 0
@@ -79,12 +101,11 @@ def main(argv):
         a_s = sorted(float(r["min_s"]) for r in a)
         b_s = sorted(float(r["min_s"]) for r in b)
         a_best, b_best = a_s[0], b_s[0]
-        gf = lambda s: 2.0 * m * n * k / s / 1e9
         ratio = b_best / a_best            # >1 => detected is faster
 
         # A point is called only when the arms differ structurally, their ranges
         # do not overlap, AND the effect clears the noise floor.
-        rounds = min(len(a_s), len(b_s))
+        rounds = len(a_s)                  # == len(b_s), enforced by the gate above
         if null_run:
             verdict = "null (identical blocking)"
             noise += 1
@@ -105,11 +126,13 @@ def main(argv):
             noise += 1
 
         print(f"{m}x{n}x{k:>6}".rjust(22)
-              + f" {t:>3} {gf(b_best):>10.2f} {gf(a_best):>10.2f} {ratio:>7.3f}  {verdict}")
+              + f" {t:>3} {gflops(m, n, k, b_best):>10.2f}"
+              + f" {gflops(m, n, k, a_best):>10.2f} {ratio:>7.3f}  {verdict}")
 
     print()
     print(f"{wins} faster, {losses} slower, {noise} indistinguishable "
-          f"(GFLOP/s columns; ratio > 1 means detection helped)")
+          f"(GFLOP/s columns; ratio > 1 means detection helped; "
+          f"differences under {NOISE_FLOOR:.0%} are not called)")
 
     if bad_checksum:
         print("\nCHECKSUM MISMATCH -- the arms did not compute the same result. "
