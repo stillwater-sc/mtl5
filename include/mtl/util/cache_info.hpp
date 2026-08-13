@@ -30,6 +30,7 @@
 #include <mtl/util/cpuid.hpp>
 
 #if defined(__linux__)
+#  include <cerrno>
 #  include <cstdlib>
 #  include <fstream>
 #  include <sched.h>
@@ -214,13 +215,36 @@ inline std::size_t distinct_cores(const std::vector<int>& cpus) {
 
 /// CPUs this process may actually be scheduled on. Under `taskset` that is the
 /// pinned set, which is what makes detection agree with where the work will run.
+///
+/// A plain `cpu_set_t` is fixed at CPU_SETSIZE (1024) logical CPUs, and on a
+/// host configured with more `sched_getaffinity` fails with EINVAL. Falling back
+/// to cpu0 there would be worse than useless: cpu0 need not even be in the mask,
+/// so detection would describe a core the process cannot run on. Grow a
+/// dynamically sized set until it fits instead.
 inline std::vector<int> allowed_cpus() {
     std::vector<int> out;
-    cpu_set_t set;
+#if defined(CPU_ALLOC)
+    for (int ncpus = CPU_SETSIZE; ncpus <= (1 << 20); ncpus *= 2) {
+        cpu_set_t* set = CPU_ALLOC(ncpus);
+        if (set == nullptr) break;
+        const std::size_t sz = CPU_ALLOC_SIZE(ncpus);
+        CPU_ZERO_S(sz, set);
+        errno = 0;
+        const bool ok = (::sched_getaffinity(0, sz, set) == 0);
+        if (ok)
+            for (int i = 0; i < ncpus; ++i)
+                if (CPU_ISSET_S(static_cast<std::size_t>(i), sz, set)) out.push_back(i);
+        const bool too_small = (!ok && errno == EINVAL);
+        CPU_FREE(set);
+        if (ok || !too_small) break;                // success, or a real failure
+    }
+#else
+    cpu_set_t set;                                  // libc without CPU_ALLOC
     CPU_ZERO(&set);
     if (::sched_getaffinity(0, sizeof(set), &set) == 0)
         for (int i = 0; i < CPU_SETSIZE; ++i)
             if (CPU_ISSET(i, &set)) out.push_back(i);
+#endif
     if (out.empty()) out.push_back(0);              // affinity unavailable: assume cpu0
     return out;
 }
@@ -260,9 +284,14 @@ inline void fill_caches_sysfs(cache_info& c) {
             const int level = std::atoi(lvl.c_str());
             if (size == 0) continue;
 
-            std::size_t sharers = distinct_cores(parse_cpu_list(read_sysfs(dir + "/shared_cpu_list")));
-            if (sharers == 0) sharers = 1;          // topology unavailable: assume private
-            const std::size_t per_core = size / sharers;
+            // 0 means the topology could not be read, and it is STORED as 0 --
+            // the struct's contract is that 0 is "unknown", and reporting an
+            // unreadable topology as "shared by exactly one core" would claim
+            // knowledge of a private cache we do not have. Only the local divisor
+            // treats it as 1; with_detected_caches makes the same assumption at
+            // the point where it actually spends the budget.
+            const std::size_t sharers = distinct_cores(parse_cpu_list(read_sysfs(dir + "/shared_cpu_list")));
+            const std::size_t per_core = size / (sharers ? sharers : 1);
 
             if (c.line_bytes == 0 && line != 0) c.line_bytes = line;
             const bool is_instruction = (type == "Instruction");

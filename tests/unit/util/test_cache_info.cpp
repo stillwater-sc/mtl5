@@ -17,7 +17,6 @@
 #include <catch2/catch_template_test_macros.hpp>
 
 #include <cstddef>
-#include <thread>
 
 #include <mtl/util/cache_info.hpp>
 #include <mtl/simd/blocking.hpp>
@@ -273,15 +272,17 @@ TEST_CASE("detection is reproducible and independent of the running core",
          << " l2=" << a.l2_bytes << "/" << a.l2_sharing_cores
          << " l3=" << a.l3_bytes << "/" << a.l3_sharing_cores);
 
-    // Where sharing is reported at all, it must be a sane core count -- never 0
-    // through a division, and never more cores than the machine has.
-    const unsigned hw_cores = std::thread::hardware_concurrency();
-    if (a.l1d_sharing_cores != 0 && hw_cores != 0)
-        REQUIRE(a.l1d_sharing_cores <= hw_cores);
-    if (a.l2_sharing_cores != 0 && hw_cores != 0)
-        REQUIRE(a.l2_sharing_cores <= hw_cores);
-    if (a.l3_sharing_cores != 0 && hw_cores != 0)
-        REQUIRE(a.l3_sharing_cores <= hw_cores);
+    // Sharing widens monotonically with level: a cache cannot be shared by fewer
+    // cores than the one above it. This is a property of the topology itself, so
+    // it holds on any machine. Deliberately NOT compared against
+    // hardware_concurrency() -- that is a concurrency hint with no defined
+    // relationship to cache topology, it varies with libstdc++ version and cgroup
+    // limits, and comparing a sysfs physical-core count to it would pass here by
+    // luck of toolchain rather than by being true.
+    if (a.l1d_sharing_cores != 0 && a.l2_sharing_cores != 0)
+        REQUIRE(a.l2_sharing_cores >= a.l1d_sharing_cores);
+    if (a.l2_sharing_cores != 0 && a.l3_sharing_cores != 0)
+        REQUIRE(a.l3_sharing_cores >= a.l2_sharing_cores);
 }
 
 TEST_CASE("a detected L1 moves nc even with L3 held fixed",
