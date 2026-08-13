@@ -39,6 +39,36 @@ The primary MTL5 development machine.
 | Compiler | GCC 13.3.0, `-O3 -DNDEBUG` (CMake `Release`) |
 | CPU governor | `powersave` (`intel_pstate`; still boosts, but clocks are not pinned) |
 
+### Cache hierarchy — two hierarchies, not one
+
+This machine has **two different cache configurations in one socket**, and which
+one MTL5 detects depends on where the detecting thread is scheduled (#432). Both
+readings are recorded because neither is "the" answer for this CPU:
+
+| Pinned to | L1d | L2 | L3 | fp64 `kc` `mc` | fp32 `kc` `mc` |
+|---|---|---|---|---|---|
+| P-core, `taskset -c 0` (Golden Cove) | 48 KiB, 12-way | 1.25 MiB **private** | 25 MiB | `768` `106` | `768` `213` |
+| E-core, `taskset -c 16` (Gracemont) | 32 KiB, 8-way | 2 MiB **shared by 4 cores** | 25 MiB | `512` `256` | `512` `512` |
+| — Haswell defaults, for comparison | 32 KiB | 256 KiB | 8 MiB | `512` `32` | `512` `64` |
+
+Read with `util_test_cache_info -s` from a `ci`-preset build. Blocking figures are
+the 128-bit (SSE) build; an AVX2 build divides them by the wider SIMD width.
+
+Two things follow, and both matter when reading any result from this machine:
+
+1. **Unpinned detection is not reproducible here.** The same binary reports either
+   row depending on the scheduler. Every measurement on this machine must pin, and
+   must record which core class it pinned to.
+2. **The E-core L2 is shared by four cores**, so its 2 MiB supports about 512 KiB
+   per core — the `mc = 256` derived from it assumes roughly 4x the L2 a core
+   actually gets. The P-core's 1.25 MiB is genuinely private and needs no such
+   discount.
+
+Under this page's pinning policy (P-cores, E-cores excluded) the relevant row is
+the first: against the Haswell defaults MTL5 blocks with `kc` 512 -> 768 and `mc`
+32 -> 106 for fp64. Whether that is *faster* is the open question, measured by
+`benchmarks/run_blocking_ab.sh`.
+
 ### Vendor libraries
 
 | Backend | Version | Selected by |

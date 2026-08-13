@@ -220,10 +220,23 @@ constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info&
     return base;
 }
 
+/// Define MTL5_DISABLE_CACHE_DETECTION to compile out the runtime detection and
+/// fall back to `default_hw_traits` everywhere. Two uses, both real:
+///
+///   * the A/B lever for measuring detection against the compile-time defaults
+///     on one machine (benchmarks/run_blocking_ab.sh builds both arms from the
+///     same source, so only the blocking parameters differ);
+///   * the mitigation if detection is found to pick the wrong cache on some
+///     topology -- a hybrid CPU reports whichever core the detecting thread was
+///     scheduled on, and its L2 may be shared rather than private (#432).
 inline const hw_traits& detected_hw_traits() {
+#if defined(MTL5_DISABLE_CACHE_DETECTION)
+    return default_hw_traits;   // constexpr object: static storage, safe to bind
+#else
     static const hw_traits hw =
         with_detected_caches(default_hw_traits, util::cached_cache_info());
     return hw;
+#endif
 }
 
 /// Blocking parameters for `T` derived against the DETECTED hardware. Use kc and
