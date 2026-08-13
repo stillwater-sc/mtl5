@@ -212,11 +212,21 @@ inline constexpr blocking_params default_blocking = derive_blocking<T>(width<T>)
 /// a balanced_nc exists, L3 can be applied here. Tracked separately so that
 /// partition change gets its own measurement rather than riding along with cache
 /// detection.
+///
+/// A SHARED cache contributes only its per-core share. The BLIS model wants the
+/// L1/L2 one core gets to itself, and `cache_info` reports the instance size
+/// alongside how many physical cores share it, so the division happens here where
+/// the model is. It matters: an Alder Lake E-cluster publishes one 2 MiB L2 for
+/// four cores, and taking that at face value sized `mc` for roughly 4x the L2 a
+/// core actually has (#432). SMT siblings are deliberately NOT counted as sharers
+/// -- see cache_info -- so a hyperthreaded machine is unaffected.
 constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info& c) {
-    if (c.l1d_bytes  != 0) base.l1_bytes   = c.l1d_bytes;   // -> kc
+    const std::size_t l1_share = c.l1d_sharing_cores ? c.l1d_sharing_cores : 1;
+    const std::size_t l2_share = c.l2_sharing_cores  ? c.l2_sharing_cores  : 1;
+    if (c.l1d_bytes  != 0) base.l1_bytes   = c.l1d_bytes / l1_share;   // -> kc
     if (c.l1d_assoc  != 0) base.l1_assoc   = c.l1d_assoc;
     if (c.line_bytes != 0) base.line_bytes = c.line_bytes;
-    if (c.l2_bytes   != 0) base.l2_bytes   = c.l2_bytes;    // -> mc
+    if (c.l2_bytes   != 0) base.l2_bytes   = c.l2_bytes / l2_share;    // -> mc
     return base;
 }
 
