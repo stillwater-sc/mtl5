@@ -2,10 +2,13 @@
 # Cache-blocking A/B (#426, #432): does GEMM go faster with kc/mc derived from
 # the DETECTED cache hierarchy than with the hardcoded Haswell-class defaults?
 #
-# Both arms are the same source. `bench_blocking_ab_detected` uses the detection
-# merged in #426; `bench_blocking_ab_default` is built with
-# MTL5_DISABLE_CACHE_DETECTION and reproduces the pre-#426 blocking. Nothing else
-# differs, so a difference in throughput is a difference in kc/mc.
+# Both arms are the same source. `bench_blocking_ab_detected` is built with
+# MTL5_ENABLE_CACHE_DETECTION; `bench_blocking_ab_default` is what MTL5 ships.
+# Nothing else differs, so a difference in throughput is a difference in kc/mc.
+#
+# Detection is opt-in precisely because this harness found it losing by up to 45%
+# on an i7-12700K (see simd/blocking.hpp). Re-run this on new hardware before
+# concluding anything for that machine.
 #
 # Protocol, matching the discipline the rest of docs/benchmarks/ uses:
 #   * PINNED    -- one logical id per physical core. On a hybrid CPU this also

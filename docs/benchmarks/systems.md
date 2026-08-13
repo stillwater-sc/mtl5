@@ -65,9 +65,41 @@ Two things follow, and both matter when reading any result from this machine:
    discount.
 
 Under this page's pinning policy (P-cores, E-cores excluded) the relevant row is
-the first: against the Haswell defaults MTL5 blocks with `kc` 512 -> 768 and `mc`
-32 -> 106 for fp64. Whether that is *faster* is the open question, measured by
-`benchmarks/run_blocking_ab.sh`.
+the first: against the Haswell defaults, detection blocks with a larger `kc` and
+`mc`. **It is slower.**
+
+### Cache-blocking A/B result — detection loses here
+
+`benchmarks/run_blocking_ab.sh`, AVX2 build (`MTL5_NATIVE_ARCH=ON`), fp64,
+P-cores pinned, 5 interleaved rounds, min of 5. Ratio is detected / default
+throughput, so below 1 is a loss:
+
+| shape | T=1 | T=8 |
+|---|---|---|
+| 1024³ | 0.965 | **0.551** |
+| 2048³ | 0.920 | 0.929 |
+| 4096³ | 0.901 | 0.985 |
+| 852 × 8192 × 1024 | 0.914 | 0.806 |
+| 852 × 12288 × 1024 | 0.906 | 0.675 |
+
+`detected kc=384 mc=213` against `default kc=256 mc=64`. Nine losses, one tie,
+no wins. Three separate causes, and only the first is about cache sizing:
+
+1. **At T=1 the larger blocks are just slower, by ~9% at every size.** No
+   threading is involved: the analytical "half of L1, half of L2" sizing is
+   beaten by the hand-tuned constants on Golden Cove.
+2. **A larger `mc` starves the thread partition.** `gemm_blocked` fixes
+   `ic_nt = min(budget, nib)` from the *unbalanced* block count, so `mc` 64 → 213
+   takes `nib` 16 → 5 at 1024³ and five threads of eight do the work.
+3. **A larger `kc` inflates the packed B panel**, and once the jc loop splits
+   into teams each holds one: 2 × 12.6 MB against a 25 MiB L3.
+
+Causes 2 and 3 are the #408 / #429 family — a cache-derived parameter moving a
+*block count* the thread partition is sensitive to — and are defects independent
+of detection, which merely exposed them. Because of this result, cache detection
+ships **opt-in** (`MTL5_ENABLE_CACHE_DETECTION`); MTL5's shipped blocking is the
+compile-time defaults. Re-run the harness before assuming this verdict holds on
+different hardware.
 
 ### Vendor libraries
 

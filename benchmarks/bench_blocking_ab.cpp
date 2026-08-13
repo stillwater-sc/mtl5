@@ -1,10 +1,14 @@
 // MTL5 -- A/B the detected cache blocking against the compile-time defaults.
 //
 // One question: on this machine, is GEMM faster with kc/mc derived from the
-// DETECTED cache hierarchy (#426) than with the hardcoded Haswell-class figures
-// it replaced? Both arms are this same source; they differ only by
-// MTL5_DISABLE_CACHE_DETECTION, so nothing but the blocking parameters changes.
+// DETECTED cache hierarchy than with the hardcoded Haswell-class figures MTL5
+// ships? Both arms are this same source; they differ only by
+// MTL5_ENABLE_CACHE_DETECTION, so nothing but the blocking parameters changes.
 // benchmarks/run_blocking_ab.sh builds both and interleaves them.
+//
+// The answer on an i7-12700K was NO -- detection lost on 9 of 10 points, which
+// is why it is opt-in (see simd/blocking.hpp). This harness is how that verdict
+// gets revisited on other hardware (#430) rather than assumed either way.
 //
 // Shapes are NOT hardcoded. The regime where the jc (n-dimension) loop actually
 // parallelizes is machine-dependent -- it needs
@@ -168,8 +172,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "arm=%s dtype=%s\n", label.c_str(), dtype.c_str());
     std::fprintf(stderr, "  detected l1d=%zu l2=%zu l3=%zu line=%zu\n",
                  ci.l1d_bytes, ci.l2_bytes, ci.l3_bytes, ci.line_bytes);
-#if defined(MTL5_DISABLE_CACHE_DETECTION)
-    std::fprintf(stderr, "  MTL5_DISABLE_CACHE_DETECTION is ON -- blocking uses the defaults\n");
+#if defined(MTL5_ENABLE_CACHE_DETECTION)
+    std::fprintf(stderr, "  MTL5_ENABLE_CACHE_DETECTION is ON -- blocking follows the detected caches\n");
+#else
+    std::fprintf(stderr, "  detection not enabled -- blocking uses the compile-time defaults (shipped)\n");
 #endif
     std::fprintf(stderr, "  fp64 mr=%zu nr=%zu kc=%zu mc=%zu nc=%zu\n",
                  bpd.mr, bpd.nr, bpd.kc, bpd.mc, bpd.nc);

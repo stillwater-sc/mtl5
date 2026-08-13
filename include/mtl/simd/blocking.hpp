@@ -220,22 +220,50 @@ constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info&
     return base;
 }
 
-/// Define MTL5_DISABLE_CACHE_DETECTION to compile out the runtime detection and
-/// fall back to `default_hw_traits` everywhere. Two uses, both real:
+/// Runtime cache detection is OPT-IN: define MTL5_ENABLE_CACHE_DETECTION to let
+/// the detected hierarchy feed kc/mc. Without it this returns the compile-time
+/// defaults, which is what MTL5 ships.
 ///
-///   * the A/B lever for measuring detection against the compile-time defaults
-///     on one machine (benchmarks/run_blocking_ab.sh builds both arms from the
-///     same source, so only the blocking parameters differ);
-///   * the mitigation if detection is found to pick the wrong cache on some
-///     topology -- a hybrid CPU reports whichever core the detecting thread was
-///     scheduled on, and its L2 may be shared rather than private (#432).
+/// That is not caution, it is a measurement. Detection was wired in by #426 on
+/// the assumption that real cache sizes must beat figures hardcoded to a
+/// Haswell-class core. Measured on an i7-12700K (Golden Cove, P-cores pinned,
+/// AVX2, fp64, 5 interleaved rounds, min of 5) it LOST on 9 of 10 points:
+///
+///     detected  kc=384 mc=213      default  kc=256 mc=64
+///
+///     shape            T=1     T=8
+///     1024^3          0.965   0.551      <- 3 of 8 threads left idle
+///     2048^3          0.920   0.929
+///     4096^3          0.901   0.985
+///     852 x 8192      0.914   0.806      <- two 12.6 MB B panels in a 25 MB L3
+///     852 x 12288     0.906   0.675
+///     (ratio = detected / default throughput; < 1 is a loss)
+///
+/// Three distinct causes, and only the first is about cache sizing:
+///
+///   1. At T=1 the larger kc/mc are simply slower, everywhere, by ~9%. The
+///      analytical "half of L1, half of L2" sizing is beaten by the hand-tuned
+///      constants on this microarchitecture. No threading is involved.
+///   2. A larger mc means FEWER ic blocks, and gemm_blocked fixes
+///      ic_nt = min(budget, nib) from nib BEFORE balanced_mc runs. At 1024^3,
+///      mc 64 -> 213 takes nib 16 -> 5, so five threads of eight do the work.
+///   3. A larger kc inflates the packed B panel (kc x nc), and once the jc loop
+///      splits into teams each team holds one: 2 x 12.6 MB against a 25 MB L3.
+///
+/// (2) and (3) are the #408 / #429 family -- a cache-derived parameter moving a
+/// BLOCK COUNT that the thread partition is sensitive to. They are real defects
+/// independent of detection, and detection is what exposed them.
+///
+/// So the machinery stays, tested and available, and the shipped blocking is
+/// byte-identical to pre-#426 until the model is shown to win on hardware.
+/// benchmarks/run_blocking_ab.sh is how that is decided; #430 is the experiment.
 inline const hw_traits& detected_hw_traits() {
-#if defined(MTL5_DISABLE_CACHE_DETECTION)
-    return default_hw_traits;   // constexpr object: static storage, safe to bind
-#else
+#if defined(MTL5_ENABLE_CACHE_DETECTION)
     static const hw_traits hw =
         with_detected_caches(default_hw_traits, util::cached_cache_info());
     return hw;
+#else
+    return default_hw_traits;   // constexpr object: static storage, safe to bind
 #endif
 }
 

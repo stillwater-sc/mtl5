@@ -83,12 +83,24 @@ TEST_CASE("detected_hw_traits overrides only what was detected",
     // Stated as an if/else on each field so an undetectable platform (non-x86
     // Windows, or a container without sysfs) is asserted to behave exactly as it
     // did before detection existed.
+#if defined(MTL5_ENABLE_CACHE_DETECTION)
     if (c.l1d_bytes  != 0) REQUIRE(hw.l1_bytes   == c.l1d_bytes);
     else                   REQUIRE(hw.l1_bytes   == def.l1_bytes);
     if (c.l2_bytes   != 0) REQUIRE(hw.l2_bytes   == c.l2_bytes);
     else                   REQUIRE(hw.l2_bytes   == def.l2_bytes);
     if (c.line_bytes != 0) REQUIRE(hw.line_bytes == c.line_bytes);
     else                   REQUIRE(hw.line_bytes == def.line_bytes);
+#else
+    // Detection is opt-in and this build did not opt in, so the SHIPPED blocking
+    // must be the compile-time defaults on every machine, whatever was detected
+    // (#426 measured the detected figures losing by up to 45% on an i7-12700K).
+    // Deliberately unconditional: this is the assertion that fails first if the
+    // default is ever flipped back without the measurement to justify it.
+    REQUIRE(hw.l1_bytes   == def.l1_bytes);
+    REQUIRE(hw.l2_bytes   == def.l2_bytes);
+    REQUIRE(hw.line_bytes == def.line_bytes);
+    REQUIRE(hw.l1_assoc   == def.l1_assoc);
+#endif
 
     // L3 is detected but NOT applied, whatever the machine reports: it feeds only
     // nc, and nc sets the jc block count that the threaded nest partitions
@@ -138,6 +150,14 @@ TEMPLATE_TEST_CASE("runtime_blocking keeps the compiled register tile",
 
     // Two calls return the same cached object.
     REQUIRE(&simd::runtime_blocking<TestType>() == &rbp);
+
+#if !defined(MTL5_ENABLE_CACHE_DETECTION)
+    // Detection opt-out (the shipped default): every parameter, not just the
+    // register tile, must equal the compile-time derivation -- kc and mc
+    // included. This is what makes the shipped GEMM byte-identical to pre-#426.
+    REQUIRE(rbp.kc == dbp.kc);
+    REQUIRE(rbp.mc == dbp.mc);
+#endif
 }
 
 TEST_CASE("an undetected cache level keeps the compile-time default",
