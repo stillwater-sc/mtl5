@@ -123,8 +123,11 @@ TEMPLATE_TEST_CASE("runtime_blocking keeps the compiled register tile",
     REQUIRE(rbp.nr == dbp.nr);
 
     // nc must also be untouched by detection: it is the jc block count, and the
-    // threaded nest's team partition is sensitive to it. gemm_blocked takes NC
-    // from default_blocking, and this asserts the two cannot silently diverge.
+    // threaded nest's team partition is sensitive to it (#429). Note this does
+    // NOT follow from withholding L3 -- nc = l3/(kc*sdata) and kc is detected, so
+    // a machine with a larger L1 would move nc from an unchanged L3. This caught
+    // exactly that on the ARM64 runners, where L1d is 64-128 KB against the 32 KB
+    // default; runtime_blocking pins nc for that reason.
     REQUIRE(rbp.nc == dbp.nc);
 
     // Cache blocks stay well-formed whatever was detected.
@@ -198,4 +201,27 @@ TEST_CASE("derive_blocking tracks the cache figures it is given",
     simd::hw_traits big_l2 = simd::default_hw_traits;
     big_l2.l2_bytes = small.l2_bytes * 2;
     REQUIRE(simd::derive_blocking<double>(4, big_l2).mc > bp_small.mc);
+}
+
+TEST_CASE("a detected L1 moves nc even with L3 held fixed",
+          "[util][cache][blocking]") {
+    // Why runtime_blocking pins nc rather than merely withholding l3_bytes.
+    // nc = round_down(l3/(kc*sdata), nr) and kc = (l1/2)/(nr*sdata), so a larger
+    // L1 raises kc and LOWERS nc from an unchanged L3. Withholding L3 alone would
+    // therefore still let the jc block count drift on any machine whose L1 is not
+    // the 32 KB default -- which is every ARM64 target in CI, and is why this only
+    // showed up there. Asserted on explicit traits so it runs on x86 as well.
+    simd::hw_traits base = simd::default_hw_traits;
+    simd::hw_traits big_l1 = base;
+    big_l1.l1_bytes = base.l1_bytes * 4;          // 32 KB -> 128 KB, M-series shape
+    REQUIRE(big_l1.l3_bytes == base.l3_bytes);    // L3 deliberately identical
+
+    const auto bp_base = simd::derive_blocking<double>(4, base);
+    const auto bp_l1   = simd::derive_blocking<double>(4, big_l1);
+    REQUIRE(bp_l1.kc > bp_base.kc);               // bigger L1 -> bigger kc
+    REQUIRE(bp_l1.nc < bp_base.nc);               // ... which drags nc down
+
+    // And the pin holds regardless: runtime_blocking reports the compile-time nc.
+    REQUIRE(simd::runtime_blocking<double>().nc == simd::default_blocking<double>.nc);
+    REQUIRE(simd::runtime_blocking<float>().nc  == simd::default_blocking<float>.nc);
 }

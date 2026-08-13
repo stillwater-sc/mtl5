@@ -232,7 +232,19 @@ inline const hw_traits& detected_hw_traits() {
 /// see with_detected_caches. Computed once per element type.
 template <typename T>
 inline const blocking_params& runtime_blocking() {
-    static const blocking_params bp = derive_blocking<T>(width<T>, detected_hw_traits());
+    static const blocking_params bp = [] {
+        blocking_params p = derive_blocking<T>(width<T>, detected_hw_traits());
+        // Pin nc to the compile-time derivation. Withholding l3_bytes from
+        // with_detected_caches is NOT sufficient to hold nc still, because
+        // nc = round_down(l3/(kc*sdata), nr) and kc IS detected: a machine with a
+        // larger L1 gets a larger kc and therefore a smaller nc, from an
+        // unchanged L3. (Invisible on a 32 KB-L1 x86 host, where kc matches the
+        // default; an Apple M-series 128 KB L1d moves it four-fold.) Since the jc
+        // partition is what must not move (#429), pin the result rather than an
+        // input, and leave this struct saying exactly what the nest should use.
+        p.nc = default_blocking<T>.nc;
+        return p;
+    }();
     return bp;
 }
 
