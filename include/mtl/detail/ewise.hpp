@@ -46,7 +46,8 @@ inline void parallel_ewise(std::size_t n, std::size_t work_per_elem, Body&& body
 /// within a chunk is the serial nested loop's, every element is produced by
 /// exactly one chunk, and the per-element computation does not depend on which
 /// thread runs it -- so the result is BIT-IDENTICAL to the serial loop and to any
-/// other thread count. Serial (a single body call) at MTL5_NUM_THREADS=1.
+/// other thread count. At MTL5_NUM_THREADS=1 the whole space is one chunk on the
+/// calling thread -- no parallel dispatch -- with body still invoked per element.
 template <typename Body>
 inline void parallel_ewise_2d(std::size_t rows, std::size_t cols,
                               std::size_t work_per_elem, Body&& body) {
