@@ -16,7 +16,12 @@
 //         jr (step nr) -- macro-kernel over packed panels
 //           ir (step mr) -> MICRO-KERNEL: mr x nr C tile in registers, kc deep
 //
-// kc/mc/nc and the mr x nr register tile come from simd::default_blocking<T>.
+// The mr x nr register tile comes from simd::default_blocking<T> (compile time --
+// it is a micro-kernel template argument); kc/mc/nc come from
+// simd::runtime_blocking<T>(), derived against the DETECTED cache hierarchy so
+// the cache blocks follow the machine rather than the Haswell-class defaults
+// (#222). On a machine whose caches match those defaults, or one where detection
+// is unavailable, the two agree and nothing changes.
 // Edge tiles (trailing rows < mr or cols < nr) are accumulated through a zeroed
 // mr x nr temporary so the micro-kernel only ever writes full tiles.
 //
@@ -146,9 +151,13 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                   TC* C, std::size_t ldc,
                   unsigned nthreads = 1) {
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
-    constexpr std::size_t MR = bp.mr;
-    constexpr std::size_t NR = bp.nr;
-    const std::size_t KC = bp.kc, MC = bp.mc, NC = bp.nc;
+    constexpr std::size_t MR = bp.mr;   // register tile: must match the compiled
+    constexpr std::size_t NR = bp.nr;   // micro-kernel, so compile-time only
+    // Cache blocks from the detected hierarchy (#222). rbp.mr/rbp.nr are equal to
+    // MR/NR by construction -- detection overrides only the cache fields, never
+    // the register-file or FMA terms the tile is derived from.
+    const simd::blocking_params& rbp = simd::runtime_blocking<TC>();
+    const std::size_t KC = rbp.kc, MC = rbp.mc, NC = rbp.nc;
     // The ic-block size actually used. Equal to the cache bound MC everywhere
     // except the threaded nest, which lowers it to balance the m-partition once
     // ic_nt is known (#408). Captured by reference below and finalized before

@@ -20,7 +20,8 @@
 
 #include <cstddef>
 
-#include <mtl/simd/batch.hpp>   // simd::width<T>
+#include <mtl/simd/batch.hpp>        // simd::width<T>
+#include <mtl/util/cache_info.hpp>   // util::cached_cache_info (#222)
 
 namespace mtl::simd {
 
@@ -173,8 +174,55 @@ constexpr blocking_params derive_blocking(std::size_t nvec,
 }
 
 /// Blocking parameters for `T` using the compiled SIMD width and the default
-/// hardware traits. (#90 will let the hw_traits be overridden per build.)
+/// hardware traits. Compile-time, and the source of the mr x nr register tile
+/// (a micro-kernel template argument) everywhere.
 template <typename T>
 inline constexpr blocking_params default_blocking = derive_blocking<T>(width<T>);
+
+/// `default_hw_traits` with the CACHE fields replaced by what the running machine
+/// reports (#222). Detected once per process; a field the platform could not
+/// report keeps its compile-time default, so an undetectable machine behaves
+/// exactly as it did before this existed.
+///
+/// The FMA latency/issue width and the vector register file are NOT overridden.
+/// They determine mr x nr, which is a template argument of the compiled
+/// micro-kernel: a runtime value could not be applied to it, and pretending
+/// otherwise would produce a tile the kernel does not implement. Keeping them
+/// compile-time is also what guarantees `runtime_blocking<T>().mr == default_blocking<T>.mr`
+/// (likewise nr), so the two agree on the register tile by construction and only
+/// the cache blocks can differ.
+/// Overlay detected cache figures on a base description, field by field. Pure,
+/// so the fallback is testable with hierarchies the host does not have.
+///
+/// A 0 field means NOT DETECTED and keeps the base value. That per-field guard is
+/// load-bearing, not defensive tidiness: `nc` is derived as l3_bytes/(kc*sdata),
+/// so letting an undetected L3 through as a literal zero would floor nc at nr --
+/// 8 columns per jc block, re-streaming A for every 8 columns of C. Machines that
+/// report no L3 are ordinary (Apple M-series has no L3 in the sysctl sense, and a
+/// container without sysfs reports nothing at all), so this is a case the model
+/// meets in practice rather than a hypothetical.
+constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info& c) {
+    if (c.l1d_bytes  != 0) base.l1_bytes   = c.l1d_bytes;
+    if (c.l1d_assoc  != 0) base.l1_assoc   = c.l1d_assoc;
+    if (c.line_bytes != 0) base.line_bytes = c.line_bytes;
+    if (c.l2_bytes   != 0) base.l2_bytes   = c.l2_bytes;
+    if (c.l3_bytes   != 0) base.l3_bytes   = c.l3_bytes;
+    return base;
+}
+
+inline const hw_traits& detected_hw_traits() {
+    static const hw_traits hw =
+        with_detected_caches(default_hw_traits, util::cached_cache_info());
+    return hw;
+}
+
+/// Blocking parameters for `T` derived against the DETECTED hardware. Use the
+/// kc/mc/nc from this; take mr/nr from `default_blocking<T>`, which is the tile
+/// the micro-kernel was instantiated with. Computed once per element type.
+template <typename T>
+inline const blocking_params& runtime_blocking() {
+    static const blocking_params bp = derive_blocking<T>(width<T>, detected_hw_traits());
+    return bp;
+}
 
 } // namespace mtl::simd

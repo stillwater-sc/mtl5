@@ -21,22 +21,15 @@
 #include <string>
 #include <thread>
 
+#include <mtl/util/cpuid.hpp>   // MTL5_HAS_X86_CPUID, util::cpuidex
+
 // ---------------------------------------------------------------------------
 // Architecture detection (compile time)
 // ---------------------------------------------------------------------------
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-#  define MTL5_SYSINFO_X86 1
-#else
-#  define MTL5_SYSINFO_X86 0
-#endif
-
-#if MTL5_SYSINFO_X86
-#  if defined(_MSC_VER)
-#    include <intrin.h>
-#  else
-#    include <cpuid.h>
-#  endif
-#endif
+// The CPUID wrapper and its <cpuid.h>/<intrin.h> include moved to cpuid.hpp so
+// cache_info.hpp can share them (#222); MTL5_SYSINFO_X86 is kept as the name the
+// rest of this header uses.
+#define MTL5_SYSINFO_X86 MTL5_HAS_X86_CPUID
 
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -101,22 +94,8 @@ struct system_info {
 namespace detail {
 
 #if MTL5_SYSINFO_X86
-/// Thin portable wrapper over CPUID: fills regs[eax,ebx,ecx,edx] for a leaf.
-inline void cpuidex(int leaf, int subleaf, unsigned regs[4]) {
-#  if defined(_MSC_VER)
-    int r[4];
-    __cpuidex(r, leaf, subleaf);
-    regs[0] = static_cast<unsigned>(r[0]);
-    regs[1] = static_cast<unsigned>(r[1]);
-    regs[2] = static_cast<unsigned>(r[2]);
-    regs[3] = static_cast<unsigned>(r[3]);
-#  else
-    unsigned a, b, c, d;
-    __cpuid_count(leaf, subleaf, a, b, c, d);
-    regs[0] = a; regs[1] = b; regs[2] = c; regs[3] = d;
-#  endif
-}
-
+// `cpuidex` resolves to mtl::util::cpuidex (cpuid.hpp) by enclosing-namespace
+// lookup from mtl::util::detail.
 inline void fill_cpu_x86(cpu_info& cpu) {
     unsigned regs[4];
 
