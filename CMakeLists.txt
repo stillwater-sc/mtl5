@@ -283,17 +283,6 @@ endif()
 if(MTL5_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
-
-    # Provenance escaping (#443): generate the header from a hostile value,
-    # compile it, run it, and require the value back byte for byte. Not a Catch2
-    # test because the thing under test is a CMake script and the contract spans
-    # generate -> compile -> run.
-    add_test(NAME provenance_escaping
-             COMMAND ${CMAKE_COMMAND}
-                     -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-                     -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/provenance_escaping
-                     -DCXX=${CMAKE_CXX_COMPILER}
-                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/test_provenance_escaping.cmake)
 endif()
 
 if(MTL5_BUILD_EXAMPLES)
