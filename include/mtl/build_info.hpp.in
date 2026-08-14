@@ -23,9 +23,11 @@ namespace mtl {
 
 /// Short git SHA the binary was built from, or "unknown" outside a git checkout.
 inline constexpr const char* build_git_commit = MTL5_BUILD_GIT_COMMIT;
-/// "1" when the working tree had uncommitted changes at build time, else "0".
-/// A benchmark result taken from a dirty tree is not reproducible; record it
-/// rather than pretend otherwise.
+/// "1" when the working tree had changes at build time (tracked OR untracked --
+/// tests/unit globs *.cpp, so an untracked source is compiled in), "0" when
+/// clean, and "unknown" when git is unavailable or the status query failed. A
+/// benchmark result from a dirty tree is not reproducible; record it rather than
+/// pretend otherwise -- and "unknown" is not "clean".
 inline constexpr const char* build_git_dirty = MTL5_BUILD_GIT_DIRTY;
 /// CMAKE_CXX_FLAGS as configured -- the ISA selection lives here (-march=native,
 /// /arch:AVX512), and it decides the SIMD width every blocking parameter divides by.

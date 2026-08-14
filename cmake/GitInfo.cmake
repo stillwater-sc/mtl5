@@ -16,8 +16,12 @@ find_package(Git QUIET)
 function(mtl5_escape_c_string out value)
     string(REPLACE "\\" "\\\\" value "${value}")
     string(REPLACE "\"" "\\\"" value "${value}")
-    string(REPLACE "\r" "" value "${value}")
-    string(REPLACE "\n" " " value "${value}")
+    # Encode, do not discard. Dropping \r and folding \n to a space would keep
+    # the header valid while silently changing the value it records -- wrong
+    # provenance rather than missing provenance, which is the failure this whole
+    # feature exists to prevent.
+    string(REPLACE "\r" "\\r" value "${value}")
+    string(REPLACE "\n" "\\n" value "${value}")
     set(${out} "${value}" PARENT_SCOPE)
 endfunction()
 
