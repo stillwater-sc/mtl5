@@ -38,7 +38,12 @@
 #   SHAPES       override the derived shape list, "m,n,k;m,n,k". Use for a quick
 #                smoke run; prefer the derived list for real measurements, since
 #                it is what puts the jc loop in play on THIS machine.
-#   OUTDIR       where CSVs land (default benchmarks/data)
+#   OUTDIR       REQUIRED. Where the CSVs land, one directory PER MACHINE, e.g.
+#                benchmarks/data/i7-12700k. There is deliberately no default:
+#                the CSVs are named by arm, not by machine, and this script
+#                deletes them before writing -- so a shared default silently
+#                destroys another machine's committed results, which is exactly
+#                what happened once.
 set -euo pipefail
 
 BUILD_DIR=${BUILD_DIR:-build-release}
@@ -47,7 +52,13 @@ THREADS=${THREADS:-"1 8"}
 REPS=${REPS:-5}
 ROUNDS=${ROUNDS:-3}
 DTYPE=${DTYPE:-double}
-OUTDIR=${OUTDIR:-benchmarks/data}
+if [ -z "${OUTDIR:-}" ]; then
+    echo "OUTDIR is required: give this machine its own directory, e.g." >&2
+    echo "  OUTDIR=benchmarks/data/<machine> $0" >&2
+    echo "Existing machine directories:" >&2
+    ls -d benchmarks/data/*/ 2>/dev/null | sed 's|^|  |' >&2
+    exit 2
+fi
 
 DET="$BUILD_DIR/benchmarks/bench_blocking_ab_detected"
 DEF="$BUILD_DIR/benchmarks/bench_blocking_ab_default"

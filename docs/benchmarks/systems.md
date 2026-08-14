@@ -384,10 +384,13 @@ cmake --build build-release --target bench_blocking_ab_detected bench_blocking_a
 # map, from `lscpu -e=CPU,CORE`. The values below are the i7-12700K's P-cores;
 # for the Xeon E5-2420 v2 it is 0,1,2,3,4,5. THREADS must not exceed that count
 # (the runner rejects it rather than over-subscribing).
+# OUTDIR is REQUIRED and must be this machine's own directory -- the CSVs are
+# named by arm, not by machine, and the runner clears them before writing.
 BENCH_PCPUS=0,2,4,6,8,10,12,14 THREADS="1 8" ROUNDS=5 \
-    ./benchmarks/run_blocking_ab.sh
+    OUTDIR=benchmarks/data/i7-12700k ./benchmarks/run_blocking_ab.sh
 
-./benchmarks/analyze_blocking_ab.py benchmarks/data/blocking_ab_{detected,default}.csv
+./benchmarks/analyze_blocking_ab.py \
+    benchmarks/data/i7-12700k/blocking_ab_{detected,default}.csv
 ```
 
 **Windows (MSVC)** — there is no `taskset`, so pinning is an affinity bitmask and
@@ -434,10 +437,15 @@ Four things decide whether the result means anything:
   parallelizes needs `nib <= T/2` and `njb >= 2`, and both bounds contain that
   machine's own `mc` and `nc`. A square-only list measures the one regime where
   the thread-partition effects cannot appear.
-- **Commit the CSVs and their `.sysinfo` sidecars** to `benchmarks/data/`. The
-  sidecar records the hierarchy each arm was blocked for, which is what makes the
-  rows interpretable later — and on a hybrid part it is the evidence that the run
-  was pinned to the core class you intended.
+- **Commit the CSVs and their `.sysinfo` sidecars** to **this machine's own
+  directory** under `benchmarks/data/` — `i7-12700k/`, `ryzen-9-8945hs/`, and so
+  on. The output files are named by *arm*, not by machine, and the runner clears
+  them before writing, so a shared directory means the next machine's run
+  destroys the previous one's committed results. Both drivers now require an
+  explicit output directory for that reason. The sidecar records the hierarchy
+  each arm was blocked for, which is what makes the rows interpretable later —
+  and on a hybrid part it is the evidence that the run was pinned to the core
+  class you intended.
 
 The analyzer refuses to compare incomplete or unevenly-sampled runs, declines any
 difference under 2%, and reports a **null run** when both arms compiled to

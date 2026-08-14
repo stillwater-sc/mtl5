@@ -64,7 +64,8 @@ param(
     [string]$DType   = "double",
     [string]$Shapes  = "",          # empty: derive from the machine (preferred)
     [string]$Arch    = "/arch:AVX512",
-    [string]$OutDir  = "benchmarks\data",
+    [string]$OutDir  = "",          # REQUIRED -- one directory per machine
+
     [string]$BuildDir = "build-blocking-ab",
     [int]$Jobs       = [Environment]::ProcessorCount
 )
@@ -93,6 +94,14 @@ foreach ($T in $ThreadList) {
     if ($T -gt $PCoreList.Count) {
         throw "-Threads $T exceeds the $($PCoreList.Count) physical core(s) in -PCores ($PCores). Set -PCores to one logical id per physical core on this machine."
     }
+}
+# -OutDir is REQUIRED and must name a per-machine directory. The CSVs are named
+# by arm, not by machine, and this script deletes them before writing -- so a
+# shared default silently destroys another machine's committed results. That is
+# not hypothetical: a Zen 4 run overwrote the i7's data exactly this way.
+if ($OutDir -eq "") {
+    $existing = (Get-ChildItem -Directory (Join-Path (Split-Path -Parent $PSScriptRoot) "benchmarks\data") -ErrorAction SilentlyContinue | ForEach-Object { "  benchmarks\data\$($_.Name)" }) -join "`n"
+    throw "-OutDir is required: give this machine its own directory, e.g.`n  -OutDir `"benchmarks\data\ryzen-9-8945hs`"`nExisting machine directories:`n$existing"
 }
 if ($Reps -lt 1)   { throw "-Reps must be > 0." }
 if ($Rounds -lt 1) { throw "-Rounds must be > 0." }
