@@ -374,6 +374,8 @@ question untested here. Any conclusion about L3 or `nc` waits on the
 `balanced_nc` work in #429; until then, treat detected-L3 results as
 experimental and out of scope for this runbook.
 
+**Linux (GCC/Clang):**
+
 ```bash
 cmake --preset release -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON
 cmake --build build-release --target bench_blocking_ab_detected bench_blocking_ab_default -j4
@@ -388,12 +390,39 @@ BENCH_PCPUS=0,2,4,6,8,10,12,14 THREADS="1 8" ROUNDS=5 \
 ./benchmarks/analyze_blocking_ab.py benchmarks/data/blocking_ab_{detected,default}.csv
 ```
 
+**Windows (MSVC)** — there is no `taskset`, so pinning is an affinity bitmask and
+the driver is PowerShell, following `run_scaling.ps1`:
+
+```powershell
+pwsh benchmarks/run_blocking_ab.ps1 `
+     -PCores "0,2,4,6,8,10,12,14" -Threads "1,8" -Rounds 5 `
+     -Arch "/arch:AVX512" -OutDir "benchmarks\data\ryzen-9-8945hs"
+
+python benchmarks/analyze_blocking_ab.py `
+     benchmarks\data\ryzen-9-8945hs\blocking_ab_detected.csv `
+     benchmarks\data\ryzen-9-8945hs\blocking_ab_default.csv
+```
+
+One caveat that is specific to Windows and does not apply on Linux: cache
+detection there falls back to CPUID, which describes whichever core the thread is
+running on, and .NET can only set `ProcessorAffinity` *after* the process starts —
+so detection may run before the pin takes effect. That is harmless on a
+**homogeneous** part, where every core reports the same hierarchy (which covers
+`ryzen-9-8945hs`), and it is why the Linux path reads sysfs under the affinity
+mask instead. Do not use the PowerShell driver on a hybrid Windows machine
+without closing that gap first — the detected arm's figures would not be
+reproducible.
+
 Four things decide whether the result means anything:
 
-- **`-DMTL5_NATIVE_ARCH=ON` is not optional.** Without it Highway compiles for the
+- **An explicit ISA flag is not optional.** Without one Highway compiles for the
   baseline 128-bit target rather than the machine's real ISA, and since `kc`, `mc`
   and `nc` all divide by the SIMD width, you would be measuring blocking for a
-  vector length the production build never uses.
+  vector length the production build never uses. On GCC/Clang that is
+  `-DMTL5_NATIVE_ARCH=ON`. **On MSVC that option does nothing** — it is guarded
+  `if(MTL5_NATIVE_ARCH AND NOT MSVC)`, and MSVC x64 defaults to SSE2 — so pass
+  the ISA directly, e.g. `-DCMAKE_CXX_FLAGS="/arch:AVX512"`. This is easy to miss
+  because the run completes and produces a clean table either way.
 - **`BENCH_PCPUS` must list one logical id per *physical* core**, in the order to
   use — the example above is the i7's and must be replaced for any other machine.
   On a hybrid CPU it does more than control noise: it fixes *which cache hierarchy
