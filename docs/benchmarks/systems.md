@@ -76,6 +76,38 @@ Under this page's pinning policy (P-cores, E-cores excluded) the relevant row is
 the first: against the Haswell defaults, detection blocks with a larger `kc` and
 `mc`. **It is slower.**
 
+### Cache hierarchy: asymmetric clusters, and a level MTL5 cannot see
+
+From the module datasheet, with what detection reports beside it:
+
+| | 4-core cluster | 2-core cluster |
+|---|---|---|
+| L1 per core | 128 KiB (64 KiB d + 64 KiB i) | same |
+| L2 per core | 256 KiB private | same |
+| L3 | 2 MiB shared by **4** → **512 KiB/core** | 2 MiB shared by **2** → **1 MiB/core** |
+| System Cache | 4 MiB shared across **both** clusters | — |
+
+Two things follow that matter when reading any result from this machine.
+
+**The cores are identical but their cache *sharing* is not.** All six are A78AE
+with the same private L1/L2, yet a core in the small cluster has twice the L3
+share of one in the large cluster. That is a third topology class beyond the
+homogeneous-private parts (`xeon-e5-2420v2`, `ryzen-9-8945hs`) and the hybrid
+P/E one (`i7-12700K`): *symmetric cores, asymmetric sharing*. A thread grid
+spanning both clusters therefore has non-uniform cache behaviour even though
+every thread runs the same core.
+
+**Detection handles it correctly, and the datasheet is why we know.** It reports
+`l3 = 2 MiB / 4 cores`, i.e. it selected the **smaller** per-core share (512 KiB)
+rather than the larger. That is #432's rule — take the minimum per-core budget
+across the CPUs the process may run on — doing exactly what it was written for,
+so blocks fit whichever cluster the work lands on.
+
+**The 4 MiB System Cache is not modelled at all.** It does not appear in sysfs, so
+`cache_info` cannot see it and `derive_blocking` never considers it. On this part
+there is a real level between the 2 MiB cluster L3 and DRAM that the blocking
+model is blind to. Worth remembering before concluding anything about `nc` here.
+
 ### Cache-blocking A/B result — detection loses here
 
 `benchmarks/run_blocking_ab.sh`, AVX2 build (`MTL5_NATIVE_ARCH=ON`), fp64,
@@ -283,9 +315,9 @@ equivalents where a vendor is linked).
 | | |
 |---|---|
 | CPU | NVIDIA Jetson **Orin Nano** Engineering Reference Developer Kit (Super), Tegra234 |
-| Topology | **6× Cortex-A78AE**, no SMT, all six online. Six is the module's **physical** core count, not a power-mode reduction — `nvpmodel.conf` defines `CPU_A78_0..5` and nothing else |
+| Topology | **6× Cortex-A78AE** (ARMv8.2), no SMT, all six online. Six is the module's **physical** core count, not a power-mode reduction — `nvpmodel.conf` defines `CPU_A78_0..5` and nothing else. **Two asymmetric clusters**: one 4-core and one 2-core (datasheet) |
 | Clocks | 729.6 MHz – **1497.6 MHz** (15 W mode cap). Governor **`schedutil`**, *not* pinned — see the caveat below |
-| Cache | L1d 64 KiB 4-way **private**, L2 256 KiB **private**, L3 2 MiB **shared by 4 cores**, 64 B line |
+| Cache | L1d 64 KiB 4-way **private**, L2 256 KiB **private**, L3 2 MiB **per cluster**, 64 B line. Plus a **4 MiB System Cache** shared across clusters that sysfs does not expose — see below |
 | ISA | NEON, 128-bit (`nr=4` for fp64 ⇒ 2 doubles). **No SVE** — a data point for #427 |
 | Memory | 7 GiB total, **shared with the GPU** |
 | OS | Ubuntu 22.04.5 LTS, **L4T R36.4.7** (JetPack 6.x, GCID 42132812), kernel 5.15.148-tegra |
