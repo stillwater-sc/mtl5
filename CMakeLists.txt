@@ -85,7 +85,7 @@ add_custom_target(mtl5_build_info ALL
             -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/include/mtl/build_info.hpp.in
             -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
             -DCXX_FLAGS=${CMAKE_CXX_FLAGS}
-            -DCMAKE_TYPE=${CMAKE_BUILD_TYPE}
+            -DCMAKE_TYPE=$<CONFIG>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitInfo.cmake
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
     COMMENT "Recording build provenance (git commit, cxx flags)"
