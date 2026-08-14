@@ -72,6 +72,22 @@ param(
 [int[]]$PCoreList  = $PCores  -split ',' | ForEach-Object { [int]$_ }
 [int[]]$ThreadList = $Threads -split ',' | ForEach-Object { [int]$_ }
 
+# Validate -PCores BEFORE -Threads, because -Threads is checked against its
+# count. "0,0" would otherwise pass a two-thread run whose mask is 0x1: two
+# nominal threads sharing one logical processor, producing scaling data that is
+# wrong rather than merely noisy. A 64-bit process affinity mask addresses ids
+# 0-63, so anything outside that cannot be pinned at all.
+$seen = @{}
+foreach ($c in $PCoreList) {
+    if ($c -lt 0 -or $c -gt 63) {
+        throw "-PCores: id $c is outside the 0-63 range a process affinity mask can address."
+    }
+    if ($seen.ContainsKey($c)) {
+        throw "-PCores: id $c appears more than once. Give one logical id per PHYSICAL core; duplicates silently shrink the affinity mask."
+    }
+    $seen[$c] = $true
+}
+
 foreach ($T in $ThreadList) {
     if ($T -lt 1) { throw "-Threads: '$T' is not a positive integer." }
     if ($T -gt $PCoreList.Count) {
@@ -96,9 +112,19 @@ function Mask-ForThreads {
     return $m
 }
 
+# -ArgumentList joins an array with spaces, so an element that CONTAINS a space
+# would be split into two arguments. Windows repo paths routinely sit under
+# "C:\Users\First Last\...", which would otherwise break `-B <builddir>` in a way
+# that surfaces as a confusing CMake error rather than a quoting error.
+function Quote-Arg {
+    param([string]$a)
+    if ($a -match '\s') { return '"' + $a + '"' } else { return $a }
+}
+
 function Invoke-Native {
     param([string]$Exe, [string[]]$NativeArgs, [string]$LogBase)
-    $p = Start-Process -FilePath $Exe -ArgumentList $NativeArgs -PassThru -NoNewWindow -Wait `
+    $quoted = @($NativeArgs | ForEach-Object { Quote-Arg $_ })
+    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow -Wait `
                        -RedirectStandardOutput "$LogBase.out.log" -RedirectStandardError "$LogBase.err.log"
     return $p.ExitCode
 }
@@ -107,8 +133,14 @@ function Invoke-Native {
 $Full = Join-Path $RepoRoot $BuildDir
 $cfg  = @("-B", $Full,
           "-DMTL5_BUILD_BENCHMARKS=ON", "-DMTL5_BUILD_TESTS=OFF", "-DMTL5_BUILD_EXAMPLES=OFF",
-          "-DCMAKE_BUILD_TYPE=Release", "-DMTL5_WITH_HIGHWAY=ON")
-if ($Arch -ne "") { $cfg += "-DCMAKE_CXX_FLAGS=$Arch" }
+          "-DCMAKE_BUILD_TYPE=Release", "-DMTL5_WITH_HIGHWAY=ON",
+          # ALWAYS set it, empty included. Omitting it for -Arch "" would leave a
+          # previous /arch:AVX512 sitting in this build tree's CMake cache while
+          # the log below announced an SSE2 baseline -- the build would be AVX-512
+          # and the record would say otherwise. That is precisely the failure this
+          # script exists to prevent, so it must not be reintroduced by the escape
+          # hatch.
+          "-DCMAKE_CXX_FLAGS=$Arch")
 
 Write-Host "=== configure ($BuildDir)"
 Write-Host ("    ISA flag: {0}" -f $(if ($Arch -ne "") { $Arch } else { "<none> -- measuring the MSVC default (SSE2)" }))
@@ -140,7 +172,16 @@ function Run-Arm {
     $psi.RedirectStandardOutput = $true    # per-arm blocking params stay visible
     $env:MTL5_NUM_THREADS = "$T"
     $p = [System.Diagnostics.Process]::Start($psi)
-    try { $p.ProcessorAffinity = [IntPtr]$Mask; $p.PriorityClass = 'High' } catch { Write-Warning $_ }
+    # Pinning is FATAL, not advisory. Warning and continuing would append samples
+    # to a CSV whose whole claim is that they were taken on N pinned physical
+    # cores -- unpinned numbers filed as pinned ones are worse than no numbers.
+    try { $p.ProcessorAffinity = [IntPtr]$Mask }
+    catch {
+        try { $p.Kill() } catch { }
+        throw "could not pin $Label to mask 0x$('{0:x}' -f $Mask): $_"
+    }
+    # Priority is a nice-to-have and stays advisory.
+    try { $p.PriorityClass = 'High' } catch { Write-Warning "priority class: $_" }
     $p.StandardOutput.ReadToEnd() | Out-Null
     $p.WaitForExit()
     if ($p.ExitCode -ne 0) { throw "$Label arm failed (T=$T, exit $($p.ExitCode))" }
@@ -156,9 +197,17 @@ if ($Shapes -eq "") {
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $p = [System.Diagnostics.Process]::Start($psi)
-    try { $p.ProcessorAffinity = [IntPtr]$maskMax } catch { Write-Warning $_ }
+    try { $p.ProcessorAffinity = [IntPtr]$maskMax }
+    catch {
+        try { $p.Kill() } catch { }
+        throw "could not pin shape discovery to mask 0x$('{0:x}' -f $maskMax): $_"
+    }
     $Shapes = ($p.StandardOutput.ReadToEnd()).Trim()
     $p.WaitForExit()
+    # Exit code first: a failing --suggest-shapes that still wrote something to
+    # stdout would otherwise feed a garbage shape list to BOTH arms, and the run
+    # would complete and compare them happily.
+    if ($p.ExitCode -ne 0) { throw "shape discovery failed (exit $($p.ExitCode)) from $Det" }
     if ($Shapes -eq "") { throw "could not derive shapes from $Det" }
 }
 Write-Host "shapes: $Shapes"
