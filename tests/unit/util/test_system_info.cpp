@@ -88,6 +88,12 @@ TEST_CASE("build_isa names what this binary was compiled for", "[util][system_in
     //
     // This is what makes the key worth putting in a sidecar: it cannot quietly
     // claim more than the run actually used.
+    //
+    // The precondition is that the binary RUNS where it was built, which holds
+    // for a test suite (it is compiled and executed by the same job) and for the
+    // benchmark builds this key exists to describe. A cross-built binary carried
+    // to a weaker machine would trip this legitimately -- and should, because its
+    // build_isa would then be describing instructions that machine cannot run.
     const auto si  = mtl::util::identify();
     const auto isa = mtl::util::build_isa_list();
 

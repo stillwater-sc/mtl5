@@ -50,11 +50,21 @@ REPORT_ONLY=0
 REPO=""
 MARGIN=${MIN_THERMAL_HEADROOM_C:-15}
 
+# A gate that cannot be reached is worse than no gate: a trailing `--threads`
+# with no value used to leave $1 unchanged (shift 2 fails on one argument), so
+# the loop spun forever, and a non-numeric value silently skipped the thread
+# budget check entirely. Demand the value up front.
+need_value() {            # flag, remaining-count
+    if [ "$2" -lt 2 ]; then
+        echo "preflight: $1 requires a value" >&2
+        exit 2
+    fi
+}
 while [ $# -gt 0 ]; do
     case "$1" in
-        --phase)       PHASE=${2:-}; shift 2 ;;
-        --threads)     THREADS_REQ=${2:-0}; shift 2 ;;
-        --repo)        REPO=${2:-}; shift 2 ;;
+        --phase)       need_value "$1" $#; PHASE=$2; shift 2 ;;
+        --threads)     need_value "$1" $#; THREADS_REQ=$2; shift 2 ;;
+        --repo)        need_value "$1" $#; REPO=$2; shift 2 ;;
         --report-only) REPORT_ONLY=1; shift ;;
         -h|--help)     sed -n '2,45p' "$0"; exit 0 ;;
         *) echo "preflight: unknown argument '$1'" >&2; exit 2 ;;
@@ -63,6 +73,11 @@ done
 case "$PHASE" in
     before|after) ;;
     *) echo "preflight: --phase must be 'before' or 'after'" >&2; exit 2 ;;
+esac
+case "$THREADS_REQ" in
+    ''|*[!0-9]*)
+        echo "preflight: --threads must be a non-negative integer, got '$THREADS_REQ'" >&2
+        exit 2 ;;
 esac
 if [ -z "$REPO" ]; then
     REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -211,8 +226,12 @@ emit loadavg_1m "$LOAD1"
 # ── cores and thread budget ─────────────────────────────────────────────────
 # nproc honours the affinity mask, so under taskset this is the count the run can
 # actually use -- which is the number the thread budget must fit into.
-NPROC_AFFINITY=$(nproc 2>/dev/null || echo 0)
-NPROC_ONLINE=$(nproc --all 2>/dev/null || echo "$NPROC_AFFINITY")
+#
+# macOS ships no nproc (it is GNU coreutils), which made this 0 there and failed
+# EVERY run with "0 cpus available" -- a gate that blocks the machine outright is
+# not a stricter gate, it is a broken one. sysctl is the platform's own answer.
+NPROC_AFFINITY=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 0)
+NPROC_ONLINE=$(nproc --all 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "$NPROC_AFFINITY")
 emit cpu_online "$NPROC_ONLINE"
 emit cpu_affinity "$NPROC_AFFINITY"
 if [ "$THREADS_REQ" -gt 0 ] 2>/dev/null && [ "$THREADS_REQ" -gt "$NPROC_AFFINITY" ]; then

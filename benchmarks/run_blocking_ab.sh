@@ -146,7 +146,23 @@ done
 # pair of temperatures distinguishes them. Appended to the sidecars the binaries
 # wrote, which is why this happens once at the end rather than per run -- each
 # invocation truncates its own sidecar.
-AFTER_KV=$("$SCRIPT_DIR/preflight.sh" --phase after || true)
+# If the postflight read fails, the MEASUREMENTS are still good -- they are
+# already on disk, and discarding a completed session over a failed thermometer
+# read would destroy data to punish a missing probe. What must not happen is the
+# key going missing silently, so the failure is written into the sidecar as
+# `unavailable` and said out loud. `unavailable` is a fact; an absent key is a
+# reader's guess.
+if ! AFTER_KV=$("$SCRIPT_DIR/preflight.sh" --phase after); then
+    echo "WARNING: postflight thermal read failed; recording thermal_after_c=unavailable." >&2
+    echo "         The measurements themselves are unaffected." >&2
+    AFTER_KV="thermal_after_c=unavailable"
+fi
+# Guard the same hole from the other side: a preflight that exits 0 while
+# printing nothing would leave the key absent just as effectively.
+case "$AFTER_KV" in
+    *thermal_after_c=*) ;;
+    *) AFTER_KV="thermal_after_c=unavailable" ;;
+esac
 
 # Did we measure the code the tree is on? The binary records the commit it was
 # BUILT from (mtl/build_info.hpp); preflight records where the tree is NOW. They

@@ -399,11 +399,24 @@ rather than a slow result.
 
 ## The run contract
 
-Every harness in `benchmarks/` must satisfy this. It exists because each rule
+Every harness in `benchmarks/` **must** satisfy this. It exists because each rule
 below was written **after** the corresponding mistake had already produced a
 number someone believed: a Zen 4 run that deleted the i7's committed CSVs, an
 analyzer that called a 4.8% "win" between two byte-identical arms, a Jetson that
 asked for eight threads on a six-core part.
+
+**Not every harness satisfies it yet.** The requirement is stated first because
+it is the target; here is where each one actually stands, so nobody reads a
+`run_scaling` CSV as though it had been gated:
+
+| Harness | Preflight | Pins | Interleaves | `OUTDIR` required |
+|---|---|---|---|---|
+| `run_blocking_ab.sh` / `.ps1` | yes | yes | yes | yes |
+| `run_scaling.sh` / `.ps1` | **no** | yes | no | **no** |
+| `run_sweeps.sh` / `.ps1` | **no** | yes | no | **no** |
+
+`run_scaling` and `run_sweeps` produced the published i7 and Ryzen numbers, and
+bringing them up to this contract is tracked in #442.
 
 | Rule | Why |
 |---|---|

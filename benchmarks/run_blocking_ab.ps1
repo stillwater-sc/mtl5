@@ -258,7 +258,18 @@ for ($round = 1; $round -le $Rounds; $round++) {
 # a configuration that is simply slow give the same GFLOP/s, and only the pair of
 # temperatures separates them. Appended once at the end because each benchmark
 # invocation truncates its own sidecar.
+# If the postflight read fails the MEASUREMENTS are still good -- they are
+# already on disk, and discarding a completed session over a failed thermometer
+# read would destroy data to punish a missing probe. What must not happen is the
+# key going missing silently, so a failure is recorded as `unavailable` and said
+# out loud. `unavailable` is a fact; an absent key is a reader's guess. This
+# matters more on Windows than anywhere else, where the sensor is usually absent.
 $AfterKv = & $PreflightScript -Phase after
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "postflight thermal read failed; recording thermal_after_c=unavailable. The measurements themselves are unaffected."
+    $AfterKv = "thermal_after_c=unavailable"
+}
+if (-not ($AfterKv -match 'thermal_after_c=')) { $AfterKv = "thermal_after_c=unavailable" }
 
 # Did we measure the code the tree is on? The binary records the commit it was
 # BUILT from (mtl/build_info.hpp); preflight records where the tree is NOW. They
