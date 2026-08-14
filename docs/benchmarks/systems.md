@@ -278,24 +278,28 @@ core with its sibling and report a contended number.
 Single-threaded runs additionally force `MTL5_NUM_THREADS=1` (and the vendor
 equivalents where a vendor is linked).
 
-## `jetson-orin` — ARM Cortex-A78AE (partially characterized)
-
-> Everything below marked **measured** was read from the machine by the #430
-> Step 0 run and the A/B sidecars. The remaining `TODO`s still need reading from
-> the hardware — do not populate them from a datasheet, since the shipped
-> configuration (power mode, clock cap, memory) is what determines the numbers.
+## `jetson-orin` — Jetson Orin Nano (Tegra234, 6× Cortex-A78AE)
 
 | | |
 |---|---|
-| CPU | **measured**: reports only `ARMv8 Processor rev 1 (v8l)`; TODO — exact module, from `cat /proc/device-tree/model` |
-| Topology | **measured**: **6 logical cores**, no SMT. Earlier text said 8; that was an assumption and it was wrong |
-| Clocks | TODO — depends on the selected `nvpmodel` mode |
-| Cache | **measured**: L1d 64 KiB 4-way **private**, L2 256 KiB **private**, L3 2 MiB **shared by 4 cores**, 64 B line |
-| ISA | **measured**: NEON, 128-bit (`nr=4` for fp64 ⇒ 2 doubles). SVE not exposed — relevant to #427 |
-| Memory | TODO — and note it is **shared with the GPU** |
-| OS | **measured**: Ubuntu 22.04.5 LTS, kernel 5.15.148-tegra (L4T) |
-| Compilers | **measured**: GCC 11.4.0, `-O3 -DNDEBUG` (CMake `Release`) |
-| Power mode | TODO — `nvpmodel -q` output |
+| CPU | NVIDIA Jetson **Orin Nano** Engineering Reference Developer Kit (Super), Tegra234 |
+| Topology | **6× Cortex-A78AE**, no SMT, all six online. Six is the module's **physical** core count, not a power-mode reduction — `nvpmodel.conf` defines `CPU_A78_0..5` and nothing else |
+| Clocks | 729.6 MHz – **1497.6 MHz** (15 W mode cap). Governor **`schedutil`**, *not* pinned — see the caveat below |
+| Cache | L1d 64 KiB 4-way **private**, L2 256 KiB **private**, L3 2 MiB **shared by 4 cores**, 64 B line |
+| ISA | NEON, 128-bit (`nr=4` for fp64 ⇒ 2 doubles). **No SVE** — a data point for #427 |
+| Memory | 7 GiB total, **shared with the GPU** |
+| OS | Ubuntu 22.04.5 LTS, **L4T R36.4.7** (JetPack 6.x, GCID 42132812), kernel 5.15.148-tegra |
+| Compilers | GCC 11.4.0, `-O3 -DNDEBUG` (CMake `Release`) |
+| Power mode | **15 W (mode 0)**. GPU capped 306–612 MHz with 4 TPCs active, EMC 2133 MHz |
+| Thermal at rest | cpu 47.4 °C, gpu 46.2 °C, soc ~47 °C — far below throttle |
+
+> **Clocks were not pinned for the run on this page.** The governor is
+> `schedutil` and `jetson_clocks` was not applied, so cores ramp between 729.6
+> and 1497.6 MHz rather than sitting at the cap. Both A/B arms are affected
+> equally and the interleaved min-of-5 protocol absorbs much of it, but these are
+> **15 W-mode, unpinned** numbers and should not be compared against a `MAXN`
+> or `jetson_clocks` run. Single-thread GEMM measured 6.7 GFLOP/s, roughly 56% of
+> the ~12 GFLOP/s fp64 NEON peak this core reaches at the 15 W cap.
 
 The 6-core figure matters beyond bookkeeping: the thread pool clamps
 `MTL5_NUM_THREADS` to `hardware_concurrency`, so a run asking for 8 threads here
@@ -321,7 +325,9 @@ sudo nvpmodel -q; sudo jetson_clocks --show; cat /sys/devices/virtual/thermal/th
 ### Cache-blocking A/B result — neutral, and the grid explains the one loss
 
 `kc` doubles (64 KiB L1d) and `mc` halves — the opposite corner from the Zen 4.
-Result: **0 faster, 1 slower, 9 indistinguishable**, at an effective budget of 6.
+Result: **0 faster, 1 slower, 9 indistinguishable**, at an effective budget of 6
+(the run asked for 8; the pool clamps to `hardware_concurrency`), in **15 W mode
+with unpinned clocks**.
 
 | shape | T=1 | T=8 (pool 6) |
 |---|---|---|
