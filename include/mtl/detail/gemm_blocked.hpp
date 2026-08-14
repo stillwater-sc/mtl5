@@ -102,6 +102,75 @@ inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt
     return mc == 0 ? mc_max : mc;
 }
 
+/// The threaded nest's shape decision: the ic block size and the ic x jc thread
+/// grid. Pure, so it can be unit-tested and enumerated offline (#430) instead of
+/// being inferred from a throughput change.
+struct gemm_grid {
+    std::size_t mc;      ///< ic block size actually used (<= the cache bound)
+    std::size_t nib;     ///< ic blocks that mc produces
+    std::size_t njb;     ///< jc blocks
+    unsigned    ic_nt;   ///< threads across ic
+    unsigned    jc_nt;   ///< teams across jc
+};
+
+/// Choose mc and the grid for an m x n problem on `budget` threads.
+///
+/// Two defects this fixes, both found by measuring three machines (#430) and both
+/// costing whole cores rather than percentages:
+///
+/// 1. mc WAS THE CACHE BOUND ONLY, so `nib = ceil(m/mc)` could be smaller than
+///    the budget and cap ic_nt permanently -- with njb == 1 (square problems,
+///    where n <= nc) there is no jc parallelism to make up the difference and the
+///    machine simply idles. Measured: an i7-12700K at 1024^3 ran 5 of 8 threads
+///    (ratio 0.551 against the smaller-mc arm) and a Zen 4 ran 4 of 8 (0.590).
+///    mc is therefore also bounded by ceil(m/budget) -- enough blocks to hand
+///    every thread one -- floored at a single register tile. This only ever
+///    LOWERS mc, so the L2 bound is still respected, and it binds ONLY when the
+///    partition would otherwise starve: at the shipped mc = 64 with m = 1024 and
+///    8 threads the cap is 128 and nothing changes.
+///
+/// 2. THE FACTORIZATION WAS GREEDY: fill ic first, then give jc the integer
+///    quotient. That throws the remainder away -- at budget 6 with nib = 4 it
+///    picked 4 x 1 = 4 and left two cores idle, while 3 x 2 and 2 x 3 were both
+///    legal. Measured on a Jetson Orin Nano: 0.760 where the grid was the only
+///    difference. The search below is exhaustive over ic (a handful of values)
+///    and maximises ic_nt * jc_nt, preferring the larger ic_nt on ties because a
+///    wider ic team keeps the shared packed-B panel resident.
+constexpr gemm_grid plan_gemm_grid(std::size_t m, std::size_t n,
+                                   std::size_t mc_cache, std::size_t nc,
+                                   std::size_t mr, unsigned budget) {
+    if (budget < 1) budget = 1;
+    // mc is a divisor and a loop step, so it must never leave here as 0 even on
+    // a degenerate call -- a 0 step would not terminate. Everything else about a
+    // degenerate call is "nothing to do": no blocks, a 1x1 grid.
+    gemm_grid g{mc_cache < 1 ? 1 : mc_cache, 0, 0, 1, 1};
+    if (m == 0 || n == 0 || mc_cache == 0 || nc == 0) return g;
+
+    // (1) Enough ic blocks to fill the budget, if m allows. Never below one
+    // register tile -- a block shorter than mr would waste the micro-kernel.
+    const std::size_t want = (m + budget - 1) / budget;
+    if (want < g.mc) g.mc = (want < mr) ? (mr < mc_cache ? mr : mc_cache) : want;
+
+    g.nib = (m + g.mc - 1) / g.mc;
+    g.njb = (n + nc - 1) / nc;
+
+    // (2) Exhaustive search for the largest usable grid.
+    unsigned best_ic = 1, best_jc = 1, best_grid = 1;
+    const unsigned ic_max = static_cast<unsigned>(g.nib < budget ? g.nib : budget);
+    for (unsigned ic = 1; ic <= ic_max; ++ic) {
+        unsigned jc = budget / ic;
+        if (jc > g.njb) jc = static_cast<unsigned>(g.njb);
+        if (jc < 1) continue;
+        const unsigned cand = ic * jc;
+        if (cand > best_grid || (cand == best_grid && ic > best_ic)) {
+            best_grid = cand; best_ic = ic; best_jc = jc;
+        }
+    }
+    g.ic_nt = best_ic;
+    g.jc_nt = best_jc;
+    return g;
+}
+
 inline unsigned gemm_default_threads() {
     return thread_pool::instance().size();
 }
@@ -254,32 +323,30 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
 
     if (nthreads <= 1) { serial_nest(); return; }
 
-    // Block-start lists for the m (ic) and n (jc) dimensions.
+    // The thread budget is needed BEFORE the block lists, because it now bounds
+    // the ic block size -- see plan_gemm_grid. Never exceed the pool: pool.run()
+    // clamps its worker count to the pool size, so a grid sized past the pool
+    // would leave team members that never run, and their barrier would wait
+    // forever (deadlock).
+    thread_pool& pool = thread_pool::instance();
+    const unsigned budget = std::min(nthreads, pool.size());
+    if (budget <= 1) { serial_nest(); return; }
+
+    const gemm_grid plan = plan_gemm_grid(m, n, MC, NC, MR, budget);
+
+    // Block-start lists for the m (ic) and n (jc) dimensions. The m dimension
+    // steps by the PLANNED mc, which may be smaller than the cache bound MC when
+    // the cache bound alone would not produce enough blocks to fill the machine.
     std::vector<std::size_t> ic_starts, jc_starts;
-    for (std::size_t ic = 0; ic < m; ic += MC) ic_starts.push_back(ic);
+    for (std::size_t ic = 0; ic < m; ic += plan.mc) ic_starts.push_back(ic);
     for (std::size_t jc = 0; jc < n; jc += NC) jc_starts.push_back(jc);
     const std::size_t nib = ic_starts.size();
     const std::size_t njb = jc_starts.size();
 
     // Thread budget: never exceed the pool. pool.run() clamps its worker count to
-    // the pool size, so a grid sized past the pool would leave team members that
-    // never run -- and their barrier would wait forever (deadlock). Cap here.
-    thread_pool& pool = thread_pool::instance();
-    const unsigned budget = std::min(nthreads, pool.size());
-    if (budget <= 1) { serial_nest(); return; }
-
-    // 2D grid factorization (deterministic; affects performance, not results).
-    // Fill the ic loop first (keeps the shared B panel resident and maximizes its
-    // reuse), then hand any leftover threads to the jc loop. Re-expand ic with
-    // whatever remains so the grid uses as many threads as the shape allows.
-    // grid = ic_nt * jc_nt <= budget <= pool size (surplus threads stay idle).
-    unsigned ic_nt = static_cast<unsigned>(std::min<std::size_t>(budget, nib));
-    if (ic_nt < 1) ic_nt = 1;
-    unsigned jc_nt = static_cast<unsigned>(std::min<std::size_t>(budget / ic_nt, njb));
-    if (jc_nt < 1) jc_nt = 1;
-    ic_nt = static_cast<unsigned>(std::min<std::size_t>(budget / jc_nt, nib));
-    if (ic_nt < 1) ic_nt = 1;
-    const unsigned grid = ic_nt * jc_nt;
+    const unsigned ic_nt = plan.ic_nt;
+    const unsigned jc_nt = plan.jc_nt;
+    const unsigned grid  = ic_nt * jc_nt;
 
     if (grid <= 1) { serial_nest(); return; }
 
@@ -292,8 +359,8 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // This changes neither the result nor its bit-identity to the serial nest:
     // the FMA order for a given C element is fixed by the pc (k) loop, which is
     // untouched, and ic blocking only decides which rows are grouped together.
-    MC_eff = balanced_mc(m, MC, ic_nt, MR);
-    if (MC_eff != MC) {
+    MC_eff = balanced_mc(m, plan.mc, ic_nt, MR);
+    if (MC_eff != plan.mc) {
         ic_starts.clear();
         for (std::size_t ic = 0; ic < m; ic += MC_eff) ic_starts.push_back(ic);
     }
