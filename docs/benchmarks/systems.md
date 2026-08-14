@@ -16,7 +16,7 @@ with the system description here.
 | `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) |
 | `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) |
 | `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | pending — #430 |
-| `jetson-orin` | NVIDIA Jetson, ARM Cortex-A78AE | 8 cores | pending — #430 |
+| `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | pending — #430 |
 
 A machine is registered here as soon as it is part of an experiment, which can
 precede its first result page: the bottom two rows exist because #430 needs the
@@ -278,26 +278,31 @@ core with its sibling and report a contended number.
 Single-threaded runs additionally force `MTL5_NUM_THREADS=1` (and the vendor
 equivalents where a vendor is linked).
 
-## `jetson-orin` — ARM Cortex-A78AE (pending characterization)
+## `jetson-orin` — ARM Cortex-A78AE (partially characterized)
 
-> **This entry is incomplete on purpose.** The fields below have not been read
-> from the machine, and guessing them is worse than leaving them blank — the whole
-> point of this page is that performance claims do not travel between machines.
-> Fill them by running the commands below **on the Jetson** and replacing each
-> `TODO`; do not populate them from a datasheet, since the shipped configuration
-> (power mode, clock cap, memory) is what determines the numbers.
+> Everything below marked **measured** was read from the machine by the #430
+> Step 0 run and the A/B sidecars. The remaining `TODO`s still need reading from
+> the hardware — do not populate them from a datasheet, since the shipped
+> configuration (power mode, clock cap, memory) is what determines the numbers.
 
 | | |
 |---|---|
-| CPU | TODO — exact module (AGX Orin / Orin NX) and core count |
-| Topology | TODO — cores, clusters, SMT (expected: 8 cores, no SMT) |
+| CPU | **measured**: reports only `ARMv8 Processor rev 1 (v8l)`; TODO — exact module, from `cat /proc/device-tree/model` |
+| Topology | **measured**: **6 logical cores**, no SMT. Earlier text said 8; that was an assumption and it was wrong |
 | Clocks | TODO — depends on the selected `nvpmodel` mode |
-| Cache | TODO — L1d, L2 per core, L3/SLC, line size |
-| ISA | TODO — NEON (expected); confirm whether SVE is exposed (relevant to #427) |
+| Cache | **measured**: L1d 64 KiB 4-way **private**, L2 256 KiB **private**, L3 2 MiB **shared by 4 cores**, 64 B line |
+| ISA | **measured**: NEON, 128-bit (`nr=4` for fp64 ⇒ 2 doubles). SVE not exposed — relevant to #427 |
 | Memory | TODO — and note it is **shared with the GPU** |
-| OS | TODO — JetPack / L4T version and kernel |
-| Compilers | TODO |
+| OS | **measured**: Ubuntu 22.04.5 LTS, kernel 5.15.148-tegra (L4T) |
+| Compilers | **measured**: GCC 11.4.0, `-O3 -DNDEBUG` (CMake `Release`) |
 | Power mode | TODO — `nvpmodel -q` output |
+
+The 6-core figure matters beyond bookkeeping: the thread pool clamps
+`MTL5_NUM_THREADS` to `hardware_concurrency`, so a run asking for 8 threads here
+gets a budget of 6, and every thread-grid calculation is bounded by 6. The A/B
+CSVs recorded only the *requested* count, which is why the first analysis of this
+machine used the wrong budget; the benchmark now records the effective pool size
+alongside it.
 
 ### Commands to fill this in
 
@@ -312,6 +317,28 @@ ctest --test-dir build -R util_test_cache_info --output-on-failure -V | grep l1d
 # power/thermal state -- the numbers are meaningless without these
 sudo nvpmodel -q; sudo jetson_clocks --show; cat /sys/devices/virtual/thermal/thermal_zone*/temp
 ```
+
+### Cache-blocking A/B result — neutral, and the grid explains the one loss
+
+`kc` doubles (64 KiB L1d) and `mc` halves — the opposite corner from the Zen 4.
+Result: **0 faster, 1 slower, 9 indistinguishable**, at an effective budget of 6.
+
+| shape | T=1 | T=8 (pool 6) |
+|---|---|---|
+| 64 × 4096 × 1024 | 0.961 | 0.988 |
+| 64 × 6144 × 1024 | 0.965 | **0.760** |
+| 1024³ | 0.961 | 0.905 |
+| 2048³ | 0.994 | 0.990 |
+| 4096³ | 1.006 | 1.004 |
+
+The single loss is the single shape where the two arms get different thread
+grids: `mc = 16` gives `nib = 4`, so `ic_nt = min(6,4) = 4` and then
+`jc_nt = 6/4 = 1` by integer division — a grid of 4 where the default's `mc = 32`
+yields 2 × 3 = 6. Predicted 0.667, measured 0.760. `3 × 2` and `2 × 3` were both
+legal, so full utilisation existed and the factorization missed it (#429).
+
+Everywhere the grids match, the arms match. **`mc` shows no locality effect on
+this machine at all** — its entire measured influence is through the grid.
 
 ### Pinning and thermal policy (applies regardless of the module)
 

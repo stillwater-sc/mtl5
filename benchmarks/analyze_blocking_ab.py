@@ -51,6 +51,21 @@ def main(argv):
         print(f"blocking ({dt}):  detected mr,nr,kc,mc,nc = {det_p.get(dt)}"
               f"   default = {dfl_p.get(dt)}")
 
+    # A request larger than the machine is silently clamped: thread_pool caps
+    # MTL5_NUM_THREADS at hardware_concurrency. Every grid calculation depends on
+    # the CLAMPED value, so say so loudly rather than leaving it to be inferred
+    # from a speedup that looks low. `pool` is absent from CSVs written before
+    # this column existed, which is exactly when it bit.
+    clamped = sorted({(int(r["threads"]), int(r["pool"]))
+                      for rows in (det, dfl) for rs in rows.values() for r in rs
+                      if r.get("pool") and int(r["pool"]) != int(r["threads"])})
+    for asked, got in clamped:
+        print(f"NOTE: threads={asked} was clamped to a pool of {got} "
+              f"(hardware_concurrency); grids are bounded by {got}, not {asked}.")
+    if any(not r.get("pool") for rows in (det, dfl) for rs in rows.values() for r in rs):
+        print("NOTE: this CSV predates the `pool` column -- the effective thread "
+              "count was not recorded and may be lower than `threads`.")
+
     # Structural control: identical parameters means the arms are the same
     # program. Any timing difference is measurement noise, by construction.
     null_run = all(det_p.get(dt) == dfl_p.get(dt) for dt in set(det_p) | set(dfl_p))

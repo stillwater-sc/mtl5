@@ -35,6 +35,7 @@
 #include <vector>
 
 #include <mtl/detail/gemm_blocked.hpp>
+#include <mtl/detail/thread_pool.hpp>
 #include <mtl/simd/blocking.hpp>
 #include <mtl/util/cache_info.hpp>
 #include <mtl/util/system_info.hpp>
@@ -224,13 +225,22 @@ int main(int argc, char** argv) {
             const auto& bp = (dtype == "float") ? bpf : bpd;
             const double gf = 2.0 * double(sh.m) * double(sh.n) * double(sh.k) / secs / 1e9;
             char buf[512];
+            // `threads` is what was ASKED for; `pool` is what the process can
+            // actually use. thread_pool clamps MTL5_NUM_THREADS to
+            // hardware_concurrency, so on a machine with fewer cores than the
+            // request the two differ -- and every grid calculation depends on the
+            // second. Recording only the request cost a wrong analysis of the
+            // Jetson run, where 8 was asked for on a 6-core part and the shortfall
+            // was visible only as a suspiciously low speedup.
             std::snprintf(buf, sizeof buf,
-                "%s,%s,%zu,%zu,%zu,%u,%zu,%zu,%zu,%zu,%zu,%d,%.6f,%.3f,%.6f",
+                "%s,%s,%zu,%zu,%zu,%u,%u,%zu,%zu,%zu,%zu,%zu,%d,%.6f,%.3f,%.6f",
                 label.c_str(), dtype.c_str(), sh.m, sh.n, sh.k, nt,
+                mtl::detail::thread_pool::instance().size(),
                 bp.mr, bp.nr, bp.kc, bp.mc, bp.nc, reps, secs, gf, chk);
             rows.emplace_back(buf);
-            std::fprintf(stderr, "  m=%zu n=%zu k=%zu T=%u  %.4f s  %.2f GFLOP/s\n",
-                         sh.m, sh.n, sh.k, nt, secs, gf);
+            std::fprintf(stderr, "  m=%zu n=%zu k=%zu T=%u (pool %u)  %.4f s  %.2f GFLOP/s\n",
+                         sh.m, sh.n, sh.k, nt,
+                         mtl::detail::thread_pool::instance().size(), secs, gf);
         }
     }
 
@@ -242,7 +252,7 @@ int main(int argc, char** argv) {
     std::ofstream out(csv, std::ios::app);
     if (!out) { std::fprintf(stderr, "cannot write %s\n", csv.c_str()); return 1; }
     if (fresh)
-        out << "arm,dtype,m,n,k,threads,mr,nr,kc,mc,nc,reps,min_s,gflops,checksum\n";
+        out << "arm,dtype,m,n,k,threads,pool,mr,nr,kc,mc,nc,reps,min_s,gflops,checksum\n";
     for (const auto& r : rows) out << r << "\n";
 
     // Sidecar, matching the convention bench_all uses, plus the cache figures --
