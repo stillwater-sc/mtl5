@@ -1,0 +1,35 @@
+#pragma once
+// MTL5 -- build provenance for benchmark results (configured by CMake, #442).
+//
+// A committed benchmark CSV is evidence, and evidence that cannot be traced to
+// the code and configuration that produced it is worth much less than it looks.
+// Every sidecar written before this existed recorded the CPU, OS, compiler and
+// caches -- and nothing identifying the BUILD. Nothing in a Zen 4 CSV could say
+// whether it had been compiled with /arch:AVX512 or without, which is precisely
+// the question that turned out to matter for that run.
+//
+// git_commit is regenerated at BUILD time rather than configure time. A
+// configure-time value goes stale the moment you commit and rebuild without
+// reconfiguring, and a sidecar confidently naming the wrong commit is worse than
+// one naming none. cmake/GitInfo.cmake reruns per build and rewrites this header
+// only when the content actually changes, so it costs no spurious rebuilds.
+
+#define MTL5_BUILD_GIT_COMMIT  "@MTL5_BUILD_GIT_COMMIT@"
+#define MTL5_BUILD_GIT_DIRTY   "@MTL5_BUILD_GIT_DIRTY@"
+#define MTL5_BUILD_CXX_FLAGS   "@MTL5_BUILD_CXX_FLAGS@"
+#define MTL5_BUILD_CMAKE_TYPE  "@MTL5_BUILD_CMAKE_TYPE@"
+
+namespace mtl {
+
+/// Short git SHA the binary was built from, or "unknown" outside a git checkout.
+inline constexpr const char* build_git_commit = MTL5_BUILD_GIT_COMMIT;
+/// "1" when the working tree had uncommitted changes at build time, else "0".
+/// A benchmark result taken from a dirty tree is not reproducible; record it
+/// rather than pretend otherwise.
+inline constexpr const char* build_git_dirty = MTL5_BUILD_GIT_DIRTY;
+/// CMAKE_CXX_FLAGS as configured -- the ISA selection lives here (-march=native,
+/// /arch:AVX512), and it decides the SIMD width every blocking parameter divides by.
+inline constexpr const char* build_cxx_flags = MTL5_BUILD_CXX_FLAGS;
+inline constexpr const char* build_cmake_type = MTL5_BUILD_CMAKE_TYPE;
+
+} // namespace mtl

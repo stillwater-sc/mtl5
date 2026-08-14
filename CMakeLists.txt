@@ -72,6 +72,35 @@ configure_file(
     @ONLY
 )
 
+# ── Build provenance for benchmark results (#442) ───────────────────────
+# Regenerated at BUILD time, not configure time: a configure-time commit goes
+# stale as soon as you commit and rebuild, and a sidecar naming the wrong commit
+# is worse than one naming none. The script rewrites the header only when its
+# content changes, so nothing rebuilds spuriously. Not part of the mtl5 INTERFACE
+# -- putting a per-commit define on every consumer would invalidate their objects
+# on each commit; benchmark targets depend on this target explicitly.
+add_custom_target(mtl5_build_info ALL
+    COMMAND ${CMAKE_COMMAND}
+            -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/include/mtl/build_info.hpp.in
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
+            -DCXX_FLAGS=${CMAKE_CXX_FLAGS}
+            -DCMAKE_TYPE=${CMAKE_BUILD_TYPE}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitInfo.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
+    COMMENT "Recording build provenance (git commit, cxx flags)"
+    VERBATIM)
+
+# Generate it once at configure time too, so a consumer that includes the header
+# without depending on the target still compiles.
+execute_process(COMMAND ${CMAKE_COMMAND}
+    -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/include/mtl/build_info.hpp.in
+    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
+    -DCXX_FLAGS=${CMAKE_CXX_FLAGS}
+    -DCMAKE_TYPE=${CMAKE_BUILD_TYPE}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitInfo.cmake)
+
 # ── Named test-matrix catalog data dir (universal#1210) ─────────────────
 # Bake the in-tree path to the .mtx catalog so mtl::testsuite::by_name() works
 # out of the box for in-tree / FetchContent consumers; installed consumers pass

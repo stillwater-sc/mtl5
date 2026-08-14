@@ -48,6 +48,9 @@ foreach(_arm detected default)
     target_link_libraries(bench_blocking_ab_${_arm} PRIVATE MTL5::mtl5)
     target_include_directories(bench_blocking_ab_${_arm} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(bench_blocking_ab_${_arm} PROPERTIES FOLDER "Benchmarks")
+    # Provenance is regenerated per build, so the recorded commit follows the
+    # working tree rather than the last configure (#442).
+    add_dependencies(bench_blocking_ab_${_arm} mtl5_build_info)
 endforeach()
 target_compile_definitions(bench_blocking_ab_detected PRIVATE MTL5_ENABLE_CACHE_DETECTION)
 
