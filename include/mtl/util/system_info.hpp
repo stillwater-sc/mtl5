@@ -338,6 +338,53 @@ inline std::string simd_feature_list(const cpu_info& c) {
     return s;
 }
 
+/// The ISA the BINARY WAS COMPILED FOR, read from the compiler's own predefined
+/// macros (empty if none apply).
+///
+/// `simd_feature_list` above says what the MACHINE can do; this says what the
+/// code is actually allowed to use, and the two differ exactly when an intended
+/// flag did not take effect. That is not hypothetical: the Zen 4 A/B in #430 was
+/// measured as an AVX2 build when AVX-512 was intended, and nothing in the CSV
+/// could say so -- the flags reached the compiler through target_compile_options
+/// and CMAKE_CXX_FLAGS_<CONFIG>, so recording CMAKE_CXX_FLAGS alone shows an
+/// empty string on a build that is anything but default.
+///
+/// Asking the compiler what it defined sidesteps every one of those paths: it is
+/// the effect, not the intent.
+inline std::string build_isa_list() {
+    std::string s;
+    auto add = [&](const char* name) {
+        if (!s.empty()) s += ' ';
+        s += name;
+    };
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    // x86-64 guarantees SSE2; 32-bit needs _M_IX86_FP >= 2 under MSVC.
+  #if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+    add("SSE2");
+  #endif
+  #if defined(__AVX__)
+    add("AVX");
+  #endif
+  #if defined(__AVX2__)
+    add("AVX2");
+  #endif
+  #if defined(__FMA__) || (defined(_MSC_VER) && defined(__AVX2__))
+    // MSVC has no __FMA__; /arch:AVX2 enables FMA, so infer it there.
+    add("FMA");
+  #endif
+  #if defined(__AVX512F__)
+    add("AVX512F");
+  #endif
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    add("NEON");   // mandatory on AArch64
+  #if defined(__ARM_FEATURE_SVE)
+    add("SVE");
+  #endif
+#endif
+    if (s.empty()) s = "baseline";
+    return s;
+}
+
 /// Human-readable multi-line summary, suitable for a benchmark output header.
 inline std::string to_string(const system_info& si) {
     std::string feats = simd_feature_list(si.cpu);
@@ -365,6 +412,9 @@ inline std::string to_keyvals(const system_info& si) {
     s += "cpu_arch="    + si.cpu.arch    + "\n";
     s += "cpu_logical_cores=" + std::to_string(si.cpu.logical_cores) + "\n";
     s += "cpu_simd="    + simd_feature_list(si.cpu) + "\n";
+    // What the machine can do (above) and what this binary was built to use
+    // (below) are different facts, and only the second explains the numbers.
+    s += "build_isa="   + build_isa_list() + "\n";
     s += "os_name="     + si.os.name     + "\n";
     s += "os_version="  + si.os.version  + "\n";
     s += "compiler="    + si.compiler.name + "\n";

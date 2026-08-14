@@ -29,8 +29,14 @@ inline constexpr const char* build_git_commit = MTL5_BUILD_GIT_COMMIT;
 /// benchmark result from a dirty tree is not reproducible; record it rather than
 /// pretend otherwise -- and "unknown" is not "clean".
 inline constexpr const char* build_git_dirty = MTL5_BUILD_GIT_DIRTY;
-/// CMAKE_CXX_FLAGS as configured -- the ISA selection lives here (-march=native,
-/// /arch:AVX512), and it decides the SIMD width every blocking parameter divides by.
+/// CMAKE_CXX_FLAGS plus CMAKE_CXX_FLAGS_<CONFIG>, as configured.
+///
+/// Read this as the build's INTENT, not as the ISA. Flags reach the compiler by
+/// several routes -- MTL5_NATIVE_ARCH adds -march=native through
+/// target_compile_options and never appears in any CMAKE_CXX_FLAGS variable --
+/// so this string can omit the one flag that mattered. The sidecar's `build_isa`
+/// (mtl::util::build_isa_list) is the authoritative answer, because it asks the
+/// compiler which ISA macros it actually defined.
 inline constexpr const char* build_cxx_flags = MTL5_BUILD_CXX_FLAGS;
 inline constexpr const char* build_cmake_type = MTL5_BUILD_CMAKE_TYPE;
 

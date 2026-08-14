@@ -79,12 +79,25 @@ configure_file(
 # content changes, so nothing rebuilds spuriously. Not part of the mtl5 INTERFACE
 # -- putting a per-commit define on every consumer would invalidate their objects
 # on each commit; benchmark targets depend on this target explicitly.
+#
+# CMAKE_CXX_FLAGS alone is usually EMPTY: the optimisation level lives in
+# CMAKE_CXX_FLAGS_<CONFIG> and MTL5_NATIVE_ARCH adds -march=native through
+# target_compile_options. A sidecar reading `cxx_flags=` on a -O3 -march=native
+# build records nothing while looking like it recorded something, so the
+# per-config flags are folded in here. The authoritative answer to "which ISA"
+# is build_isa in the sidecar, taken from the compiler's own predefined macros
+# (mtl/util/system_info.hpp) -- flags are the intent, that is the effect.
+set(MTL5_PROVENANCE_FLAGS "${CMAKE_CXX_FLAGS} $<$<CONFIG:Debug>:${CMAKE_CXX_FLAGS_DEBUG}>$<$<CONFIG:Release>:${CMAKE_CXX_FLAGS_RELEASE}>$<$<CONFIG:RelWithDebInfo>:${CMAKE_CXX_FLAGS_RELWITHDEBINFO}>$<$<CONFIG:MinSizeRel>:${CMAKE_CXX_FLAGS_MINSIZEREL}>")
+if(MTL5_NATIVE_ARCH)
+    set(MTL5_PROVENANCE_FLAGS "${MTL5_PROVENANCE_FLAGS} [MTL5_NATIVE_ARCH=ON]")
+endif()
+
 add_custom_target(mtl5_build_info ALL
     COMMAND ${CMAKE_COMMAND}
             -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
             -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/include/mtl/build_info.hpp.in
             -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
-            -DCXX_FLAGS=${CMAKE_CXX_FLAGS}
+            "-DCXX_FLAGS=${MTL5_PROVENANCE_FLAGS}"
             -DCMAKE_TYPE=$<CONFIG>
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitInfo.cmake
     BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
@@ -92,12 +105,16 @@ add_custom_target(mtl5_build_info ALL
     VERBATIM)
 
 # Generate it once at configure time too, so a consumer that includes the header
-# without depending on the target still compiles.
+# without depending on the target still compiles. Genex do not expand here, so
+# the per-config flags are resolved directly; single-config generators know the
+# build type at this point and multi-config ones get the plain flags until the
+# build-time regeneration above corrects them.
+string(TOUPPER "${CMAKE_BUILD_TYPE}" _prov_cfg)
 execute_process(COMMAND ${CMAKE_COMMAND}
     -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
     -DTEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/include/mtl/build_info.hpp.in
     -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/include/mtl/build_info.hpp
-    -DCXX_FLAGS=${CMAKE_CXX_FLAGS}
+    "-DCXX_FLAGS=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_prov_cfg}}"
     -DCMAKE_TYPE=${CMAKE_BUILD_TYPE}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/GitInfo.cmake)
 

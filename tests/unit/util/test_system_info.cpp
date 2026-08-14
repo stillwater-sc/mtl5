@@ -77,3 +77,35 @@ TEST_CASE("string renderings are non-empty and consistent", "[util][system_info]
     if (feats.find("AVX2") != std::string::npos) REQUIRE(si.cpu.avx2);
     if (feats.find("FMA") != std::string::npos)  REQUIRE(si.cpu.fma);
 }
+
+TEST_CASE("build_isa names what this binary was compiled for", "[util][system_info]") {
+    // The check that is NOT a restatement of the implementation: every ISA the
+    // binary was compiled for must be one the CPU actually has. It could not be
+    // otherwise -- a binary using an instruction the CPU lacks would have died
+    // with SIGILL long before reaching this assertion -- so a mis-mapping (say,
+    // reporting AVX512F for an /arch:AVX2 build) fails here on every machine
+    // that lacks the feature, which is most of them.
+    //
+    // This is what makes the key worth putting in a sidecar: it cannot quietly
+    // claim more than the run actually used.
+    const auto si  = mtl::util::identify();
+    const auto isa = mtl::util::build_isa_list();
+
+    REQUIRE_FALSE(isa.empty());
+    REQUIRE(isa.find("  ") == std::string::npos);   // no empty slots
+    REQUIRE(isa.back() != ' ');
+
+    if (si.cpu.arch == "x86_64") {
+        if (isa.find("SSE2") != std::string::npos)    REQUIRE(si.cpu.sse2);
+        if (isa.find("AVX") != std::string::npos)     REQUIRE(si.cpu.avx);
+        if (isa.find("AVX2") != std::string::npos)    REQUIRE(si.cpu.avx2);
+        if (isa.find("FMA") != std::string::npos)     REQUIRE(si.cpu.fma);
+        if (isa.find("AVX512F") != std::string::npos) REQUIRE(si.cpu.avx512f);
+        // x86-64 guarantees SSE2, so a build ISA that names nothing at all on
+        // this arch means the macro mapping missed the baseline.
+        REQUIRE(isa != "baseline");
+    }
+
+    // It reaches the sidecar, which is the only reason it exists.
+    REQUIRE(to_keyvals(si).find("build_isa=" + isa) != std::string::npos);
+}

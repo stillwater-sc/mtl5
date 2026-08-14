@@ -97,6 +97,18 @@ for t in $THREADS; do
     [ "$t" -gt "$TMAX" ] && TMAX=$t
 done
 
+# Preflight BEFORE anything is measured (#442): a dirty tree, a competing build
+# or a machine that is already hot invalidates the whole session, and finding
+# that out afterwards means the CSVs are already written. Its key=value output is
+# appended to both sidecars below, so the machine state travels with the data
+# instead of living in the operator's memory of the session.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if ! PREFLIGHT_KV=$("$SCRIPT_DIR/preflight.sh" --threads "$TMAX" --repo "$SCRIPT_DIR/.."); then
+    echo "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1 if" >&2
+    echo "you accept a dirty tree (it is then recorded as such in the sidecar)." >&2
+    exit 1
+fi
+
 # Shapes: derived ONCE, from the detected arm, at the largest thread count (the
 # wide/short shapes depend on the thread budget). Both arms then get this list.
 SHAPES=${SHAPES:-$(taskset -c "$(pin_for "$TMAX")" "$DET" --suggest-shapes --threads "$TMAX" --dtype "$DTYPE")}
@@ -127,6 +139,40 @@ for round in $(seq 1 "$ROUNDS"); do
             run_arm "$DET" detected "$CSV_DET" "$cpus" "$t"
         fi
     done
+done
+
+# Thermal AFTER the session, alongside the before reading: a run that ended hot
+# and a configuration that is simply slow produce the same GFLOP/s, and only the
+# pair of temperatures distinguishes them. Appended to the sidecars the binaries
+# wrote, which is why this happens once at the end rather than per run -- each
+# invocation truncates its own sidecar.
+AFTER_KV=$("$SCRIPT_DIR/preflight.sh" --phase after || true)
+
+# Did we measure the code the tree is on? The binary records the commit it was
+# BUILT from (mtl/build_info.hpp); preflight records where the tree is NOW. They
+# differ whenever someone edits, forgets to rebuild, and measures -- an easy
+# error, and one that hides completely in the numbers. It happened while writing
+# this very script: the first run recorded a binary two commits behind.
+TREE_COMMIT=$(printf '%s\n' "$PREFLIGHT_KV" | sed -n 's/^tree_git_commit=//p')
+BUILD_COMMIT=$(sed -n 's/^git_commit=//p' "$CSV_DET.sysinfo" 2>/dev/null | head -1)
+STALE=unknown
+if [ -n "$TREE_COMMIT" ] && [ -n "$BUILD_COMMIT" ] && \
+   [ "$TREE_COMMIT" != unknown ] && [ "$BUILD_COMMIT" != unknown ]; then
+    if [ "$TREE_COMMIT" = "$BUILD_COMMIT" ]; then
+        STALE=0
+    else
+        STALE=1
+        echo "WARNING: binary was built from $BUILD_COMMIT but the tree is on $TREE_COMMIT." >&2
+        echo "         These numbers describe the BUILT code; rebuild if that is not what you meant." >&2
+    fi
+fi
+
+for s in "$CSV_DET.sysinfo" "$CSV_DEF.sysinfo"; do
+    if [ -f "$s" ]; then
+        printf '%s\n%s\n' "$PREFLIGHT_KV" "$AFTER_KV" >> "$s"
+        printf 'binary_stale=%s\nharness=run_blocking_ab.sh\nharness_rounds=%s\nharness_reps=%s\n' \
+               "$STALE" "$ROUNDS" "$REPS" >> "$s"
+    fi
 done
 
 echo
