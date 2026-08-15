@@ -225,7 +225,17 @@ int main(int argc, char** argv) {
                                                    : run_one<double>(sh, nt, reps, chk);
             const auto& bp = (dtype == "float") ? bpf : bpd;
             const double gf = 2.0 * double(sh.m) * double(sh.n) * double(sh.k) / secs / 1e9;
-            char buf[512];
+            // What the nest ACTUALLY did, not what was configured. mc travels
+            // through three stages before any loop steps by it -- the L2 bound
+            // here in bp.mc, the budget cap in plan_gemm_grid, and the round-off
+            // in balanced_mc -- and the first is the only one the earlier CSVs
+            // recorded. The i7 rows in benchmarks/data say mc=213 for runs that
+            // stepped 210 serially and 128 on eight threads, so the parameter
+            // under test could not be recovered from the data it produced (#430).
+            const auto plan = (dtype == "float")
+                ? mtl::detail::gemm_plan_for<float>(sh.m, sh.n, nt)
+                : mtl::detail::gemm_plan_for<double>(sh.m, sh.n, nt);
+            char buf[640];
             // `threads` is what was ASKED for; `pool` is what the process can
             // actually use. thread_pool clamps MTL5_NUM_THREADS to
             // hardware_concurrency, so on a machine with fewer cores than the
@@ -234,14 +244,20 @@ int main(int argc, char** argv) {
             // Jetson run, where 8 was asked for on a 6-core part and the shortfall
             // was visible only as a suspiciously low speedup.
             std::snprintf(buf, sizeof buf,
-                "%s,%s,%zu,%zu,%zu,%u,%u,%zu,%zu,%zu,%zu,%zu,%d,%.6f,%.3f,%.6f",
+                "%s,%s,%zu,%zu,%zu,%u,%u,%zu,%zu,%zu,%zu,%zu,"
+                "%zu,%zu,%zu,%u,%u,%d,%.6f,%.3f,%.6f",
                 label.c_str(), dtype.c_str(), sh.m, sh.n, sh.k, nt,
                 mtl::detail::thread_pool::instance().size(),
-                bp.mr, bp.nr, bp.kc, bp.mc, bp.nc, reps, secs, gf, chk);
+                bp.mr, bp.nr, bp.kc, bp.mc, bp.nc,
+                plan.mc, plan.nib, plan.njb, plan.ic_nt, plan.jc_nt,
+                reps, secs, gf, chk);
             rows.emplace_back(buf);
-            std::fprintf(stderr, "  m=%zu n=%zu k=%zu T=%u (pool %u)  %.4f s  %.2f GFLOP/s\n",
+            std::fprintf(stderr,
+                         "  m=%zu n=%zu k=%zu T=%u (pool %u)  mc %zu->%zu  grid %ux%u"
+                         "  %.4f s  %.2f GFLOP/s\n",
                          sh.m, sh.n, sh.k, nt,
-                         mtl::detail::thread_pool::instance().size(), secs, gf);
+                         mtl::detail::thread_pool::instance().size(),
+                         bp.mc, plan.mc, plan.ic_nt, plan.jc_nt, secs, gf);
         }
     }
 
@@ -253,7 +269,8 @@ int main(int argc, char** argv) {
     std::ofstream out(csv, std::ios::app);
     if (!out) { std::fprintf(stderr, "cannot write %s\n", csv.c_str()); return 1; }
     if (fresh)
-        out << "arm,dtype,m,n,k,threads,pool,mr,nr,kc,mc,nc,reps,min_s,gflops,checksum\n";
+        out << "arm,dtype,m,n,k,threads,pool,mr,nr,kc,mc,nc,"
+               "mc_used,nib,njb,ic_nt,jc_nt,reps,min_s,gflops,checksum\n";
     for (const auto& r : rows) out << r << "\n";
 
     // Sidecar, matching the convention bench_all uses, plus the cache figures --

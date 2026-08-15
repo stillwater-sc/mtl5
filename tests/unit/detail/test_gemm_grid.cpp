@@ -159,3 +159,59 @@ TEST_CASE("plan_gemm_grid handles degenerate inputs", "[detail][gemm][grid][edge
         REQUIRE(g.mc >= 1);
     }
 }
+
+// --- gemm_plan_for: what the nest RUNS, not what was configured -------------
+//
+// The blocking parameter under test travels through three stages before any
+// loop steps by it: the L2 bound in blocking_params, the budget cap in
+// plan_gemm_grid, and the round-off in balanced_mc. The A/B harness recorded
+// only the first, so the committed data reports mc=213 for i7 runs that stepped
+// 210 serially and 128 on eight threads (#430). gemm_plan_for is the single
+// implementation the nest and the benchmark now share; these tests pin the
+// properties that make it worth recording.
+#include <mtl/simd/blocking.hpp>
+#include <mtl/detail/thread_pool.hpp>
+
+TEST_CASE("gemm_plan_for reports a derived mc, not the configured one",
+          "[detail][gemm][grid][plan]") {
+    const auto& bp = mtl::simd::runtime_blocking<double>();
+
+    SECTION("serial: rounded down to whole register panels") {
+        const auto p = mtl::detail::gemm_plan_for<double>(1024, 1024, 1);
+        REQUIRE(p.ic_nt == 1);
+        REQUIRE(p.jc_nt == 1);
+        REQUIRE(p.mc >= 1);
+        REQUIRE(p.mc <= bp.mc);
+        // The property that makes the recorded number meaningful: it is a whole
+        // number of mr-row panels, which the configured bound need not be (the
+        // shipped fp64 mc=64 with mr=6 runs at 60).
+        if (bp.mc >= bp.mr) REQUIRE(p.mc % bp.mr == 0);
+        REQUIRE(p.nib == (1024 + p.mc - 1) / p.mc);
+    }
+
+    SECTION("threaded: never past the pool, never past the cache bound") {
+        const unsigned pool = mtl::detail::thread_pool::instance().size();
+        for (unsigned req : {2u, 6u, 8u, 64u}) {
+            const auto p = mtl::detail::gemm_plan_for<double>(1024, 1024, req);
+            INFO("requested " << req << " of a " << pool << "-thread pool -> "
+                 << p.ic_nt << "x" << p.jc_nt << " mc=" << p.mc);
+            REQUIRE(p.budget <= pool);
+            REQUIRE(p.budget <= req);
+            REQUIRE(p.ic_nt * p.jc_nt <= p.budget);
+            REQUIRE(p.mc >= 1);
+            REQUIRE(p.mc <= bp.mc);          // the L2 bound is never exceeded
+            REQUIRE(p.nib == (1024 + p.mc - 1) / p.mc);
+            REQUIRE(p.ic_nt <= p.nib);
+            REQUIRE(p.jc_nt <= p.njb);
+        }
+    }
+
+    SECTION("a tall problem on many threads shrinks mc rather than idling") {
+        // The i7 case from #430: with the cache bound alone, m/mc yields fewer
+        // blocks than threads. Whatever the pool, the plan must never report
+        // more ic threads than it has blocks for.
+        const auto p = mtl::detail::gemm_plan_for<double>(1024, 1024, 8);
+        REQUIRE(p.ic_nt <= p.nib);
+        if (p.budget >= 8) REQUIRE(p.nib >= p.ic_nt);
+    }
+}

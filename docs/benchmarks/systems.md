@@ -397,6 +397,81 @@ Interleave A/B variants **within one session** as on every other machine, and
 treat any run whose end temperature crossed the throttle point as invalid data
 rather than a slow result.
 
+## Cache-blocking A/B — the four-machine result (#430)
+
+All four machines re-run after the thread-grid fix (#441), 5 rounds x 5 reps per
+point, every binary verified to contain the fix. **Detection is neutral at best
+and harmful at worst: across the 30 informative points, 1 was faster, 8 were
+slower, and 21 were indistinguishable.** The single win is 2.7%, barely over the
+noise threshold. `MTL5_ENABLE_CACHE_DETECTION` stays opt-in.
+
+| machine | ISA measured | detected kc, mc | verdicts (faster / slower / same) |
+|---|---|---|---|
+| i7-12700K | AVX2 | 384, 213 | 1 / 7 / 2 |
+| Ryzen 9 8945HS | **AVX-512** | 256, 256 | 0 / 1 / 9 |
+| Jetson Orin Nano 15 W | NEON | 1024, 16 | 0 / 0 / 10 |
+| Xeon E5-2420 v2 | AVX | identical to defaults | null run |
+
+### What the grid fix bought
+
+| point | before #441 | after |
+|---|---|---|
+| i7 1024³, T=8 | 0.551 | 0.707 |
+| Zen 4 1024³, T=8 | 0.590 | 0.928 |
+| Jetson wide/short, T=6 | 0.760 | 0.938 |
+
+The catastrophic multi-thread losses are gone. The Zen 4 row is **not** a
+controlled comparison: that sidecar reads `build_isa=...AVX512F` where the
+earlier run was AVX2, so the ISA changed with the fix. This is the first Zen 4
+measurement taken with the intended ISA, and it supersedes rather than extends
+the old one — which is exactly what `build_isa` was added to make visible.
+
+### mc is harmless; kc is where the loss lives
+
+The three machines happen to form a controlled experiment, because detection
+moved different parameters on each:
+
+| machine | kc | mc | single-thread ratios |
+|---|---|---|---|
+| Ryzen 8945HS | 256 → 256 (**unchanged**) | 64 → 256 (4x) | 1.002 – 1.015 |
+| i7-12700K | 256 → 384 (+50%) | 64 → 213 | 0.931 – 0.952 |
+| Jetson Orin | 512 → 1024 (2x) | 32 → 16 | 0.978 – 0.983 |
+
+Ryzen isolates `mc`: quadrupling it costs **nothing** single-threaded. Both
+machines where `kc` moved lost throughput. The harm attaches to the L1-derived
+`kc`, not the L2-derived `mc` — the inverse of the working assumption, which had
+`mc` as the suspect.
+
+Two details support it. Every detected arm sizes its A block to exactly 50% of
+L2, so *footprint fraction* is not what decides the outcome. And on the Jetson
+both arms have an identical 128 KB A block — 16x1024 against 32x512 — so that
+pair varies only the shape, and the deeper, narrower one is the one that loses.
+
+### The anomaly worth chasing
+
+i7 1024³ at T=8 is 0.707, and it is not noise: detected 312–326 GFLOP/s across
+five rounds against 438–461, ranges nowhere near overlapping. What makes it
+interesting is that the pre-#441 explanation no longer applies — at m=1024, T=8,
+mc_cache=213, the planner caps mc to 128, giving nib=8 and a perfectly balanced
+8x1 grid. **The worst remaining point is the balanced one**, so thread starvation
+is ruled out and `kc` plus L2 residency is what is left.
+
+The experiment that would settle it is a **kc-only vs mc-only** A/B on the i7:
+detect L1 alone in one arm, L2 alone in the other. If `kc` is the sole cause, the
+product of this whole line of work is not "detection off" but "detect L2, ignore
+L1" — a *win* on every machine whose mc is currently pinned at the default 64.
+
+### What the older CSVs cannot tell you
+
+The `mc` column in any CSV written before `mc_used` existed is the **configured**
+bound, not the step any loop used. Three stages sit between them — the L2 bound,
+the budget cap in `plan_gemm_grid`, and the even-partition round-off in
+`balanced_mc` — so the i7 rows say `mc=213` for runs that stepped 210 serially
+and 128 on eight threads, and even a *default* arm configured at 32 steps 30 and
+29. Every harness now records `mc_used`, `nib`, `njb`, `ic_nt`, `jc_nt` per point,
+and `analyze_blocking_ab.py` prints them beside each verdict; older CSVs are
+labelled as not carrying them.
+
 ## The run contract
 
 Every harness in `benchmarks/` **must** satisfy this. It exists because each rule

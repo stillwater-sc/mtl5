@@ -175,6 +175,52 @@ inline unsigned gemm_default_threads() {
     return thread_pool::instance().size();
 }
 
+/// Everything the threaded nest decides for one call: the ic step it will
+/// actually use, the block counts that follow, and the thread grid.
+///
+/// This exists so the decision has ONE implementation and can be RECORDED.
+/// Three stages separate the configured mc from the one the loops step by --
+/// the L2 bound in blocking_params, the budget cap in plan_gemm_grid, and the
+/// round-off in balanced_mc -- and a benchmark that writes the first of them
+/// writes a number no loop ever saw. The committed A/B data (#430) records
+/// mc=213 for i7 runs whose nest stepped 210 single-threaded and 128 on eight
+/// threads, which left the parameter under test unrecoverable from the record.
+struct gemm_plan {
+    std::size_t mc;      ///< ic step actually used (post-cap, post-balance)
+    std::size_t nib;     ///< ic blocks that mc produces
+    std::size_t njb;     ///< jc blocks
+    unsigned    ic_nt;   ///< ic threads (1 when the nest runs serially)
+    unsigned    jc_nt;   ///< jc teams  (1 when the nest runs serially)
+    unsigned    budget;  ///< threads the pool actually allowed
+};
+
+/// The plan `gemm_blocked<TC>` will follow for an m x n problem on `nthreads`.
+/// Reads its parameters from exactly the places the nest reads them, so a caller
+/// that records this records what ran.
+template <typename TC>
+inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads) {
+    constexpr simd::blocking_params bp = simd::default_blocking<TC>;
+    const simd::blocking_params& rbp = simd::runtime_blocking<TC>();
+    const std::size_t MC = rbp.mc, NC = bp.nc, MR = bp.mr;
+
+    const unsigned budget = (nthreads <= 1)
+        ? 1u : std::min(nthreads, thread_pool::instance().size());
+
+    auto finish = [&](std::size_t mc, unsigned ic_nt, unsigned jc_nt) {
+        gemm_plan p{mc, 0, 0, ic_nt, jc_nt, budget};
+        p.nib = mc ? (m + mc - 1) / mc : 0;
+        p.njb = NC ? (n + NC - 1) / NC : 0;
+        return p;
+    };
+    // Serial: balanced_mc with ic_nt = 1 rounds the bound down to whole mr
+    // panels, which is what serial_nest steps by.
+    if (budget <= 1) return finish(balanced_mc(m, MC, 1, MR), 1, 1);
+
+    const gemm_grid g = plan_gemm_grid(m, n, MC, NC, MR, budget);
+    if (g.ic_nt * g.jc_nt <= 1) return finish(balanced_mc(m, MC, 1, MR), 1, 1);
+    return finish(balanced_mc(m, g.mc, g.ic_nt, MR), g.ic_nt, g.jc_nt);
+}
+
 /// Reusable sense-reversing barrier for a fixed party count. Used to synchronize
 /// the ic-threads of one jc-team around their shared packed-B panel: the leader
 /// packs B, all wait (publish), the team computes, all wait again (so the leader
@@ -329,42 +375,32 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // would leave team members that never run, and their barrier would wait
     // forever (deadlock).
     thread_pool& pool = thread_pool::instance();
-    const unsigned budget = std::min(nthreads, pool.size());
-    if (budget <= 1) { serial_nest(); return; }
 
-    const gemm_grid plan = plan_gemm_grid(m, n, MC, NC, MR, budget);
-
-    // Block-start lists for the m (ic) and n (jc) dimensions. The m dimension
-    // steps by the PLANNED mc, which may be smaller than the cache bound MC when
-    // the cache bound alone would not produce enough blocks to fill the machine.
-    std::vector<std::size_t> ic_starts, jc_starts;
-    for (std::size_t ic = 0; ic < m; ic += plan.mc) ic_starts.push_back(ic);
-    for (std::size_t jc = 0; jc < n; jc += NC) jc_starts.push_back(jc);
-    const std::size_t nib = ic_starts.size();
-    const std::size_t njb = jc_starts.size();
-
-    // Thread budget: never exceed the pool. pool.run() clamps its worker count to
+    // One call decides everything: the budget (never past the pool -- pool.run()
+    // clamps its worker count, so a grid sized past it would leave team members
+    // that never run and a barrier that waits forever), the ic step, and the
+    // grid. gemm_plan_for is the single implementation, so what a benchmark
+    // records is what this nest runs.
+    const gemm_plan plan = gemm_plan_for<TC>(m, n, nthreads);
     const unsigned ic_nt = plan.ic_nt;
     const unsigned jc_nt = plan.jc_nt;
     const unsigned grid  = ic_nt * jc_nt;
-
     if (grid <= 1) { serial_nest(); return; }
 
-    // Now that ic_nt is fixed, re-block the m dimension so the round-robin
-    // partition divides evenly (#408). balanced_mc only ever LOWERS mc, so the
-    // new block count is >= nib >= ic_nt and the grid stays valid; the packed-A
-    // buffers sized from mc_max = min(MC, m) stay large enough for the same
-    // reason. Rebuilding ic_starts is the only state that depends on it.
+    // plan.mc is already re-blocked so the round-robin partition divides evenly
+    // (#408); balanced_mc only ever LOWERS the bound, so the block count is
+    // >= ic_nt and the grid stays valid, and the packed-A buffers sized from
+    // mc_max = min(MC, m) stay large enough for the same reason.
     //
     // This changes neither the result nor its bit-identity to the serial nest:
     // the FMA order for a given C element is fixed by the pc (k) loop, which is
     // untouched, and ic blocking only decides which rows are grouped together.
-    MC_eff = balanced_mc(m, plan.mc, ic_nt, MR);
-    if (MC_eff != plan.mc) {
-        ic_starts.clear();
-        for (std::size_t ic = 0; ic < m; ic += MC_eff) ic_starts.push_back(ic);
-    }
+    MC_eff = plan.mc;
+    std::vector<std::size_t> ic_starts, jc_starts;
+    for (std::size_t ic = 0; ic < m; ic += MC_eff) ic_starts.push_back(ic);
+    for (std::size_t jc = 0; jc < n; jc += NC) jc_starts.push_back(jc);
     const std::size_t nib_eff = ic_starts.size();
+    const std::size_t njb = jc_starts.size();
 
     // Pre-allocate ALL scratch outside the parallel region: one packed-B per
     // jc-team (shared within the team), one packed-A per grid thread, and one

@@ -51,6 +51,25 @@ def main(argv):
         print(f"blocking ({dt}):  detected mr,nr,kc,mc,nc = {det_p.get(dt)}"
               f"   default = {dfl_p.get(dt)}")
 
+    # The CONFIGURED mc above is not the one the loops step by: it is capped to
+    # fill the thread budget (plan_gemm_grid) and then rounded so the partition
+    # divides evenly (balanced_mc). Reading the configured value as the value
+    # under test is wrong for BOTH arms -- a default arm configured mc=32 runs at
+    # 30 serially and 29 on six threads -- and it varies with the SHAPE, so it
+    # belongs per point rather than in a summary line. Collected here, printed in
+    # the table below.
+    def plan_of(rows):
+        out = {}
+        for key, rs in rows.items():
+            for r in rs:
+                if r.get("mc_used"):
+                    out[key] = (r["mc_used"], f'{r.get("ic_nt","?")}x{r.get("jc_nt","?")}')
+        return out
+    det_plan, dfl_plan = plan_of(det), plan_of(dfl)
+    if not det_plan and not dfl_plan:
+        print("\nNOTE: this CSV predates the mc_used column, so the mc above is the"
+              "\n      CONFIGURED bound and not the step any loop used (#430).")
+
     # A request larger than the machine is silently clamped: thread_pool caps
     # MTL5_NUM_THREADS at hardware_concurrency. Every grid calculation depends on
     # the CLAMPED value, so say so loudly rather than leaving it to be inferred
@@ -95,7 +114,8 @@ def main(argv):
         print("Re-run both arms over the same shapes and rounds.", file=sys.stderr)
         return 2
 
-    hdr = f"{'shape':>22} {'T':>3} {'default':>10} {'detected':>10} {'ratio':>7}  verdict"
+    hdr = (f"{'shape':>22} {'T':>3} {'default':>10} {'detected':>10} {'ratio':>7}"
+           f" {'mc def/det':>11} {'grid':>6}  verdict")
     print(hdr)
     print("-" * len(hdr))
 
@@ -140,9 +160,15 @@ def main(argv):
             verdict = "noise (ranges overlap)"
             noise += 1
 
+        # mc as RUN, per arm, and the grid (identical for both arms by
+        # construction -- it depends on m, n and the budget, not on the blocking).
+        pa, pb = dfl_plan.get(key), det_plan.get(key)
+        mc_col = f"{pa[0] if pa else '?'}/{pb[0] if pb else '?'}"
+        grid_col = (pb or pa or ("", "?"))[1]
         print(f"{m}x{n}x{k:>6}".rjust(22)
               + f" {t:>3} {gflops(m, n, k, b_best):>10.2f}"
-              + f" {gflops(m, n, k, a_best):>10.2f} {ratio:>7.3f}  {verdict}")
+              + f" {gflops(m, n, k, a_best):>10.2f} {ratio:>7.3f}"
+              + f" {mc_col:>11} {grid_col:>6}  {verdict}")
 
     print()
     print(f"{wins} faster, {losses} slower, {noise} indistinguishable "
