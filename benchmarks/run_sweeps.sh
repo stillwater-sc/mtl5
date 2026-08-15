@@ -76,7 +76,8 @@ fi
 # below), so the thread budget asked of preflight is 1.
 preflight_gate() {
     local kv
-    if ! kv=$("$SCRIPT_DIR/preflight.sh" --threads 1 --repo "$ROOT"); then
+    if ! kv=$("$SCRIPT_DIR/preflight.sh" --threads 1 --repo "$ROOT" \
+                  --ignore-path "$DATA"); then
         echo "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1" >&2
         echo "if you accept a dirty tree (it is then recorded as such)." >&2
         exit 1

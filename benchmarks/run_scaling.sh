@@ -82,7 +82,8 @@ done
 # that goes in the sidecars.
 preflight_gate() {
     local kv
-    if ! kv=$("$SCRIPT_DIR/preflight.sh" --threads "$TMAX" --repo "$ROOT"); then
+    if ! kv=$("$SCRIPT_DIR/preflight.sh" --threads "$TMAX" --repo "$ROOT" \
+                  --ignore-path "$DATA"); then
         echo "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1" >&2
         echo "if you accept a dirty tree (it is then recorded as such)." >&2
         exit 1

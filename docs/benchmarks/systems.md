@@ -469,11 +469,21 @@ meaningless. A warning scrolls past and the CSV gets committed anyway.
 
 | Condition | Action | Override |
 |---|---|---|
-| Working tree dirty | fail | `ALLOW_DIRTY=1`, and it is recorded as `tree_git_dirty=1` |
+| Working tree dirty | fail | `--allow-dirty` / `-AllowDirty` (or `ALLOW_DIRTY=1`), and it is recorded as `tree_git_dirty=1` |
 | A build or benchmark already running | fail | none — fix the machine |
 | Threads requested exceed available cpus | fail | none |
 | Thermal headroom below the margin | fail **only where a sensor and a limit are both readable** | `MIN_THERMAL_HEADROOM_C` (default 15) |
 | Governor not `performance` | warn, and record the value | — |
+
+**What "dirty" excludes.** The harness's own `OUTDIR` — the CSVs from a previous
+run, and the cmake logs the PowerShell drivers write beside them (now gitignored
+as well). None of that says anything about whether the source that built the
+binary is reproducible, and counting it stamped `tree_git_dirty=1` on sidecars
+whose code was pristine. It also made the gate unusable: the Windows driver
+builds before it measures, so the run tripped over its own logs, and the escape
+hatch the message suggested (`set ALLOW_DIRTY=1`) is cmd.exe syntax that does
+nothing in PowerShell. A gate a normal run trips by existing is not a gate. Use
+`-AllowDirty` there, or `$env:ALLOW_DIRTY = "1"`.
 
 The thermal rule is asymmetric on purpose. Windows desktop firmware usually does
 not implement `MSAcpi_ThermalZoneTemperature`, and failing there would make the

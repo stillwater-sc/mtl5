@@ -67,7 +67,14 @@ param(
     [string]$OutDir  = "",          # REQUIRED -- one directory per machine
 
     [string]$BuildDir = "build-blocking-ab",
-    [int]$Jobs       = [Environment]::ProcessorCount
+    [int]$Jobs       = [Environment]::ProcessorCount,
+
+    # Permit a dirty working tree (still recorded as tree_git_dirty=1). A switch,
+    # not only the ALLOW_DIRTY environment variable, because the obvious way to
+    # set that variable does not work here: `set ALLOW_DIRTY=1` is cmd.exe syntax,
+    # and in PowerShell `set` aliases Set-Variable, so the run fails again with
+    # the same message and no clue why.
+    [switch]$AllowDirty
 )
 
 [int[]]$PCoreList  = $PCores  -split ',' | ForEach-Object { [int]$_ }
@@ -138,6 +145,25 @@ function Invoke-Native {
     return $p.ExitCode
 }
 
+# --- preflight, before the build ---------------------------------------------
+# Gate FIRST, not after the build: a dirty tree or a competing compile should
+# cost seconds, not a full configure-and-build. It is also the only order that
+# works -- this harness builds into the repo and writes its cmake logs beside the
+# CSVs, so gating afterwards meant the run tripped over ITS OWN output and failed
+# dirty every time (the logs are now gitignored as well).
+$TMax = ($ThreadList | Measure-Object -Maximum).Maximum
+$PreflightScript = Join-Path $PSScriptRoot "preflight.ps1"
+function Invoke-Preflight {
+    $kv = & $PreflightScript -Threads $TMax -Repo $RepoRoot -AllowDirty:$AllowDirty -IgnorePath $DataDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "preflight failed -- not measuring. Fix the above, or pass -AllowDirty"
+        Write-Host "if you accept a dirty tree (it is then recorded as such in the sidecar)."
+        exit 1
+    }
+    return $kv
+}
+Invoke-Preflight | Out-Null
+
 # --- build both arms from one tree ------------------------------------------
 $Full = Join-Path $RepoRoot $BuildDir
 $cfg  = @("-B", $Full,
@@ -196,19 +222,11 @@ function Run-Arm {
     if ($p.ExitCode -ne 0) { throw "$Label arm failed (T=$T, exit $($p.ExitCode))" }
 }
 
-# --- preflight: gate the session before anything is measured (#442) ----------
-# A dirty tree, a competing build or a machine already hot invalidates the run,
-# and discovering it afterwards means the CSVs are already written. The key=value
-# output is appended to both sidecars below, so machine state travels with the
-# data rather than living in the operator's memory of the session.
-$TMax = ($ThreadList | Measure-Object -Maximum).Maximum
-$PreflightScript = Join-Path $PSScriptRoot "preflight.ps1"
-$PreflightKv = & $PreflightScript -Threads $TMax -Repo (Split-Path -Parent $PSScriptRoot)
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1"
-    Write-Host "if you accept a dirty tree (it is then recorded as such in the sidecar)."
-    exit 1
-}
+# --- preflight, again, now the build is done ---------------------------------
+# The builds heat the machine, so the temperature that belongs in the sidecar is
+# the one the MEASUREMENTS start at, not the one the session started at. This
+# record is what travels with the data.
+$PreflightKv = Invoke-Preflight
 
 # --- shapes: derived ONCE, from the detected arm, at the largest thread count -
 if ($Shapes -eq "") {

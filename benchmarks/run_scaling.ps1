@@ -46,7 +46,13 @@ param(
     # machine, so a shared default silently overwrites another machine's
     # committed results -- which is exactly what happened once (#439).
     [Parameter(Mandatory = $true)][string]$OutDir,
-    [int]$Jobs = [Environment]::ProcessorCount
+    [int]$Jobs = [Environment]::ProcessorCount,
+
+    # Permit a dirty working tree (still recorded as tree_git_dirty=1). A switch,
+    # not only the ALLOW_DIRTY environment variable, because `set ALLOW_DIRTY=1`
+    # is cmd.exe syntax -- in PowerShell `set` aliases Set-Variable, so the run
+    # fails again with the same message and no clue why.
+    [switch]$AllowDirty
 )
 
 if ($Variants.Count -eq 1 -and $Variants[0] -match ',') { $Variants = $Variants[0] -split ',' }
@@ -160,9 +166,9 @@ foreach ($T in $ThreadList) {
 $TMax = ($ThreadList | Measure-Object -Maximum).Maximum
 $PreflightScript = Join-Path $PSScriptRoot "preflight.ps1"
 function Invoke-Preflight {
-    $kv = & $PreflightScript -Threads $TMax -Repo $RepoRoot
+    $kv = & $PreflightScript -Threads $TMax -Repo $RepoRoot -AllowDirty:$AllowDirty -IgnorePath $DataDir
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1"
+        Write-Host "preflight failed -- not measuring. Fix the above, or pass -AllowDirty"
         Write-Host "if you accept a dirty tree (it is then recorded as such)."
         exit 1
     }

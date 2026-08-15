@@ -103,7 +103,8 @@ done
 # appended to both sidecars below, so the machine state travels with the data
 # instead of living in the operator's memory of the session.
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-if ! PREFLIGHT_KV=$("$SCRIPT_DIR/preflight.sh" --threads "$TMAX" --repo "$SCRIPT_DIR/.."); then
+if ! PREFLIGHT_KV=$("$SCRIPT_DIR/preflight.sh" --threads "$TMAX" --repo "$SCRIPT_DIR/.." \
+                        --ignore-path "$OUTDIR"); then
     echo "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1 if" >&2
     echo "you accept a dirty tree (it is then recorded as such in the sidecar)." >&2
     exit 1

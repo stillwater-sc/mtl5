@@ -19,7 +19,8 @@
 #      pinned" only because someone thought to ask.
 #
 # Usage:
-#   preflight.sh [--phase before|after] [--threads N] [--repo DIR] [--report-only]
+#   preflight.sh [--phase before|after] [--threads N] [--repo DIR]
+#                [--report-only] [--allow-dirty] [--ignore-path DIR]
 #
 #   --phase before   (default) run every gate, emit the full record
 #   --phase after    emit thermal_after_c only -- call once the run finishes, so
@@ -29,6 +30,10 @@
 #   --repo DIR       repository to check (default: the parent of this script)
 #   --report-only    probe and emit, never fail. For CI and for inspecting a
 #                    machine; NOT for taking measurements.
+#   --allow-dirty    same as ALLOW_DIRTY=1.
+#   --ignore-path DIR  exclude DIR from the dirty check -- a harness passes its
+#                    own OUTDIR, since a previous run's CSVs say nothing about
+#                    whether the source is reproducible.
 #
 # Environment:
 #   ALLOW_DIRTY=1              permit a dirty working tree (still recorded)
@@ -66,6 +71,8 @@ while [ $# -gt 0 ]; do
         --threads)     need_value "$1" $#; THREADS_REQ=$2; shift 2 ;;
         --repo)        need_value "$1" $#; REPO=$2; shift 2 ;;
         --report-only) REPORT_ONLY=1; shift ;;
+        --allow-dirty) ALLOW_DIRTY=1; shift ;;
+        --ignore-path) need_value "$1" $#; IGNORE_PATH=$2; shift 2 ;;
         -h|--help)     sed -n '2,45p' "$0"; exit 0 ;;
         *) echo "preflight: unknown argument '$1'" >&2; exit 2 ;;
     esac
@@ -173,19 +180,59 @@ emit preflight_kernel "$(uname -sr)"
 # records the commit the tree is on NOW. They are different facts: if they
 # disagree, the binary is stale relative to the checkout, and the run measures
 # code that is no longer what the tree says it is.
+#
+# --ignore-path excludes a directory from the dirtiness question -- the harness
+# passes its own OUTDIR. A previous run's CSVs, or the cmake logs a harness
+# writes beside them, say NOTHING about whether the source that built the binary
+# is reproducible. Counting them would stamp tree_git_dirty=1 on a sidecar whose
+# code was pristine, and a field that lies is worse than one that is missing.
+# It is also what made the gate unusable in practice: the harness tripped over
+# its own output and the documented escape hatch was cmd.exe syntax.
+IGNORE_REL=""
+if [ -n "${IGNORE_PATH:-}" ] && [ -d "$IGNORE_PATH" ]; then
+    _ig_abs=$(cd "$IGNORE_PATH" && pwd)
+    _repo_abs=$(cd "$REPO" && pwd)
+    case "$_ig_abs/" in
+        "$_repo_abs"/*) IGNORE_REL=${_ig_abs#"$_repo_abs"/} ;;
+        *) ;;   # outside the repo: git never reports it anyway
+    esac
+fi
+
+# Porcelain lines are "XY <path>", repo-relative.
+#
+# --untracked-files=ALL, not `normal`: git collapses a wholly untracked directory
+# into one entry ("?? benchmarks/"), and a prefix filter for
+# benchmarks/data/<machine>/ can never match that. The first version of this
+# filter silently did nothing for exactly that reason.
+dirty_entries() {
+    local out
+    out=$(git -C "$REPO" status --porcelain --untracked-files=all) || return 1
+    [ -z "$out" ] && return 0
+    if [ -n "$IGNORE_REL" ]; then
+        printf '%s\n' "$out" | awk -v p="$IGNORE_REL/" 'substr($0, 4, length(p)) != p'
+    else
+        printf '%s\n' "$out"
+    fi
+}
+
 TREE_COMMIT=unknown
 TREE_DIRTY=unknown
 if command -v git >/dev/null 2>&1 && git -C "$REPO" rev-parse HEAD >/dev/null 2>&1; then
     TREE_COMMIT=$(git -C "$REPO" rev-parse --short=12 HEAD)
-    if [ -z "$(git -C "$REPO" status --porcelain --untracked-files=normal)" ]; then
+    [ -n "$IGNORE_REL" ] && emit tree_dirty_excluded "$IGNORE_REL"
+    DIRTY_ENTRIES=$(dirty_entries)
+    if [ -z "${DIRTY_ENTRIES//[[:space:]]/}" ]; then
         TREE_DIRTY=0
     else
         TREE_DIRTY=1
         if [ "${ALLOW_DIRTY:-0}" = 1 ]; then
-            warn "working tree is dirty; ALLOW_DIRTY=1, recording tree_git_dirty=1"
+            warn "working tree is dirty; recording tree_git_dirty=1"
         else
+            # Name what is dirty. Without it the operator has to go looking, and
+            # the answer is usually a file a harness or an editor dropped.
             gate_failed "working tree is dirty -- this result could not be reproduced." \
-                        "Commit, stash, or set ALLOW_DIRTY=1 to record it as dirty."
+                        "Commit, stash or clean these, or pass --allow-dirty (ALLOW_DIRTY=1):"
+            printf '%s\n' "$DIRTY_ENTRIES" | head -5 | sed 's/^/  /' >&2
         fi
     fi
 fi

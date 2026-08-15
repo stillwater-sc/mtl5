@@ -9,6 +9,13 @@ examples/phase15_sparse_direct/data/
 benchmarks/data/klu/
 benchmarks/data/superlu/
 
+# Configure/build logs the PowerShell harnesses write beside their CSVs. These
+# are run artifacts, not results -- and while they were tracked, a harness that
+# builds before it measures made the tree dirty WITH ITS OWN OUTPUT, so preflight
+# then refused to measure. A gate that a normal run trips by existing is not a
+# gate, it is a wall.
+benchmarks/data/**/logs/
+
 # IDE
 .idea/
 .vscode/
