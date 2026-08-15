@@ -188,13 +188,28 @@ emit preflight_kernel "$(uname -sr)"
 # code was pristine, and a field that lies is worse than one that is missing.
 # It is also what made the gate unusable in practice: the harness tripped over
 # its own output and the documented escape hatch was cmd.exe syntax.
+#
+# CONTAINED to benchmarks/data/<something>. The exclusion is for GENERATED
+# output, and an unrestricted one is a hole straight through the gate: pass
+# --ignore-path benchmarks and an edit to this very script stops counting, so
+# preflight reports a clean tree and the sidecar records tree_git_dirty=0 for a
+# build whose source had been modified. The whole point is that a recorded fact
+# is true, so the exclusion may only cover a directory that cannot hold source.
+#
+# Out-of-root paths are REFUSED, not silently narrowed: a run whose OUTDIR sits
+# somewhere unexpected should be blocked by the ordinary dirty gate rather than
+# quietly measured with a weaker one.
 IGNORE_REL=""
 if [ -n "${IGNORE_PATH:-}" ] && [ -d "$IGNORE_PATH" ]; then
     _ig_abs=$(cd "$IGNORE_PATH" && pwd)
     _repo_abs=$(cd "$REPO" && pwd)
     case "$_ig_abs/" in
-        "$_repo_abs"/*) IGNORE_REL=${_ig_abs#"$_repo_abs"/} ;;
-        *) ;;   # outside the repo: git never reports it anyway
+        "$_repo_abs"/benchmarks/data/?*/)
+            IGNORE_REL=${_ig_abs#"$_repo_abs"/} ;;
+        "$_repo_abs"/*)
+            warn "--ignore-path '$IGNORE_PATH' is inside the repository but not under" \
+                 "benchmarks/data/<machine>; it will NOT be excluded from the dirty check." ;;
+        *) ;;   # outside the repo entirely: git never reports it anyway
     esac
 fi
 

@@ -117,13 +117,30 @@ Emit 'preflight_kernel'  ([System.Environment]::OSVersion.VersionString -replace
 # The BINARY records the commit it was built from (mtl/build_info.hpp); this
 # records the commit the tree is on NOW. If they disagree the binary is stale
 # relative to the checkout.
+# CONTAINED to benchmarks/data/<something>. The exclusion is for GENERATED
+# output, and an unrestricted one is a hole straight through the gate: pass
+# -IgnorePath benchmarks and an edit to this very script stops counting, so
+# preflight reports a clean tree and the sidecar records tree_git_dirty=0 for a
+# build whose source had been modified. A recorded fact has to be true, so the
+# exclusion may only cover a directory that cannot hold source.
+#
+# In-repo paths outside that root are REFUSED, not silently narrowed: a run whose
+# OutDir sits somewhere unexpected should be blocked by the ordinary dirty gate
+# rather than quietly measured with a weaker one.
 $ignoreRel = ''
 if ($IgnorePath -and (Test-Path $IgnorePath)) {
-    $ig = (Resolve-Path $IgnorePath).Path
-    $rp = (Resolve-Path $Repo).Path
+    $ig = (Resolve-Path $IgnorePath).Path.TrimEnd('\', '/')
+    $rp = (Resolve-Path $Repo).Path.TrimEnd('\', '/')
     if ($ig.StartsWith($rp, [System.StringComparison]::OrdinalIgnoreCase)) {
-        $ignoreRel = ($ig.Substring($rp.Length).TrimStart('\', '/')) -replace '\\', '/'
+        $rel = ($ig.Substring($rp.Length).TrimStart('\', '/')) -replace '\\', '/'
+        if ($rel -match '^benchmarks/data/.+') {
+            $ignoreRel = $rel
+        } else {
+            Warn ("-IgnorePath '$IgnorePath' is inside the repository but not under " +
+                  "benchmarks/data/<machine>; it will NOT be excluded from the dirty check.")
+        }
     }
+    # Outside the repository entirely: git never reports it, nothing to exclude.
 }
 
 $treeCommit = 'unknown'

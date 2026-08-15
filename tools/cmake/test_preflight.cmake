@@ -65,6 +65,30 @@ foreach(key ${REQUIRED_KEYS})
     endif()
 endforeach()
 
+# The dirty-check exclusion must stay contained to generated output. An
+# unrestricted --ignore-path is a hole straight through the gate: point it at a
+# source directory and edits there stop counting, so preflight reports a clean
+# tree and the sidecar records tree_git_dirty=0 for a build whose source had
+# changed. Asking for `benchmarks` (source) must NOT produce an exclusion.
+if(INTERP MATCHES "pwsh|powershell")
+    set(_bad_ignore ${INTERP} -NoProfile -NonInteractive -File ${SCRIPT}
+                    -ReportOnly -Threads 1 -Repo ${REPO} -IgnorePath ${REPO}/benchmarks)
+else()
+    set(_bad_ignore ${INTERP} ${SCRIPT} --report-only --threads 1 --repo ${REPO}
+                    --ignore-path ${REPO}/benchmarks)
+endif()
+execute_process(COMMAND ${_bad_ignore}
+                RESULT_VARIABLE _rc3 OUTPUT_VARIABLE _out3 ERROR_VARIABLE _err3)
+if(NOT _rc3 EQUAL 0)
+    message(FATAL_ERROR "--report-only must never fail, got ${_rc3}:\n${_err3}")
+endif()
+if(_out3 MATCHES "tree_dirty_excluded=")
+    message(FATAL_ERROR
+        "preflight excluded a SOURCE directory from the dirty check.\n"
+        "Only benchmarks/data/<machine> may be excluded; anything else lets a "
+        "modified source tree be recorded as clean.\n--- stdout ---\n${_out3}")
+endif()
+
 # The after phase is what makes a throttled session visible, and it is the phase
 # nobody runs by hand.
 execute_process(COMMAND ${_after}
