@@ -405,18 +405,30 @@ number someone believed: a Zen 4 run that deleted the i7's committed CSVs, an
 analyzer that called a 4.8% "win" between two byte-identical arms, a Jetson that
 asked for eight threads on a six-core part.
 
-**Not every harness satisfies it yet.** The requirement is stated first because
-it is the target; here is where each one actually stands, so nobody reads a
-`run_scaling` CSV as though it had been gated:
+Where each harness stands, so no CSV is read as more gated than it was:
 
-| Harness | Preflight | Pins | Interleaves | `OUTDIR` required |
-|---|---|---|---|---|
-| `run_blocking_ab.sh` / `.ps1` | yes | yes | yes | yes |
-| `run_scaling.sh` / `.ps1` | **no** | yes | no | **no** |
-| `run_sweeps.sh` / `.ps1` | **no** | yes | no | **no** |
+| Harness | Preflight | Pins | Per-machine `OUTDIR` | Sidecar state | Interleaves |
+|---|---|---|---|---|---|
+| `run_blocking_ab.sh` / `.ps1` | yes | yes | yes | yes | yes |
+| `run_scaling.sh` / `.ps1` | yes | yes | yes | yes | **no** |
+| `run_sweeps.sh` / `.ps1` | yes | yes | yes | yes | **no** |
+| `run_scaling_297.sh` / `.ps1` | **no** | yes | no | no | no |
 
-`run_scaling` and `run_sweeps` produced the published i7 and Ryzen numbers, and
-bringing them up to this contract is tracked in #442.
+**Why `run_scaling` and `run_sweeps` do not interleave.** Not an oversight, a
+dependency: `bench_all` truncates its `--csv` on every invocation, and
+`analyze_scaling.py` keeps the **last** row for a `(backend, op, size, T)` key
+rather than the best — so extra rounds would silently overwrite instead of
+accumulating, which is worse than not interleaving at all. It needs append
+support in `bench_all` and best-of-rounds in the analyzers first (#442).
+
+What they do instead is **build every variant before measuring any of them**.
+Previously each backend was built and then immediately measured, so every arm was
+timed on a machine still hot from compiling its own binary while the next arm
+compiled during the previous one's cooldown — a per-arm bias in a comparison
+whose entire purpose is comparing arms. That is the largest order effect
+available to remove without the round support above.
+
+`run_scaling_297.sh` is the remaining gap.
 
 | Rule | Why |
 |---|---|

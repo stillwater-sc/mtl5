@@ -34,6 +34,22 @@ if(MTL5_PREFLIGHT_INTERP)
                      -P ${PROJECT_SOURCE_DIR}/tools/cmake/test_preflight.cmake)
 endif()
 
+# The PowerShell harnesses run on one machine each, by hand, ten minutes into a
+# session -- so a syntax error surfaces at the worst moment on the one machine
+# nobody else has. Parse them wherever a PowerShell is present, which on the
+# hosted runners includes Linux.
+find_program(MTL5_POWERSHELL NAMES pwsh powershell)
+if(MTL5_POWERSHELL)
+    file(GLOB MTL5_PS1_HARNESSES "${PROJECT_SOURCE_DIR}/benchmarks/*.ps1")
+    if(MTL5_PS1_HARNESSES)
+        add_test(NAME bench_powershell_parse
+                 COMMAND ${CMAKE_COMMAND}
+                         -DINTERP=${MTL5_POWERSHELL}
+                         "-DSCRIPTS=${MTL5_PS1_HARNESSES}"
+                         -P ${PROJECT_SOURCE_DIR}/tools/cmake/test_powershell_parse.cmake)
+    endif()
+endif()
+
 if(MTL5_BUILD_REGRESSION_TESTS)
     add_subdirectory(regression)
 endif()

@@ -56,10 +56,11 @@ param(
     # and BLAS-only, so it is not usable as a reference. Point this at the unzipped
     # OpenBLAS-<ver>-x64 dir (contains lib\libopenblas.lib and bin\libopenblas.dll).
     [string]$OpenBlasRoot = "C:\Users\tomtz\dev\openblas-win",
-    # Output directory for CSVs, relative to the repo root. Point per-machine
-    # runs at a subdir (e.g. data\ryzen-9-8945hs) so they never overwrite the
-    # committed reference CSVs that back an existing results page.
-    [string]$OutDir = "benchmarks\data",
+    # REQUIRED, one directory PER MACHINE (e.g. benchmarks\data\ryzen-9-8945hs).
+    # There is deliberately no default: the CSVs are named by backend, not by
+    # machine, so a shared default silently overwrites another machine's
+    # committed results -- which is exactly what happened once (#439).
+    [Parameter(Mandatory = $true)][string]$OutDir,
     [int]$Jobs = [Environment]::ProcessorCount
 )
 
@@ -120,9 +121,14 @@ function Invoke-Pinned {
 # wrapping native stderr in ErrorRecords.
 function Invoke-Native {
     param([string]$Exe, [string[]]$NativeArgs, [string]$LogBase)
+    # Quote arguments containing spaces, exactly as Invoke-Pinned does.
+    # Start-Process joins -ArgumentList with spaces and quotes NOTHING, so a repo
+    # under "C:\Users\Some Name\..." reaches cmake as two broken arguments and
+    # the configure fails with a path that looks correct in the log (#438).
+    $quoted = $NativeArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
     # -Wait is required: without it, Start-Process -PassThru leaves ExitCode
     # empty in Windows PowerShell 5.1 (disposed process handle).
-    $p = Start-Process -FilePath $Exe -ArgumentList $NativeArgs -PassThru -NoNewWindow -Wait `
+    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow -Wait `
                        -RedirectStandardOutput "$LogBase.out.log" `
                        -RedirectStandardError  "$LogBase.err.log"
     return $p.ExitCode
@@ -147,6 +153,8 @@ function Build-Variant {
     return (Join-Path $full "benchmarks\Release\bench_all.exe")
 }
 
+$script:Sidecars = @()
+
 function Run-Variant {
     param([string]$Exe, [string]$Label, [switch]$BlasOnly)
     foreach ($s in $SuiteList) {
@@ -159,26 +167,48 @@ function Run-Variant {
         Write-Host ">> ${Label}: $s sweep ($Sweep)"
         Invoke-Pinned -Exe $Exe -LogPath $log -BenchArgs @(
             "--suite", $s, $sweepFlag, $Sweep, "--label", $Label, "--csv", $csv)
+        $script:Sidecars += "$csv.sysinfo"
     }
 }
 
-# --- variants --------------------------------------------------------------
+# --- preflight -------------------------------------------------------------
+# Gate the session, and record the state it ran in (#442). Called twice on
+# purpose: once BEFORE the builds so a dirty tree or a competing compile fails in
+# seconds rather than after ten minutes of configuring, and once after them,
+# because the builds heat the machine and the temperature that matters is the one
+# the MEASUREMENTS start at. The second record goes in the sidecars.
+$PreflightScript = Join-Path $PSScriptRoot "preflight.ps1"
+function Invoke-Preflight {
+    $kv = & $PreflightScript -Threads 1 -Repo $RepoRoot
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1"
+        Write-Host "if you accept a dirty tree (it is then recorded as such)."
+        exit 1
+    }
+    return $kv
+}
+Invoke-Preflight | Out-Null
 
+# --- build phase -----------------------------------------------------------
+# Every variant is built BEFORE any is measured. Building and measuring in turn
+# meant each backend was timed on a machine still hot from compiling its own
+# binary, while the next compiled during the previous one's cooldown -- a per-arm
+# bias in a comparison whose whole purpose is comparing arms.
 Write-Host "Pinning single-thread runs to affinity mask 0x$($PinMask.ToString('x'))"
-Write-Host "Data -> $DataDir`n"
+Write-Host "Data -> $DataDir"
+Write-Host "=== building all variants (nothing is measured yet) ===`n"
 
+$Built = @()
 foreach ($v in $Variants) {
     switch ($v) {
         "native" {
             Write-Host "=== native (generic-only) ==="
-            $exe = Build-Variant "build-native" @()
-            Run-Variant $exe "native"
+            $Built += [pscustomobject]@{ Label = "native"; Exe = (Build-Variant "build-native" @()) }
         }
         "native-fast" {
             Write-Host "=== native-fast (blocked GEMM / SIMD GEMV via Highway) ==="
-            $exe = Build-Variant "build-native-fast" @(
-                "-DMTL5_NATIVE_FAST_GEMM=ON", "-DMTL5_WITH_HIGHWAY=ON", "-DMTL5_NATIVE_ARCH=ON")
-            Run-Variant $exe "native-fast"
+            $Built += [pscustomobject]@{ Label = "native-fast"; Exe = (Build-Variant "build-native-fast" @(
+                "-DMTL5_NATIVE_FAST_GEMM=ON", "-DMTL5_WITH_HIGHWAY=ON", "-DMTL5_NATIVE_ARCH=ON")) }
         }
         "openblas" {
             $obLib = Join-Path $OpenBlasRoot "lib\libopenblas.lib"
@@ -190,10 +220,9 @@ foreach ($v in $Variants) {
             # The official mingw build bundles LAPACK, so libopenblas.lib resolves
             # both BLAS and the Fortran LAPACK symbols; put its DLL on PATH.
             $env:PATH = "$obBin;$env:PATH"
-            $exe = Build-Variant "build-openblas" @(
+            $Built += [pscustomobject]@{ Label = "openblas"; Exe = (Build-Variant "build-openblas" @(
                 "-DMTL5_WITH_BLAS=ON", "-DMTL5_WITH_LAPACK=ON",
-                "-DBLAS_LIBRARIES=$obLib", "-DLAPACK_LIBRARIES=$obLib")
-            Run-Variant $exe "openblas"
+                "-DBLAS_LIBRARIES=$obLib", "-DLAPACK_LIBRARIES=$obLib")) }
         }
         "mkl" {
             $mklLib = Join-Path $MklRoot "lib\mkl_rt.lib"
@@ -208,12 +237,44 @@ foreach ($v in $Variants) {
             # exports the Fortran BLAS/LAPACK symbols MTL5 needs), and put its
             # DLL dir on PATH so the benchmark resolves it at runtime.
             $env:PATH = "$mklBin;$env:PATH"
-            $exe = Build-Variant "build-mkl" @(
+            $Built += [pscustomobject]@{ Label = "mkl"; Exe = (Build-Variant "build-mkl" @(
                 "-DMTL5_WITH_BLAS=ON", "-DMTL5_WITH_LAPACK=ON",
-                "-DBLAS_LIBRARIES=$mklLib", "-DLAPACK_LIBRARIES=$mklLib")
-            Run-Variant $exe "mkl"
+                "-DBLAS_LIBRARIES=$mklLib", "-DLAPACK_LIBRARIES=$mklLib")) }
         }
         default { Write-Warning "unknown variant '$v', skipping" }
+    }
+}
+
+# --- measurement phase -----------------------------------------------------
+# NOT interleaved, unlike run_blocking_ab: bench_all truncates its --csv on every
+# invocation, so multiple rounds would overwrite rather than accumulate. Doing it
+# properly needs append support in bench_all and best-of-rounds in the analyzers.
+# Tracked in #442.
+$PreflightKv = Invoke-Preflight
+Write-Host "`n=== measuring ==="
+foreach ($b in $Built) {
+    Write-Host "=== $($b.Label) ==="
+    Run-Variant $b.Exe $b.Label
+}
+
+# --- record machine state in every sidecar ---------------------------------
+# A failed postflight read must not silently drop the key: `unavailable` is a
+# fact, an absent key is a reader's guess.
+$AfterKv = & $PreflightScript -Phase after
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "postflight thermal read failed; recording thermal_after_c=unavailable."
+    $AfterKv = "thermal_after_c=unavailable"
+}
+if (-not ($AfterKv -match 'thermal_after_c=')) { $AfterKv = "thermal_after_c=unavailable" }
+
+foreach ($s in $script:Sidecars) {
+    if (Test-Path $s) {
+        Add-Content -Path $s -Value $PreflightKv
+        Add-Content -Path $s -Value $AfterKv
+        Add-Content -Path $s -Value @(
+            "harness=run_sweeps.ps1",
+            "harness_pinned_mask=0x$($PinMask.ToString('x'))",
+            "harness_interleaved=0")
     }
 }
 

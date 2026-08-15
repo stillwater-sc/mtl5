@@ -86,15 +86,24 @@ columns stay empty. See the per-backend builds below.
 
 ```bash
 # Builds native / native-fast / openblas / mkl, pins to a P-core, one CSV each.
-BENCH_CPU=4 benchmarks/run_sweeps.sh            # 4 = a P-core; see note below
-# custom sweep:        BENCH_CPU=4 benchmarks/run_sweeps.sh 16:2048:32
+# OUTDIR is REQUIRED and must be this machine's own directory: the CSVs are named
+# by backend, not by machine, so a shared one silently overwrites another
+# machine's committed results (#439).
+OUTDIR=benchmarks/data/i7-12700k BENCH_CPU=4 benchmarks/run_sweeps.sh
+# custom sweep:
+OUTDIR=benchmarks/data/i7-12700k BENCH_CPU=4 benchmarks/run_sweeps.sh 16:2048:32
 # BLAS-only (the #82 gate; native LAPACK at large N is slow):
-BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sweeps.sh
+OUTDIR=benchmarks/data/i7-12700k BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sweeps.sh
 ```
 
-`run_sweeps.sh` configures each variant in its own (clean) build dir, builds
-`bench_all`, and runs the suites named in `BENCH_SUITES` (default `blas lapack`)
-single-threaded. The MKL variant is skipped automatically if
+`run_sweeps.sh` runs `benchmarks/preflight.sh` first and refuses to measure on a
+dirty tree, against a competing build, or on a machine without thermal headroom
+(see the run contract in `docs/benchmarks/systems.md`); the machine state it
+captures is appended to every `.sysinfo` sidecar. It then configures each variant
+in its own (clean) build dir and builds `bench_all` for **all** variants before
+measuring any of them, so no backend is timed while the machine is still hot from
+compiling its own binary. The suites named in `BENCH_SUITES` (default
+`blas lapack`) then run single-threaded. The MKL variant is skipped automatically if
 `/opt/intel/oneapi/setvars.sh` is absent (override with `MKL_SETVARS=...`).
 
 **CPU pinning matters.** On hybrid CPUs (e.g. Intel P/E-core parts) an unpinned
@@ -206,11 +215,12 @@ ceiling for GEMV/L1. `analyze_gate.py` measures this from the CSVs:
 
 ```bash
 # Build the gate variants (BLAS suite only -- native LAPACK at large N is slow):
-BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sweeps.sh 65:1025:80
+OUTDIR=benchmarks/data/i7-12700k BENCH_CPU=4 BENCH_SUITES=blas \
+    benchmarks/run_sweeps.sh 65:1025:80
 
 # % of OpenBLAS and % of FMA peak, per op and size (peak = 1 P-core fp64):
-benchmarks/analyze_gate.py benchmarks/data/blas_sweep_native-fast.csv \
-    benchmarks/data/blas_sweep_openblas.csv --peak-gflops 78
+benchmarks/analyze_gate.py benchmarks/data/i7-12700k/blas_sweep_native-fast.csv \
+    benchmarks/data/i7-12700k/blas_sweep_openblas.csv --peak-gflops 78
 
 # Pass/fail gate: median GEMM ratio >= 80% of OpenBLAS for N >= 256,
 # and no individual size below the 70% floor
@@ -270,10 +280,12 @@ thread counts for native-fast **and** threaded OpenBLAS/MKL (their own
 reports speedup + parallel efficiency and draws the scaling plot.
 
 ```bash
-# native-fast / openblas / mkl, T in {1,2,4,8}, pinned to P-cores:
-BENCH_PCPUS=0,2,4,6,8,10,12,14 benchmarks/run_scaling.sh
-benchmarks/analyze_scaling.py benchmarks/data/gemm_scaling_*.csv \
-    --plot benchmarks/data/gemm_scaling.png
+# native-fast / openblas / mkl, T in {1,2,4,8}, pinned to P-cores.
+# OUTDIR is REQUIRED -- one directory per machine (#439).
+OUTDIR=benchmarks/data/i7-12700k BENCH_PCPUS=0,2,4,6,8,10,12,14 \
+    benchmarks/run_scaling.sh
+benchmarks/analyze_scaling.py benchmarks/data/i7-12700k/gemm_scaling_*.csv \
+    --plot benchmarks/data/i7-12700k/gemm_scaling.png
 ```
 
 > **Set `BENCH_PCPUS` to your topology** — one logical id per physical core
