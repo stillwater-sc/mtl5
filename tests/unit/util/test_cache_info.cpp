@@ -307,3 +307,71 @@ TEST_CASE("a detected L1 moves nc even with L3 held fixed",
     REQUIRE(simd::runtime_blocking<double>().nc == simd::default_blocking<double>.nc);
     REQUIRE(simd::runtime_blocking<float>().nc  == simd::default_blocking<float>.nc);
 }
+
+// --- detection level groups (#430 follow-up) --------------------------------
+//
+// L1 feeds kc and L2 feeds mc, and the four-machine A/B says the two do not
+// behave alike: the Ryzen run moved mc alone (kc identical, mc 64 -> 256) at no
+// single-thread cost, while both machines whose kc moved lost throughput. That
+// was an inference across machines that each happened to vary something
+// different; splitting the switch turns it into an experiment on one machine.
+//
+// These tests pin the SEPARATION -- that each group moves its own fields and
+// leaves the other's alone -- which is the property the kconly/mconly arms rest
+// on. If it broke, both arms would still run and would quietly measure the same
+// thing.
+TEST_CASE("detection levels are separable", "[util][cache_info][blocking]") {
+    using mtl::simd::detect_levels;
+    using mtl::simd::with_detected_caches;
+
+    const simd::hw_traits def = simd::default_hw_traits;
+
+    // A machine unlike the defaults in BOTH levels, so either leak is visible.
+    util::cache_info c{};
+    c.l1d_bytes = 4 * def.l1_bytes;
+    c.l1d_assoc = def.l1_assoc + 4;
+    c.l2_bytes  = 4 * def.l2_bytes;
+    c.line_bytes = def.line_bytes;      // 64 on every machine measured so far
+    c.l1d_sharing_cores = 1;
+    c.l2_sharing_cores  = 1;
+
+    SECTION("l1 only moves the kc inputs") {
+        const auto hw = with_detected_caches(def, c, detect_levels::l1);
+        REQUIRE(hw.l1_bytes == c.l1d_bytes);
+        REQUIRE(hw.l1_assoc == c.l1d_assoc);
+        REQUIRE(hw.l2_bytes == def.l2_bytes);      // mc input untouched
+    }
+    SECTION("l2 only moves the mc input") {
+        const auto hw = with_detected_caches(def, c, detect_levels::l2);
+        REQUIRE(hw.l2_bytes == c.l2_bytes);
+        REQUIRE(hw.l1_bytes == def.l1_bytes);      // kc inputs untouched
+        REQUIRE(hw.l1_assoc == def.l1_assoc);
+    }
+    SECTION("both is the union, and the default") {
+        const auto both = with_detected_caches(def, c, detect_levels::both);
+        REQUIRE(both.l1_bytes == c.l1d_bytes);
+        REQUIRE(both.l2_bytes == c.l2_bytes);
+        // The unparameterised call is what every pre-split caller compiles to.
+        const auto implicit_both = with_detected_caches(def, c);
+        REQUIRE(implicit_both.l1_bytes == both.l1_bytes);
+        REQUIRE(implicit_both.l2_bytes == both.l2_bytes);
+    }
+    SECTION("none changes nothing") {
+        const auto hw = with_detected_caches(def, c, detect_levels::none);
+        REQUIRE(hw.l1_bytes == def.l1_bytes);
+        REQUIRE(hw.l2_bytes == def.l2_bytes);
+        REQUIRE(hw.l1_assoc == def.l1_assoc);
+    }
+    SECTION("the arms are not measuring the same thing") {
+        // The point of the split: on a machine whose caches differ from the
+        // model, kc-only and mc-only must produce DIFFERENT blocking. Same
+        // hierarchy, one level each -- if these ever agreed, the experiment
+        // would be a null run that looks like a result.
+        const auto kc_only = mtl::simd::derive_blocking<double>(
+            4, with_detected_caches(def, c, detect_levels::l1));
+        const auto mc_only = mtl::simd::derive_blocking<double>(
+            4, with_detected_caches(def, c, detect_levels::l2));
+        REQUIRE(kc_only.kc != mc_only.kc);
+        REQUIRE(kc_only.mc != mc_only.mc);
+    }
+}

@@ -220,14 +220,75 @@ inline constexpr blocking_params default_blocking = derive_blocking<T>(width<T>)
 /// four cores, and taking that at face value sized `mc` for roughly 4x the L2 a
 /// core actually has (#432). SMT siblings are deliberately NOT counted as sharers
 /// -- see cache_info -- so a hyperthreaded machine is unaffected.
-constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info& c) {
+/// Which detected levels may override the compile-time model.
+///
+/// Separable because the four-machine A/B (#430) says the two do NOT behave
+/// alike: the Ryzen run moved mc alone (kc identical, mc 64 -> 256) and cost
+/// nothing single-threaded, while both machines whose kc moved lost throughput.
+/// L1 feeds kc and L2 feeds mc, so splitting the switch turns that observation
+/// into an experiment instead of an inference from three machines that each
+/// happened to vary something different.
+enum class detect_levels : unsigned {
+    none = 0u,
+    l1   = 1u << 0,          ///< L1d size/assoc/line -> kc
+    l2   = 1u << 1,          ///< L2 size -> mc
+    both = l1 | l2,
+};
+
+constexpr detect_levels operator|(detect_levels a, detect_levels b) {
+    return static_cast<detect_levels>(static_cast<unsigned>(a) | static_cast<unsigned>(b));
+}
+constexpr bool has_level(detect_levels set, detect_levels one) {
+    return (static_cast<unsigned>(set) & static_cast<unsigned>(one)) != 0u;
+}
+
+/// Overlay the detected hierarchy on `base`, one level group at a time.
+///
+/// line_bytes travels with the L1 group: it is read from the same descriptor,
+/// and on every machine measured so far it is 64 -- identical to the default --
+/// so it cannot confound an L1-vs-L2 comparison in practice.
+///
+/// NOTE for anyone reading a split run: mc is derived from L2 *given kc*
+/// (mc ~ l2 / (2 * kc * sizeof)), so the l2-only arm does not reproduce the mc
+/// of the both arm. On the i7 the both arm gets mc=213 from kc=384, while the
+/// l2-only arm gets mc=320 from the default kc=256. That is the honest question
+/// -- "what does this L2 imply for the blocking we ship?" -- not a defect, but
+/// it does mean the four arms are not a clean 2x2 of the same numbers.
+constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info& c,
+                                         detect_levels lv = detect_levels::both) {
     const std::size_t l1_share = c.l1d_sharing_cores ? c.l1d_sharing_cores : 1;
     const std::size_t l2_share = c.l2_sharing_cores  ? c.l2_sharing_cores  : 1;
-    if (c.l1d_bytes  != 0) base.l1_bytes   = c.l1d_bytes / l1_share;   // -> kc
-    if (c.l1d_assoc  != 0) base.l1_assoc   = c.l1d_assoc;
-    if (c.line_bytes != 0) base.line_bytes = c.line_bytes;
-    if (c.l2_bytes   != 0) base.l2_bytes   = c.l2_bytes / l2_share;    // -> mc
+    if (has_level(lv, detect_levels::l1)) {
+        if (c.l1d_bytes  != 0) base.l1_bytes   = c.l1d_bytes / l1_share;   // -> kc
+        if (c.l1d_assoc  != 0) base.l1_assoc   = c.l1d_assoc;
+        if (c.line_bytes != 0) base.line_bytes = c.line_bytes;
+    }
+    if (has_level(lv, detect_levels::l2)) {
+        if (c.l2_bytes != 0) base.l2_bytes = c.l2_bytes / l2_share;        // -> mc
+    }
     return base;
+}
+
+/// The levels this translation unit was compiled to detect.
+///
+///   MTL5_ENABLE_CACHE_DETECTION      both (unchanged meaning)
+///   MTL5_ENABLE_CACHE_DETECTION_L1   kc only  -- the A/B arm that isolates kc
+///   MTL5_ENABLE_CACHE_DETECTION_L2   mc only  -- the arm that isolates mc
+///
+/// Defining the two single-level macros together is the same as defining the
+/// original one.
+constexpr detect_levels configured_detect_levels() {
+    detect_levels lv = detect_levels::none;
+#if defined(MTL5_ENABLE_CACHE_DETECTION)
+    lv = lv | detect_levels::both;
+#endif
+#if defined(MTL5_ENABLE_CACHE_DETECTION_L1)
+    lv = lv | detect_levels::l1;
+#endif
+#if defined(MTL5_ENABLE_CACHE_DETECTION_L2)
+    lv = lv | detect_levels::l2;
+#endif
+    return lv;
 }
 
 /// Runtime cache detection is OPT-IN: define MTL5_ENABLE_CACHE_DETECTION to let
@@ -269,13 +330,13 @@ constexpr hw_traits with_detected_caches(hw_traits base, const util::cache_info&
 /// byte-identical to pre-#426 until the model is shown to win on hardware.
 /// benchmarks/run_blocking_ab.sh is how that is decided; #430 is the experiment.
 inline const hw_traits& detected_hw_traits() {
-#if defined(MTL5_ENABLE_CACHE_DETECTION)
-    static const hw_traits hw =
-        with_detected_caches(default_hw_traits, util::cached_cache_info());
-    return hw;
-#else
-    return default_hw_traits;   // constexpr object: static storage, safe to bind
-#endif
+    if constexpr (configured_detect_levels() == detect_levels::none) {
+        return default_hw_traits;   // constexpr object: static storage, safe to bind
+    } else {
+        static const hw_traits hw = with_detected_caches(
+            default_hw_traits, util::cached_cache_info(), configured_detect_levels());
+        return hw;
+    }
 }
 
 /// Blocking parameters for `T` derived against the DETECTED hardware. Use kc and

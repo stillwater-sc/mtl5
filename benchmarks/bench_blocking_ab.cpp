@@ -207,11 +207,19 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "arm=%s dtype=%s\n", label.c_str(), dtype.c_str());
     std::fprintf(stderr, "  detected l1d=%zu l2=%zu l3=%zu line=%zu\n",
                  ci.l1d_bytes, ci.l2_bytes, ci.l3_bytes, ci.line_bytes);
-#if defined(MTL5_ENABLE_CACHE_DETECTION)
-    std::fprintf(stderr, "  MTL5_ENABLE_CACHE_DETECTION is ON -- blocking follows the detected caches\n");
-#else
-    std::fprintf(stderr, "  detection not enabled -- blocking uses the compile-time defaults (shipped)\n");
-#endif
+    // Report the LEVELS this arm compiled with, not just whether the original
+    // both-levels macro was set: a kc-only arm announcing "detection not
+    // enabled" would put a false statement at the top of its own record.
+    {
+        using mtl::simd::detect_levels;
+        constexpr auto lv = mtl::simd::configured_detect_levels();
+        const char* what =
+            lv == detect_levels::none ? "none -- compile-time defaults (what MTL5 ships)"
+          : lv == detect_levels::both ? "L1+L2 -- both kc and mc follow the detected caches"
+          : mtl::simd::has_level(lv, detect_levels::l1) ? "L1 only -- kc detected, mc from the default model"
+          :                                              "L2 only -- mc detected, kc from the default model";
+        std::fprintf(stderr, "  cache detection: %s\n", what);
+    }
     std::fprintf(stderr, "  fp64 mr=%zu nr=%zu kc=%zu mc=%zu nc=%zu\n",
                  bpd.mr, bpd.nr, bpd.kc, bpd.mc, bpd.nc);
     std::fprintf(stderr, "  fp32 mr=%zu nr=%zu kc=%zu mc=%zu nc=%zu\n",

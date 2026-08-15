@@ -43,16 +43,29 @@ set_target_properties(bench_sparse PROPERTIES FOLDER "Benchmarks")
 # in kc/mc. Driven by benchmarks/run_blocking_ab.sh, which pins and interleaves
 # them. The `-default` arm is what MTL5 ships; the `-detected` arm is the opt-in
 # under test, which measured a loss on the i7-12700K.
-foreach(_arm detected default)
+# FOUR arms, because the four-machine result (#430) says kc and mc do not behave
+# alike -- the Ryzen run varied mc alone and cost nothing, while both machines
+# whose kc moved lost throughput. `kconly` and `mconly` turn that inference into
+# a measurement: L1 feeds kc, L2 feeds mc, and each arm detects one of them.
+#
+# All four are the SAME source; only the macro differs, so any difference in
+# throughput is a difference in blocking.
+set(_ab_arms      default        detected                        kconly                             mconly)
+set(_ab_arm_defs  ""             MTL5_ENABLE_CACHE_DETECTION     MTL5_ENABLE_CACHE_DETECTION_L1     MTL5_ENABLE_CACHE_DETECTION_L2)
+foreach(_i RANGE 3)
+    list(GET _ab_arms     ${_i} _arm)
+    list(GET _ab_arm_defs ${_i} _def)
     add_executable(bench_blocking_ab_${_arm} bench_blocking_ab.cpp)
     target_link_libraries(bench_blocking_ab_${_arm} PRIVATE MTL5::mtl5)
     target_include_directories(bench_blocking_ab_${_arm} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
     set_target_properties(bench_blocking_ab_${_arm} PROPERTIES FOLDER "Benchmarks")
+    if(NOT _def STREQUAL "")
+        target_compile_definitions(bench_blocking_ab_${_arm} PRIVATE ${_def})
+    endif()
     # Provenance is regenerated per build, so the recorded commit follows the
     # working tree rather than the last configure (#442).
     add_dependencies(bench_blocking_ab_${_arm} mtl5_build_info)
 endforeach()
-target_compile_definitions(bench_blocking_ab_detected PRIVATE MTL5_ENABLE_CACHE_DETECTION)
 
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)

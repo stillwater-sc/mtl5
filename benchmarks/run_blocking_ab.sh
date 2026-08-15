@@ -60,16 +60,42 @@ if [ -z "${OUTDIR:-}" ]; then
     exit 2
 fi
 
-DET="$BUILD_DIR/benchmarks/bench_blocking_ab_detected"
-DEF="$BUILD_DIR/benchmarks/bench_blocking_ab_default"
-for b in "$DET" "$DEF"; do
+# The arms to run, in the order they lead the first round. All are the same
+# source; they differ only in which detected cache levels feed the blocking:
+#
+#   default    none  -- the compile-time model MTL5 ships
+#   detected   L1+L2 -- kc from L1 and mc from L2
+#   kconly     L1    -- kc detected, mc from the default model
+#   mconly     L2    -- mc detected, kc from the default model
+#
+# kconly/mconly exist because the four-machine result (#430) implicated kc and
+# exonerated mc without ever varying them separately: the Ryzen run happened to
+# move mc alone and cost nothing, while both machines whose kc moved lost. Run
+# all four in ONE session and that becomes a measurement rather than a
+# cross-machine inference:  ARMS="default detected kconly mconly"
+ARMS=${ARMS:-"detected default"}
+
+ARM_BINS=""
+for a in $ARMS; do
+    b="$BUILD_DIR/benchmarks/bench_blocking_ab_$a"
     if [ ! -x "$b" ]; then
         echo "missing $b" >&2
-        echo "build with:  cmake --preset release && cmake --build $BUILD_DIR --target bench_blocking_ab_detected bench_blocking_ab_default -j4" >&2
+        echo "known arms: default detected kconly mconly" >&2
+        echo "build with:  cmake --preset release && cmake --build $BUILD_DIR --target \\" >&2
+        for x in $ARMS; do echo "                 bench_blocking_ab_$x \\" >&2; done
+        echo "                 -j4" >&2
         exit 1
     fi
+    ARM_BINS="$ARM_BINS $b"
 done
+NARMS=$(echo "$ARMS" | wc -w)
+if [ "$NARMS" -lt 2 ]; then
+    echo "ARMS needs at least two arms to compare, got '$ARMS'" >&2; exit 2
+fi
 mkdir -p "$OUTDIR"
+
+arm_bin() { echo "$BUILD_DIR/benchmarks/bench_blocking_ab_$1"; }
+arm_csv() { echo "$OUTDIR/blocking_ab_$1.csv"; }
 
 # Pin to the first T ids of BENCH_PCPUS. On a hybrid part this is also what fixes
 # WHICH cache hierarchy gets detected, so it is applied to every run including
@@ -110,35 +136,43 @@ if ! PREFLIGHT_KV=$("$SCRIPT_DIR/preflight.sh" --threads "$TMAX" --repo "$SCRIPT
     exit 1
 fi
 
-# Shapes: derived ONCE, from the detected arm, at the largest thread count (the
-# wide/short shapes depend on the thread budget). Both arms then get this list.
-SHAPES=${SHAPES:-$(taskset -c "$(pin_for "$TMAX")" "$DET" --suggest-shapes --threads "$TMAX" --dtype "$DTYPE")}
+# Shapes: derived ONCE, from the FIRST arm, at the largest thread count (the
+# wide/short shapes depend on the thread budget). Every arm then gets this list,
+# so the arms are never compared on different shapes -- each would otherwise pick
+# its own from its own mc/nc.
+FIRST_ARM=$(echo "$ARMS" | awk '{print $1}')
+SHAPES=${SHAPES:-$(taskset -c "$(pin_for "$TMAX")" "$(arm_bin "$FIRST_ARM")" \
+                       --suggest-shapes --threads "$TMAX" --dtype "$DTYPE")}
+echo "arms:   $ARMS   (shapes derived from '$FIRST_ARM')"
 echo "shapes: $SHAPES"
 
-CSV_DET="$OUTDIR/blocking_ab_detected.csv"
-CSV_DEF="$OUTDIR/blocking_ab_default.csv"
-rm -f "$CSV_DET" "$CSV_DEF" "$CSV_DET.sysinfo" "$CSV_DEF.sysinfo"
+for a in $ARMS; do rm -f "$(arm_csv "$a")" "$(arm_csv "$a").sysinfo"; done
 
-run_arm() {   # bin label csv cpus threads
-    MTL5_NUM_THREADS=$5 taskset -c "$4" "$1" \
-        --label "$2" --dtype "$DTYPE" --threads "$5" --reps "$REPS" \
-        --shapes "$SHAPES" --csv "$3"
+run_arm() {   # arm cpus threads
+    MTL5_NUM_THREADS=$3 taskset -c "$2" "$(arm_bin "$1")" \
+        --label "$1" --dtype "$DTYPE" --threads "$3" --reps "$REPS" \
+        --shapes "$SHAPES" --csv "$(arm_csv "$1")"
+}
+
+# Rotate the arm order by round, so every arm leads an equal share of rounds.
+# Running one arm first every round would fold warm-up, frequency ramp and
+# thermal drift into the ratio in a fixed direction; rotating cancels it to first
+# order, and generalises the two-arm alternation to any number of arms.
+rotated() {   # round -> the arm list rotated left by (round-1) mod NARMS
+    local shift_by=$(( ($1 - 1) % NARMS )) i=0 head="" tail=""
+    for a in $ARMS; do
+        if [ "$i" -lt "$shift_by" ]; then tail="$tail $a"; else head="$head $a"; fi
+        i=$((i + 1))
+    done
+    echo "$head$tail"
 }
 
 for round in $(seq 1 "$ROUNDS"); do
     for t in $THREADS; do
         cpus=$(pin_for "$t")
-        echo "== round $round, T=$t, cpus=$cpus"
-        # Interleaved AND order-alternated. Running one arm first every round
-        # would fold warm-up, frequency ramp and thermal drift into the ratio in
-        # a fixed direction; alternating cancels it to first order.
-        if [ $((round % 2)) -eq 1 ]; then
-            run_arm "$DET" detected "$CSV_DET" "$cpus" "$t"
-            run_arm "$DEF" default  "$CSV_DEF" "$cpus" "$t"
-        else
-            run_arm "$DEF" default  "$CSV_DEF" "$cpus" "$t"
-            run_arm "$DET" detected "$CSV_DET" "$cpus" "$t"
-        fi
+        order=$(rotated "$round")
+        echo "== round $round, T=$t, cpus=$cpus, order:$order"
+        for a in $order; do run_arm "$a" "$cpus" "$t"; done
     done
 done
 
@@ -171,7 +205,7 @@ esac
 # error, and one that hides completely in the numbers. It happened while writing
 # this very script: the first run recorded a binary two commits behind.
 TREE_COMMIT=$(printf '%s\n' "$PREFLIGHT_KV" | sed -n 's/^tree_git_commit=//p')
-BUILD_COMMIT=$(sed -n 's/^git_commit=//p' "$CSV_DET.sysinfo" 2>/dev/null | head -1)
+BUILD_COMMIT=$(sed -n 's/^git_commit=//p' "$(arm_csv "$FIRST_ARM").sysinfo" 2>/dev/null | head -1)
 STALE=unknown
 if [ -n "$TREE_COMMIT" ] && [ -n "$BUILD_COMMIT" ] && \
    [ "$TREE_COMMIT" != unknown ] && [ "$BUILD_COMMIT" != unknown ]; then
@@ -184,7 +218,8 @@ if [ -n "$TREE_COMMIT" ] && [ -n "$BUILD_COMMIT" ] && \
     fi
 fi
 
-for s in "$CSV_DET.sysinfo" "$CSV_DEF.sysinfo"; do
+for a in $ARMS; do
+    s="$(arm_csv "$a").sysinfo"
     if [ -f "$s" ]; then
         printf '%s\n%s\n' "$PREFLIGHT_KV" "$AFTER_KV" >> "$s"
         printf 'binary_stale=%s\nharness=run_blocking_ab.sh\nharness_rounds=%s\nharness_reps=%s\n' \
@@ -193,5 +228,14 @@ for s in "$CSV_DET.sysinfo" "$CSV_DEF.sysinfo"; do
 done
 
 echo
-echo "wrote $CSV_DET and $CSV_DEF (+ .sysinfo sidecars)"
-echo "compare with: benchmarks/analyze_blocking_ab.py $CSV_DET $CSV_DEF"
+echo "wrote (+ .sysinfo sidecars):"
+for a in $ARMS; do echo "  $(arm_csv "$a")"; done
+# Every arm against the baseline. `default` is the baseline when it is present --
+# it is what MTL5 ships, so every other arm is a proposed change to it.
+BASE=default
+echo "$ARMS" | grep -qw "$BASE" || BASE=$FIRST_ARM
+echo "compare with:"
+for a in $ARMS; do
+    [ "$a" = "$BASE" ] && continue
+    echo "  benchmarks/analyze_blocking_ab.py $(arm_csv "$a") $(arm_csv "$BASE")"
+done

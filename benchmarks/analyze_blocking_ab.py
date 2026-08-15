@@ -30,26 +30,34 @@ MIN_ROUNDS = 3
 
 
 def load(path):
+    """rows, blocking params, and the ARM NAME the data carries.
+
+    The name comes from the file rather than from this script's assumptions:
+    the harness now runs four arms (default / detected / kconly / mconly) and
+    any pair of them can be compared, so a hardcoded "detected vs default"
+    heading would mislabel three comparisons out of four."""
     rows = defaultdict(list)          # (dtype,m,n,k,threads) -> [row, ...]
     params = {}
+    arm = None
     with open(path, newline="") as fh:
         for r in csv.DictReader(fh):
+            arm = arm or r.get("arm")
             key = (r["dtype"], int(r["m"]), int(r["n"]), int(r["k"]), int(r["threads"]))
             rows[key].append(r)
             params[r["dtype"]] = (r["mr"], r["nr"], r["kc"], r["mc"], r["nc"])
-    return rows, params
+    return rows, params, (arm or "test")
 
 
 def main(argv):
     if len(argv) != 3:
         print("usage: analyze_blocking_ab.py <detected.csv> <default.csv>", file=sys.stderr)
         return 2
-    det, det_p = load(argv[1])
-    dfl, dfl_p = load(argv[2])
+    det, det_p, det_name = load(argv[1])
+    dfl, dfl_p, dfl_name = load(argv[2])
 
     for dt in sorted(set(det_p) | set(dfl_p)):
-        print(f"blocking ({dt}):  detected mr,nr,kc,mc,nc = {det_p.get(dt)}"
-              f"   default = {dfl_p.get(dt)}")
+        print(f"blocking ({dt}):  {det_name} mr,nr,kc,mc,nc = {det_p.get(dt)}"
+              f"   {dfl_name} = {dfl_p.get(dt)}")
 
     # The CONFIGURED mc above is not the one the loops step by: it is capped to
     # fill the thread budget (plan_gemm_grid) and then rounded so the partition
@@ -90,9 +98,9 @@ def main(argv):
     null_run = all(det_p.get(dt) == dfl_p.get(dt) for dt in set(det_p) | set(dfl_p))
     if null_run:
         print("\n*** NULL RUN: both arms compiled to identical blocking parameters.")
-        print("*** Detection changes nothing on this machine (its L1/L2 already match")
-        print("*** the compile-time defaults), so every difference below is noise and")
-        print("*** no point is called. This is a useful harness self-test, not a result.")
+        print(f"*** {det_name} and {dfl_name} derive the same kc/mc on this machine")
+        print("*** (its caches already match the compile-time model), so every difference")
+        print("*** below is noise and no point is called. A useful harness self-test.")
     print()
 
     # Integrity gate. An A/B is only an A/B if both arms measured the same points
@@ -114,8 +122,8 @@ def main(argv):
         print("Re-run both arms over the same shapes and rounds.", file=sys.stderr)
         return 2
 
-    hdr = (f"{'shape':>22} {'T':>3} {'default':>10} {'detected':>10} {'ratio':>7}"
-           f" {'mc def/det':>11} {'grid':>6}  verdict")
+    hdr = (f"{'shape':>22} {'T':>3} {dfl_name:>10} {det_name:>10} {'ratio':>7}"
+           f" {'mc base/test':>13} {'grid':>6}  verdict")
     print(hdr)
     print("-" * len(hdr))
 
@@ -151,10 +159,10 @@ def main(argv):
             verdict = f"unresolved (only {rounds} rounds)"
             noise += 1
         elif a_s[-1] < b_s[0]:
-            verdict = "detected faster"
+            verdict = f"{det_name} faster"
             wins += 1
         elif b_s[-1] < a_s[0]:
-            verdict = "DEFAULT faster"
+            verdict = f"{dfl_name.upper()} faster"
             losses += 1
         else:
             verdict = "noise (ranges overlap)"
@@ -168,7 +176,7 @@ def main(argv):
         print(f"{m}x{n}x{k:>6}".rjust(22)
               + f" {t:>3} {gflops(m, n, k, b_best):>10.2f}"
               + f" {gflops(m, n, k, a_best):>10.2f} {ratio:>7.3f}"
-              + f" {mc_col:>11} {grid_col:>6}  {verdict}")
+              + f" {mc_col:>13} {grid_col:>6}  {verdict}")
 
     print()
     print(f"{wins} faster, {losses} slower, {noise} indistinguishable "

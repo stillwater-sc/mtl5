@@ -64,6 +64,16 @@ param(
     [string]$DType   = "double",
     [string]$Shapes  = "",          # empty: derive from the machine (preferred)
     [string]$Arch    = "/arch:AVX512",
+    # Arms to run, in the order they lead the first round. All are the same
+    # source and differ only in which detected cache levels feed the blocking:
+    #   default  none   -- the compile-time model MTL5 ships
+    #   detected L1+L2  -- kc from L1, mc from L2
+    #   kconly   L1     -- kc detected, mc from the default model
+    #   mconly   L2     -- mc detected, kc from the default model
+    # kconly/mconly exist because #430 implicated kc and exonerated mc without
+    # ever varying them separately. Run all four in ONE session to settle it:
+    #   -Arms "default,detected,kconly,mconly"
+    [string]$Arms    = "detected,default",
     [string]$OutDir  = "",          # REQUIRED -- one directory per machine
 
     [string]$BuildDir = "build-blocking-ab",
@@ -183,17 +193,27 @@ if ((Invoke-Native "cmake" $cfg (Join-Path $LogDir "blocking_ab.configure")) -ne
     throw "configure failed (see $LogDir\blocking_ab.configure.err.log)"
 }
 Write-Host "=== build"
-$targets = @("--build", $Full, "--config", "Release",
-             "--target", "bench_blocking_ab_detected", "bench_blocking_ab_default", "-j", "$Jobs")
+[string[]]$ArmList = $Arms -split '[,\s]+' | Where-Object { $_ }
+if ($ArmList.Count -lt 2) { throw "-Arms needs at least two arms to compare, got '$Arms'" }
+$known = @("default", "detected", "kconly", "mconly")
+foreach ($a in $ArmList) {
+    if ($known -notcontains $a) { throw "unknown arm '$a'; known arms: $($known -join ', ')" }
+}
+$targets = @("--build", $Full, "--config", "Release", "--target") +
+           ($ArmList | ForEach-Object { "bench_blocking_ab_$_" }) + @("-j", "$Jobs")
 if ((Invoke-Native "cmake" $targets (Join-Path $LogDir "blocking_ab.build")) -ne 0) {
     throw "build failed (see $LogDir\blocking_ab.build.err.log)"
 }
 
-$Det = Join-Path $Full "benchmarks\Release\bench_blocking_ab_detected.exe"
-$Def = Join-Path $Full "benchmarks\Release\bench_blocking_ab_default.exe"
-foreach ($exe in @($Det, $Def)) {
-    if (-not (Test-Path $exe)) { throw "missing $exe after build" }
+function Arm-Exe($arm) { Join-Path $Full "benchmarks\Release\bench_blocking_ab_$arm.exe" }
+function Arm-Csv($arm) { Join-Path $DataDir "blocking_ab_$arm.csv" }
+foreach ($a in $ArmList) {
+    if (-not (Test-Path (Arm-Exe $a))) { throw "missing $(Arm-Exe $a) after build" }
 }
+# Shapes come from the FIRST arm and go to every arm, so the arms are never
+# compared on different shapes.
+$FirstArm = $ArmList[0]
+$Det = Arm-Exe $FirstArm
 
 # --- run one arm, pinned -----------------------------------------------------
 # Affinity is applied immediately after Start(); see caveat 2 in the header for
@@ -252,23 +272,24 @@ if ($Shapes -eq "") {
 }
 Write-Host "shapes: $Shapes"
 
-$CsvDet = Join-Path $DataDir "blocking_ab_detected.csv"
-$CsvDef = Join-Path $DataDir "blocking_ab_default.csv"
-foreach ($f in @($CsvDet, $CsvDef, "$CsvDet.sysinfo", "$CsvDef.sysinfo")) {
-    if (Test-Path $f) { Remove-Item $f -Force }
+foreach ($a in $ArmList) {
+    foreach ($f in @((Arm-Csv $a), "$(Arm-Csv $a).sysinfo")) {
+        if (Test-Path $f) { Remove-Item $f -Force }
+    }
 }
 
+# Rotate the arm order by round so every arm leads an equal share. Running one
+# arm first every round would fold warm-up, frequency ramp and thermal drift into
+# the ratio in a fixed direction; this generalises the two-arm alternation to any
+# number of arms.
 for ($round = 1; $round -le $Rounds; $round++) {
+    $shiftBy = ($round - 1) % $ArmList.Count
+    $order = @($ArmList[$shiftBy..($ArmList.Count - 1)])
+    if ($shiftBy -gt 0) { $order += @($ArmList[0..($shiftBy - 1)]) }
     foreach ($T in $ThreadList) {
         $mask = Mask-ForThreads $T
-        Write-Host ("== round {0}, T={1}, affinity mask 0x{2:x}" -f $round, $T, $mask)
-        if ($round % 2 -eq 1) {
-            Run-Arm $Det "detected" $CsvDet $mask $T $Shapes
-            Run-Arm $Def "default"  $CsvDef $mask $T $Shapes
-        } else {
-            Run-Arm $Def "default"  $CsvDef $mask $T $Shapes
-            Run-Arm $Det "detected" $CsvDet $mask $T $Shapes
-        }
+        Write-Host ("== round {0}, T={1}, affinity mask 0x{2:x}, order: {3}" -f $round, $T, $mask, ($order -join ' '))
+        foreach ($a in $order) { Run-Arm (Arm-Exe $a) $a (Arm-Csv $a) $mask $T $Shapes }
     }
 }
 
@@ -295,8 +316,8 @@ if (-not ($AfterKv -match 'thermal_after_c=')) { $AfterKv = "thermal_after_c=una
 # error that hides completely in the numbers.
 $TreeCommit  = ($PreflightKv | Select-String -Pattern '^tree_git_commit=(.+)$').Matches.Groups[1].Value
 $BuildCommit = ""
-if (Test-Path "$CsvDet.sysinfo") {
-    $m = Get-Content "$CsvDet.sysinfo" | Select-String -Pattern '^git_commit=(.+)$' | Select-Object -First 1
+if (Test-Path "$(Arm-Csv $FirstArm).sysinfo") {
+    $m = Get-Content "$(Arm-Csv $FirstArm).sysinfo" | Select-String -Pattern '^git_commit=(.+)$' | Select-Object -First 1
     if ($m) { $BuildCommit = $m.Matches.Groups[1].Value }
 }
 $Stale = "unknown"
@@ -310,7 +331,7 @@ if ($TreeCommit -and $BuildCommit -and $TreeCommit -ne "unknown" -and $BuildComm
     }
 }
 
-foreach ($s in @("$CsvDet.sysinfo", "$CsvDef.sysinfo")) {
+foreach ($s in ($ArmList | ForEach-Object { "$(Arm-Csv $_).sysinfo" })) {
     if (Test-Path $s) {
         Add-Content -Path $s -Value $PreflightKv
         Add-Content -Path $s -Value $AfterKv
@@ -323,5 +344,13 @@ foreach ($s in @("$CsvDet.sysinfo", "$CsvDef.sysinfo")) {
 }
 
 Write-Host ""
-Write-Host "wrote $CsvDet and $CsvDef (+ .sysinfo sidecars)"
-Write-Host "compare with: python benchmarks/analyze_blocking_ab.py `"$CsvDet`" `"$CsvDef`""
+Write-Host "wrote (+ .sysinfo sidecars):"
+foreach ($a in $ArmList) { Write-Host "  $(Arm-Csv $a)" }
+# Every arm against the baseline. `default` is the baseline when present -- it is
+# what MTL5 ships, so every other arm is a proposed change to it.
+$Base = if ($ArmList -contains "default") { "default" } else { $FirstArm }
+Write-Host "compare with:"
+foreach ($a in $ArmList) {
+    if ($a -eq $Base) { continue }
+    Write-Host "  python benchmarks/analyze_blocking_ab.py `"$(Arm-Csv $a)`" `"$(Arm-Csv $Base)`""
+}

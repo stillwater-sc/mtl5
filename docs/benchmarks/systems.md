@@ -456,10 +456,45 @@ mc_cache=213, the planner caps mc to 128, giving nib=8 and a perfectly balanced
 8x1 grid. **The worst remaining point is the balanced one**, so thread starvation
 is ruled out and `kc` plus L2 residency is what is left.
 
-The experiment that would settle it is a **kc-only vs mc-only** A/B on the i7:
-detect L1 alone in one arm, L2 alone in the other. If `kc` is the sole cause, the
-product of this whole line of work is not "detection off" but "detect L2, ignore
-L1" — a *win* on every machine whose mc is currently pinned at the default 64.
+The experiment that settles it is a **kc-only vs mc-only** A/B, and the harness
+now runs it. Four arms, all the same source, differing only in which detected
+level feeds the blocking:
+
+| arm | detects | moves |
+|---|---|---|
+| `default` | nothing | — (what MTL5 ships) |
+| `detected` | L1 + L2 | kc and mc |
+| `kconly` | L1 | kc |
+| `mconly` | L2 | mc |
+
+Run all four in **one session**, which is what makes them comparable — the arms
+rotate order round by round, so no arm systematically leads:
+
+```bash
+BENCH_PCPUS=0,2,4,6,8,10,12,14 THREADS="1 8" ROUNDS=5 \
+    ARMS="default detected kconly mconly" \
+    OUTDIR=benchmarks/data/i7-12700k ./benchmarks/run_blocking_ab.sh
+
+# then each arm against the baseline
+./benchmarks/analyze_blocking_ab.py \
+    benchmarks/data/i7-12700k/blocking_ab_{kconly,default}.csv
+```
+
+```powershell
+pwsh benchmarks/run_blocking_ab.ps1 -Arms "default,detected,kconly,mconly" `
+     -PCores "0,2,4,6,8,10,12,14" -Threads "1,8" -Rounds 5 `
+     -Arch "/arch:AVX512" -OutDir "benchmarks\data\ryzen-9-8945hs"
+```
+
+If `kc` is the sole cause, the product of this whole line of work is not
+"detection off" but **"detect L2, ignore L1"** — a *win* on every machine whose
+mc is currently pinned at the default 64.
+
+One thing not to over-read: mc is derived from L2 *given kc*, so `mconly` does
+not reproduce the `detected` arm's mc. On the i7, `detected` gets mc=213 from
+kc=384 while `mconly` gets mc=320 from the default kc=256. That is the honest
+question — "what does this L2 imply for the blocking we ship?" — but it means the
+four arms are not a clean 2x2 of the same numbers.
 
 ### What the older CSVs cannot tell you
 
