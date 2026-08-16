@@ -51,6 +51,8 @@ benchmarks/
   bench_klu.cpp          sparse scoreboard: native KLU vs SuiteSparse KLU (#138)
   bench_superlu.cpp      sparse scoreboard: native LU vs SuperLU (#186)
   bench_sparse.cpp       level-scheduled sparse triangular-solve scaling (#297)
+  machines/              per-machine run profiles: the pin list, thread counts and ISA
+                         flag for each benchmark host, committed instead of retyped
   run_sweeps.sh          builds native/native-fast/openblas/blis/mkl variants and runs the sweeps
   run_scaling.sh         multi-core GEMM scaling across backends and thread counts (#108)
   run_scaling_297.sh     native 1->N scaling of every threaded kernel family (#297)

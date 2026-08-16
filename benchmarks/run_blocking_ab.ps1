@@ -335,11 +335,20 @@ foreach ($s in ($ArmList | ForEach-Object { "$(Arm-Csv $_).sysinfo" })) {
     if (Test-Path $s) {
         Add-Content -Path $s -Value $PreflightKv
         Add-Content -Path $s -Value $AfterKv
+        # The INVOCATION, not just the harness name. Which cpus were pinned,
+        # which arms ran, which ISA flag and which machine profile chose them are
+        # what make a committed CSV re-runnable.
         Add-Content -Path $s -Value @(
             "binary_stale=$Stale",
             "harness=run_blocking_ab.ps1",
+            "harness_profile=$(if ($env:BENCH_PROFILE) { $env:BENCH_PROFILE } else { 'none' })",
             "harness_rounds=$Rounds",
-            "harness_reps=$Reps")
+            "harness_reps=$Reps",
+            "harness_arms=$($ArmList -join ',')",
+            "harness_pcores=$PCores",
+            "harness_threads=$Threads",
+            "harness_arch=$(if ($Arch -ne '') { $Arch } else { 'none' })",
+            "harness_dtype=$DType")
     }
 }
 

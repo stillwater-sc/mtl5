@@ -222,8 +222,16 @@ for a in $ARMS; do
     s="$(arm_csv "$a").sysinfo"
     if [ -f "$s" ]; then
         printf '%s\n%s\n' "$PREFLIGHT_KV" "$AFTER_KV" >> "$s"
-        printf 'binary_stale=%s\nharness=run_blocking_ab.sh\nharness_rounds=%s\nharness_reps=%s\n' \
-               "$STALE" "$ROUNDS" "$REPS" >> "$s"
+        # The INVOCATION, not just the harness name. Which cpus were pinned,
+        # which arms ran and which machine profile chose them are what make a
+        # committed CSV re-runnable; without them the numbers depend on a command
+        # line that lives only in someone's shell history.
+        printf 'binary_stale=%s\nharness=run_blocking_ab.sh\nharness_profile=%s\n' \
+               "$STALE" "${BENCH_PROFILE:-none}" >> "$s"
+        printf 'harness_rounds=%s\nharness_reps=%s\nharness_arms=%s\n' \
+               "$ROUNDS" "$REPS" "$(echo "$ARMS" | tr ' ' ',')" >> "$s"
+        printf 'harness_pcpus=%s\nharness_threads=%s\nharness_dtype=%s\n' \
+               "$BENCH_PCPUS" "$(echo "$THREADS" | tr ' ' ',')" "$DTYPE" >> "$s"
     fi
 done
 

@@ -468,22 +468,35 @@ level feeds the blocking:
 | `mconly` | L2 | mc |
 
 Run all four in **one session**, which is what makes them comparable — the arms
-rotate order round by round, so no arm systematically leads:
+rotate order round by round, so no arm systematically leads.
+
+Each machine has a committed profile under `benchmarks/machines/`, so the pin
+list, thread counts, ISA flag and output directory are **in the repository
+rather than in someone's shell history** — and land in the sidecar as
+`harness_profile`, `harness_pcpus`, `harness_arms`:
 
 ```bash
-BENCH_PCPUS=0,2,4,6,8,10,12,14 THREADS="1 8" ROUNDS=5 \
-    ARMS="default detected kconly mconly" \
-    OUTDIR=benchmarks/data/i7-12700k ./benchmarks/run_blocking_ab.sh
-
-# then each arm against the baseline
-./benchmarks/analyze_blocking_ab.py \
-    benchmarks/data/i7-12700k/blocking_ab_{kconly,default}.csv
+benchmarks/machines/i7-12700k.sh            # P-cores 0,2,...,14, T in {1,8}
+benchmarks/machines/jetson-orin-nano.sh     # 6 cores, T in {1,6}, OUTDIR follows nvpmodel
 ```
 
 ```powershell
-pwsh benchmarks/run_blocking_ab.ps1 -Arms "default,detected,kconly,mconly" `
-     -PCores "0,2,4,6,8,10,12,14" -Threads "1,8" -Rounds 5 `
-     -Arch "/arch:AVX512" -OutDir "benchmarks\data\ryzen-9-8945hs"
+pwsh benchmarks/machines/ryzen-9-8945hs.ps1  # /arch:AVX512, 8 physical cores
+```
+
+Every profile refuses to run on a machine it does not recognise (`-Force` /
+`FORCE=1` overrides). That is not fussiness: the CSVs are named by arm and the
+runner clears them before writing, so a profile executed on the wrong host
+replaces one machine's committed evidence with another's — the #439 failure
+wearing a friendlier face. Anything can still be overridden for a one-off
+(`ROUNDS=3 ARMS="detected default" benchmarks/machines/i7-12700k.sh`), and the
+profile prints when a pin list came from the environment rather than from itself.
+
+Then compare each arm against the baseline:
+
+```bash
+./benchmarks/analyze_blocking_ab.py \
+    benchmarks/data/i7-12700k/blocking_ab_{kconly,default}.csv
 ```
 
 If `kc` is the sole cause, the product of this whole line of work is not
