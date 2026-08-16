@@ -23,10 +23,16 @@ int main() {
 
     // Demonstrate concepts (compile-time checks)
     static_assert(mtl::Scalar<float>, "float satisfies Scalar");
-	static_assert(mtl::Field<unsigned>, "unsigned satisfies Field");
     static_assert(mtl::Field<double>,  "double satisfies Field");
-    static_assert(mtl::OrderedField<int>, "int satisfies OrderedField");
-	static_assert(mtl::OrderedField<double>, "double satisfies OrderedField");
+    static_assert(mtl::OrderedField<double>, "double satisfies OrderedField");
+
+    // The integers are a RING, not a field: they add and multiply, but only 1
+    // and -1 have inverses, and a / b truncates. These assertions used to read
+    // the other way round -- and that is exactly what let lu_factor(dense2D<int>)
+    // compile and return a truncated factorization.
+    static_assert(mtl::Scalar<int>,        "int is a scalar: it adds and multiplies");
+    static_assert(!mtl::Field<unsigned>,   "unsigned is not a field: division truncates");
+    static_assert(!mtl::OrderedField<int>, "int is not an ordered field either");
 
     std::cout << "\nAll concepts verified at compile time.\n";
 
@@ -80,22 +86,26 @@ int main() {
   What the concepts actually test
 
   - Scalar -- has +, -, *, unary -, and T{0}. This is really "arithmetic type" or "ring-like"
-  - Field -- Scalar + has /. This is really "arithmetic type with division" -- a division ring at best
-  - OrderedField -- Field + std::totally_ordered. This is really "comparable arithmetic type with division"
+  - Field -- Scalar + division + NOT an integral type
+  - OrderedField -- Field + std::totally_ordered
 
-  So what's wrong?
+  Where the line is drawn, and why
 
-  The names oversell the mathematical guarantees. The concepts only check syntactic requirements (does a / b compile?)
-  not semantic axioms (is division exact? is addition associative?). This is fine -- C++20 concepts are inherently
-  syntactic. But the names Field and OrderedField imply mathematical properties that double doesn't satisfy.
+  A purely syntactic Field admitted the integers: int has operator/ and it returns an int, so `a / b` compiles and the
+  requirement is met. That made Field<int> true, and every algorithm that says "requires Field" -- meaning "I will
+  divide and expect the quotient back" -- accepted a type that cannot give it one. lu_factor(dense2D<int>) compiled and
+  returned a truncated factorization: right shape, right type, wrong numbers, no diagnostic.
 
-  Options:
-  1. Accept the naming convention -- MTL4 and most linear algebra libraries do this. It's understood that "Field" means
-  "type with division" in the C++ template library context
-  2. Rename to be more honest -- DivisionType, OrderedDivisionType, or ArithmeticWithDivision
-  3. Document the gap -- keep the names but document that they're syntactic concepts, not mathematical field axioms
+  So Field now excludes the integral types. That is not a claim that double is a field in the axiomatic sense -- it is
+  not, since floating-point addition is not associative and division is inexact. The concepts remain syntactic where
+  they can only be syntactic. The line drawn is the one that decides whether an ALGORITHM works:
 
-  Most numerical libraries (Eigen, Blaze, MTL4) take option 1. The naming convention is understood by the community,
-  even if mathematically imprecise.
+    integers          a / b truncates       (a/b)*b != a       factorizations silently wrong
+    floating point    a / b rounds          (a/b)*b ~= a       factorizations work, with error bounds
+    posit / LNS / rational                  same as above      likewise
+
+  Integers keep Scalar, which is the honest statement: they add and multiply, so dot / gemv / gemm are fine on them
+  (a ring is all those need). Only the operations that DIVIDE are refused, at compile time, with a diagnostic that
+  names the concept.
 
 */
