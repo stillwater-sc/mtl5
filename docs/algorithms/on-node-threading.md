@@ -124,7 +124,7 @@ not GFLOP/s:
 > against the core topology before drawing a scaling conclusion. The full
 > investigation — hypotheses, controls, and attribution — is written up as a
 > performance-engineering case study:
-> [Multi-Core Scaling of MTL5's Threaded Kernels](../design/multicore-scaling-investigation.md).
+> [Multi-Core Scaling of MTL5's Threaded Kernels](../performance/multicore-scaling-investigation.md).
 
 ## Not yet threaded
 

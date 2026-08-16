@@ -195,6 +195,17 @@ if ((Invoke-Native "cmake" $cfg (Join-Path $LogDir "blocking_ab.configure")) -ne
 Write-Host "=== build"
 [string[]]$ArmList = $Arms -split '[,\s]+' | Where-Object { $_ }
 if ($ArmList.Count -lt 2) { throw "-Arms needs at least two arms to compare, got '$Arms'" }
+
+# The rotation only cancels position effects when every arm leads an equal number
+# of rounds, which needs -Rounds to be a multiple of the arm count. At 5 rounds
+# over 4 arms the first arm leads twice and one never leads -- a residual bias of
+# exactly the size the rotation exists to remove.
+if ($Rounds % $ArmList.Count -ne 0) {
+    $asked = $Rounds
+    $Rounds = [int][Math]::Ceiling($Rounds / $ArmList.Count) * $ArmList.Count
+    Write-Host "NOTE: -Rounds $asked over $($ArmList.Count) arms cannot balance the rotation;"
+    Write-Host "      running $Rounds rounds so each arm leads $($Rounds / $ArmList.Count)."
+}
 $known = @("default", "detected", "kconly", "mconly")
 foreach ($a in $ArmList) {
     if ($known -notcontains $a) { throw "unknown arm '$a'; known arms: $($known -join ', ')" }
@@ -358,6 +369,32 @@ foreach ($a in $ArmList) { Write-Host "  $(Arm-Csv $a)" }
 # Every arm against the baseline. `default` is the baseline when present -- it is
 # what MTL5 ships, so every other arm is a proposed change to it.
 $Base = if ($ArmList -contains "default") { "default" } else { $FirstArm }
+# Arms that derived the SAME kc/mc measure the same thing, so comparing them
+# checks the SESSION rather than the code -- and the analyzer fails it when they
+# disagree systematically (#430).
+function Blocking-Of($arm) {
+    $csv = Arm-Csv $arm
+    if (-not (Test-Path $csv)) { return "" }
+    $line = Get-Content $csv | Select-Object -Skip 1 -First 1
+    if (-not $line) { return "" }
+    $f = $line -split ','
+    return "$($f[9]),$($f[10])"      # kc,mc
+}
+$checks = @()
+for ($i = 0; $i -lt $ArmList.Count; $i++) {
+    for ($j = $i + 1; $j -lt $ArmList.Count; $j++) {
+        if ((Blocking-Of $ArmList[$i]) -eq (Blocking-Of $ArmList[$j]) -and (Blocking-Of $ArmList[$i]) -ne "") {
+            $checks += "  python benchmarks/analyze_blocking_ab.py `"$(Arm-Csv $ArmList[$i])`" `"$(Arm-Csv $ArmList[$j])`""
+        }
+    }
+}
+if ($checks.Count -gt 0) {
+    Write-Host ""
+    Write-Host "consistency checks -- these arms derived IDENTICAL kc/mc, so they must agree;"
+    Write-Host "the analyzer fails them if the machine drifted more than the effect under test:"
+    $checks | ForEach-Object { Write-Host $_ }
+}
+
 Write-Host "compare with:"
 foreach ($a in $ArmList) {
     if ($a -eq $Base) { continue }

@@ -118,4 +118,4 @@ The library kernels use the env-sized singleton pool, and **no CI lane currently
 
 - Thread pool + kernel rollout: [#221](https://github.com/stillwater-sc/mtl5/issues/221) (batches [#239–#243]), extended in [#297](https://github.com/stillwater-sc/mtl5/issues/297) (batches [#298], [#300], [#301]).
 - Threaded CI coverage gap: [#299](https://github.com/stillwater-sc/mtl5/issues/299).
-- Design context: [`on-node-threading.md`](../algorithms/on-node-threading.md), [`multicore-scaling-investigation.md`](multicore-scaling-investigation.md).
+- Design context: [`on-node-threading.md`](../algorithms/on-node-threading.md), [`multicore-scaling-investigation.md`](../performance/multicore-scaling-investigation.md).

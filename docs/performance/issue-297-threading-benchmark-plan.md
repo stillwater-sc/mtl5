@@ -8,7 +8,7 @@ plan** (what/why/how to measure) and an **implementation plan** (the concrete
 harness changes).
 
 The guiding principle from the existing scaling study
-(`docs/design/multicore-scaling-investigation.md`) still holds: **the experiment
+(`docs/performance/multicore-scaling-investigation.md`) still holds: **the experiment
 is as easy to get wrong as the code.** We reuse its physical-core pinning
 methodology rather than reinvent it.
 
@@ -205,7 +205,7 @@ the harness.
   assertion (fail the analysis if any row is `0`).
 
 ### Phase 5 — Results write-up (0.5 day)
-- `docs/design/issue-297-threading-results.md`: topology, method (link this
+- `docs/performance/issue-297-threading-results.md`: topology, method (link this
   plan + the #221 study), per-kernel tables (speedup/efficiency/GFLOP/s or
   throughput), the multi-loop wide/short win, the sparse level-structure story,
   the T=1 overhead check, and the honest ceilings/limitations (serial panels,
@@ -219,7 +219,7 @@ the harness.
 - `benchmarks/bench_all.cpp` — `gemm-rect`, `ewise`, `sparse-solve` suites
 - `benchmarks/CMakeLists.txt` — `bench_sparse` target (if separate)
 - `benchmarks/run_scaling.sh` (or `run_scaling_297.sh`), `analyze_scaling.py`
-- `docs/design/issue-297-threading-results.md` — the report
+- `docs/performance/issue-297-threading-results.md` — the report
 
 ### Effort & sequencing
 ~4.5 engineer-days. Phase 2 (sparse) is the bulk and the most novel; Phases 0/1/3

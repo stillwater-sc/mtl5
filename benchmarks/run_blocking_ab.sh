@@ -92,6 +92,19 @@ NARMS=$(echo "$ARMS" | wc -w)
 if [ "$NARMS" -lt 2 ]; then
     echo "ARMS needs at least two arms to compare, got '$ARMS'" >&2; exit 2
 fi
+
+# The rotation below only cancels position effects when every arm leads an EQUAL
+# number of rounds, which needs ROUNDS to be a multiple of the arm count. At 5
+# rounds over 4 arms the first arm leads twice and one arm never leads -- a
+# residual bias of exactly the size the rotation exists to remove. Round up
+# rather than refuse: the operator asked for at least this many rounds, and the
+# sidecar records what actually ran.
+if [ $((ROUNDS % NARMS)) -ne 0 ]; then
+    ROUNDS_ASKED=$ROUNDS
+    ROUNDS=$(( ((ROUNDS + NARMS - 1) / NARMS) * NARMS ))
+    echo "NOTE: ROUNDS=$ROUNDS_ASKED over $NARMS arms cannot balance the rotation;" >&2
+    echo "      running $ROUNDS rounds so each arm leads $((ROUNDS / NARMS))." >&2
+fi
 mkdir -p "$OUTDIR"
 
 arm_bin() { echo "$BUILD_DIR/benchmarks/bench_blocking_ab_$1"; }
@@ -242,6 +255,27 @@ for a in $ARMS; do echo "  $(arm_csv "$a")"; done
 # it is what MTL5 ships, so every other arm is a proposed change to it.
 BASE=default
 echo "$ARMS" | grep -qw "$BASE" || BASE=$FIRST_ARM
+# Arms that derived the SAME kc/mc measure the same thing, so comparing them is
+# a check on the SESSION rather than on the code -- and the analyzer fails it
+# when they disagree systematically. Surface those pairs, because they are the
+# only way to find out that a machine's own drift is larger than the effect
+# under test (it disqualified a 15 W Jetson session that looked fine, #430).
+blocking_of() { awk -F, 'NR==2 {print $10","$11}' "$(arm_csv "$1")" 2>/dev/null; }
+CHECKS=""
+for a in $ARMS; do
+    for b in $ARMS; do
+        [ "$a" \< "$b" ] || continue
+        [ "$(blocking_of "$a")" = "$(blocking_of "$b")" ] || continue
+        CHECKS="$CHECKS  benchmarks/analyze_blocking_ab.py $(arm_csv "$a") $(arm_csv "$b")\n"
+    done
+done
+if [ -n "$CHECKS" ]; then
+    echo
+    echo "consistency checks -- these arms derived IDENTICAL kc/mc, so they must agree;"
+    echo "the analyzer fails them if the machine drifted more than the effect under test:"
+    printf "%b" "$CHECKS"
+fi
+
 echo "compare with:"
 for a in $ARMS; do
     [ "$a" = "$BASE" ] && continue

@@ -85,10 +85,11 @@ const FILE_MAP = {
   'design/multigrid-architecture.md':           'design/multigrid-architecture.md',
   'design/dense-direct-solvers-architecture.md': 'design/dense-direct-solvers-architecture.md',
   'design/blas-kernel-architecture.md':         'design/blas-kernel-architecture.md',
-  'design/multicore-scaling-investigation.md':  'design/multicore-scaling-investigation.md',
+  'performance/multicore-scaling-investigation.md':  'performance/multicore-scaling-investigation.md',
   'design/parallelization-patterns-and-pitfalls.md': 'design/parallelization-patterns-and-pitfalls.md',
-  'design/issue-297-threading-benchmark-plan.md': 'design/issue-297-threading-benchmark-plan.md',
-  'design/issue-297-threading-results.md': 'design/issue-297-threading-results.md',
+  'performance/issue-297-threading-benchmark-plan.md': 'performance/issue-297-threading-benchmark-plan.md',
+  'performance/issue-297-threading-results.md': 'performance/issue-297-threading-results.md',
+  'performance/cache-blocking-ab-study.md':    'performance/cache-blocking-ab-study.md',
   'design/mixed-precision-custom-types-SIMD.md': 'design/mixed-precision-custom-types-simd.md',
 
   // ── Modernization ──────────────────────────────────────────────────────

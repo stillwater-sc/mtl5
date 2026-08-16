@@ -85,14 +85,19 @@ export default defineConfig({
                 { slug: 'design/sparse-direct-solvers' },
               ],
             },
-            {
-              label: 'Performance studies',
-              items: [
-                { slug: 'design/multicore-scaling-investigation' },
-                { slug: 'design/issue-297-threading-benchmark-plan' },
-                { slug: 'design/issue-297-threading-results' },
-              ],
-            },
+          ],
+        },
+        {
+          // Lifted out of Design: these are experiments and their results, not
+          // architecture. They answer "what did the machine do", which is a
+          // different question from "how is it built", and they are cited from
+          // issues and PRs often enough to deserve a top-level home.
+          label: 'Performance studies',
+          items: [
+            { slug: 'performance/cache-blocking-ab-study' },
+            { slug: 'performance/multicore-scaling-investigation' },
+            { slug: 'performance/issue-297-threading-benchmark-plan' },
+            { slug: 'performance/issue-297-threading-results' },
           ],
         },
         {

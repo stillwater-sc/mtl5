@@ -122,6 +122,7 @@ def main(argv):
         print("Re-run both arms over the same shapes and rounds.", file=sys.stderr)
         return 2
 
+    null_ratios = []
     hdr = (f"{'shape':>22} {'T':>3} {dfl_name:>10} {det_name:>10} {'ratio':>7}"
            f" {'mc base/test':>13} {'grid':>6}  verdict")
     print(hdr)
@@ -150,6 +151,7 @@ def main(argv):
         # do not overlap, AND the effect clears the noise floor.
         rounds = len(a_s)                  # == len(b_s), enforced by the gate above
         if null_run:
+            null_ratios.append((key, ratio))
             verdict = "null (identical blocking)"
             noise += 1
         elif abs(ratio - 1.0) < NOISE_FLOOR:
@@ -182,6 +184,40 @@ def main(argv):
     print(f"{wins} faster, {losses} slower, {noise} indistinguishable "
           f"(GFLOP/s columns; ratio > 1 means detection helped; "
           f"differences under {NOISE_FLOOR:.0%} are not called)")
+
+    # INTEGRITY: two arms that compiled to the SAME blocking must measure the
+    # same throughput. When they do not, the difference is the machine or the
+    # session -- clock drift, thermal, an uncontrolled neighbour -- and it puts a
+    # floor under what this session can resolve that is LARGER than the effects
+    # it was run to measure. Reporting those effects anyway is how a 3% blocking
+    # result gets read out of an 8% measurement artefact.
+    #
+    # This is the check that disqualified the 15 W Jetson session (#430): its
+    # `detected` and `kconly` arms are the same configuration there, and they
+    # disagreed by up to 10%.
+    # Judged on the MEDIAN deviation, not point by point. Individual points
+    # scatter by a few percent on any machine -- that is what the noise floor is
+    # for -- and gating on the worst one would fail every healthy session. A
+    # SYSTEMATIC offset between identical binaries is the thing that cannot be
+    # noise. (Measured: a healthy Zen 4 pair sits at 1.2% median with individual
+    # points to 3.3%; the disqualified Jetson session sits at 3.5% median with
+    # five points beyond 9%.)
+    if null_ratios:
+        devs = sorted(abs(r - 1.0) for _, r in null_ratios)
+        median_dev = devs[len(devs) // 2] if len(devs) % 2 else \
+                     (devs[len(devs) // 2 - 1] + devs[len(devs) // 2]) / 2
+        if median_dev >= NOISE_FLOOR:
+            print(f"\nINTEGRITY FAILURE: {det_name} and {dfl_name} compiled to IDENTICAL "
+                  f"blocking, so these ratios should all be 1.0. The median deviation is "
+                  f"{median_dev:.1%}, past the {NOISE_FLOOR:.0%} floor.", file=sys.stderr)
+            print("The machine, not the code, is producing that -- this session cannot "
+                  "resolve anything smaller than its own drift:", file=sys.stderr)
+            for (dt, m, n, k, t), ratio in null_ratios:
+                if abs(ratio - 1.0) >= NOISE_FLOOR:
+                    print(f"  {m}x{n}x{k} T={t}: {ratio:.3f}", file=sys.stderr)
+            print("Pin clocks (governor / jetson_clocks), re-run, and compare again.",
+                  file=sys.stderr)
+            return 1
 
     if bad_checksum:
         print("\nCHECKSUM MISMATCH -- the arms did not compute the same result. "

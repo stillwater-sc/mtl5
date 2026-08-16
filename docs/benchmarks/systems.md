@@ -164,7 +164,7 @@ This is a **hybrid P/E-core CPU**, which makes pinning mandatory rather than
 optional. An unpinned single-threaded run lets short L1 kernels land on a 3.8 GHz
 E-core and reports a number that has nothing to do with the 5.0 GHz P-core the
 same code would reach in production. The failure mode is documented in
-[the multi-core scaling investigation](../design/multicore-scaling-investigation.md).
+[the multi-core scaling investigation](../performance/multicore-scaling-investigation.md).
 
 | Run type | Pinning | Rationale |
 |----------|---------|-----------|
@@ -426,26 +426,26 @@ earlier run was AVX2, so the ISA changed with the fix. This is the first Zen 4
 measurement taken with the intended ISA, and it supersedes rather than extends
 the old one — which is exactly what `build_isa` was added to make visible.
 
-### mc is harmless; kc is where the loss lives
+### CORRECTED: it is mc, not kc — see the study page
 
-The three machines happen to form a controlled experiment, because detection
-moved different parameters on each:
+The first round of this experiment concluded that "mc is harmless and kc is where
+the loss lives", inferred across machines that each happened to vary something
+different. The four-arm follow-up, which varies them **one at a time on a single
+machine**, refuted it and reversed the direction:
 
-| machine | kc | mc | single-thread ratios |
+| i7-12700K, single-threaded | kc | mc | median ratio |
 |---|---|---|---|
-| Ryzen 8945HS | 256 → 256 (**unchanged**) | 64 → 256 (4x) | 1.002 – 1.015 |
-| i7-12700K | 256 → 384 (+50%) | 64 → 213 | 0.931 – 0.952 |
-| Jetson Orin | 512 → 1024 (2x) | 32 → 16 | 0.978 – 0.983 |
+| `kconly` | 256 → **384** | 64 → 42 | **0.999** (free) |
+| `mconly` | 256 | 64 → **320** | **0.919** (8% loss, 5/5 shapes) |
 
-Ryzen isolates `mc`: quadrupling it costs **nothing** single-threaded. Both
-machines where `kc` moved lost throughput. The harm attaches to the L1-derived
-`kc`, not the L2-derived `mc` — the inverse of the working assumption, which had
-`mc` as the suspect.
+Raising `mc` is the harm, and it shows up with one thread. Raising `kc` is free
+serially — though *not* in parallel, where the i7 loses ~6% under `kconly` too.
+Neither is ever a win.
 
-Two details support it. Every detected arm sizes its A block to exactly 50% of
-L2, so *footprint fraction* is not what decides the outcome. And on the Jetson
-both arms have an identical 128 KB A block — 16x1024 against 32x512 — so that
-pair varies only the shape, and the deeper, narrower one is the one that loses.
+The full design, the exact hypothesis tests, the identical-binary calibration and
+the mechanism hypothesis are on
+[Cache blocking A/B](../performance/cache-blocking-ab-study.md). The operational
+conclusion is unchanged: **detection stays opt-in and off by default.**
 
 ### The anomaly worth chasing
 
