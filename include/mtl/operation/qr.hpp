@@ -23,7 +23,7 @@ namespace mtl {
 /// QR factorization: A (m x n, m >= n) is overwritten with R on+above diagonal
 /// and Householder vectors below diagonal. tau(k) stores beta for column k.
 /// Returns 0 on success.
-template <Matrix M>
+template <FieldMatrix M>
 int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -153,7 +153,7 @@ auto qr_extract_R(const M& A) {
 
 /// Solve A*x = b via QR factorization (least-squares for m > n).
 /// A must already be factored via qr_factor. x has size n, b has size m.
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
               VecX& x, const VecB& b) {
     using value_type = typename M::value_type;

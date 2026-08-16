@@ -38,7 +38,7 @@ namespace mtl {
 /// This is the C++ reference path. `eigenvalue_symmetric` dispatches to LAPACK
 /// when available and otherwise calls this; benchmarks and tests can call this
 /// directly to exercise the generic algorithm regardless of MTL5_HAS_LAPACK.
-template <Matrix M>
+template <FieldMatrix M>
 auto eigenvalue_symmetric_generic(const M& A,
                                   magnitude_t<typename M::value_type> tol = 1e-10,
                                   typename M::size_type max_iter = 0) {
@@ -167,7 +167,7 @@ auto eigenvalue_symmetric_generic(const M& A,
 /// Hermitian); otherwise uses the in-house eigenvalue_symmetric_generic. The
 /// LAPACK Hermitian path is what test_lapack_dispatch cross-checks the native
 /// complex reduction against.
-template <Matrix M>
+template <FieldMatrix M>
 auto eigenvalue_symmetric(const M& A,
                           magnitude_t<typename M::value_type> tol = 1e-10,
                           typename M::size_type max_iter = 0) {
@@ -259,7 +259,7 @@ auto eigenvalue_symmetric(const M& A,
 /// folded into Q -- skip it and eigenvalues still look right while A*v != lambda*v.
 /// For a real value_type conj() is the identity, D is the identity, real_t is
 /// value_type, and the arithmetic is bit-identical to the earlier H*A*H code.
-template <Matrix M>
+template <FieldMatrix M>
 auto eigen_symmetric(const M& A,
                      magnitude_t<typename M::value_type> tol = 1e-10,
                      typename M::size_type max_iter = 0) {

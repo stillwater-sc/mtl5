@@ -96,7 +96,7 @@ void symmetric_swap(M& A, std::size_t r1, std::size_t r2, std::size_t first_col 
 /// In-place: lower triangle of A is overwritten with L (unit diagonal implicit),
 /// D occupies the diagonal and first subdiagonal for 2x2 blocks.
 /// Returns 0 on success, k+1 if a singular block is encountered at step k.
-template <Matrix M>
+template <FieldMatrix M>
 int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
     using value_type = typename M::value_type;
     using std::abs;
@@ -256,7 +256,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
 /// The factored A contains L (unit lower, implicit diagonal) and D
 /// (diagonal and subdiagonal for 2x2 blocks). pivots records the
 /// permutation and block structure.
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void ldlt_bk_solve(const M& A, const bk_pivot_info& pivots, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     const std::size_t n = A.num_rows();

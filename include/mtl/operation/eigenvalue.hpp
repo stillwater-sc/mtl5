@@ -184,7 +184,7 @@ void eig_lu_solve(const std::vector<Complex>& M, const std::vector<std::size_t>&
 /// Dispatches to LAPACK geev when MTL5_HAS_LAPACK is defined and the type
 /// qualifies (dense2D<float/double>, either orientation); otherwise uses the
 /// in-house path above, which also serves custom number types (posits, LNS, ...).
-template <Matrix M>
+template <FieldMatrix M>
 auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
                 typename M::size_type max_iter = 0) {
     using value_type = typename M::value_type;
@@ -391,7 +391,7 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 /// Dispatches to LAPACK geev (eigenvalues + right eigenvectors) when
 /// MTL5_HAS_LAPACK is defined and the type qualifies (dense2D<float/double>,
 /// either orientation); otherwise uses the in-house path above.
-template <Matrix M>
+template <FieldMatrix M>
 auto eigen(const M& A, typename M::value_type tol = 1e-10,
            typename M::size_type max_iter = 0) {
     using value_type   = typename M::value_type;

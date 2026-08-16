@@ -7,6 +7,7 @@
 #include <mtl/concepts/collection.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
+#include <mtl/mat/dense2D.hpp>
 #include <mtl/concepts/linear_operator.hpp>
 #include <mtl/concepts/preconditioner.hpp>
 
@@ -23,6 +24,22 @@ TEST_CASE("Scalar concept satisfied by arithmetic types", "[concepts][scalar]") 
 TEST_CASE("Scalar concept satisfied by std::complex", "[concepts][scalar]") {
     STATIC_REQUIRE(mtl::Scalar<std::complex<float>>);
     STATIC_REQUIRE(mtl::Scalar<std::complex<double>>);
+}
+
+TEST_CASE("Field excludes the integers, which are a ring", "[concepts][scalar]") {
+    // int satisfies the SYNTAX of a field -- a / b compiles and yields an int --
+    // which is why a purely syntactic concept admitted it, and why lu_factor on
+    // an integer matrix used to compile and return a truncated factorization.
+    // Only 1 and -1 have inverses in Z.
+    STATIC_REQUIRE_FALSE(mtl::Field<int>);
+    STATIC_REQUIRE_FALSE(mtl::Field<long>);
+    STATIC_REQUIRE_FALSE(mtl::Field<unsigned>);
+    STATIC_REQUIRE_FALSE(mtl::Field<char>);
+    STATIC_REQUIRE_FALSE(mtl::Field<bool>);
+    // Still scalars, though: they add and multiply, and the SIMD/GEMM path is
+    // meant to grow integer support (dot/gemv/gemm need a ring, not a field).
+    STATIC_REQUIRE(mtl::Scalar<int>);
+    STATIC_REQUIRE(mtl::Scalar<short>);
 }
 
 TEST_CASE("Field concept satisfied by floating-point types", "[concepts][scalar]") {
@@ -73,4 +90,17 @@ TEST_CASE("std::vector does not satisfy Collection (no size_type alias)", "[conc
 TEST_CASE("Non-scalar types do not satisfy Scalar", "[concepts][scalar]") {
     STATIC_REQUIRE_FALSE(mtl::Scalar<std::vector<double>>);
     STATIC_REQUIRE_FALSE(mtl::Scalar<std::string>);
+}
+
+TEST_CASE("FieldMatrix gates the algorithms that divide", "[concepts][matrix]") {
+    // The factorizations (LU, QR, LQ, Cholesky, LDL^T, SVD, eigen, inv) require
+    // this. An integer matrix is a perfectly good Matrix -- it just cannot be
+    // factorized, and saying so at the interface is what turns a wrong answer
+    // into a compile error.
+    STATIC_REQUIRE(mtl::Matrix<mtl::mat::dense2D<int>>);
+    STATIC_REQUIRE_FALSE(mtl::FieldMatrix<mtl::mat::dense2D<int>>);
+
+    STATIC_REQUIRE(mtl::FieldMatrix<mtl::mat::dense2D<double>>);
+    STATIC_REQUIRE(mtl::FieldMatrix<mtl::mat::dense2D<float>>);
+    STATIC_REQUIRE(mtl::FieldMatrix<mtl::mat::dense2D<std::complex<double>>>);
 }

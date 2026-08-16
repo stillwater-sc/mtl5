@@ -66,7 +66,7 @@ inline constexpr int LDLT_NOT_HERMITIAN = -2;
 /// The strictly lower triangle of A is overwritten with L (unit diagonal implicit).
 /// The diagonal of A is overwritten with D.
 /// Returns 0 on success, k+1 if D(k,k) == 0 (zero pivot).
-template <Matrix M>
+template <FieldMatrix M>
 int ldlt_factor(M& A) {
     using value_type = typename M::value_type;
     const std::size_t n = A.num_rows();
@@ -142,7 +142,7 @@ int ldlt_factor(M& A) {
 /// Solve A*x = b using precomputed LDL^T factors stored in A.
 /// Lower triangle of A contains L (unit diagonal implicit), diagonal contains D.
 /// Three phases: L*y = b (forward), D*z = y (diagonal), L^T*x = z (backward).
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void ldlt_solve(const M& A, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     const std::size_t n = A.num_rows();
@@ -190,7 +190,7 @@ void ldlt_solve(const M& A, VecX& x, const VecB& b) {
 /// For real element types conjugation is the identity and this is exactly
 /// ldlt_factor. For complex elements it is the factorization a Hermitian matrix
 /// actually has -- see the note at the top of this file (#352).
-template <Matrix M>
+template <FieldMatrix M>
 int ldlt_h_factor(M& A) {
     using value_type = typename M::value_type;
     using mag_t      = magnitude_t<value_type>;
@@ -252,7 +252,7 @@ int ldlt_h_factor(M& A) {
 
 /// Solve A*x = b using precomputed LDL^H factors stored in A.
 /// Three phases: L*y = b (forward), D*z = y (diagonal), L^H*x = z (backward).
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void ldlt_h_solve(const M& A, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     using conj_t     = functor::scalar::conj<value_type>;

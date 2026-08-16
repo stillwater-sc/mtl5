@@ -11,7 +11,7 @@ namespace mtl {
 
 /// Compute the inverse of a square matrix A via LU factorization.
 /// Returns inv(A) as a dense2D. Throws if A is singular.
-template <Matrix M>
+template <FieldMatrix M>
 auto inv(const M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;

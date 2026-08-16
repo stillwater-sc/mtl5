@@ -16,7 +16,7 @@ namespace mtl {
 /// LQ factorization: A (m x n, n >= m) is overwritten with L on+below diagonal
 /// and Householder vectors above diagonal. tau(k) stores beta for row k.
 /// Returns 0 on success.
-template <Matrix M>
+template <FieldMatrix M>
 int lq_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;

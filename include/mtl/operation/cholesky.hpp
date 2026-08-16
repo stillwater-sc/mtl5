@@ -52,7 +52,7 @@ inline constexpr int CHOLESKY_NOT_HERMITIAN = -2;
 /// Returns 0 on success, k+1 if A(k,k) <= 0 (not SPD).
 ///
 /// Complex element types are rejected at compile time; use cholesky_h_factor.
-template <Matrix M>
+template <FieldMatrix M>
 int cholesky_factor(M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -146,7 +146,7 @@ int cholesky_factor(M& A) {
 
 /// Solve A*x = b using precomputed Cholesky factor L (stored in lower triangle of A).
 /// Solves L*y = b (forward), then L^T*x = y (backward).
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void cholesky_solve(const M& L, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     using size_type  = typename M::size_type;
@@ -185,7 +185,7 @@ void cholesky_solve(const M& L, VecX& x, const VecB& b) {
 ///
 /// For real element types conjugation is the identity and this is exactly
 /// cholesky_factor -- see the note at the top of this file (#353).
-template <Matrix M>
+template <FieldMatrix M>
 int cholesky_h_factor(M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -278,7 +278,7 @@ int cholesky_h_factor(M& A) {
 /// Solve A*x = b using precomputed Cholesky factors of a HERMITIAN A, i.e. the
 /// L of A = L*L^H stored in the lower triangle by cholesky_h_factor.
 /// Solves L*y = b (forward), then L^H*x = y (backward).
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void cholesky_h_solve(const M& L, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     using size_type  = typename M::size_type;

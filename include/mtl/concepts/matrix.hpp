@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- Matrix concepts (replaces MTL4 concept/matrix.hpp)
 #include <mtl/concepts/collection.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/tag/sparsity.hpp>
 #include <cstddef>
@@ -15,6 +16,14 @@ concept Matrix = Collection<T> && requires(const T& m, std::size_t r, std::size_
     { m.num_cols() } -> std::convertible_to<typename T::size_type>;
     { m(r, c) }      -> std::convertible_to<typename T::value_type>;
 };
+
+/// A matrix whose elements form a FIELD -- the requirement of every algorithm
+/// that divides by a matrix element: LU, QR, LQ, Cholesky, LDL^T, SVD, eigen,
+/// inverse. Integral element types are excluded by Field (see concepts/scalar);
+/// on them the division truncates and the factorization returns confident
+/// nonsense rather than failing.
+template <typename T>
+concept FieldMatrix = Matrix<T> && Field<typename T::value_type>;
 
 /// A dense matrix: category tag is tag::dense
 template <typename T>

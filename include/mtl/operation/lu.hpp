@@ -28,7 +28,7 @@ namespace mtl {
 /// A is overwritten: L (unit lower, stored below diagonal) + U (stored on+above diagonal).
 /// pivot[k] = row index swapped with row k at step k.
 /// Returns 0 on success, k+1 if U(k,k) is zero (singular).
-template <Matrix M>
+template <FieldMatrix M>
 int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -128,7 +128,7 @@ int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
 /// Solve A*x = b using precomputed LU factorization.
 /// LU contains both L (below diagonal, unit) and U (on+above diagonal).
 /// Applies pivot permutation, then forward/back substitution.
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void lu_solve(const M& LU, const std::vector<typename M::size_type>& pivot,
               VecX& x, const VecB& b) {
     using size_type = typename M::size_type;
@@ -168,7 +168,7 @@ void lu_solve(const M& LU, const std::vector<typename M::size_type>& pivot,
 ///
 /// Needed by bicg and qmr, the only solvers that ask a preconditioner for
 /// M^-H (#394).
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 void lu_adjoint_solve(const M& LU, const std::vector<typename M::size_type>& pivot,
                       VecX& x, const VecB& b) {
     using size_type  = typename M::size_type;
@@ -212,7 +212,7 @@ void lu_adjoint_solve(const M& LU, const std::vector<typename M::size_type>& piv
 
 /// Convenience: factor and solve A*x = b in one call.
 /// A is modified in place. Returns 0 on success.
-template <Matrix M, Vector VecX, Vector VecB>
+template <FieldMatrix M, Vector VecX, Vector VecB>
 int lu_apply(M& A, VecX& x, const VecB& b) {
     std::vector<typename M::size_type> pivot;
     int info = lu_factor(A, pivot);

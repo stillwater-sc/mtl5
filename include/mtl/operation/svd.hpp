@@ -34,7 +34,7 @@ namespace mtl {
 /// 1e-10 would cap accuracy several orders of magnitude short of what the
 /// method achieves. Callers wanting the old, looser behaviour can pass 1e-10
 /// explicitly, and a larger tolerance trades accuracy for fewer sweeps.
-template <Matrix M>
+template <FieldMatrix M>
 void svd(const M& A,
          mat::dense2D<typename M::value_type>& U,
          mat::dense2D<typename M::value_type>& S,
@@ -324,7 +324,7 @@ void svd(const M& A,
 }
 
 /// Convenience overload returning a tuple of (U, S, V).
-template <Matrix M>
+template <FieldMatrix M>
 auto svd(const M& A,
          typename M::value_type tol = std::numeric_limits<typename M::value_type>::epsilon()) {
     using value_type = typename M::value_type;
