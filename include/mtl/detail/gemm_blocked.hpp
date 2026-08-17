@@ -102,6 +102,38 @@ inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt
     return mc == 0 ? mc_max : mc;
 }
 
+/// The largest mc for which the packed A block AND the strip of C it accumulates
+/// both fit in L2. Returns 0 for "no bound" on degenerate input.
+///
+/// WHY THIS IS A RUNTIME BOUND AND NOT PART OF THE MODEL (#453). derive_blocking
+/// sizes mc so the A block `mc x kc` fills about half of L2 and counts nothing
+/// else, while the same cache simultaneously holds the C strip the ic block is
+/// accumulating into. The obvious repair -- add the C term to the compile-time
+/// model -- is FALSIFIED by its own calibration point: the strip there has to be
+/// `mc x nc`, since n is unknown, and reproducing the shipped mc = 64 then needs
+///
+///     mc * (kc + nc) * sizeof <= 8.5 * L2
+///
+/// which is not a residency statement at all, and a different family of hardware
+/// needs 2.5 rather than 8.5. The model cannot be fixed with a constant.
+///
+/// The reason is that the strip is `mc x min(n, nc)`, not `mc x nc` -- and n is
+/// known exactly HERE, at the call, which is already where mc is capped for the
+/// thread budget. On an i7 (L2 = 1.25 MB, kc = 256) this yields 128 at n = 1024,
+/// where the shipped mc = 64 is untouched, and 37 at n = 4096, where the
+/// measurements preferred a smaller mc than the model chose (#430: the 4096^2
+/// single-thread point was the one place a smaller-mc arm WON, at 1.029).
+constexpr std::size_t c_strip_mc_cap(std::size_t l2_bytes, std::size_t kc,
+                                     std::size_t n, std::size_t nc,
+                                     std::size_t sdata) {
+    if (l2_bytes == 0 || sdata == 0) return 0;          // nothing known -> no bound
+    const std::size_t strip = (nc != 0 && nc < n) ? nc : n;   // min(n, nc)
+    const std::size_t per_row = (kc + strip) * sdata;
+    if (per_row == 0) return 0;
+    const std::size_t cap = l2_bytes / per_row;
+    return cap == 0 ? 1 : cap;      // never 0: mc is a loop step
+}
+
 /// The threaded nest's shape decision: the ic block size and the ic x jc thread
 /// grid. Pure, so it can be unit-tested and enumerated offline (#430) instead of
 /// being inferred from a throughput change.
@@ -136,10 +168,16 @@ struct gemm_grid {
 ///    difference. The search below is exhaustive over ic (a handful of values)
 ///    and maximises ic_nt * jc_nt, preferring the larger ic_nt on ties because a
 ///    wider ic team keeps the shared packed-B panel resident.
+///
+/// `mc_extra_cap` is an additional upper bound on mc (0 = none), used for the
+/// C-strip bound above. It is applied BEFORE the budget cap, so both can bind
+/// and the smaller wins; like the budget cap it only ever LOWERS mc.
 constexpr gemm_grid plan_gemm_grid(std::size_t m, std::size_t n,
                                    std::size_t mc_cache, std::size_t nc,
-                                   std::size_t mr, unsigned budget) {
+                                   std::size_t mr, unsigned budget,
+                                   std::size_t mc_extra_cap = 0) {
     if (budget < 1) budget = 1;
+    if (mc_extra_cap != 0 && mc_extra_cap < mc_cache) mc_cache = mc_extra_cap;
     // mc is a divisor and a loop step, so it must never leave here as 0 even on
     // a degenerate call -- a 0 step would not terminate. Everything else about a
     // degenerate call is "nothing to do": no blocks, a 1x1 grid.
@@ -212,12 +250,25 @@ inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads) 
         p.njb = NC ? (n + NC - 1) / NC : 0;
         return p;
     };
-    // Serial: balanced_mc with ic_nt = 1 rounds the bound down to whole mr
-    // panels, which is what serial_nest steps by.
-    if (budget <= 1) return finish(balanced_mc(m, MC, 1, MR), 1, 1);
+    // The C-strip bound (#453), off unless this translation unit asked for it.
+    // It needs the machine's real L2, so it is only meaningful together with L2
+    // detection -- the `ccap` benchmark arm compiles both.
+#if defined(MTL5_GEMM_C_STRIP_CAP)
+    const std::size_t c_cap = c_strip_mc_cap(simd::detected_hw_traits().l2_bytes,
+                                             rbp.kc, n, NC, sizeof(TC));
+#else
+    const std::size_t c_cap = 0;
+#endif
+    const std::size_t serial_mc = (c_cap != 0 && c_cap < MC) ? c_cap : MC;
 
-    const gemm_grid g = plan_gemm_grid(m, n, MC, NC, MR, budget);
-    if (g.ic_nt * g.jc_nt <= 1) return finish(balanced_mc(m, MC, 1, MR), 1, 1);
+    // Serial: balanced_mc with ic_nt = 1 rounds the bound down to whole mr
+    // panels, which is what serial_nest steps by. The C-strip bound applies here
+    // too -- it is about cache residency, not about threads, and the measured
+    // losses it targets are visible at one thread (#430).
+    if (budget <= 1) return finish(balanced_mc(m, serial_mc, 1, MR), 1, 1);
+
+    const gemm_grid g = plan_gemm_grid(m, n, MC, NC, MR, budget, c_cap);
+    if (g.ic_nt * g.jc_nt <= 1) return finish(balanced_mc(m, serial_mc, 1, MR), 1, 1);
     return finish(balanced_mc(m, g.mc, g.ic_nt, MR), g.ic_nt, g.jc_nt);
 }
 

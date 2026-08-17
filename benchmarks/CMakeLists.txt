@@ -50,11 +50,30 @@ set_target_properties(bench_sparse PROPERTIES FOLDER "Benchmarks")
 #
 # All four are the SAME source; only the macro differs, so any difference in
 # throughput is a difference in blocking.
-set(_ab_arms      default        detected                        kconly                             mconly)
-set(_ab_arm_defs  ""             MTL5_ENABLE_CACHE_DETECTION     MTL5_ENABLE_CACHE_DETECTION_L1     MTL5_ENABLE_CACHE_DETECTION_L2)
-foreach(_i RANGE 3)
-    list(GET _ab_arms     ${_i} _arm)
-    list(GET _ab_arm_defs ${_i} _def)
+# `ccap` is the #453 arm: L2 detection PLUS the runtime C-strip bound on mc. It
+# is deliberately mconly + the cap, so `ccap` vs `mconly` isolates the cap and
+# `ccap` vs `default` answers the shipped question.
+# One if-chain rather than two parallel lists: an arm needs TWO defines, and a
+# ";"-joined list element is silently FLATTENED into the outer list by CMake, so
+# the parallel-list form shifted every later index and handed `ccap` only half
+# its configuration. It still built and ran, reporting "L2 only" -- a
+# misconfigured arm that looks like a working one, which is the failure this
+# whole benchmark tree exists to make impossible.
+set(_ab_arms default detected kconly mconly ccap)
+foreach(_arm ${_ab_arms})
+    if(_arm STREQUAL "default")
+        set(_def "")
+    elseif(_arm STREQUAL "detected")
+        set(_def MTL5_ENABLE_CACHE_DETECTION)
+    elseif(_arm STREQUAL "kconly")
+        set(_def MTL5_ENABLE_CACHE_DETECTION_L1)
+    elseif(_arm STREQUAL "mconly")
+        set(_def MTL5_ENABLE_CACHE_DETECTION_L2)
+    elseif(_arm STREQUAL "ccap")
+        set(_def MTL5_ENABLE_CACHE_DETECTION_L2 MTL5_GEMM_C_STRIP_CAP)
+    else()
+        message(FATAL_ERROR "no defines configured for A/B arm '${_arm}'")
+    endif()
     add_executable(bench_blocking_ab_${_arm} bench_blocking_ab.cpp)
     target_link_libraries(bench_blocking_ab_${_arm} PRIVATE MTL5::mtl5)
     target_include_directories(bench_blocking_ab_${_arm} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)

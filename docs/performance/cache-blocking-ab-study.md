@@ -215,9 +215,40 @@ holds the C strip being accumulated, which is `mc × nc`:
 | `default`, mc=60 | 123 KB | 1.97 MB | 1.25 MB |
 | `mconly`, mc=318 | 651 KB | **10.4 MB** | 1.25 MB |
 
-C dominates and is absent from the derivation. That predicts `mc` should be
-bounded by `mc·(kc + nc)`, not by `mc·kc` — a concrete, falsifiable model change
-and the next arm to add.
+C dominates and is absent from the derivation.
+
+**The obvious repair does not survive its own calibration point.** Adding the C
+term to the *compile-time* model forces the strip to be `mc × nc`, since `n` is
+unknown there, and reproducing the shipped `mc = 64` then needs
+
+```
+mc * (kc + nc) * sizeof  <=  8.5 * L2
+```
+
+which is not a residency statement at all — and the `nr = 4` hardware family
+needs 2.5 rather than 8.5, so no constant repairs it.
+
+The reason is that the strip is `mc × min(n, nc)`, and **`n` is known at the
+call** — which is already where `mc` is capped for the thread budget. So the
+bound belongs in the runtime planner, not in the model:
+
+```
+mc  <=  L2 / ((kc + min(n, nc)) * sizeof)
+```
+
+On the i7 that yields **128** at `n = 1024` (the shipped `mc = 64` untouched),
+**71** at `n = 2048`, and **37** at `n = 4096` — tightening exactly where the
+measurements preferred a smaller `mc`, and leaving alone where they did not. It
+is also nearly independent of `kc`, where the current model is inversely
+proportional to it; that difference in *shape* is the thing to measure.
+
+Implemented as `detail::c_strip_mc_cap` and the **`ccap` arm** (#453): L2
+detection plus the cap, so `ccap` vs `mconly` isolates the bound and `ccap` vs
+`default` answers the shipped question. Run it with
+
+```bash
+ARMS="default mconly ccap" benchmarks/machines/i7-12700k.sh
+```
 
 ## What this experiment changed in the harness
 

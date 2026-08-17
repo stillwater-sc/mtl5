@@ -215,3 +215,77 @@ TEST_CASE("gemm_plan_for reports a derived mc, not the configured one",
         if (p.budget >= 8) REQUIRE(p.nib >= p.ic_nt);
     }
 }
+
+// --- the C-strip bound on mc (#453) ----------------------------------------
+//
+// derive_blocking sizes mc so the packed A block fills ~half of L2 and counts
+// nothing else, while the same cache holds the strip of C being accumulated.
+// Adding the C term to the COMPILE-TIME model does not work, and the arithmetic
+// says so rather than a measurement: the static strip has to be `mc x nc`, since
+// n is unknown there, and reproducing the shipped mc = 64 then needs
+// `mc*(kc+nc)*sizeof <= 8.5*L2` -- not a residency statement, and a different
+// hardware family needs 2.5 instead. The strip is `mc x min(n, nc)`, and n is
+// known at the call.
+TEST_CASE("the C-strip cap bounds mc by what L2 must actually hold",
+          "[detail][gemm][grid][cstrip]") {
+    using mtl::detail::c_strip_mc_cap;
+    constexpr std::size_t SD = 8;                 // double
+
+    SECTION("i7-12700K: binds where the model overshot, not where it was fine") {
+        constexpr std::size_t L2 = 1310720;       // 1.25 MB, one P-core
+        // n <= nc: the strip is the problem width, so a narrow problem allows a
+        // large mc and the shipped 64 is untouched.
+        REQUIRE(c_strip_mc_cap(L2, 256, 1024, 4096, SD) == 128);
+        // As n grows the strip does too, and the bound tightens below 64 --
+        // which is the direction the 4096^2 measurements preferred (#430).
+        REQUIRE(c_strip_mc_cap(L2, 256, 2048, 4096, SD) == 71);
+        REQUIRE(c_strip_mc_cap(L2, 256, 4096, 4096, SD) == 37);
+        // Beyond nc the strip stops growing: jc blocks the problem at nc.
+        REQUIRE(c_strip_mc_cap(L2, 256, 8192, 4096, SD)
+                == c_strip_mc_cap(L2, 256, 4096, 4096, SD));
+    }
+
+    SECTION("a larger kc tightens the bound, but weakly") {
+        // The kc term is small next to the strip, so the cap is nearly
+        // independent of kc -- unlike the current model, where mc is inversely
+        // proportional to it. That difference in SHAPE is what the ccap arm
+        // measures.
+        constexpr std::size_t L2 = 1310720;
+        const auto lo = c_strip_mc_cap(L2, 256, 1024, 4096, SD);
+        const auto hi = c_strip_mc_cap(L2, 384, 1024, 4096, SD);
+        REQUIRE(hi < lo);
+        REQUIRE(hi * 10 > lo * 8);      // within ~20%, not the 1.5x of mc ~ 1/kc
+    }
+
+    SECTION("degenerate input yields no bound rather than a zero step") {
+        REQUIRE(c_strip_mc_cap(0, 256, 1024, 4096, SD) == 0);      // L2 unknown
+        REQUIRE(c_strip_mc_cap(1310720, 256, 1024, 4096, 0) == 0); // sizeof 0
+        // A cache too small for even one row must still leave a usable step.
+        REQUIRE(c_strip_mc_cap(64, 256, 4096, 4096, SD) == 1);
+    }
+}
+
+TEST_CASE("plan_gemm_grid honours the extra cap and still never starves",
+          "[detail][gemm][grid][cstrip]") {
+    // The cap is applied BEFORE the budget cap, so both can bind and the smaller
+    // wins -- and neither may push mc to 0, which is a loop step.
+    for (std::size_t cap : {std::size_t{0}, std::size_t{16}, std::size_t{37},
+                            std::size_t{128}, std::size_t{4096}})
+        for (std::size_t m : {std::size_t{64}, std::size_t{1024}, std::size_t{4096}})
+            for (unsigned b : {1u, 8u}) {
+                const auto g = plan_gemm_grid(m, 4096, 213, NC, MR, b, cap);
+                INFO("cap=" << cap << " m=" << m << " budget=" << b
+                     << " -> mc=" << g.mc << " grid=" << g.ic_nt << "x" << g.jc_nt);
+                REQUIRE(g.mc >= 1);
+                REQUIRE(g.mc <= 213);                       // the L2 bound holds
+                if (cap != 0 && cap < 213) REQUIRE(g.mc <= cap);
+                REQUIRE(g.nib == (m + g.mc - 1) / g.mc);
+                REQUIRE(g.ic_nt * g.jc_nt <= (b < 1 ? 1 : b));
+            }
+
+    // A cap looser than the cache bound changes nothing.
+    const auto uncapped = plan_gemm_grid(1024, 4096, 64, NC, MR, 8, 0);
+    const auto loose    = plan_gemm_grid(1024, 4096, 64, NC, MR, 8, 4096);
+    REQUIRE(uncapped.mc == loose.mc);
+    REQUIRE(uncapped.ic_nt == loose.ic_nt);
+}

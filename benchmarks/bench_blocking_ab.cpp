@@ -219,6 +219,13 @@ int main(int argc, char** argv) {
           : mtl::simd::has_level(lv, detect_levels::l1) ? "L1 only -- kc detected, mc from the default model"
           :                                              "L2 only -- mc detected, kc from the default model";
         std::fprintf(stderr, "  cache detection: %s\n", what);
+#if defined(MTL5_GEMM_C_STRIP_CAP)
+        // The cap changes mc per CALL, so an arm carrying it must say so: two
+        // arms with the same kc/mc line and different behaviour is precisely
+        // what the identical-arm integrity check reads as a broken session.
+        std::fprintf(stderr, "  mc bound: C-strip cap ON -- mc also bounded by "
+                             "L2 / ((kc + min(n,nc)) * sizeof) per call (#453)\n");
+#endif
     }
     std::fprintf(stderr, "  fp64 mr=%zu nr=%zu kc=%zu mc=%zu nc=%zu\n",
                  bpd.mr, bpd.nr, bpd.kc, bpd.mc, bpd.nc);

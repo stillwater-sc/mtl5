@@ -67,6 +67,7 @@ fi
 #   detected   L1+L2 -- kc from L1 and mc from L2
 #   kconly     L1    -- kc detected, mc from the default model
 #   mconly     L2    -- mc detected, kc from the default model
+#   ccap       L2    -- mconly PLUS the runtime C-strip bound on mc (#453)
 #
 # kconly/mconly exist because the four-machine result (#430) implicated kc and
 # exonerated mc without ever varying them separately: the Ryzen run happened to
@@ -80,7 +81,7 @@ for a in $ARMS; do
     b="$BUILD_DIR/benchmarks/bench_blocking_ab_$a"
     if [ ! -x "$b" ]; then
         echo "missing $b" >&2
-        echo "known arms: default detected kconly mconly" >&2
+        echo "known arms: default detected kconly mconly ccap" >&2
         echo "build with:  cmake --preset release && cmake --build $BUILD_DIR --target \\" >&2
         for x in $ARMS; do echo "                 bench_blocking_ab_$x \\" >&2; done
         echo "                 -j4" >&2
