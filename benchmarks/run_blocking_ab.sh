@@ -260,7 +260,17 @@ echo "$ARMS" | grep -qw "$BASE" || BASE=$FIRST_ARM
 # when they disagree systematically. Surface those pairs, because they are the
 # only way to find out that a machine's own drift is larger than the effect
 # under test (it disqualified a 15 W Jetson session that looked fine, #430).
-blocking_of() { awk -F, 'NR==2 {print $10","$11}' "$(arm_csv "$1")" 2>/dev/null; }
+# By HEADER NAME, not column number. The CSV has grown columns twice (`pool`,
+# then the mc_used group), so kc sits at field 9 in the pre-`pool` files still
+# committed under benchmarks/data and at field 10 in current ones -- a positional
+# read silently returns (mc,nc) for the older layout. It happens to group
+# correctly today, because a session only ever reads files it just wrote, which
+# is exactly the kind of accident that stops being true later.
+blocking_of() {
+    awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
+             NR == 2 { if (col["kc"] && col["mc"]) print $col["kc"] "," $col["mc"]; exit }' \
+        "$(arm_csv "$1")" 2>/dev/null
+}
 CHECKS=""
 for a in $ARMS; do
     for b in $ARMS; do
