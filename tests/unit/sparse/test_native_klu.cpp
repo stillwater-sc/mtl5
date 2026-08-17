@@ -212,14 +212,32 @@ TEST_CASE("native KLU on 2D Poisson scales sub-quadratically",
           "[sparse][klu][native][scaling][poisson]") {
     // 2D Poisson (5-point Laplacian) is the canonical fill-test matrix. With a
     // good ordering its factorization is O(n^1.5) flops / O(n log n) fill -- not
-    // literally O(nnz), but far from the old O(n^2) blowup. As the grid refines,
-    // n quadruples per step; an O(n^2) implementation would grow time ~16x per
-    // step. We solve 32x32, 64x64, 128x128, 256x256 grids, check the relative
-    // residual, and assert both time and factor fill grow sub-quadratically.
+    // literally O(nnz), but far from the old O(n^2) blowup. As the grid refines
+    // n quadruples per step, and an O(n^2) implementation would grow FILL ~16x
+    // per step. We solve 32x32, 64x64 and 128x128 grids, check the relative
+    // residual, and assert the factor fill grows sub-quadratically.
+    //
+    // FILL, NOT TIME. This test used to assert a wall-clock ratio as well
+    // (#454). It could not be stable: a ratio of two single timings, against a
+    // threshold only ~2x above the expected value, in the tier that gates every
+    // PR on shared cloud runners. Sampled three times on an IDLE machine the
+    // statistic itself moved 31% (5.24, 5.91, 6.87), and CI produced 15.0
+    // against a limit of 13.0 on a PR that changed no C++ at all.
+    //
+    // Nothing algorithmic was lost by removing it, because fill is the
+    // DETERMINISTIC observable of the same property: a sparse factorization's
+    // asymptotic cost is driven by fill growth, and the clock measures fill plus
+    // noise. The timing claim now lives in the regression tier
+    // (tests/regression/sparse/test_klu_scaling.cpp), which is gated, runs on
+    // one controlled platform, and takes a minimum of several samples per size.
+    //
+    // Dropping the 256x256 grid with it takes this test from ~10 s to ~1.5 s.
+    // The fill ratio is a per-refinement quantity, so 64 -> 128 tests it exactly
+    // as well as 128 -> 256 did.
     struct Row { std::size_t N, n, nnz, fill; double time_ms; };
     std::vector<Row> rows;
 
-    for (std::size_t N : {32u, 64u, 128u, 256u}) {
+    for (std::size_t N : {32u, 64u, 128u}) {
         auto A = generators::poisson2d_dirichlet<double>(N, N);
         std::size_t n = A.num_rows();
 
@@ -255,17 +273,10 @@ TEST_CASE("native KLU on 2D Poisson scales sub-quadratically",
             << "  time=" << r.time_ms << " ms");
 
     // Fill is deterministic: O(n log n)-ish, so each 4x-n refinement grows fill
-    // well under the 16x an O(n^2) factorization would require.
+    // well under the 16x an O(n^2) factorization would require. No clock is
+    // involved, so this holds identically on a loaded runner.
     double fill_ratio = double(rows.back().fill) / double(rows[rows.size() - 2].fill);
     REQUIRE(fill_ratio < 8.0);
-
-    // Time growth over the last refinement (n quadruples). Measured ~7-8x
-    // (O(n^1.5)); an O(n^2) factorization would be ~16x. A ratio cancels the
-    // build-dependent per-op constant, so this is stable across Debug/Release/
-    // sanitizer builds, unlike an absolute wall-clock ceiling. Both timings are
-    // large (tens-to-hundreds of ms), so jitter is small.
-    double time_ratio = rows.back().time_ms / rows[rows.size() - 2].time_ms;
-    REQUIRE(time_ratio < 13.0);
 }
 
 TEST_CASE("native KLU refactor reuses structure for same-pattern matrices",

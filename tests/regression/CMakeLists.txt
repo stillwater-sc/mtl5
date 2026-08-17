@@ -48,4 +48,9 @@ if(ITL_REG_SRC)
     add_regression_tests("itl" "itl" "${ITL_REG_SRC}")
     set_tests_properties(regression_itl_test_cg PROPERTIES TIMEOUT 600)
     set_tests_properties(regression_itl_test_bicgstab PROPERTIES TIMEOUT 600)
+    # gmres belongs with them and was missed: it takes 8m06s on a Xeon E5-2420 v2
+    # (486 s), so it TIMES OUT at the 300 s default on any machine slower than a
+    # CI runner -- which makes the regression tier unrunnable locally for the
+    # people most likely to run it. It passes comfortably at 600.
+    set_tests_properties(regression_itl_test_gmres PROPERTIES TIMEOUT 600)
 endif()
