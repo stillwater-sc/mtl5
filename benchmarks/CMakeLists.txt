@@ -92,6 +92,16 @@ foreach(_arm ${_ab_arms})
     add_dependencies(bench_blocking_ab_${_arm} mtl5_build_info)
 endforeach()
 
+# Blocking response-curve sweep (#453): the same bench_blocking_ab source, built
+# with the diagnostic override so kc/mc/nc can be set per run from the
+# environment. Separate target so no other binary carries the knob.
+add_executable(bench_blocking_sweep bench_blocking_ab.cpp)
+target_link_libraries(bench_blocking_sweep PRIVATE MTL5::mtl5)
+target_include_directories(bench_blocking_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_compile_definitions(bench_blocking_sweep PRIVATE MTL5_ENABLE_BLOCKING_OVERRIDE)
+set_target_properties(bench_blocking_sweep PROPERTIES FOLDER "Benchmarks")
+add_dependencies(bench_blocking_sweep mtl5_build_info)
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)

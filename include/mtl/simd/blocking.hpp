@@ -19,6 +19,7 @@
 // packed B panel to ~L3.
 
 #include <cstddef>
+#include <cstdlib>   // getenv, for the diagnostic override below
 
 #include <mtl/simd/batch.hpp>        // simd::width<T>
 #include <mtl/util/cache_info.hpp>   // util::cached_cache_info (#222)
@@ -356,6 +357,33 @@ inline const blocking_params& runtime_blocking() {
         // partition is what must not move (#429), pin the result rather than an
         // input, and leave this struct saying exactly what the nest should use.
         p.nc = default_blocking<T>.nc;
+
+        // DIAGNOSTIC OVERRIDE, compiled out unless a translation unit asks for
+        // it. There is no way to measure the kc/mc RESPONSE CURVE without one:
+        // both are derived, and #453 has now produced two analytical rules that
+        // each explained half the data. OpenBLAS and BLIS disagree with this
+        // model and with each other -- for Haswell double, BLIS uses mc=72,
+        // kc=256 (A block 57% of L2) while OpenBLAS uses 512/256 (400% of L2) --
+        // so the space worth measuring reaches far outside what the model can
+        // express.
+        //
+        // Guarded by a macro rather than merely by the environment: a shipped
+        // build must not have a knob that silently changes blocking, and the
+        // sidecar's mc_used would record the effect without explaining it.
+#if defined(MTL5_ENABLE_BLOCKING_OVERRIDE)
+        if (const char* e = std::getenv("MTL5_BLOCKING_KC")) {
+            const long v = std::atol(e);
+            if (v > 0) p.kc = static_cast<std::size_t>(v);
+        }
+        if (const char* e = std::getenv("MTL5_BLOCKING_MC")) {
+            const long v = std::atol(e);
+            if (v > 0) p.mc = static_cast<std::size_t>(v);
+        }
+        if (const char* e = std::getenv("MTL5_BLOCKING_NC")) {
+            const long v = std::atol(e);
+            if (v > 0) p.nc = static_cast<std::size_t>(v);
+        }
+#endif
         return p;
     }();
     return bp;

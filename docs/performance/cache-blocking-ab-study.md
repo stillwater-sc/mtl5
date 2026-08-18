@@ -293,6 +293,80 @@ the wins have another cause.
 ARMS="default ccap ccap2" ROUNDS=6 benchmarks/machines/i7-12700k.sh
 ```
 
+### The prediction was half right, which killed the hypothesis
+
+Xeon, `default` / `ccap` / `ccap2`, 6 rounds. `ccap` reproduced its earlier
+session to within 0.5% — an independent replication of both the wins and the
+losses.
+
+| shape | T | `ccap` | `ccap2` | predicted | mc: def / ccap / ccap2 |
+|---|---|---|---|---|---|
+| 96×4096 | 6 | 0.832 | **0.993** | loss gone ✓ | 16 / 8 / 16 |
+| 96×6144 | 6 | 0.836 | **0.999** | loss gone ✓ | 16 / 8 / 16 |
+| 1024² | 6 | 0.856 | **1.001** | loss gone ✓ | 29 / 19 / 29 |
+| 2048² | 6 | 1.152 | **1.012** | win survives ✗ | 32 / 12 / 16 |
+| 4096² | 6 | 1.159 | **1.025** | win survives ✗ | 32 / 12 / 16 |
+
+Charging A was indeed what caused the losses — all three vanish. But charging C
+alone keeps only 1.2% and 2.5% of a 15% win. So the win is **not** "C fits in
+L2": at mc=16 the strip is exactly 256 KB (100% of L2) and captures almost
+nothing, while mc=12 (77%) captures all of it. And at 1024² the strip at the
+untouched mc=29 is 237 KB — 93% of L2 — and leaving it alone is best. No
+residency threshold produces both.
+
+## What the reference implementations do
+
+Haswell, double precision:
+
+| | mr×nr | mc | kc | nc | A block | vs 256 KB L2 |
+|---|---|---|---|---|---|---|
+| BLIS | 6×8 | 72 | 256 | 4080 | 147 KB | 57% |
+| OpenBLAS | 4×8 | **512** | 256 | **13824** | **1024 KB** | **400%** |
+| MTL5 (AVX2) | 6×8 | 64 | 256 | 4096 | 131 KB | 51% |
+| MTL5 (Xeon, nr=4) | 6×4 | 32 | **512** | 2048 | 131 KB | 51% |
+
+**OpenBLAS does not target L2 for the A block at all** — 4× over on Haswell,
+Sandy Bridge and Nehalem, 2× on Zen. Only SkylakeX, whose L2 is 1 MB, has A
+inside L2 (589 KB, 58%). Our model and BLIS's assume L2 residency unconditionally;
+the most-used BLAS in the world does not.
+
+Both references use **kc = 256** for double, where our Xeon build derives 512 —
+because `kc = (L1/2)/(nr·sizeof)` charges the **B micro-panel only**, so a
+narrower `nr` inflates it. That was worth measuring rather than "fixing".
+
+## The response curve, measured
+
+2048³, best of 3 rounds, order rotated per round, `mc` overridden directly
+(`bench_blocking_sweep`, an opt-in diagnostic build):
+
+| mc | kc=256, T=1 | kc=512, T=1 | kc=256, T=6 | kc=512, T=6 |
+|---|---|---|---|---|
+| 12 | 9.61 | **9.74** | 50.27 | **51.24** |
+| 24 | 9.58 | 9.65 | 48.91 | 50.25 |
+| **32** *(shipped)* | 9.50 | 9.54 | 45.11 | **45.35** |
+| 48 | 9.22 | 9.60 | 44.11 | 45.44 |
+| 64 | 9.32 | 9.62 | 46.19 | 47.30 |
+| 96 | 9.29 | 9.59 | 46.03 | 48.84 |
+| 144 | 9.14 | 9.41 | 48.87 | 50.50 |
+| 256 | 9.12 | 9.40 | 46.45 | 47.88 |
+
+Three results, none of which either candidate model predicted:
+
+1. **The curve is W-shaped, and the shipped `mc = 32` sits in the trough.** It
+   reaches 88.5% of the best at T=6; both 12 and 144 beat it by ~12%. The two
+   `kc` columns show the same shape independently, which is a replication.
+2. **`mc` is a threading effect, not a residency one.** The spread across mc is
+   **3.6% at T=1** and **13.0% at T=6**. A cache-residency story cannot be four
+   times stronger with six threads on the same footprints.
+3. **Our kc = 512 beats the reference kc = 256** on this machine at nearly every
+   mc — so the "our kc is twice everyone else's" observation, which looked like a
+   defect, is not one here.
+
+So #453's premise does not survive: the L2 model is not what makes `mc` matter.
+The `ccap` win was real and reproducible, but it came from moving off a bad
+operating point, not from making C fit. The next question belongs to the
+partition (#429, #412), not to the cache model.
+
 ## What this experiment changed in the harness
 
 Each of these came from a defect this study found in its own data:
