@@ -244,10 +244,53 @@ proportional to it; that difference in *shape* is the thing to measure.
 
 Implemented as `detail::c_strip_mc_cap` and the **`ccap` arm** (#453): L2
 detection plus the cap, so `ccap` vs `mconly` isolates the bound and `ccap` vs
-`default` answers the shipped question. Run it with
+`default` answers the shipped question.
+
+### First result: the effect is large, and A does not belong in the budget
+
+Xeon E5-2420 v2, 6 physical cores, 3 arms × 6 rounds in one session. The control
+holds — `mconly` is a null run here (L2 already matches the model), median 1.001,
+range [0.992, 1.006] — so the machine resolved to about ±0.7%.
+
+| shape | T | ratio `ccap`/`default` | mc default → ccap |
+|---|---|---|---|
+| 2048² | 6 | **1.151** | 32 → 12 |
+| 4096² | 6 | **1.158** | 32 → 12 |
+| 1024² | 6 | 0.854 | 29 → 19 |
+| 96×4096 | 6 | 0.832 | 16 → 8 |
+| 96×6144 | 6 | 0.831 | 16 → 8 |
+| all shapes | 1 | 0.993 – 1.005 | 30 → 12 |
+
+Two things fall out. **Single-threaded, mc barely matters on this machine** —
+cutting it from 30 to 12 costs nothing — which is the mirror image of the i7,
+where *raising* it cost 3–14%. Small mc is safe; large mc is not.
+
+And the multi-threaded split has a clean explanation:
+
+| shape | mc | A = mc·kc | C = mc·min(n,nc) | C fits 256 KB L2? | ratio |
+|---|---|---|---|---|---|
+| 2048² | 32 | 128 KB | 512 KB | **no** | 1.151 |
+| 4096² | 32 | 128 KB | 512 KB | **no** | 1.158 |
+| 1024² | 29 | 116 KB | 232 KB | yes | 0.854 |
+| 96×4096 | 16 | 64 KB | 256 KB | yes | 0.832 |
+
+The bound fires whenever **A + C** exceeds L2, but every win is a shape where
+**C alone** exceeds it, and every loss is a shape where C already fitted and the
+bound shrank mc for nothing. So A does not belong in the budget: it is streamed
+into the packed buffer and consumed once per jc block, while C is
+read-modify-written across the whole kc loop and is the operand that must stay
+resident.
+
+### The `ccap2` arm, and what it predicts
+
+`ccap2` charges the C strip alone. On this machine it leaves mc at the default
+exactly where `ccap` lost — 1024² keeps 29, 96×4096 keeps 16 — while still
+cutting 32 → 16 where `ccap` won. So it predicts, falsifiably: **the three losses
+disappear and both wins survive.** If they do not, the C-strip story is wrong and
+the wins have another cause.
 
 ```bash
-ARMS="default mconly ccap" benchmarks/machines/i7-12700k.sh
+ARMS="default ccap ccap2" ROUNDS=6 benchmarks/machines/i7-12700k.sh
 ```
 
 ## What this experiment changed in the harness

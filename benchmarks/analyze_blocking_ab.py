@@ -66,6 +66,7 @@ def main(argv):
     # 30 serially and 29 on six threads -- and it varies with the SHAPE, so it
     # belongs per point rather than in a summary line. Collected here, printed in
     # the table below.
+
     def plan_of(rows):
         out = {}
         for key, rs in rows.items():
@@ -95,7 +96,21 @@ def main(argv):
 
     # Structural control: identical parameters means the arms are the same
     # program. Any timing difference is measurement noise, by construction.
-    null_run = all(det_p.get(dt) == dfl_p.get(dt) for dt in set(det_p) | set(dfl_p))
+    # "Identical" means the arms ran the SAME PLAN, not that they were configured
+    # alike. mc travels through a budget cap and a C-strip bound before any loop
+    # steps by it (#448, #453), so two arms can share a kc/mc line and still
+    # block differently -- the ccap arm does exactly that. Judging by the
+    # configured values called a 15% effect "null (identical blocking)" AND
+    # raised an integrity failure against it: the analyzer hid a result and
+    # blamed the machine for it.
+    #
+    # mc_used is absent from CSVs written before #448; there the configured
+    # values are all there is, which is the old behaviour and no worse.
+    if det_plan and dfl_plan:
+        shared = set(det_plan) & set(dfl_plan)
+        null_run = bool(shared) and all(det_plan[k] == dfl_plan[k] for k in shared)
+    else:
+        null_run = all(det_p.get(dt) == dfl_p.get(dt) for dt in set(det_p) | set(dfl_p))
     if null_run:
         print("\n*** NULL RUN: both arms compiled to identical blocking parameters.")
         print(f"*** {det_name} and {dfl_name} derive the same kc/mc on this machine")

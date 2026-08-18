@@ -59,7 +59,7 @@ set_target_properties(bench_sparse PROPERTIES FOLDER "Benchmarks")
 # its configuration. It still built and ran, reporting "L2 only" -- a
 # misconfigured arm that looks like a working one, which is the failure this
 # whole benchmark tree exists to make impossible.
-set(_ab_arms default detected kconly mconly ccap)
+set(_ab_arms default detected kconly mconly ccap ccap2)
 foreach(_arm ${_ab_arms})
     if(_arm STREQUAL "default")
         set(_def "")
@@ -71,6 +71,12 @@ foreach(_arm ${_ab_arms})
         set(_def MTL5_ENABLE_CACHE_DETECTION_L2)
     elseif(_arm STREQUAL "ccap")
         set(_def MTL5_ENABLE_CACHE_DETECTION_L2 MTL5_GEMM_C_STRIP_CAP)
+    elseif(_arm STREQUAL "ccap2")
+        # As ccap, but the budget charges the C strip ALONE. The Xeon run says
+        # A does not belong in it: every win was a shape where C alone overflowed
+        # L2, every loss a shape where C already fitted.
+        set(_def MTL5_ENABLE_CACHE_DETECTION_L2 MTL5_GEMM_C_STRIP_CAP
+                 MTL5_GEMM_C_STRIP_CAP_C_ONLY)
     else()
         message(FATAL_ERROR "no defines configured for A/B arm '${_arm}'")
     endif()

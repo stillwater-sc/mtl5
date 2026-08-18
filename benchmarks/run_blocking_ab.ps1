@@ -71,6 +71,7 @@ param(
     #   kconly   L1     -- kc detected, mc from the default model
     #   mconly   L2     -- mc detected, kc from the default model
     #   ccap     L2     -- mconly PLUS the runtime C-strip bound on mc (#453)
+    #   ccap2    L2     -- as ccap, but the bound charges the C strip ALONE
     # kconly/mconly exist because #430 implicated kc and exonerated mc without
     # ever varying them separately. Run all four in ONE session to settle it:
     #   -Arms "default,detected,kconly,mconly"
@@ -207,7 +208,7 @@ if ($Rounds % $ArmList.Count -ne 0) {
     Write-Host "NOTE: -Rounds $asked over $($ArmList.Count) arms cannot balance the rotation;"
     Write-Host "      running $Rounds rounds so each arm leads $($Rounds / $ArmList.Count)."
 }
-$known = @("default", "detected", "kconly", "mconly", "ccap")
+$known = @("default", "detected", "kconly", "mconly", "ccap", "ccap2")
 foreach ($a in $ArmList) {
     if ($known -notcontains $a) { throw "unknown arm '$a'; known arms: $($known -join ', ')" }
 }

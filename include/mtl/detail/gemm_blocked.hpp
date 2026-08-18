@@ -123,12 +123,27 @@ inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt
 /// where the shipped mc = 64 is untouched, and 37 at n = 4096, where the
 /// measurements preferred a smaller mc than the model chose (#430: the 4096^2
 /// single-thread point was the one place a smaller-mc arm WON, at 1.029).
+/// `charge_a` decides whether the packed A block is charged against the same
+/// budget. MEASURED, not assumed (Xeon E5-2420, 6 cores, 6 rounds):
+///
+///     shape      T   default mc   A+C      C alone   fits L2?   ccap ratio
+///     2048^2     6      32        640K      512K       NO         1.151
+///     4096^2     6      32        640K      512K       NO         1.158
+///     1024^2     6      29        348K      232K       yes        0.854
+///     96x4096    6      16        320K      256K       yes        0.832
+///
+/// Charging A+C fires whenever the pair exceeds L2 -- but every WIN is a shape
+/// where C ALONE exceeds it, and every LOSS is a shape where C already fitted
+/// and the bound only shrank mc for nothing. So A does not belong in the budget:
+/// it is streamed into the packed buffer and consumed once per jc block, while C
+/// is read-modify-written across the whole kc loop and is the operand that has
+/// to stay resident.
 constexpr std::size_t c_strip_mc_cap(std::size_t l2_bytes, std::size_t kc,
                                      std::size_t n, std::size_t nc,
-                                     std::size_t sdata) {
+                                     std::size_t sdata, bool charge_a = true) {
     if (l2_bytes == 0 || sdata == 0) return 0;          // nothing known -> no bound
     const std::size_t strip = (nc != 0 && nc < n) ? nc : n;   // min(n, nc)
-    const std::size_t per_row = (kc + strip) * sdata;
+    const std::size_t per_row = (charge_a ? kc + strip : strip) * sdata;
     if (per_row == 0) return 0;
     const std::size_t cap = l2_bytes / per_row;
     return cap == 0 ? 1 : cap;      // never 0: mc is a loop step
@@ -254,8 +269,14 @@ inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads) 
     // It needs the machine's real L2, so it is only meaningful together with L2
     // detection -- the `ccap` benchmark arm compiles both.
 #if defined(MTL5_GEMM_C_STRIP_CAP)
+    // MTL5_GEMM_C_STRIP_CAP_C_ONLY drops A from the budget -- the `ccap2` arm.
+  #if defined(MTL5_GEMM_C_STRIP_CAP_C_ONLY)
+    constexpr bool charge_a = false;
+  #else
+    constexpr bool charge_a = true;
+  #endif
     const std::size_t c_cap = c_strip_mc_cap(simd::detected_hw_traits().l2_bytes,
-                                             rbp.kc, n, NC, sizeof(TC));
+                                             rbp.kc, n, NC, sizeof(TC), charge_a);
 #else
     const std::size_t c_cap = 0;
 #endif
