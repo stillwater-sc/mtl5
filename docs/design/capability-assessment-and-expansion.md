@@ -88,6 +88,14 @@ rather than foundational.
 
 ## 2. Performance
 
+> **Since this assessment was written**, the blocking and scheduling questions
+> have their own accumulated verdict, with the measurements behind it:
+> [Assessment: blocking, scheduling, and what transfers to other backends](../performance/blocking-and-scheduling-assessment.md).
+> The short version: the thread partition dominates the cache model, cache-size
+> detection never wins, and the analytical model's L2-residency premise is not
+> shared by OpenBLAS. That page also frames what to re-derive for a GPU or KPU
+> backend.
+
 ### What exists and works well
 
 - **SIMD abstraction** (`simd/batch.hpp`). A compile-time-lane `batch<T>` over

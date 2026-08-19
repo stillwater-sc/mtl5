@@ -90,6 +90,7 @@ const FILE_MAP = {
   'performance/issue-297-threading-benchmark-plan.md': 'performance/issue-297-threading-benchmark-plan.md',
   'performance/issue-297-threading-results.md': 'performance/issue-297-threading-results.md',
   'performance/cache-blocking-ab-study.md':    'performance/cache-blocking-ab-study.md',
+  'performance/blocking-and-scheduling-assessment.md': 'performance/blocking-and-scheduling-assessment.md',
   'design/mixed-precision-custom-types-SIMD.md': 'design/mixed-precision-custom-types-simd.md',
 
   // ── Modernization ──────────────────────────────────────────────────────
