@@ -50,6 +50,56 @@ T big_b(std::size_t i) { return static_cast<T>(static_cast<std::uint32_t>(0x85EB
 
 const std::size_t kLengths[] = {0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 33, 64, 100, 257};
 
+/// Closed-form mod-2^32 reference for the first `n` products.
+template <typename T>
+std::uint64_t ref_dot(const T* a, const T* b, std::size_t n) {
+    std::uint64_t acc = 0;
+    for (std::size_t i = 0; i < n; ++i) acc += bits(a[i]) * bits(b[i]);
+    return acc;
+}
+
+/// `reduce_dot` at a COMPILE-TIME-CONSTANT length, checked against both the
+/// closed form and the same call with the length made opaque.
+///
+/// The second comparison is the one that earns its place. A constant trip count
+/// is a different code path -- the compiler may unroll it, specialize the loop
+/// bounds, or vectorize it differently from the runtime-length version -- and
+/// the two must still agree. GCC 13 at -O3 -march=x86-64-v3 did not: it fused
+/// the four interleaved integer accumulator chains into one contiguous
+/// reduction and advanced three of them at half the required stride, so the
+/// constant-length answer was silently wrong while the runtime-length answer
+/// was right. Every test that reached reduce_dot through a runtime length
+/// passed. See the note in simd/algorithm.hpp.
+template <typename T, std::size_t N>
+bool const_length_ok(const T* a, const T* b) {
+    const T folded = mtl::simd::reduce_dot<T>(a, b, N);       // N is constant here
+    volatile std::size_t opaque = N;                          // ... and not here
+    const T runtime = mtl::simd::reduce_dot<T>(a, b, opaque);
+    return folded == runtime && folded == wrap32<T>(ref_dot(a, b, N));
+}
+
+template <typename T, std::size_t N>
+bool const_length_sq_ok(const T* a) {
+    const T folded = mtl::simd::reduce_sum_squares<T>(a, N);
+    volatile std::size_t opaque = N;
+    const T runtime = mtl::simd::reduce_sum_squares<T>(a, opaque);
+    return folded == runtime && folded == wrap32<T>(ref_dot(a, a, N));
+}
+
+template <typename T, std::size_t... Ns>
+std::vector<std::size_t> failing_dot_lengths(const T* a, const T* b) {
+    std::vector<std::size_t> bad;
+    ((const_length_ok<T, Ns>(a, b) ? void() : bad.push_back(Ns)), ...);
+    return bad;
+}
+
+template <typename T, std::size_t... Ns>
+std::vector<std::size_t> failing_sq_lengths(const T* a) {
+    std::vector<std::size_t> bad;
+    ((const_length_sq_ok<T, Ns>(a) ? void() : bad.push_back(Ns)), ...);
+    return bad;
+}
+
 /// Is `batch<T> / batch<T>` a valid expression?
 ///
 /// Written as a variable TEMPLATE rather than inline in the assertion on
@@ -196,6 +246,29 @@ TEMPLATE_TEST_CASE("integer reduce_dot equals the exact mod-2^32 sum",
         INFO("n=" << n);
         CHECK(mtl::simd::reduce_dot<TestType>(a.data(), b.data(), n) == wrap32<TestType>(acc));
     }
+}
+
+TEMPLATE_TEST_CASE("integer reductions agree at compile-time-constant lengths",
+                   "[simd][integer][l1]", std::int32_t, std::uint32_t) {
+    // Lengths chosen to straddle the SIMD width and the unroll factor on every
+    // backend, and to include the two that GCC 13 miscompiled (137, 257).
+    constexpr std::size_t kMax = 1031;
+    std::vector<TestType> a(kMax), b(kMax);
+    for (std::size_t i = 0; i < kMax; ++i) { a[i] = big_a<TestType>(i); b[i] = big_b<TestType>(i); }
+
+    const auto bad_dot = failing_dot_lengths<TestType,
+        1, 2, 3, 7, 8, 12, 13, 16, 17, 20, 25, 31, 33, 40, 64, 100,
+        128, 137, 200, 256, 257, 512, 1031>(a.data(), b.data());
+    for (std::size_t n : bad_dot)
+        UNSCOPED_INFO("reduce_dot disagrees at compile-time-constant length " << n);
+    CHECK(bad_dot.empty());
+
+    const auto bad_sq = failing_sq_lengths<TestType,
+        1, 2, 3, 7, 8, 12, 13, 16, 17, 20, 25, 31, 33, 40, 64, 100,
+        128, 137, 200, 256, 257, 512, 1031>(a.data());
+    for (std::size_t n : bad_sq)
+        UNSCOPED_INFO("reduce_sum_squares disagrees at compile-time-constant length " << n);
+    CHECK(bad_sq.empty());
 }
 
 TEMPLATE_TEST_CASE("integer reduce_dot is invariant under partitioning",
