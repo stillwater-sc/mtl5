@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <complex>
+#include <cstddef>
+#include <cstdint>
 
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
@@ -61,4 +64,41 @@ TEST_CASE("dot product of single-element vectors", "[operation][dot]") {
     dense_vector<double> a = {5.0};
     dense_vector<double> b = {3.0};
     REQUIRE(dot(a, b) == 15.0);
+}
+
+// Integer dot after #451 phase 0: same values, different route. dense_vector<int>
+// used to fall to the generic accumulate loop because the SIMD gate asked for a
+// BLAS scalar type; it now goes through simd::reduce_dot. The results below are
+// small enough to be order-independent either way -- the point of stating them
+// is that widening the gate did not change any answer.
+TEST_CASE("integer dot takes the SIMD path and keeps its values", "[operation][dot][integer]") {
+    STATIC_REQUIRE(mtl::interface::SimdDenseVector<dense_vector<std::int32_t>>);
+    STATIC_REQUIRE_FALSE(mtl::interface::BlasDenseVector<dense_vector<std::int32_t>>);
+
+    dense_vector<std::int32_t> a = {1, 2, 3, 4, 5};
+    dense_vector<std::int32_t> b = {2, 3, 4, 5, 6};
+    // 2 + 6 + 12 + 20 + 30 = 70
+    CHECK(dot(a, b) == 70);
+    CHECK(dot_real(a, b) == 70);
+}
+
+// Long enough to run the four-accumulator SIMD body, the single-batch loop and
+// the scalar tail, with operands large enough that the sum overflows int32 many
+// times over. The contract is that the answer is the exact sum reduced mod 2^32,
+// and that it does not depend on where the kernel happened to split the work.
+TEST_CASE("integer dot overflows into a defined value, not an order-dependent one",
+          "[operation][dot][integer]") {
+    constexpr std::size_t n = 1031;                       // prime, so tails are ragged
+    dense_vector<std::int32_t> a(n), b(n);
+    std::uint64_t acc = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto ai = static_cast<std::uint32_t>(0x9E3779B9u * (i + 1));
+        const auto bi = static_cast<std::uint32_t>(0x85EBCA77u * (i + 3));
+        a(i) = static_cast<std::int32_t>(ai);
+        b(i) = static_cast<std::int32_t>(bi);
+        acc += static_cast<std::uint64_t>(ai) * bi;       // uint64 wrap keeps low 32 bits
+    }
+    const auto expected = static_cast<std::int32_t>(static_cast<std::uint32_t>(acc));
+    CHECK(dot(a, b) == expected);
+    CHECK(dot_real(a, b) == expected);
 }

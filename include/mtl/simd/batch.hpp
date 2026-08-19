@@ -19,9 +19,32 @@
 //
 // The API surface is identical across backends, so the dense kernels (#86-#90)
 // never need to know which one is active.
+//
+// LANE TYPES AND THE INTEGER OVERFLOW CONTRACT (#451 phase 0)
+//
+// Supported lanes are float, double, int32_t and uint32_t -- see is_lane_v for
+// why the integer entry stops at 32 bits. Integer arithmetic here is
+// **two's-complement wrapping**: + - * and fma each return the exact
+// mathematical result reduced mod 2^32. That is not a fallback, it is the
+// native semantics of every target ISA (Highway specifies `operator*` as
+// "truncating to the lower half for integer inputs"), and it buys a property
+// floating point cannot offer:
+//
+//   addition mod 2^32 is associative and commutative, so an integer reduction
+//   is BIT-IDENTICAL across lane counts, unroll factors, backends and thread
+//   partitions.
+//
+// A float reduce_dot has to qualify every equality claim with an accumulation
+// order; the int32 one does not. The cost is that the caller owns overflow:
+// int32 x int32 accumulated in int32 wraps within a couple of terms at full
+// range. Choosing an accumulator wide enough for the data is #451 phases 2-3,
+// and tests/unit/simd/test_int_accumulation.cpp already pins the envelope.
+//
+// Division is NOT provided for integer lanes -- deliberately; see operator/.
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 #if defined(MTL5_HAS_HIGHWAY)
@@ -37,6 +60,76 @@
 
 namespace mtl::simd {
 
+/// Lane types `batch<T>` supports.
+///
+/// Real floating point (the dense-BLAS case), plus **32-bit integers** as of
+/// phase 0 of the integer-lane epic (#451). The integer entry is deliberately
+/// narrow:
+///
+///   * 8- and 16-bit lanes are excluded because their VALUE is the widening
+///     accumulate (`vpdpbusd` / `vpdpwssd` / SDOT), not the plain lane -- and
+///     x86 has no 8-bit vector multiply at all. They arrive with the
+///     accumulator contract, in phases 2-3.
+///   * 64-bit lanes are excluded because `Mul` is emulated on x86 before
+///     AVX512DQ, so a `batch<int64_t>` would advertise a vector multiply that
+///     is a scalar loop in disguise.
+///
+/// 32-bit is exactly the width where the multiply is a single native
+/// instruction on every target ISA (`vpmulld` / NEON `mul.4s`), which is what
+/// makes it the honest plumbing case.
+template <typename T>
+inline constexpr bool is_lane_v =
+    std::is_floating_point_v<T> ||
+    std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::uint32_t>;
+
+/// True for the integer lane types -- the ones whose arithmetic WRAPS.
+template <typename T>
+inline constexpr bool is_integer_lane_v = is_lane_v<T> && std::is_integral_v<T>;
+
+namespace detail {
+
+// Two's-complement wrapping add/multiply for the scalar paths (the fallback
+// backend and every kernel's scalar tail).
+//
+// This is not pedantry. Signed integer overflow is UB in C++, so a tail written
+// `s += a[i] * b[i]` over int32 is UB the moment it overflows -- while the SIMD
+// body it completes wraps silently and defines the result. Routing the scalar
+// arithmetic through the unsigned counterpart makes both halves agree on the
+// SAME well-defined value: C++20 fixes two's complement, so the round trip
+// through std::make_unsigned_t is exact and the narrowing cast back is modular
+// rather than implementation-defined. Floating lanes fall through unchanged.
+template <typename T>
+constexpr T wrap_add(T a, T b) noexcept {
+    if constexpr (std::is_integral_v<T>) {
+        using U = std::make_unsigned_t<T>;
+        return static_cast<T>(static_cast<U>(static_cast<U>(a) + static_cast<U>(b)));
+    } else {
+        return a + b;
+    }
+}
+
+template <typename T>
+constexpr T wrap_sub(T a, T b) noexcept {
+    if constexpr (std::is_integral_v<T>) {
+        using U = std::make_unsigned_t<T>;
+        return static_cast<T>(static_cast<U>(static_cast<U>(a) - static_cast<U>(b)));
+    } else {
+        return a - b;
+    }
+}
+
+template <typename T>
+constexpr T wrap_mul(T a, T b) noexcept {
+    if constexpr (std::is_integral_v<T>) {
+        using U = std::make_unsigned_t<T>;
+        return static_cast<T>(static_cast<U>(static_cast<U>(a) * static_cast<U>(b)));
+    } else {
+        return a * b;
+    }
+}
+
+} // namespace detail
+
 #if MTL5_SIMD_USE_HIGHWAY
 
 namespace hn = hwy::HWY_NAMESPACE;
@@ -44,11 +137,11 @@ namespace hn = hwy::HWY_NAMESPACE;
 /// SIMD register of `T`, backed by Google Highway (static dispatch).
 template <typename T>
 class batch {
-    static_assert(std::is_floating_point_v<T>,
-                  "mtl::simd::batch currently supports floating-point lanes "
-                  "(float/double) -- the dense-BLAS use case. The ops (/, fma, "
-                  "reductions) assume floating semantics; integer lanes are a "
-                  "future extension.");
+    static_assert(is_lane_v<T>,
+                  "mtl::simd::batch supports float, double, int32_t and uint32_t "
+                  "lanes. 8/16-bit integers arrive with the widening accumulate "
+                  "(#451 phases 2-3); 64-bit integer multiply is emulated on x86 "
+                  "before AVX512DQ.");
     using D = hn::ScalableTag<T>;
     using V = hn::VFromD<D>;
     static constexpr D d_{};
@@ -71,8 +164,16 @@ public:
     /// Load `size` values of a NARROWER type `Src` and widen each lane to `T`
     /// (e.g. load float, accumulate in double). The float descriptor is rebound
     /// to the same lane count as `T`'s, so exactly `size` source values are read.
+    ///
+    /// Floating lanes only. Widening an integer lane is the whole substance of
+    /// #451 phases 2-3 -- it has to pick a signedness convention and an overflow
+    /// contract for the accumulate -- so it is excluded here rather than
+    /// inherited by accident from `sizeof(Src) < sizeof(T)`.
     template <typename Src>
     static batch load_widen(const Src* p) {
+        static_assert(std::is_floating_point_v<T> && std::is_floating_point_v<Src>,
+                      "load_widen is floating-point only; widening integer lanes "
+                      "needs an accumulator contract (#451 phases 2-3)");
         static_assert(sizeof(Src) < sizeof(T),
                       "load_widen widens; use load_unaligned for equal-width types");
         const hn::Rebind<Src, D> ds;
@@ -82,9 +183,27 @@ public:
     friend batch operator+(batch a, batch b) { return batch(hn::Add(a.v_, b.v_)); }
     friend batch operator-(batch a, batch b) { return batch(hn::Sub(a.v_, b.v_)); }
     friend batch operator*(batch a, batch b) { return batch(hn::Mul(a.v_, b.v_)); }
-    friend batch operator/(batch a, batch b) { return batch(hn::Div(a.v_, b.v_)); }
+
+    /// Lane-wise division -- FLOATING LANES ONLY, and the omission is deliberate.
+    ///
+    /// Highway does offer an integer `Div`, but it is implementation-defined
+    /// where `b[i] == 0` and where `a[i] == INT_MIN && b[i] == -1`, and it
+    /// truncates. #450 took exactly this position one level up: `Field` now
+    /// excludes the integers so `lu_factor(dense2D<int>)` fails to compile
+    /// rather than returning a truncated factorization. Offering `batch<int32_t>
+    /// / batch<int32_t>` would reopen that door underneath the concept. Generic
+    /// code that divides therefore fails to compile on integer lanes, which is
+    /// the intended answer.
+    friend batch operator/(batch a, batch b)
+        requires std::is_floating_point_v<T>
+    { return batch(hn::Div(a.v_, b.v_)); }
 
     /// Fused multiply-add: a*b + c (the single FMA decision point).
+    ///
+    /// On integer lanes there is nothing to fuse and nothing to round: `MulAdd`
+    /// is a multiply and an add, and the result is the exact product-sum reduced
+    /// mod 2^32. So the "fused" in the name is a floating-point concern only,
+    /// and the integer answer is exact by construction.
     friend batch fma(batch a, batch b, batch c) { return batch(hn::MulAdd(a.v_, b.v_, c.v_)); }
 
     friend T reduce_add(batch a) { return hn::ReduceSum(d_, a.v_); }
@@ -96,11 +215,11 @@ public:
 
 template <typename T>
 class batch {
-    static_assert(std::is_floating_point_v<T>,
-                  "mtl::simd::batch currently supports floating-point lanes "
-                  "(float/double) -- the dense-BLAS use case. The ops (/, fma, "
-                  "reductions) assume floating semantics; integer lanes are a "
-                  "future extension.");
+    static_assert(is_lane_v<T>,
+                  "mtl::simd::batch supports float, double, int32_t and uint32_t "
+                  "lanes. 8/16-bit integers arrive with the widening accumulate "
+                  "(#451 phases 2-3); 64-bit integer multiply is emulated on x86 "
+                  "before AVX512DQ.");
     T v_{};
 
 public:
@@ -119,20 +238,35 @@ public:
     /// widening load; see the Highway variant).
     template <typename Src>
     static batch load_widen(const Src* p) {
+        static_assert(std::is_floating_point_v<T> && std::is_floating_point_v<Src>,
+                      "load_widen is floating-point only; widening integer lanes "
+                      "needs an accumulator contract (#451 phases 2-3)");
         static_assert(sizeof(Src) < sizeof(T),
                       "load_widen widens; use load_unaligned for equal-width types");
         return batch(static_cast<T>(p[0]));
     }
 
-    friend batch operator+(batch a, batch b) { return batch(a.v_ + b.v_); }
-    friend batch operator-(batch a, batch b) { return batch(a.v_ - b.v_); }
-    friend batch operator*(batch a, batch b) { return batch(a.v_ * b.v_); }
-    friend batch operator/(batch a, batch b) { return batch(a.v_ / b.v_); }
+    friend batch operator+(batch a, batch b) { return batch(detail::wrap_add(a.v_, b.v_)); }
+    friend batch operator-(batch a, batch b) { return batch(detail::wrap_sub(a.v_, b.v_)); }
+    friend batch operator*(batch a, batch b) { return batch(detail::wrap_mul(a.v_, b.v_)); }
+
+    /// Lane-wise division -- floating lanes only; see the Highway variant for why.
+    friend batch operator/(batch a, batch b)
+        requires std::is_floating_point_v<T>
+    { return batch(a.v_ / b.v_); }
 
     /// Fused multiply-add: a*b + c (the single FMA decision point).
+    ///
+    /// `std::fma` is a floating-point function, so the integer case is the plain
+    /// wrapping multiply-add -- which is exact mod 2^32 and therefore matches the
+    /// Highway backend's `MulAdd` lane for lane.
     friend batch fma(batch a, batch b, batch c) {
-        using std::fma;
-        return batch(fma(a.v_, b.v_, c.v_));
+        if constexpr (std::is_integral_v<T>) {
+            return batch(detail::wrap_add(detail::wrap_mul(a.v_, b.v_), c.v_));
+        } else {
+            using std::fma;
+            return batch(fma(a.v_, b.v_, c.v_));
+        }
     }
 
     friend T reduce_add(batch a) { return a.v_; }

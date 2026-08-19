@@ -12,6 +12,15 @@
 // Unaligned loads/stores are used so these work on any contiguous span
 // (sub-vectors, views); on modern cores aligned vs unaligned cost is
 // negligible. The packed-panel GEMM path (#89) uses aligned loads instead.
+//
+// Lane types are whatever batch<T> supports (mtl::simd::is_lane_v): float,
+// double, int32_t, uint32_t. On integer lanes every kernel here is EXACT mod
+// 2^32 -- the four independent accumulators, the horizontal reduce and the
+// scalar tail all commute, because wrapping addition is associative. So the
+// integer results are bit-identical across lane counts and backends, and the
+// scalar tails go through the wrapping helpers rather than raw `+`/`*` so that
+// a tail overflow is defined rather than UB. Widening accumulation (int8/int16
+// into int32) is #451 phases 2-3 and is not offered here.
 
 #include <cstddef>
 #include <type_traits>
@@ -20,10 +29,10 @@
 
 namespace mtl::simd {
 
-/// dot product: sum_i a[i]*b[i]  (real float/double).
+/// dot product: sum_i a[i]*b[i]  (real float/double, or int32/uint32 mod 2^32).
 template <typename T>
 T reduce_dot(const T* a, const T* b, std::size_t n) {
-    static_assert(std::is_floating_point_v<T>);
+    static_assert(is_lane_v<T>);
     using B = batch<T>;
     constexpr std::size_t W = B::size;
     constexpr std::size_t U = 4;             // independent accumulators
@@ -39,7 +48,8 @@ T reduce_dot(const T* a, const T* b, std::size_t n) {
     for (; i + W <= n; i += W)
         a0 = fma(B::load_unaligned(a + i), B::load_unaligned(b + i), a0);
     T s = reduce_add((a0 + a1) + (a2 + a3));
-    for (; i < n; ++i) s += a[i] * b[i];     // scalar tail
+    for (; i < n; ++i)                       // scalar tail
+        s = detail::wrap_add(s, detail::wrap_mul(a[i], b[i]));
     return s;
 }
 
@@ -75,7 +85,7 @@ Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
 /// sum of squares: sum_i a[i]*a[i]  (two_norm computes sqrt of this).
 template <typename T>
 T reduce_sum_squares(const T* a, std::size_t n) {
-    static_assert(std::is_floating_point_v<T>);
+    static_assert(is_lane_v<T>);
     using B = batch<T>;
     constexpr std::size_t W = B::size;
     constexpr std::size_t U = 4;
@@ -90,14 +100,14 @@ T reduce_sum_squares(const T* a, std::size_t n) {
     }
     for (; i + W <= n; i += W) { B v = B::load_unaligned(a + i); a0 = fma(v, v, a0); }
     T s = reduce_add((a0 + a1) + (a2 + a3));
-    for (; i < n; ++i) s += a[i] * a[i];
+    for (; i < n; ++i) s = detail::wrap_add(s, detail::wrap_mul(a[i], a[i]));
     return s;
 }
 
 /// axpy: y[i] += alpha*x[i].
 template <typename T>
 void axpy(T alpha, const T* x, T* y, std::size_t n) {
-    static_assert(std::is_floating_point_v<T>);
+    static_assert(is_lane_v<T>);
     using B = batch<T>;
     constexpr std::size_t W = B::size;
     const B va(alpha);
@@ -106,20 +116,20 @@ void axpy(T alpha, const T* x, T* y, std::size_t n) {
         B r = fma(va, B::load_unaligned(x + i), B::load_unaligned(y + i));
         r.store_unaligned(y + i);
     }
-    for (; i < n; ++i) y[i] += alpha * x[i];
+    for (; i < n; ++i) y[i] = detail::wrap_add(y[i], detail::wrap_mul(alpha, x[i]));
 }
 
 /// scal: x[i] *= alpha.
 template <typename T>
 void scal(T alpha, T* x, std::size_t n) {
-    static_assert(std::is_floating_point_v<T>);
+    static_assert(is_lane_v<T>);
     using B = batch<T>;
     constexpr std::size_t W = B::size;
     const B va(alpha);
     std::size_t i = 0;
     for (; i + W <= n; i += W)
         (va * B::load_unaligned(x + i)).store_unaligned(x + i);
-    for (; i < n; ++i) x[i] *= alpha;
+    for (; i < n; ++i) x[i] = detail::wrap_mul(x[i], alpha);
 }
 
 } // namespace mtl::simd

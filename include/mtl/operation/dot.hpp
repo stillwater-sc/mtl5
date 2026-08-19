@@ -78,6 +78,20 @@ auto dot(const V1& v1, const V2& v2) {
         return detail::thread_pool::instance().parallel_reduce<T>(
             v1.size(), /*grain=*/std::size_t{65536},
             [&](std::size_t lo, std::size_t hi) { return simd::reduce_dot<T>(a + lo, b + lo, hi - lo); });
+    } else if constexpr (interface::SimdDenseVector<V1> && interface::SimdDenseVector<V2> &&
+                         std::is_same_v<typename V1::value_type, typename V2::value_type>) {
+        // Integer lanes (#451 phase 0). conj is the identity on the integers, so
+        // reduce_dot is the Hermitian product here too. The sum is exact mod
+        // 2^32 -- see simd/batch.hpp for the contract.
+        //
+        // SERIAL, unlike the float branch above. parallel_reduce combines its
+        // partials with `acc = acc + partials[t]`, and on int32 that plain `+`
+        // is signed-overflow UB. Wrapping addition IS associative, so a parallel
+        // integer reduction would be bit-identical and is worth having; making
+        // the combine wrap-safe means touching parallel_reduce's documented
+        // plus-only contract for every T, which is not a phase-0 change.
+        using T = typename V1::value_type;
+        return simd::reduce_dot<T>(v1.data(), v2.data(), v1.size());
     } else {
         using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
         auto acc = math::zero<result_type>();
@@ -122,7 +136,10 @@ auto dot_real(const V1& v1, const V2& v2) {
         }
     }
 #endif
-    if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2> &&
+    // SimdDenseVector is BlasDenseVector widened to every mtl::simd lane type,
+    // so this also picks up the integer lanes (#451 phase 0); on those the sum
+    // is exact mod 2^32 rather than order-dependent.
+    if constexpr (interface::SimdDenseVector<V1> && interface::SimdDenseVector<V2> &&
                   std::is_same_v<typename V1::value_type, typename V2::value_type>) {
         return simd::reduce_dot<typename V1::value_type>(v1.data(), v2.data(), v1.size());
     } else {

@@ -3,6 +3,10 @@
 // SIMD/FMA order, so we compare bit-exactly to a naive reference. One assertion
 // per configuration (bool "all matched"), not one per element.
 //
+// The int32_t/uint32_t arms (#451 phase 0) get that exactness unconditionally:
+// integer arithmetic here is wrapping, and wrapping addition is associative, so
+// the naive reference and the kernel agree bit for bit whatever the lane count.
+//
 // Define the gate BEFORE including mult.hpp so the native path is exercised
 // through mtl::mult for this translation unit.
 #define MTL5_NATIVE_FAST_GEMM 1
@@ -11,6 +15,7 @@
 #include <catch2/catch_template_test_macros.hpp>
 
 #include <mtl/detail/gemv.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
@@ -18,6 +23,7 @@
 #include <mtl/vec/dense_vector.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace {
@@ -52,7 +58,11 @@ const std::size_t kDims[] = {0, 1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 31, 33, 64, 
 
 } // namespace
 
-TEMPLATE_TEST_CASE("gemv: row-major and col-major vs naive, all sizes", "[operation][gemv]", float, double) {
+// int32_t/uint32_t are lanes as of #451 phase 0. The naive reference below is
+// plain C++ integer arithmetic, so on the unsigned arm it wraps mod 2^32 exactly
+// as the kernel does -- the comparison stays bit-exact without special-casing.
+TEMPLATE_TEST_CASE("gemv: row-major and col-major vs naive, all sizes", "[operation][gemv]",
+                   float, double, std::int32_t, std::uint32_t) {
     for (std::size_t m : kDims)
         for (std::size_t n : kDims) {
             INFO("m=" << m << " n=" << n);
@@ -61,8 +71,9 @@ TEMPLATE_TEST_CASE("gemv: row-major and col-major vs naive, all sizes", "[operat
         }
 }
 
-// mult(A,x,y) dispatch: with MTL5_NATIVE_FAST_GEMM defined, dense2D float/double
-// x dense_vector routes through the native GEMV for both A orientations.
+// mult(A,x,y) dispatch: with MTL5_NATIVE_FAST_GEMM defined, a dense2D over any
+// mtl::simd lane type x dense_vector routes through the native GEMV for both A
+// orientations.
 namespace {
 using rowmaj = mtl::mat::parameters<mtl::tag::row_major>;
 using colmaj = mtl::mat::parameters<mtl::tag::col_major>;
@@ -87,11 +98,37 @@ bool mult_matches(std::size_t m, std::size_t n) {
 }
 } // namespace
 
-TEMPLATE_TEST_CASE("mult() native GEMV dispatch matches naive (row- and col-major A)", "[operation][gemv][dispatch]", float, double) {
+TEMPLATE_TEST_CASE("mult() native GEMV dispatch matches naive (row- and col-major A)",
+                   "[operation][gemv][dispatch]", float, double, std::int32_t, std::uint32_t) {
     const std::size_t cases[][2] = {{0, 0}, {0, 5}, {7, 0}, {1, 1}, {7, 5}, {16, 16}, {33, 20}, {100, 64}};
     for (auto& c : cases) {
         INFO("m=" << c[0] << " n=" << c[1]);
         CHECK(mult_matches<mtl::mat::dense2D<TestType, rowmaj>>(c[0], c[1]));
         CHECK(mult_matches<mtl::mat::dense2D<TestType, colmaj>>(c[0], c[1]));
     }
+}
+
+// The dispatch predicate itself, stated directly. The correctness cases above
+// would pass on the generic scalar loop too, so on their own they cannot show
+// that integer operands stopped taking it. This is the claim that changed in
+// #451 phase 0: the native GEMV is gated on SimdDenseMatrix/SimdDenseVector, and
+// an int32 dense2D satisfies that while satisfying no BLAS predicate -- there is
+// no external ?gemv for int32, so the native path is the only one it can take.
+TEST_CASE("integer operands satisfy the SIMD dispatch predicate, not the BLAS one",
+          "[operation][gemv][dispatch]") {
+    using imat = mtl::mat::dense2D<std::int32_t, rowmaj>;
+    using ivec = mtl::vec::dense_vector<std::int32_t>;
+    STATIC_REQUIRE(mtl::interface::SimdDenseMatrix<imat>);
+    STATIC_REQUIRE(mtl::interface::SimdDenseVector<ivec>);
+    STATIC_REQUIRE_FALSE(mtl::interface::BlasDenseMatrix<imat>);
+    STATIC_REQUIRE_FALSE(mtl::interface::BlasDenseVector<ivec>);
+
+    // ... and the float case still satisfies both, so the widening did not
+    // reroute anything that an external BLAS was handling.
+    using dmat = mtl::mat::dense2D<double, rowmaj>;
+    using dvec = mtl::vec::dense_vector<double>;
+    STATIC_REQUIRE(mtl::interface::SimdDenseMatrix<dmat>);
+    STATIC_REQUIRE(mtl::interface::BlasDenseMatrix<dmat>);
+    STATIC_REQUIRE(mtl::interface::SimdDenseVector<dvec>);
+    STATIC_REQUIRE(mtl::interface::BlasDenseVector<dvec>);
 }

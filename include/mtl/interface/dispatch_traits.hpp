@@ -6,6 +6,7 @@
 #include <complex>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/simd/batch.hpp>
 
 namespace mtl::interface {
 
@@ -64,6 +65,35 @@ concept BlasDenseVector =
     requires(const V& v) {
         { v.data() } -> std::convertible_to<const typename V::value_type*>;
         { v.size() };
+    };
+
+/// Concept satisfied by dense vector types eligible for MTL5's OWN SIMD kernels.
+///
+/// Strictly wider than `BlasDenseVector`: same storage shape (contiguous
+/// `data()`, `size()`), but the value type only has to be a lane `mtl::simd`
+/// can hold -- float, double, int32_t, uint32_t -- rather than a type an
+/// external BLAS has a symbol for. The two are distinct on purpose: there is no
+/// `sdot` for int32, so the integer lanes are reachable ONLY through the native
+/// path, and gating them on the BLAS predicate is what kept them on the generic
+/// scalar loop (#451).
+template <typename V>
+concept SimdDenseVector =
+    simd::is_lane_v<typename V::value_type> &&
+    requires(const V& v) {
+        { v.data() } -> std::convertible_to<const typename V::value_type*>;
+        { v.size() };
+    };
+
+/// Concept satisfied by dense matrix types eligible for MTL5's own SIMD
+/// kernels -- `BlasDenseMatrix` widened to every `mtl::simd` lane type, for the
+/// same reason as `SimdDenseVector`.
+template <typename M>
+concept SimdDenseMatrix =
+    simd::is_lane_v<typename M::value_type> &&
+    requires(const M& m) {
+        { m.data() } -> std::convertible_to<const typename M::value_type*>;
+        { m.num_rows() };
+        { m.num_cols() };
     };
 
 /// Check if a matrix type uses row-major orientation.

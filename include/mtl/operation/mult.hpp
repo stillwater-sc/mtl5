@@ -216,10 +216,17 @@ void mult(const M& A, const VIn& x, VOut& y) {
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM
     // Native SIMD GEMV: preferred over the generic scalar loop for dense
-    // contiguous float/double when no external BLAS handled it above.
-    if constexpr (interface::BlasDenseMatrix<M> &&
-                  interface::BlasDenseVector<VIn> &&
-                  interface::BlasDenseVector<VOut> &&
+    // contiguous lane types when no external BLAS handled it above.
+    //
+    // Gated on the Simd* concepts, not the Blas* ones, so the integer lanes are
+    // reachable (#451 phase 0). There is no external ?gemv for int32, so this
+    // native path is the only one they can take; the BLAS branch above is
+    // unreachable for them and needs no extra guard. The result is exact mod
+    // 2^32 and bit-identical across lane counts and thread partitions -- the
+    // per-row partitioning below is already order-preserving.
+    if constexpr (interface::SimdDenseMatrix<M> &&
+                  interface::SimdDenseVector<VIn> &&
+                  interface::SimdDenseVector<VOut> &&
                   std::is_same_v<typename M::value_type, typename VIn::value_type> &&
                   std::is_same_v<typename M::value_type, typename VOut::value_type>) {
         using T = typename M::value_type;
