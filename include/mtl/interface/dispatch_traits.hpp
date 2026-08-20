@@ -114,6 +114,22 @@ concept SimdDenseVector =
         { v.size() };
     };
 
+/// Concept satisfied by dense vector types whose element type is not a lane but
+/// can be WIDENED into one by a dot-product accumulate -- 16-bit integers, as of
+/// #451 phase 2.
+///
+/// Separate from `SimdDenseVector` because these types are operands, not lanes:
+/// `batch<std::int16_t>` does not exist, and the only kernel that accepts them
+/// is `reduce_dot_widen`, which never materializes one.
+template <typename V>
+concept SimdNarrowVector =
+    simd::is_widenable_v<typename V::value_type> &&
+    ContiguousVector<V> &&
+    requires(const V& v) {
+        { v.data() } -> std::convertible_to<const typename V::value_type*>;
+        { v.size() };
+    };
+
 /// Concept satisfied by dense matrix types eligible for MTL5's own SIMD
 /// kernels -- `BlasDenseMatrix` widened to every `mtl::simd` lane type, for the
 /// same reason as `SimdDenseVector`.

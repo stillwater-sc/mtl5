@@ -224,6 +224,60 @@ storage cost, at SIMD speed. The same-type kernels are untouched.
 
 ---
 
+## The integer case: the same idea, a different failure mode
+
+Widening is not only a floating-point technique. `dot<int32_t>` over `int16_t`
+vectors accumulates 16-bit operands in 32 bits through the hardware's widening
+multiply-add — `vpmaddwd` on x86 (`pmaddwd` back to SSE2), `SMLAL`/`UMLAL` on
+NEON. One instruction does the widen, the multiply and the accumulate.
+
+But the reason you reach for it is the opposite of the floating-point one.
+Widening a `float` reduction into `double` buys **accuracy**: the products were
+already exact, and what you recover is the rounding lost in the sum. Widening an
+`int16` reduction into `int32` buys **range**, and only some:
+
+| | floating (`float` → `double`) | integer (`int16` → `int32`) |
+|---|---|---|
+| what a single product costs | exact either way | exact either way — 2³⁰ fits |
+| what the wide accumulator recovers | rounding error in the sum | headroom before the sum wraps |
+| what happens when you run out | gradual loss of low bits | wraps mod 2³², abruptly |
+| how much you get | ~2⁵³ terms of headroom | **~2^(31−2b) terms** at *b* bits of operand magnitude |
+
+That last row is the one to internalize. At full 16-bit range the worst case —
+every term maximal and same-signed — overflows at **k = 3**; random signed data
+random-walks rather than marches, but still only reaches k ≈ 36. The useful
+regime is **small operands, not short vectors**: 8-bit values in `int16` storage
+give ~2¹⁵ terms of headroom, 4-bit values ~2²³.
+
+This is exactly why the hardware's marquee integer dot instructions (VNNI's
+`vpdpbusd`, NEON's `SDOT`) accumulate **int8** into int32 rather than int16: an
+8-bit product needs 15 bits, leaving 16 bits of headroom — about 65 000 terms.
+`int16 → int32` is the awkward middle, useful when your data is genuinely small
+and you want the width anyway.
+
+When the sum does exceed the accumulator it **wraps** — the true sum reduced
+mod 2³², never a trap, never a saturation, never undefined. Callers needing the
+full range should widen their storage, not hope.
+
+### Why the integer kernel can use an instruction the float one cannot
+
+`ReorderWidenMulAccumulate` is free to permute which product lands in which
+accumulator lane; the ISA chooses (x86 pairs adjacent lanes, NEON splits
+low/high halves), and the only guarantee is that the *total* is right.
+
+For a floating accumulator that would be disqualifying: the sum would depend on
+which products got grouped, so the same code would give different answers on
+different ISAs. On integer lanes it costs exactly nothing, because addition mod
+2³² is associative and commutative — the permutation is unobservable.
+
+That is a concrete dividend of the integer contract: because MTL5 defines
+integer lanes as wrapping rather than leaving overflow undefined, the reduction
+is bit-identical across lane counts, unroll factors, backends and thread
+partitions, and a permuting instruction is simply free to use. The tests assert
+exact equality against a closed form and never mention lane order.
+
+---
+
 ## Designing your own mixed-precision algorithm
 
 The takeaways that generalize beyond GEMM:

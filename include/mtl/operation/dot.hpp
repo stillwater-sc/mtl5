@@ -22,6 +22,20 @@
 
 namespace mtl {
 
+/// Does `dot<Accumulator, Result>(v1, v2)` name the widening integer kernel?
+///
+/// Both vectors contiguous over the SAME 16-bit type, and the requested
+/// accumulator exactly that type's widened counterpart (int16 -> int32,
+/// uint16 -> uint32) with no separate delivery type. Anything else -- a wider
+/// accumulator, a mixed pair, a strided view -- falls to the generic
+/// accumulator_traits loop, which is correct for all of them.
+template <typename Accumulator, typename Result, typename V1, typename V2>
+concept widening_int_dot =
+    interface::SimdNarrowVector<V1> && interface::SimdNarrowVector<V2> &&
+    std::is_same_v<typename V1::value_type, typename V2::value_type> &&
+    std::is_same_v<Accumulator, simd::widen_accumulator_t<typename V1::value_type>> &&
+    std::is_same_v<Result, Accumulator>;
+
 /// Hermitian dot product: sum(conj(v1[i]) * v2[i]).
 ///
 /// Mixed precision: pass an explicit `Accumulator` to sum the products in a
@@ -44,6 +58,14 @@ auto dot(const V1& v1, const V2& v2) {
                       std::is_same_v<typename V2::value_type, float> &&
                       std::is_same_v<Accumulator, double> && std::is_same_v<Result, double>) {
             return simd::reduce_dot_widen<double, float>(v1.data(), v2.data(), v1.size());
+        } else if constexpr (widening_int_dot<Accumulator, Result, V1, V2>) {
+            // Widening INTEGER fast path (#451 phase 2): 16-bit operands into a
+            // 32-bit accumulator, via the hardware's widening multiply-add. conj
+            // is the identity on the integers, so this is the Hermitian product.
+            // The sum wraps mod 2^32 and does so within a few terms at full
+            // range -- see reduce_dot_widen for the contract.
+            return simd::reduce_dot_widen<Accumulator, typename V1::value_type>(
+                v1.data(), v2.data(), v1.size());
         } else {
             using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
             using AT = math::accumulator_traits<Accumulator, Value>;
@@ -123,6 +145,9 @@ auto dot_real(const V1& v1, const V2& v2) {
                       std::is_same_v<typename V2::value_type, float> &&
                       std::is_same_v<Accumulator, double> && std::is_same_v<Result, double>) {
             return simd::reduce_dot_widen<double, float>(v1.data(), v2.data(), v1.size());
+        } else if constexpr (widening_int_dot<Accumulator, Result, V1, V2>) {
+            return simd::reduce_dot_widen<Accumulator, typename V1::value_type>(
+                v1.data(), v2.data(), v1.size());
         } else {
             using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
             using AT = math::accumulator_traits<Accumulator, Value>;

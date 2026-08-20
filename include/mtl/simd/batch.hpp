@@ -102,6 +102,27 @@ inline constexpr bool is_lane_v =
 template <typename T>
 inline constexpr bool is_integer_lane_v = is_lane_v<T> && std::is_integral_v<T>;
 
+/// Narrow integer types that can be WIDENED into a lane by a dot-product
+/// accumulate (#451 phase 2). These are storage/operand types, not lanes:
+/// `batch<std::int16_t>` does not exist and is not wanted, because a 16-bit
+/// lane's value is the widening accumulate, not the plain multiply.
+template <typename T>
+inline constexpr bool is_widenable_v =
+    std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::uint16_t>;
+
+/// The accumulator a narrow type widens into: 16 bits doubles to 32, keeping
+/// signedness. Products of two 16-bit values always fit the 32-bit accumulator
+/// EXACTLY (|-2^15 * -2^15| = 2^30 < 2^31); it is the running sum that can
+/// overflow, and does so quickly -- see reduce_dot_widen in simd/algorithm.hpp
+/// for the headroom this actually buys.
+template <typename Narrow>
+struct widen_accumulator;
+template <> struct widen_accumulator<std::int16_t>  { using type = std::int32_t;  };
+template <> struct widen_accumulator<std::uint16_t> { using type = std::uint32_t; };
+
+template <typename Narrow>
+using widen_accumulator_t = typename widen_accumulator<Narrow>::type;
+
 #if MTL5_SIMD_USE_HIGHWAY
 
 namespace hn = hwy::HWY_NAMESPACE;
@@ -150,6 +171,51 @@ public:
                       "load_widen widens; use load_unaligned for equal-width types");
         const hn::Rebind<Src, D> ds;
         return batch(hn::PromoteTo(d_, hn::LoadU(ds, p)));
+    }
+
+    /// Narrow values consumed by one `widen_dot_accumulate` call: a full narrow
+    /// vector, which holds twice as many 16-bit lanes as this batch holds 32-bit
+    /// ones. Compile-time, like `size`.
+    ///
+    /// Only meaningful on a 32-bit integer accumulator -- it is the loop stride
+    /// for `reduce_dot_widen`, and `widen_dot_accumulate` static_asserts the
+    /// lane/operand pairing anyway, so the constant existing on `batch<double>`
+    /// is inert rather than a second gate to keep in sync.
+    static constexpr std::size_t widen_step = 2 * size;
+
+    /// Widening dot accumulate: multiply `widen_step` pairs of NARROW values and
+    /// add the products into two wide accumulators.
+    ///
+    /// The lane assignment is deliberately UNSPECIFIED. Highway's
+    /// `ReorderWidenMulAccumulate` promises only that
+    /// `reduce_add(sum0 + sum1)` is the sum of all the products -- which lane a
+    /// given product lands in is a permutation the ISA chooses (`vpmaddwd` pairs
+    /// adjacent lanes on x86; NEON splits low/high halves). That is exactly
+    /// enough for a reduction and nothing more, so this primitive is only usable
+    /// inside one.
+    ///
+    /// For a FLOATING accumulator such a permutation would be a problem: the sum
+    /// would depend on which products got grouped, and the result would vary by
+    /// ISA. On integer lanes it costs nothing, because addition mod 2^32 is
+    /// associative and commutative -- the permutation is unobservable. The
+    /// contract established in phase 0 is what makes this instruction usable
+    /// without qualification.
+    ///
+    /// `sum1` MUST start zeroed; Highway leaves it untouched on targets that do
+    /// not need it, so a nonzero initial value would silently be counted or not
+    /// depending on the ISA.
+    template <typename Narrow>
+    static void widen_dot_accumulate(const Narrow* a, const Narrow* b,
+                                     batch& sum0, batch& sum1) {
+        static_assert(is_widenable_v<Narrow>, "widen_dot_accumulate takes 16-bit operands");
+        static_assert(std::is_same_v<T, widen_accumulator_t<Narrow>>,
+                      "the accumulator must be the widened counterpart of Narrow "
+                      "(int16 -> int32, uint16 -> uint32)");
+        const hn::Repartition<Narrow, D> dn;
+        auto s1 = sum1.v_;
+        sum0.v_ = hn::ReorderWidenMulAccumulate(d_, hn::LoadU(dn, a), hn::LoadU(dn, b),
+                                                sum0.v_, s1);
+        sum1.v_ = s1;
     }
 
     friend batch operator+(batch a, batch b) { return batch(hn::Add(a.v_, b.v_)); }
@@ -216,6 +282,29 @@ public:
         static_assert(sizeof(Src) < sizeof(T),
                       "load_widen widens; use load_unaligned for equal-width types");
         return batch(static_cast<T>(p[0]));
+    }
+
+    /// Narrow values consumed per widen_dot_accumulate call. Two rather than
+    /// one, so the fallback drives BOTH accumulators and the loop in
+    /// reduce_dot_widen is the same shape on either backend -- which also means
+    /// the fallback exercises the sum1 path that Highway may or may not use.
+    static constexpr std::size_t widen_step = 2;
+
+    /// Widening dot accumulate -- scalar fallback of the SIMD primitive; see the
+    /// Highway variant for the contract. Splitting the two products across the
+    /// two accumulators reproduces the "unspecified lane assignment, defined
+    /// total" behaviour rather than papering over it.
+    template <typename Narrow>
+    static void widen_dot_accumulate(const Narrow* a, const Narrow* b,
+                                     batch& sum0, batch& sum1) {
+        static_assert(is_widenable_v<Narrow>, "widen_dot_accumulate takes 16-bit operands");
+        static_assert(std::is_same_v<T, widen_accumulator_t<Narrow>>,
+                      "the accumulator must be the widened counterpart of Narrow "
+                      "(int16 -> int32, uint16 -> uint32)");
+        sum0.v_ = mtl::detail::wrap_add(
+            sum0.v_, mtl::detail::wrap_mul(static_cast<T>(a[0]), static_cast<T>(b[0])));
+        sum1.v_ = mtl::detail::wrap_add(
+            sum1.v_, mtl::detail::wrap_mul(static_cast<T>(a[1]), static_cast<T>(b[1])));
     }
 
     friend batch operator+(batch a, batch b) { return batch(mtl::detail::wrap_add(a.v_, b.v_)); }

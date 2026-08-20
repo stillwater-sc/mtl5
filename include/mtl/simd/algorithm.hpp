@@ -91,9 +91,11 @@ T reduce_dot(const T* a, const T* b, std::size_t n) {
 /// mixed-precision dot keeps the wide accumulator's accuracy at SIMD speed,
 /// instead of the scalar policy fallback. (On the scalar batch backend this is
 /// the correct scalar widening loop.)
+/// (Integer overload below; this one is the floating-point case.)
 template <typename Wide, typename Narrow>
+    requires std::is_floating_point_v<Wide>
 Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
-    static_assert(std::is_floating_point_v<Wide> && std::is_floating_point_v<Narrow>);
+    static_assert(std::is_floating_point_v<Narrow>);
     static_assert(sizeof(Narrow) < sizeof(Wide), "reduce_dot_widen requires Narrow < Wide");
     using B = batch<Wide>;
     constexpr std::size_t W = B::size;
@@ -111,6 +113,71 @@ Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
         a0 = fma(B::load_widen(a + i), B::load_widen(b + i), a0);
     Wide s = reduce_add((a0 + a1) + (a2 + a3));
     for (; i < n; ++i) s += static_cast<Wide>(a[i]) * static_cast<Wide>(b[i]);  // tail
+    return s;
+}
+
+/// Widening INTEGER dot product: 16-bit operands accumulated in 32 bits, via the
+/// hardware's widening multiply-accumulate (#451 phase 2).
+///
+/// `int16 -> int32` and `uint16 -> uint32`. One instruction does the widening,
+/// the multiply and the accumulate -- `vpmaddwd` on x86, `SMLAL`/`UMLAL` on
+/// NEON -- so this is the first kernel here whose ISA support is the point
+/// rather than an implementation detail.
+///
+/// THE OVERFLOW CONTRACT
+///
+/// Two separate questions, with very different answers.
+///
+///   * The PRODUCTS are always exact. |-2^15 * -2^15| = 2^30 fits an int32 with
+///     a bit to spare, so no individual term is ever lost.
+///   * The SUM wraps, and it wraps SOON. Full-range operands consume 31 of the
+///     accumulator's 32 bits per term, so the worst case (every term the same
+///     sign, both operands at the limit) overflows at k = 3. Random signed data
+///     does better -- the terms random-walk rather than march, so |sum| grows
+///     like sqrt(k) -- but only to roughly k = 36 before it is more likely than
+///     not to have exceeded 2^31.
+///
+/// So this is NOT the "accumulate 65 000 terms safely" case; that is int8 into
+/// int32 (phase 3), where a product needs 15 bits and leaves 16 of headroom, and
+/// it is why the VNNI and SDOT instructions are shaped the way they are. What
+/// makes 16-bit accumulation useful is small operands, not short vectors: at b
+/// bits of operand magnitude the headroom is about 2^(31-2b) terms, so 8-bit
+/// values in int16 storage give ~2^15 terms and 4-bit values give ~2^23.
+///
+/// When the sum does exceed the accumulator it WRAPS, exactly as everywhere else
+/// in mtl::simd -- the result is the true sum reduced mod 2^32, never a trap,
+/// never a saturation, never undefined. Callers who need the full range should
+/// widen their storage, not hope. tests/unit/simd/test_int_accumulation.cpp pins
+/// the measured envelope for the 64-bit case.
+///
+/// LANE ORDER IS UNSPECIFIED AND THAT IS FINE. The hardware instruction is free
+/// to permute which product lands in which accumulator lane, and Highway
+/// promises only that the total is right. For a floating accumulator that would
+/// make the result ISA-dependent; here it is unobservable, because addition mod
+/// 2^32 is associative and commutative. Phase 0's contract is what lets this
+/// kernel use the instruction without a caveat.
+template <typename Wide, typename Narrow>
+    requires std::is_integral_v<Wide>
+Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
+    static_assert(is_widenable_v<Narrow>, "reduce_dot_widen widens 16-bit integers");
+    // Guarded: widen_accumulator has no definition for a non-widenable Narrow,
+    // so naming it unconditionally would bury the assertion above under an
+    // "incomplete type" error. A discarded if-constexpr branch is not
+    // instantiated, which leaves exactly one diagnostic.
+    if constexpr (is_widenable_v<Narrow>) {
+        static_assert(std::is_same_v<Wide, widen_accumulator_t<Narrow>>,
+                      "int16 accumulates in int32, uint16 in uint32");
+    }
+    using B = batch<Wide>;
+    constexpr std::size_t S = B::widen_step;
+    B s0{}, s1{};                            // s1 MUST start zeroed -- see batch.hpp
+    std::size_t i = 0;
+    for (; i + S <= n; i += S)
+        B::widen_dot_accumulate(a + i, b + i, s0, s1);
+    Wide s = reduce_add(s0 + s1);            // the one defined observation
+    for (; i < n; ++i)                       // scalar tail, same wrapping rules
+        s = mtl::detail::wrap_add(
+            s, mtl::detail::wrap_mul(static_cast<Wide>(a[i]), static_cast<Wide>(b[i])));
     return s;
 }
 
