@@ -131,6 +131,14 @@ TEST_CASE("is_lane_v admits exactly the supported lane types", "[simd][integer]"
     STATIC_REQUIRE_FALSE(is_lane_v<std::uint64_t>);
     STATIC_REQUIRE_FALSE(is_lane_v<bool>);
 
+    // long double is NOT a lane, despite being a floating-point type. Highway
+    // has no long double vector, so batch<long double> is a hard compile error
+    // there -- and because this trait gates SimdDenseVector, admitting it sent
+    // dot(dense_vector<long double>, ...) into reduce_dot<long double> and broke
+    // a build that had worked, since the older BlasDenseVector gate (float and
+    // double only) kept it on the generic loop.
+    STATIC_REQUIRE_FALSE(is_lane_v<long double>);
+
     STATIC_REQUIRE(is_integer_lane_v<std::int32_t>);
     STATIC_REQUIRE(is_integer_lane_v<std::uint32_t>);
     STATIC_REQUIRE_FALSE(is_integer_lane_v<double>);

@@ -103,12 +103,22 @@ constexpr T wrap_mul(T a, T b) noexcept {
 /// is only lossless between integers: with a floating-point operand and an
 /// integral result -- `mult(dense2D<double>, dense_vector<double>,
 /// dense_vector<int>)` -- it would truncate each factor before multiplying and
-/// turn 2.5 * 2.5 into 2 * 2, where the plain expression rounds 6.25 once on
-/// assignment. Those mixed cases keep the original expression.
+/// turn 2.5 * 2.5 into 2 * 2, where the plain expression accumulates in the
+/// result type and rounds each term once. Those mixed cases keep the original
+/// expression.
+///
+/// The operand test is `std::is_integral_v`, NOT `is_wrapping_integer_v`. The
+/// difference is `bool`, and it matters in the direction that is easy to get
+/// backwards: `bool` must be excluded as a RESULT type, because
+/// `std::make_unsigned_t<bool>` is ill-formed, but it must be INCLUDED as an
+/// operand, because converting it to an integral `Result` is exact (0 or 1) and
+/// excluding it would push the whole expression onto the plain branch --
+/// reinstating the signed-overflow UB this helper exists to remove.
+/// `dot(dense_vector<bool>, dense_vector<int32_t>)` is that case.
 template <typename Result, typename A, typename B>
 constexpr Result generic_fma(Result acc, const A& a, const B& b) {
     if constexpr (is_wrapping_integer_v<Result> &&
-                  is_wrapping_integer_v<A> && is_wrapping_integer_v<B>) {
+                  std::is_integral_v<A> && std::is_integral_v<B>) {
         return wrap_add(acc, wrap_mul(static_cast<Result>(a), static_cast<Result>(b)));
     } else {
         return acc + a * b;

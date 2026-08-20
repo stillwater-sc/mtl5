@@ -84,9 +84,18 @@ namespace mtl::simd {
 /// 32-bit is exactly the width where the multiply is a single native
 /// instruction on every target ISA (`vpmulld` / NEON `mul.4s`), which is what
 /// makes it the honest plumbing case.
+///
+/// The floating half lists `float` and `double` rather than asking
+/// `std::is_floating_point_v`, which also admits `long double`. Highway has no
+/// `long double` vector type, so `batch<long double>` is a hard compile error
+/// there -- and since this trait gates `SimdDenseVector`, saying otherwise sent
+/// `dot(dense_vector<long double>, ...)` into `reduce_dot<long double>` and
+/// broke a build that previously worked, because the old `BlasDenseVector` gate
+/// kept it on the generic loop. The static_assert below already claimed "float,
+/// double, int32_t and uint32_t"; this is the trait finally agreeing with it.
 template <typename T>
 inline constexpr bool is_lane_v =
-    std::is_floating_point_v<T> ||
+    std::is_same_v<T, float>        || std::is_same_v<T, double> ||
     std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::uint32_t>;
 
 /// True for the integer lane types -- the ones whose arithmetic WRAPS.

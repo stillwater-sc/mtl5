@@ -92,6 +92,21 @@ TEST_CASE("bool is not a wrapping integer", "[detail][wrapping]") {
     CHECK(mtl::detail::generic_fma<bool>(false, true, true) == true);
 }
 
+TEST_CASE("a bool OPERAND still takes the modular path", "[detail][wrapping]") {
+    // The asymmetry is deliberate and easy to get backwards. `bool` is excluded
+    // as a RESULT type, because make_unsigned_t<bool> is ill-formed. It must NOT
+    // be excluded as an OPERAND: converting it to an integral result is exact
+    // (0 or 1), and pushing the expression onto the plain branch instead would
+    // reinstate the signed-overflow UB the helper exists to remove. Reachable as
+    // dot(dense_vector<bool>, dense_vector<int32_t>), whose result type is int.
+    constexpr auto big = std::numeric_limits<std::int32_t>::max();
+    CHECK(mtl::detail::generic_fma<std::int32_t>(1, true, big) ==
+          static_cast<std::int32_t>(static_cast<std::uint32_t>(1u) +
+                                    static_cast<std::uint32_t>(big)));
+    CHECK(mtl::detail::generic_fma<std::int32_t>(5, false, big) == 5);
+    CHECK(mtl::detail::generic_fma<std::int32_t>(0, true, true) == 1);
+}
+
 TEST_CASE("generic_fma wraps only when every operand is integral", "[detail][wrapping]") {
     SECTION("all integral -> modular, and exact mod 2^N") {
         const auto a = static_cast<std::int32_t>(0x9E3779B9u);

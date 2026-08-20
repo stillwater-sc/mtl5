@@ -150,3 +150,58 @@ TEST_CASE("dot over a 16-bit element type is defined and modular",
     dense_vector<std::int16_t> p(3, static_cast<std::int16_t>(256));
     CHECK(dot_real(p, p) == 0);
 }
+
+// The mat*mat generic loop is the sibling of the mat*vec one above and took the
+// identical generic_fma change, but nothing exercised it with integers -- the
+// only mult(A, B, C) coverage is over double. A changed line with no test is
+// exactly where the next defect hides, so pin it the same way.
+TEST_CASE("generic integer mat*mat wraps rather than overflowing",
+          "[operation][mult][integer][generic]") {
+    constexpr std::size_t n = 8;
+    mtl::mat::dense2D<std::int32_t> A(n, n), B(n, n), C(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            A(i, j) = static_cast<std::int32_t>(
+                static_cast<std::uint32_t>(0x9E3779B9u * (i * n + j + 1)));
+            B(i, j) = static_cast<std::int32_t>(
+                static_cast<std::uint32_t>(0x85EBCA77u * (i * n + j + 3)));
+        }
+    mtl::mult(A, B, C);
+
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            std::uint64_t acc = 0;
+            for (std::size_t k = 0; k < n; ++k)
+                acc += static_cast<std::uint64_t>(static_cast<std::uint32_t>(A(i, k)))
+                     * static_cast<std::uint32_t>(B(k, j));
+            INFO("C(" << i << "," << j << ")");
+            REQUIRE(C(i, j) == static_cast<std::int32_t>(static_cast<std::uint32_t>(acc)));
+        }
+}
+
+// Mixed operands with an integral result must NOT take the modular path: casting
+// the factors to the result type first would turn 2.5 * 2.5 into 2 * 2. Checked
+// through mult() rather than generic_fma directly, so the guard is verified where
+// a caller would actually hit it.
+//
+// The expected value is the PRE-EXISTING semantics, which are worth stating
+// because they are not the obvious ones. `acc` has the result type, so with an
+// integral y the accumulator is an `int` and every term is rounded into it as it
+// is added -- the sum is not accumulated in double and rounded once at the end:
+//
+//     acc = 0;  acc += 2.5 * 2.5  ->  int(0 + 6.25)  = 6
+//               acc += 0.5 * 1.5  ->  int(6 + 0.75)  = 6
+//
+// so 6, not the 7 that accumulating in double would give. This test exists to
+// pin that behaviour UNCHANGED, not to endorse it; truncating the factors first
+// would have given 4, which is what the guard prevents.
+TEST_CASE("float operands with an integer result keep their rounding",
+          "[operation][mult][generic]") {
+    mtl::mat::dense2D<double> A(1, 2);
+    dense_vector<double> x(2);
+    dense_vector<int> y(1);
+    A(0, 0) = 2.5; A(0, 1) = 0.5;
+    x(0) = 2.5;    x(1) = 1.5;
+    mtl::mult(A, x, y);
+    CHECK(y(0) == 6);          // per-term rounding; truncate-first would give 4
+}
