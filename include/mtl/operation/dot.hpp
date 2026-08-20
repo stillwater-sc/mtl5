@@ -13,6 +13,7 @@
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/simd/algorithm.hpp>
 #ifdef MTL5_HAS_BLAS
@@ -96,7 +97,11 @@ auto dot(const V1& v1, const V2& v2) {
         using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
         auto acc = math::zero<result_type>();
         for (typename V1::size_type i = 0; i < v1.size(); ++i) {
-            acc += functor::scalar::conj<typename V1::value_type>::apply(v1(i)) * v2(i);
+            // generic_fma wraps on integral result types, so a non-contiguous
+            // integer vector (which the concepts route here) gets the same
+            // mod-2^32 answer as the SIMD path rather than signed-overflow UB.
+            acc = detail::generic_fma<result_type>(
+                acc, functor::scalar::conj<typename V1::value_type>::apply(v1(i)), v2(i));
         }
         return acc;
     }
@@ -146,7 +151,7 @@ auto dot_real(const V1& v1, const V2& v2) {
         using result_type = std::common_type_t<typename V1::value_type, typename V2::value_type>;
         auto acc = math::zero<result_type>();
         for (typename V1::size_type i = 0; i < v1.size(); ++i) {
-            acc += v1(i) * v2(i);
+            acc = detail::generic_fma<result_type>(acc, v1(i), v2(i));   // wraps on integers
         }
         return acc;
     }

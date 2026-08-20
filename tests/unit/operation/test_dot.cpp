@@ -3,6 +3,8 @@
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
+#include <mtl/operation/mult.hpp>
+#include <mtl/mat/dense2D.hpp>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -101,4 +103,32 @@ TEST_CASE("integer dot overflows into a defined value, not an order-dependent on
     const auto expected = static_cast<std::int32_t>(static_cast<std::uint32_t>(acc));
     CHECK(dot(a, b) == expected);
     CHECK(dot_real(a, b) == expected);
+}
+
+// The GENERIC dense mult path, which is what an integer matrix takes in the
+// DEFAULT build: MTL5_NATIVE_FAST_GEMM is off, so mult() falls to
+// detail::mult_generic. Its inner loop used to be `acc += A(r,c) * x(c)`, which
+// on int32 is signed-overflow UB and disagrees with the mod-2^32 answer the SIMD
+// kernel is documented to give. Both paths must land on the same value.
+TEST_CASE("generic integer mat*vec wraps rather than overflowing",
+          "[operation][mult][integer][generic]") {
+    constexpr std::size_t n = 37;
+    mtl::mat::dense2D<std::int32_t> A(n, n);
+    dense_vector<std::int32_t> x(n), y(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        x(i) = static_cast<std::int32_t>(static_cast<std::uint32_t>(0x85EBCA77u * (i + 3)));
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = static_cast<std::int32_t>(
+                static_cast<std::uint32_t>(0x9E3779B9u * (i * n + j + 1)));
+    }
+    mtl::mult(A, x, y);                       // generic path (no MTL5_NATIVE_FAST_GEMM here)
+
+    for (std::size_t i = 0; i < n; ++i) {
+        std::uint64_t acc = 0;
+        for (std::size_t j = 0; j < n; ++j)
+            acc += static_cast<std::uint64_t>(static_cast<std::uint32_t>(A(i, j)))
+                 * static_cast<std::uint32_t>(x(j));
+        INFO("row " << i);
+        REQUIRE(y(i) == static_cast<std::int32_t>(static_cast<std::uint32_t>(acc)));
+    }
 }

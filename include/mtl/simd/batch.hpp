@@ -47,6 +47,13 @@
 #include <cstdint>
 #include <type_traits>
 
+// wrap_add / wrap_sub / wrap_mul: the two's-complement helpers the scalar paths
+// here use. They live in mtl::detail rather than in this header because the
+// generic element-wise loops in operation/ need them for the same reason these
+// kernels do -- an integer op that misses the fast path must still land on the
+// documented answer instead of on signed-overflow UB.
+#include <mtl/detail/wrapping_arithmetic.hpp>
+
 #if defined(MTL5_HAS_HIGHWAY)
 #  include <hwy/highway.h>
 #  if HWY_HAVE_SCALABLE
@@ -85,50 +92,6 @@ inline constexpr bool is_lane_v =
 /// True for the integer lane types -- the ones whose arithmetic WRAPS.
 template <typename T>
 inline constexpr bool is_integer_lane_v = is_lane_v<T> && std::is_integral_v<T>;
-
-namespace detail {
-
-// Two's-complement wrapping add/multiply for the scalar paths (the fallback
-// backend and every kernel's scalar tail).
-//
-// This is not pedantry. Signed integer overflow is UB in C++, so a tail written
-// `s += a[i] * b[i]` over int32 is UB the moment it overflows -- while the SIMD
-// body it completes wraps silently and defines the result. Routing the scalar
-// arithmetic through the unsigned counterpart makes both halves agree on the
-// SAME well-defined value: C++20 fixes two's complement, so the round trip
-// through std::make_unsigned_t is exact and the narrowing cast back is modular
-// rather than implementation-defined. Floating lanes fall through unchanged.
-template <typename T>
-constexpr T wrap_add(T a, T b) noexcept {
-    if constexpr (std::is_integral_v<T>) {
-        using U = std::make_unsigned_t<T>;
-        return static_cast<T>(static_cast<U>(static_cast<U>(a) + static_cast<U>(b)));
-    } else {
-        return a + b;
-    }
-}
-
-template <typename T>
-constexpr T wrap_sub(T a, T b) noexcept {
-    if constexpr (std::is_integral_v<T>) {
-        using U = std::make_unsigned_t<T>;
-        return static_cast<T>(static_cast<U>(static_cast<U>(a) - static_cast<U>(b)));
-    } else {
-        return a - b;
-    }
-}
-
-template <typename T>
-constexpr T wrap_mul(T a, T b) noexcept {
-    if constexpr (std::is_integral_v<T>) {
-        using U = std::make_unsigned_t<T>;
-        return static_cast<T>(static_cast<U>(static_cast<U>(a) * static_cast<U>(b)));
-    } else {
-        return a * b;
-    }
-}
-
-} // namespace detail
 
 #if MTL5_SIMD_USE_HIGHWAY
 
@@ -246,9 +209,9 @@ public:
         return batch(static_cast<T>(p[0]));
     }
 
-    friend batch operator+(batch a, batch b) { return batch(detail::wrap_add(a.v_, b.v_)); }
-    friend batch operator-(batch a, batch b) { return batch(detail::wrap_sub(a.v_, b.v_)); }
-    friend batch operator*(batch a, batch b) { return batch(detail::wrap_mul(a.v_, b.v_)); }
+    friend batch operator+(batch a, batch b) { return batch(mtl::detail::wrap_add(a.v_, b.v_)); }
+    friend batch operator-(batch a, batch b) { return batch(mtl::detail::wrap_sub(a.v_, b.v_)); }
+    friend batch operator*(batch a, batch b) { return batch(mtl::detail::wrap_mul(a.v_, b.v_)); }
 
     /// Lane-wise division -- floating lanes only; see the Highway variant for why.
     friend batch operator/(batch a, batch b)
@@ -262,7 +225,7 @@ public:
     /// Highway backend's `MulAdd` lane for lane.
     friend batch fma(batch a, batch b, batch c) {
         if constexpr (std::is_integral_v<T>) {
-            return batch(detail::wrap_add(detail::wrap_mul(a.v_, b.v_), c.v_));
+            return batch(mtl::detail::wrap_add(mtl::detail::wrap_mul(a.v_, b.v_), c.v_));
         } else {
             using std::fma;
             return batch(fma(a.v_, b.v_, c.v_));

@@ -57,11 +57,40 @@ concept BlasHermitianMatrix =
         { m.num_cols() };
     };
 
+/// True when a vector type's storage is CONTIGUOUS -- `data()[i]` IS element i.
+///
+/// Every fast path below hands `data()` to a kernel that walks it with unit
+/// stride, so this is a precondition of dispatching there at all. Asking only
+/// for `data()` and `size()` did not establish it: `vec::strided_vector_ref`
+/// supplies both while storing element i at `data()[i * stride()]`, so it was
+/// accepted by `BlasDenseVector` and every operation gated on it read the wrong
+/// elements and returned a confident wrong answer. Measured on a stride-2 view:
+/// `dot_real` gave 14 where the answer is 44. A column of a row-major matrix is
+/// exactly such a view, which is the case that makes this worth catching.
+///
+/// A type qualifies when it either has no stride notion at all -- `data()` and
+/// `size()` are then the whole layout, which is what these concepts always
+/// assumed -- or pins its stride to 1 at COMPILE time, as `vec::dense_vector`
+/// does with `static constexpr size_type stride() { return 1; }`.
+///
+/// A runtime stride cannot qualify: `strided_vector_ref::stride()` is an
+/// instance value, so no concept can admit only its unit-stride objects. Those
+/// types take the generic element-wise loop instead, which indexes through
+/// `operator()` and is correct for any stride. That costs a stride-1
+/// `strided_vector_ref` its fast path -- the right side to err on, and
+/// recoverable later with a runtime `stride() == 1` check at the call sites if
+/// it ever measures.
+template <typename V>
+concept ContiguousVector =
+    !requires(const V& v) { v.stride(); } ||     // no stride notion
+    requires { requires V::stride() == 1; };     // ... or unit stride, statically
+
 /// Concept satisfied by dense vector types eligible for BLAS dispatch.
-/// Requires: float/double value_type, contiguous data() pointer, size().
+/// Requires: float/double value_type, contiguous unit-stride storage, size().
 template <typename V>
 concept BlasDenseVector =
     is_blas_scalar_v<typename V::value_type> &&
+    ContiguousVector<V> &&
     requires(const V& v) {
         { v.data() } -> std::convertible_to<const typename V::value_type*>;
         { v.size() };
@@ -79,6 +108,7 @@ concept BlasDenseVector =
 template <typename V>
 concept SimdDenseVector =
     simd::is_lane_v<typename V::value_type> &&
+    ContiguousVector<V> &&
     requires(const V& v) {
         { v.data() } -> std::convertible_to<const typename V::value_type*>;
         { v.size() };

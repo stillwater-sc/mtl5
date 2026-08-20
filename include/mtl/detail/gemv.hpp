@@ -55,10 +55,10 @@ void gemv_rowmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
             // wrap_* so an integer tail wraps like the SIMD body above rather
             // than being signed-overflow UB (see simd/batch.hpp); identity on
             // floating lanes.
-            s0 = simd::detail::wrap_add(s0, simd::detail::wrap_mul(a0[j], xj));
-            s1 = simd::detail::wrap_add(s1, simd::detail::wrap_mul(a1[j], xj));
-            s2 = simd::detail::wrap_add(s2, simd::detail::wrap_mul(a2[j], xj));
-            s3 = simd::detail::wrap_add(s3, simd::detail::wrap_mul(a3[j], xj));
+            s0 = mtl::detail::wrap_add(s0, mtl::detail::wrap_mul(a0[j], xj));
+            s1 = mtl::detail::wrap_add(s1, mtl::detail::wrap_mul(a1[j], xj));
+            s2 = mtl::detail::wrap_add(s2, mtl::detail::wrap_mul(a2[j], xj));
+            s3 = mtl::detail::wrap_add(s3, mtl::detail::wrap_mul(a3[j], xj));
         }
         y[i + 0] = s0; y[i + 1] = s1; y[i + 2] = s2; y[i + 3] = s3;
     }
@@ -101,7 +101,7 @@ void gemv_colmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
     for (; i < m; ++i) {                          // remaining rows (< W), scalar
         T s = T(0);
         for (std::size_t j = 0; j < n; ++j)
-            s = simd::detail::wrap_add(s, simd::detail::wrap_mul(A[j * lda + i], x[j]));
+            s = mtl::detail::wrap_add(s, mtl::detail::wrap_mul(A[j * lda + i], x[j]));
         y[i] = s;
     }
 }

@@ -81,7 +81,7 @@ T reduce_dot(const T* a, const T* b, std::size_t n) {
         a0 = fma(B::load_unaligned(a + i), B::load_unaligned(b + i), a0);
     T s = reduce_add((a0 + a1) + (a2 + a3));
     for (; i < n; ++i)                       // scalar tail
-        s = detail::wrap_add(s, detail::wrap_mul(a[i], b[i]));
+        s = mtl::detail::wrap_add(s, mtl::detail::wrap_mul(a[i], b[i]));
     return s;
 }
 
@@ -134,7 +134,7 @@ T reduce_sum_squares(const T* a, std::size_t n) {
     }
     for (; i + W <= n; i += W) { B v = B::load_unaligned(a + i); a0 = fma(v, v, a0); }
     T s = reduce_add((a0 + a1) + (a2 + a3));
-    for (; i < n; ++i) s = detail::wrap_add(s, detail::wrap_mul(a[i], a[i]));
+    for (; i < n; ++i) s = mtl::detail::wrap_add(s, mtl::detail::wrap_mul(a[i], a[i]));
     return s;
 }
 
@@ -150,7 +150,7 @@ void axpy(T alpha, const T* x, T* y, std::size_t n) {
         B r = fma(va, B::load_unaligned(x + i), B::load_unaligned(y + i));
         r.store_unaligned(y + i);
     }
-    for (; i < n; ++i) y[i] = detail::wrap_add(y[i], detail::wrap_mul(alpha, x[i]));
+    for (; i < n; ++i) y[i] = mtl::detail::wrap_add(y[i], mtl::detail::wrap_mul(alpha, x[i]));
 }
 
 /// scal: x[i] *= alpha.
@@ -163,7 +163,7 @@ void scal(T alpha, T* x, std::size_t n) {
     std::size_t i = 0;
     for (; i + W <= n; i += W)
         (va * B::load_unaligned(x + i)).store_unaligned(x + i);
-    for (; i < n; ++i) x[i] = detail::wrap_mul(x[i], alpha);
+    for (; i < n; ++i) x[i] = mtl::detail::wrap_mul(x[i], alpha);
 }
 
 } // namespace mtl::simd

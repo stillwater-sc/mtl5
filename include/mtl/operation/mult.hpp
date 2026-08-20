@@ -7,6 +7,7 @@
 #include <mtl/concepts/vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/view/transposed_view.hpp>
@@ -36,7 +37,7 @@ void mult_generic(const M& A, const VIn& x, VOut& y) {
         for (typename M::size_type r = 0; r < A.num_rows(); ++r) {
             auto acc = math::zero<Result>();
             for (typename M::size_type c = 0; c < A.num_cols(); ++c) {
-                acc += A(r, c) * x(c);
+                acc = generic_fma<Result>(acc, A(r, c), x(c));
             }
             y(r) = acc;
         }
@@ -102,7 +103,7 @@ void mult_generic(const MA& A, const MB& B, MC& C) {
             for (typename MC::size_type c = 0; c < C.num_cols(); ++c) {
                 auto acc = math::zero<Result>();
                 for (typename MA::size_type k = 0; k < A.num_cols(); ++k) {
-                    acc += A(r, k) * B(k, c);
+                    acc = generic_fma<Result>(acc, A(r, k), B(k, c));
                 }
                 C(r, c) = acc;
             }
