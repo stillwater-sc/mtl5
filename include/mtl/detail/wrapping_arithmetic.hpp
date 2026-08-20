@@ -25,11 +25,37 @@
 
 namespace mtl::detail {
 
+/// Integral types these helpers wrap.
+///
+/// `bool` is excluded: `std::make_unsigned_t<bool>` is ill-formed, and boolean
+/// arithmetic promotes to `int` and cannot overflow, so it belongs on the plain
+/// branch rather than in a modular one.
+template <typename T>
+inline constexpr bool is_wrapping_integer_v =
+    std::is_integral_v<T> && !std::is_same_v<T, bool>;
+
+/// The type the modular arithmetic is actually performed in: the unsigned
+/// counterpart of `T`, or `unsigned int` when that is narrower than `int`.
+///
+/// This width promise is the whole correctness argument, and casting to
+/// `make_unsigned_t<T>` alone does NOT deliver it. Integral promotion runs
+/// before any arithmetic operator, and it promotes any type narrower than `int`
+/// to *signed* `int` -- so for `T = int16_t`, `static_cast<uint16_t>(-1) *
+/// static_cast<uint16_t>(-1)` is `65535 * 65535` evaluated in `int`, which
+/// overflows and is undefined. The unsigned cast meant to prevent UB
+/// reintroduced it for every type narrower than `int`. Multiplying in
+/// `common_type_t<U, unsigned>` keeps the operation unsigned, where overflow is
+/// defined as reduction, and the result is then narrowed back to `U`.
+template <typename T>
+using wrap_op_t = std::common_type_t<std::make_unsigned_t<T>, unsigned int>;
+
 template <typename T>
 constexpr T wrap_add(T a, T b) noexcept {
-    if constexpr (std::is_integral_v<T>) {
+    if constexpr (is_wrapping_integer_v<T>) {
         using U = std::make_unsigned_t<T>;
-        return static_cast<T>(static_cast<U>(static_cast<U>(a) + static_cast<U>(b)));
+        using P = wrap_op_t<T>;
+        return static_cast<T>(static_cast<U>(static_cast<P>(static_cast<U>(a)) +
+                                             static_cast<P>(static_cast<U>(b))));
     } else {
         return a + b;
     }
@@ -37,9 +63,11 @@ constexpr T wrap_add(T a, T b) noexcept {
 
 template <typename T>
 constexpr T wrap_sub(T a, T b) noexcept {
-    if constexpr (std::is_integral_v<T>) {
+    if constexpr (is_wrapping_integer_v<T>) {
         using U = std::make_unsigned_t<T>;
-        return static_cast<T>(static_cast<U>(static_cast<U>(a) - static_cast<U>(b)));
+        using P = wrap_op_t<T>;
+        return static_cast<T>(static_cast<U>(static_cast<P>(static_cast<U>(a)) -
+                                             static_cast<P>(static_cast<U>(b))));
     } else {
         return a - b;
     }
@@ -47,9 +75,11 @@ constexpr T wrap_sub(T a, T b) noexcept {
 
 template <typename T>
 constexpr T wrap_mul(T a, T b) noexcept {
-    if constexpr (std::is_integral_v<T>) {
+    if constexpr (is_wrapping_integer_v<T>) {
         using U = std::make_unsigned_t<T>;
-        return static_cast<T>(static_cast<U>(static_cast<U>(a) * static_cast<U>(b)));
+        using P = wrap_op_t<T>;
+        return static_cast<T>(static_cast<U>(static_cast<P>(static_cast<U>(a)) *
+                                             static_cast<P>(static_cast<U>(b))));
     } else {
         return a * b;
     }
@@ -65,10 +95,20 @@ constexpr T wrap_mul(T a, T b) noexcept {
 ///
 /// The operands are converted to `Result` BEFORE multiplying, which is what
 /// makes the integer case exact mod 2^N rather than merely defined: it is the
-/// product that overflows first, not the sum.
+/// product that overflows first, not the sum. Narrowing first loses nothing,
+/// because reduction mod 2^N is a ring homomorphism -- (a mod 2^N)(b mod 2^N)
+/// and (a b) mod 2^N agree.
+///
+/// The OPERANDS must be integral too, not just `Result`. Converting them first
+/// is only lossless between integers: with a floating-point operand and an
+/// integral result -- `mult(dense2D<double>, dense_vector<double>,
+/// dense_vector<int>)` -- it would truncate each factor before multiplying and
+/// turn 2.5 * 2.5 into 2 * 2, where the plain expression rounds 6.25 once on
+/// assignment. Those mixed cases keep the original expression.
 template <typename Result, typename A, typename B>
 constexpr Result generic_fma(Result acc, const A& a, const B& b) {
-    if constexpr (std::is_integral_v<Result>) {
+    if constexpr (is_wrapping_integer_v<Result> &&
+                  is_wrapping_integer_v<A> && is_wrapping_integer_v<B>) {
         return wrap_add(acc, wrap_mul(static_cast<Result>(a), static_cast<Result>(b)));
     } else {
         return acc + a * b;

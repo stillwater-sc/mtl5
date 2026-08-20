@@ -132,3 +132,21 @@ TEST_CASE("generic integer mat*vec wraps rather than overflowing",
         REQUIRE(y(i) == static_cast<std::int32_t>(static_cast<std::uint32_t>(acc)));
     }
 }
+
+// Element types NARROWER than a SIMD lane still reach the generic loop, and
+// therefore mtl::detail::generic_fma. int16_t is the width where the modular
+// helpers were undefined: uint16_t operands promote to signed `int`, so
+// 65535 * 65535 overflowed it. `dot_real` over a vector of -1 is the shortest
+// path from the public API to that bug.
+TEST_CASE("dot over a 16-bit element type is defined and modular",
+          "[operation][dot][integer][generic]") {
+    STATIC_REQUIRE_FALSE(mtl::interface::SimdDenseVector<dense_vector<std::int16_t>>);
+
+    dense_vector<std::int16_t> u(4), v(4);
+    for (std::size_t i = 0; i < 4; ++i) { u(i) = -1; v(i) = -1; }
+    CHECK(dot_real(u, v) == 4);                       // (-1)*(-1) four times
+
+    // And a case that actually wraps: 256 * 256 == 0 mod 2^16, summed 3 times.
+    dense_vector<std::int16_t> p(3, static_cast<std::int16_t>(256));
+    CHECK(dot_real(p, p) == 0);
+}
