@@ -98,19 +98,55 @@ moves eight, and a dot product is a streaming reduction with no reuse, so at
 large *n* it is bandwidth-bound and the ratio approaches the operand-width
 ratio. The instruction is a small part of it.
 
-How small can be measured **without leaving the machine**, which is what makes
-it trustworthy. Zen 4 has VNNI but not AVX10.2, so in the same run, over the
-same data, `uint8 × int8` is a native `vpdpbusd` while symmetric `int8 × int8`
-is emulated (two `vpdpbusd` plus a shift and a subtract):
+Three machines, same kernel, same arms — the middle column has VNNI silicon it
+cannot reach (§7), so it isolates the bandwidth effect on a *modern* memory
+system rather than a 2013 one:
+
+| n | Xeon E5-2420 v2 (2013, no VNNI) | i7-12700K (decomposed) | Zen 4 (native VNNI) |
+|---|---|---|---|
+| 65 536 | 2.5× | 4.6× | 9.2× |
+| 1 048 576 | 3.7× | 7.8× | 17.9× |
+| 4 194 304 | 7.3× | 15.4× | 26.0× |
+
+The i7 reaching 15.4× **without a usable VNNI instruction** is the clearest
+statement of the point: most of the win is the operand width, and it is
+available on hardware that cannot execute the specialised op at all.
+
+How small can be measured **without leaving the machine**. Zen 4 has VNNI but
+not AVX10.2, so in the same run, over the same data, `uint8 × int8` is a native
+`vpdpbusd` while symmetric `int8 × int8` is emulated (two `vpdpbusd` plus a
+shift and a subtract):
 
 | n | 1 024 | 16 384 | 262 144 | 4 194 304 | median |
 |---|---|---|---|---|---|
 | native ÷ emulated | 1.33× | 1.50× | 1.44× | 1.28× | **1.42×** |
 
-**~1.4× from the instruction; ~18× from the operand width.** Notably the native
-form is only 1.4× faster despite issuing about a third of the instructions,
-which says the kernel is not instruction-throughput-bound even at L1-resident
-sizes — the same conclusion §2 reached about `mc` by a different route.
+**That 1.42× is an over-estimate, and the i7 is what showed it.** The two arms
+differ in more than one respect: they also take *different decompositions*
+(`PromoteEven`/`PromoteOdd` for the symmetric form against a shorter route for
+the mixed one). On the i7, where **both** are decomposed, the same pair should
+therefore come out level — and it does not:
+
+| | median `u8×i8 ÷ i8×i8` |
+|---|---|
+| Zen 4 — one native, one emulated | 1.42× |
+| i7 — **both emulated** | **1.17×** |
+| instruction, net of the shape difference | **≈ 1.22×** |
+
+So roughly 1.17× of the Zen 4 ratio is the shape of the decomposition, not the
+instruction. The honest figure is **~1.2×**, with ~1.4× as the upper bound if
+the shape difference does not transfer between AVX2 and AVX3_DL — which cannot
+be measured directly, because on Zen 4 the mixed form is never decomposed.
+
+**~1.2× from the instruction; ~18× from the operand width.** That the native
+form is barely faster despite issuing about a third of the instructions says the
+kernel is not instruction-throughput-bound even at L1-resident sizes — the same
+conclusion §2 reached about `mc` by a different route.
+
+This is what the control was for. The claim was written from the Zen 4 run alone
+and stood for a day before the i7 corrected it; nothing in the Zen 4 data could
+have exposed it, because the confound is only visible where the instruction is
+absent.
 
 This is the cleanest result the programme has, and it is a **data-movement**
 result. It also carries a caveat worth keeping attached: a *dot* is the worst
@@ -126,7 +162,9 @@ The i7-12700K (Alder Lake) **has** VNNI silicon — `__AVXVNNI__`, the VEX-encod
 multiply-accumulate only in its `HWY_AVX3_DL` target, which is gated on AVX-512
 macros; Alder Lake's AVX-512 is fused off, and Highway carries no AVX-VNNI path
 at all. Compiled at `-march=alderlake` the kernel emits `vpmaddwd` and
-`has_native_quad_dot` is false.
+`has_native_quad_dot` is false — and a run on the machine confirms it, labelling
+itself `native-int-decomposed` with `build_isa=SSE2 AVX AVX2 FMA` and
+`SIMD backend: AVX2`.
 
 Two lessons, both of which generalise past this instance:
 
