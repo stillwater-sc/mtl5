@@ -1,0 +1,32 @@
+# Line-ending policy. CLAUDE.md requires one; there was none, and the gap was
+# not theoretical: with Git for Windows' default core.autocrlf=true, every
+# tracked .sh checks out with CRLF, and running one under WSL fails with
+#
+#     /usr/bin/env: 'bash\r': No such file or directory
+#
+# because the carriage return becomes part of the interpreter name. All 15 shell
+# scripts in this repository were affected -- preflight.sh, the run_* harnesses
+# and the machine profiles alike -- so a Windows machine could not execute any
+# part of the benchmark contract under WSL.
+
+# Normalize text in the repository to LF; convert on checkout per platform.
+* text=auto
+
+# Files whose interpreter cannot tolerate CRLF, wherever they are checked out.
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Windows-native scripts keep CRLF so they are not mangled by editors there.
+# PowerShell itself accepts either, but these are only ever run on Windows.
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binary: never touch, never diff as text. Matrix Market files are text but are
+# fixtures compared byte-for-byte by the IO tests, so pin them to LF explicitly
+# rather than leaving them to content detection.
+*.png   binary
+*.pdf   binary
+*.gz    binary
+*.mtx   text eol=lf
+*.csv   text eol=lf
