@@ -123,6 +123,45 @@ template <> struct widen_accumulator<std::uint16_t> { using type = std::uint32_t
 template <typename Narrow>
 using widen_accumulator_t = typename widen_accumulator<Narrow>::type;
 
+/// Narrow integer types whose dot product widens by FOUR into a 32-bit lane,
+/// via the hardware's quad multiply-accumulate (#451 phase 3) -- VNNI's
+/// `vpdpbusd` on x86, `SDOT`/`UDOT` on NEON. Four products are summed into one
+/// accumulator lane by a single instruction.
+///
+/// This is the case the epic calls "the one that matters", and the reason is
+/// headroom rather than lane count: an 8-bit product needs 15 bits, leaving ~16
+/// in an int32 accumulator -- of the order of 10^5 terms, against the handful
+/// that 16-bit operands afford (see reduce_dot_widen in simd/algorithm.hpp).
+template <typename T>
+inline constexpr bool is_quad_widenable_v =
+    std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::uint8_t>;
+
+/// The accumulator for a quad-widening operand PAIR.
+///
+/// Three pairings, and the asymmetry is the hardware's, not a design choice:
+/// VNNI implements `unsigned x signed` natively (`_mm_dpbusd_epi32`) because
+/// that is the shape of quantized inference -- unsigned activations against
+/// signed weights. Symmetric `i8 x i8` is native only from AVX10.2
+/// (`_mm_dpbssd_epi32`); before that Highway emulates it with two `dpbusd`
+/// calls plus a shift and subtract, so it costs about three times the native
+/// form on every x86 shipping today. NEON has all three natively.
+///
+/// `(int8, uint8)` is deliberately absent rather than silently reordered: a dot
+/// product is symmetric, so a caller holding that pairing should swap the
+/// arguments and get the native instruction, and being told so at compile time
+/// is better than being given the emulated path without knowing.
+template <typename A, typename B> struct quad_accumulator;
+template <> struct quad_accumulator<std::int8_t,  std::int8_t>  { using type = std::int32_t;  };
+template <> struct quad_accumulator<std::uint8_t, std::int8_t>  { using type = std::int32_t;  };
+template <> struct quad_accumulator<std::uint8_t, std::uint8_t> { using type = std::uint32_t; };
+
+template <typename A, typename B>
+using quad_accumulator_t = typename quad_accumulator<A, B>::type;
+
+/// Is `(A, B)` a quad-widening pair the hardware op accepts?
+template <typename A, typename B>
+concept QuadPair = requires { typename quad_accumulator<A, B>::type; };
+
 #if MTL5_SIMD_USE_HIGHWAY
 
 namespace hn = hwy::HWY_NAMESPACE;
@@ -218,6 +257,35 @@ public:
         sum1.v_ = s1;
     }
 
+    /// Narrow values consumed by one `quad_dot_accumulate` call: a full narrow
+    /// vector, holding four times as many 8-bit lanes as this batch holds
+    /// 32-bit ones.
+    static constexpr std::size_t quad_step = 4 * size;
+
+    /// Quad-widening dot accumulate: four 8-bit products summed into each
+    /// 32-bit accumulator lane by one instruction (#451 phase 3).
+    ///
+    /// Note what is NOT here: a second accumulator. The pairwise op
+    /// (`widen_dot_accumulate`) needs one because it may permute products across
+    /// lanes and only guarantees the total. `SumOfMulQuadAccumulate` specifies
+    /// exactly which four products land in lane i, so there is nothing to
+    /// reorder and one accumulator suffices. The wrapping contract still does
+    /// the work of making the horizontal sum order-independent.
+    ///
+    /// The two operand types may differ: `(uint8, int8)` is VNNI's native shape
+    /// and the reason the instruction exists. See `quad_accumulator`.
+    template <typename NA, typename NB>
+    static void quad_dot_accumulate(const NA* a, const NB* b, batch& sum) {
+        static_assert(is_quad_widenable_v<NA> && is_quad_widenable_v<NB>,
+                      "quad_dot_accumulate takes 8-bit operands");
+        static_assert(std::is_same_v<T, quad_accumulator_t<NA, NB>>,
+                      "accumulator must match the operand pairing: i8*i8 and "
+                      "u8*i8 -> int32, u8*u8 -> uint32");
+        const hn::Repartition<NA, D> dna;
+        const hn::Repartition<NB, D> dnb;
+        sum.v_ = hn::SumOfMulQuadAccumulate(d_, hn::LoadU(dna, a), hn::LoadU(dnb, b), sum.v_);
+    }
+
     friend batch operator+(batch a, batch b) { return batch(hn::Add(a.v_, b.v_)); }
     friend batch operator-(batch a, batch b) { return batch(hn::Sub(a.v_, b.v_)); }
     friend batch operator*(batch a, batch b) { return batch(hn::Mul(a.v_, b.v_)); }
@@ -305,6 +373,25 @@ public:
             sum0.v_, mtl::detail::wrap_mul(static_cast<T>(a[0]), static_cast<T>(b[0])));
         sum1.v_ = mtl::detail::wrap_add(
             sum1.v_, mtl::detail::wrap_mul(static_cast<T>(a[1]), static_cast<T>(b[1])));
+    }
+
+    /// Narrow values consumed per quad_dot_accumulate call -- four, matching the
+    /// instruction's four-products-per-lane shape rather than the lane count.
+    static constexpr std::size_t quad_step = 4;
+
+    /// Quad-widening dot accumulate -- scalar fallback; see the Highway variant.
+    /// Four products into the single accumulator, which is exactly what the
+    /// instruction does to one lane.
+    template <typename NA, typename NB>
+    static void quad_dot_accumulate(const NA* a, const NB* b, batch& sum) {
+        static_assert(is_quad_widenable_v<NA> && is_quad_widenable_v<NB>,
+                      "quad_dot_accumulate takes 8-bit operands");
+        static_assert(std::is_same_v<T, quad_accumulator_t<NA, NB>>,
+                      "accumulator must match the operand pairing: i8*i8 and "
+                      "u8*i8 -> int32, u8*u8 -> uint32");
+        for (std::size_t k = 0; k < 4; ++k)
+            sum.v_ = mtl::detail::wrap_add(
+                sum.v_, mtl::detail::wrap_mul(static_cast<T>(a[k]), static_cast<T>(b[k])));
     }
 
     friend batch operator+(batch a, batch b) { return batch(mtl::detail::wrap_add(a.v_, b.v_)); }

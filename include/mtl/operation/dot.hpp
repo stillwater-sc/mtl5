@@ -22,6 +22,21 @@
 
 namespace mtl {
 
+/// Does `dot<Accumulator, Result>(v1, v2)` name the quad-widening 8-bit kernel?
+///
+/// Unlike the 16-bit predicate this does NOT require the two element types to
+/// match: `(uint8, int8)` is VNNI's native pairing and the one quantized
+/// inference actually uses. `quad_accumulator` decides which pairings exist and
+/// what each accumulates into, so the predicate defers to it rather than
+/// restating the rule.
+template <typename Accumulator, typename Result, typename V1, typename V2>
+concept quad_int_dot =
+    interface::SimdQuadVector<V1> && interface::SimdQuadVector<V2> &&
+    simd::QuadPair<typename V1::value_type, typename V2::value_type> &&
+    std::is_same_v<Accumulator, simd::quad_accumulator_t<typename V1::value_type,
+                                                         typename V2::value_type>> &&
+    std::is_same_v<Result, Accumulator>;
+
 /// Does `dot<Accumulator, Result>(v1, v2)` name the widening integer kernel?
 ///
 /// Both vectors contiguous over the SAME 16-bit type, and the requested
@@ -58,6 +73,12 @@ auto dot(const V1& v1, const V2& v2) {
                       std::is_same_v<typename V2::value_type, float> &&
                       std::is_same_v<Accumulator, double> && std::is_same_v<Result, double>) {
             return simd::reduce_dot_widen<double, float>(v1.data(), v2.data(), v1.size());
+        } else if constexpr (quad_int_dot<Accumulator, Result, V1, V2>) {
+            // Quad-widening 8-bit fast path (#451 phase 3): VNNI / SDOT. conj is
+            // the identity on the integers, so this is the Hermitian product.
+            return simd::reduce_dot_widen<Accumulator, typename V1::value_type,
+                                          typename V2::value_type>(
+                v1.data(), v2.data(), v1.size());
         } else if constexpr (widening_int_dot<Accumulator, Result, V1, V2>) {
             // Widening INTEGER fast path (#451 phase 2): 16-bit operands into a
             // 32-bit accumulator, via the hardware's widening multiply-add. conj
@@ -145,6 +166,10 @@ auto dot_real(const V1& v1, const V2& v2) {
                       std::is_same_v<typename V2::value_type, float> &&
                       std::is_same_v<Accumulator, double> && std::is_same_v<Result, double>) {
             return simd::reduce_dot_widen<double, float>(v1.data(), v2.data(), v1.size());
+        } else if constexpr (quad_int_dot<Accumulator, Result, V1, V2>) {
+            return simd::reduce_dot_widen<Accumulator, typename V1::value_type,
+                                          typename V2::value_type>(
+                v1.data(), v2.data(), v1.size());
         } else if constexpr (widening_int_dot<Accumulator, Result, V1, V2>) {
             return simd::reduce_dot_widen<Accumulator, typename V1::value_type>(
                 v1.data(), v2.data(), v1.size());

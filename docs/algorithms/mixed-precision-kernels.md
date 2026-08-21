@@ -259,6 +259,49 @@ When the sum does exceed the accumulator it **wraps** — the true sum reduced
 mod 2³², never a trap, never a saturation, never undefined. Callers needing the
 full range should widen their storage, not hope.
 
+### 8-bit: the width the hardware was actually built for
+
+`dot<int32_t>` over 8-bit vectors uses a different instruction again — one that
+sums **four** products into each 32-bit lane: VNNI's `vpdpbusd` on x86, `SDOT`/
+`UDOT` on NEON. Halving the operand width quarters the product, and that is
+where the headroom comes from:
+
+| pairing | max \|product\| | terms before the sum can overflow |
+|---|---|---|
+| `int16 × int16` | 2³⁰ | **3** worst case, ~36 random |
+| `int8 × int8` | 2¹⁴ | **~131 000** |
+| `uint8 × int8` | ~2¹⁵ | **~65 000** |
+| `uint8 × uint8` | ~2¹⁶ | **~66 000** |
+
+Four to five orders of magnitude, from the *same* 32-bit accumulator. This is
+why the quantized-inference instructions are 8-bit and not 16-bit: 16-bit
+operands make the accumulator the binding constraint, 8-bit operands do not. In
+MTL5 terms, the phase-2 kernel is for small values in 16-bit storage; this one
+is for real vectors.
+
+**The signedness asymmetry is the hardware's, not a design choice.** VNNI
+implements `unsigned × signed` — unsigned activations against signed weights,
+the shape of a quantized layer — and the symmetric `int8 × int8` form only from
+AVX10.2. Before that, the symmetric version costs about three times the native
+one (two `dpbusd` calls plus a shift and subtract). So MTL5 offers the three
+pairings the instruction offers, and **rejects `(int8, uint8)` at compile time**
+rather than silently reordering it: a dot product is symmetric, so swapping the
+arguments gets the native instruction, and being told that beats being quietly
+routed through the emulation.
+
+### What this means for an int8 GEMM
+
+There is **no new register tile to derive**. `derive_blocking` sizes the tile
+from the *accumulator*, which `gemm_blocked<TC, TAB>` already passes it, and
+`int32` shares a lane width and register file with `float` — so the int8 tile
+*is* the float tile, `mr × nr` unchanged, at every vector width.
+
+What the 1-byte operand does change is the **K granularity**: the instruction
+consumes four k-values at once, so `kc` must be a multiple of 4 and the packed
+panels must be quad-interleaved (four k-values contiguous within each 32-bit
+word). The first is already true — `kc` is a multiple of 4 in every cache
+configuration MTL5 derives — so only the pack layout is new work.
+
 ### Why the integer kernel can use an instruction the float one cannot
 
 `ReorderWidenMulAccumulate` is free to permute which product lands in which

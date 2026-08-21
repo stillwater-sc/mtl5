@@ -156,25 +156,74 @@ Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
 /// make the result ISA-dependent; here it is unobservable, because addition mod
 /// 2^32 is associative and commutative. Phase 0's contract is what lets this
 /// kernel use the instruction without a caveat.
-template <typename Wide, typename Narrow>
+/// 8-BIT OPERANDS (#451 phase 3) are the same function with a different
+/// instruction and a very different headroom, so the two live together here.
+///
+///   16-bit: pairwise widen (`vpmaddwd`), 2 products per 32-bit lane
+///    8-bit: quad widen (VNNI `vpdpbusd`, NEON `SDOT`), 4 products per lane
+///
+/// And the headroom is where the 8-bit case earns "the one that matters":
+///
+///   | pairing        | max |product| | terms before the sum can overflow |
+///   |----------------|----------------|-----------------------------------|
+///   | int16 x int16  | 2^30           | 3 worst case, ~36 random          |
+///   |  int8 x int8   | 2^14           | ~131 000                          |
+///   | uint8 x  int8  | ~2^15          | ~65 000                           |
+///   | uint8 x uint8  | ~2^16          | ~66 000                           |
+///
+/// Four to five orders of magnitude, from the same 32-bit accumulator, purely
+/// because the operands are half as wide and the product therefore a quarter
+/// the size. This is why the quantized-inference instructions are 8-bit and not
+/// 16-bit, and why phase 2's kernel is useful only for small operands while this
+/// one is useful for real vectors.
+///
+/// THE SIGNEDNESS ASYMMETRY IS THE HARDWARE'S. VNNI implements `unsigned x
+/// signed` -- unsigned activations against signed weights -- and symmetric
+/// `i8 x i8` only from AVX10.2. Before that Highway emulates the symmetric form
+/// with two `dpbusd` calls plus a shift and subtract, roughly three times the
+/// work. `(int8, uint8)` is rejected rather than silently reordered: the dot is
+/// symmetric, so swapping the arguments gets the native instruction, and a
+/// compile error saying so beats a quiet detour through the emulation.
+template <typename Wide, typename NA, typename NB = NA>
     requires std::is_integral_v<Wide>
-Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
-    static_assert(is_widenable_v<Narrow>, "reduce_dot_widen widens 16-bit integers");
-    // Guarded: widen_accumulator has no definition for a non-widenable Narrow,
-    // so naming it unconditionally would bury the assertion above under an
-    // "incomplete type" error. A discarded if-constexpr branch is not
-    // instantiated, which leaves exactly one diagnostic.
-    if constexpr (is_widenable_v<Narrow>) {
-        static_assert(std::is_same_v<Wide, widen_accumulator_t<Narrow>>,
-                      "int16 accumulates in int32, uint16 in uint32");
-    }
+Wide reduce_dot_widen(const NA* a, const NB* b, std::size_t n) {
+    static_assert(is_widenable_v<NA> || is_quad_widenable_v<NA>,
+                  "reduce_dot_widen widens 8- or 16-bit integers");
     using B = batch<Wide>;
-    constexpr std::size_t S = B::widen_step;
-    B s0{}, s1{};                            // s1 MUST start zeroed -- see batch.hpp
     std::size_t i = 0;
-    for (; i + S <= n; i += S)
-        B::widen_dot_accumulate(a + i, b + i, s0, s1);
-    Wide s = reduce_add(s0 + s1);            // the one defined observation
+    Wide s{};
+    // Guarded so a bad Narrow reports ONE diagnostic: the accumulator traits are
+    // undefined for it, and a discarded if-constexpr branch is not instantiated.
+    if constexpr (is_quad_widenable_v<NA>) {
+        static_assert(is_quad_widenable_v<NB>, "both operands must be 8-bit");
+        static_assert(QuadPair<NA, NB>,
+                      "unsupported 8-bit pairing -- the hardware op takes "
+                      "(i8,i8), (u8,i8) or (u8,u8); for (i8,u8) swap the "
+                      "arguments, which a dot product permits");
+        // Guarded for the same reason as the 16-bit case below: quad_accumulator
+        // is undefined for a rejected pairing, so naming it unconditionally
+        // would bury the assertion above under an "incomplete type" error.
+        if constexpr (QuadPair<NA, NB>) {
+            static_assert(std::is_same_v<Wide, quad_accumulator_t<NA, NB>>,
+                          "i8*i8 and u8*i8 accumulate in int32, u8*u8 in uint32");
+        }
+        constexpr std::size_t S = B::quad_step;
+        B acc{};
+        for (; i + S <= n; i += S) B::quad_dot_accumulate(a + i, b + i, acc);
+        s = reduce_add(acc);
+    } else {
+        static_assert(std::is_same_v<NA, NB>,
+                      "16-bit widening takes two operands of the same type");
+        static_assert(is_widenable_v<NA>, "reduce_dot_widen widens 16-bit integers");
+        if constexpr (is_widenable_v<NA>) {
+            static_assert(std::is_same_v<Wide, widen_accumulator_t<NA>>,
+                          "int16 accumulates in int32, uint16 in uint32");
+        }
+        constexpr std::size_t S = B::widen_step;
+        B s0{}, s1{};                        // s1 MUST start zeroed -- see batch.hpp
+        for (; i + S <= n; i += S) B::widen_dot_accumulate(a + i, b + i, s0, s1);
+        s = reduce_add(s0 + s1);             // the one defined observation
+    }
     for (; i < n; ++i)                       // scalar tail, same wrapping rules
         s = mtl::detail::wrap_add(
             s, mtl::detail::wrap_mul(static_cast<Wide>(a[i]), static_cast<Wide>(b[i])));

@@ -130,6 +130,23 @@ concept SimdNarrowVector =
         { v.size() };
     };
 
+/// Concept satisfied by dense vector types of an 8-bit element that the quad
+/// multiply-accumulate can widen into a 32-bit lane (#451 phase 3).
+///
+/// Distinct from `SimdNarrowVector` because the operations differ in more than
+/// width: the pairwise op takes two operands of the SAME type, while the quad op
+/// accepts three PAIRINGS, one of them mixed-signedness -- and that mixed one is
+/// the native instruction. So the pairing, not the element type alone, decides
+/// what is dispatchable; see `mtl::quad_int_dot`.
+template <typename V>
+concept SimdQuadVector =
+    simd::is_quad_widenable_v<typename V::value_type> &&
+    ContiguousVector<V> &&
+    requires(const V& v) {
+        { v.data() } -> std::convertible_to<const typename V::value_type*>;
+        { v.size() };
+    };
+
 /// Concept satisfied by dense matrix types eligible for MTL5's own SIMD
 /// kernels -- `BlasDenseMatrix` widened to every `mtl::simd` lane type, for the
 /// same reason as `SimdDenseVector`.
