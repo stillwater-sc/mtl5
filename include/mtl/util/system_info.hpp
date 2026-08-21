@@ -384,6 +384,17 @@ inline std::string build_isa_list() {
   #if defined(__AVX512VNNI__)
     add("AVX512VNNI");
   #endif
+    // AVX-VNNI is the VEX-encoded 256-bit form, present on Alder Lake and later
+    // WITHOUT AVX-512. Recorded even though MTL5 cannot currently use it:
+    // Highway implements the quad multiply-accumulate only in its AVX3_DL
+    // target, which is gated on AVX-512. Without this key an i7-12700K sidecar
+    // reads `SSE2 AVX AVX2 FMA` and cannot show that the machine had VNNI
+    // silicon the build could not reach -- which is exactly the finding worth
+    // not rediscovering (see docs/performance, "Hardware you own is not
+    // hardware you can reach").
+  #if defined(__AVXVNNI__)
+    add("AVXVNNI(unused)");
+  #endif
   #if defined(__AVX10_2__)
     add("AVX10.2");         // native symmetric i8 x i8 (`vpdpbssd`)
   #endif
