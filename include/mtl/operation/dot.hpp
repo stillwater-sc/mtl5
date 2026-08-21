@@ -37,6 +37,30 @@ concept quad_int_dot =
                                                          typename V2::value_type>> &&
     std::is_same_v<Result, Accumulator>;
 
+/// Does `dot(v1, v2)` name the quad kernel with the operands the OTHER way round?
+///
+/// `(int8, uint8)` has no hardware pairing -- VNNI implements unsigned x signed,
+/// so `(uint8, int8)` is the native one. The kernel `reduce_dot_widen` rejects
+/// the reversed order at compile time, which is right for a primitive that
+/// mirrors the instruction: there is no such instruction, and silently taking a
+/// three-times-slower emulation would be worse than saying so.
+///
+/// `dot` is not that primitive. Refusing to compute a well-defined dot product
+/// because the hardware lacks a fused form would break generic code for a
+/// performance reason, and dropping to the generic loop would cost roughly an
+/// order of magnitude with nothing to warn the caller. Neither is necessary: a
+/// dot product is SYMMETRIC, so the operands are simply swapped and the native
+/// instruction runs. `conj` is the identity on the integers, so this holds for
+/// the Hermitian `dot` as well as `dot_real`.
+template <typename Accumulator, typename Result, typename V1, typename V2>
+concept quad_int_dot_swapped =
+    interface::SimdQuadVector<V1> && interface::SimdQuadVector<V2> &&
+    !simd::QuadPair<typename V1::value_type, typename V2::value_type> &&
+    simd::QuadPair<typename V2::value_type, typename V1::value_type> &&
+    std::is_same_v<Accumulator, simd::quad_accumulator_t<typename V2::value_type,
+                                                         typename V1::value_type>> &&
+    std::is_same_v<Result, Accumulator>;
+
 /// Does `dot<Accumulator, Result>(v1, v2)` name the widening integer kernel?
 ///
 /// Both vectors contiguous over the SAME 16-bit type, and the requested
@@ -79,6 +103,12 @@ auto dot(const V1& v1, const V2& v2) {
             return simd::reduce_dot_widen<Accumulator, typename V1::value_type,
                                           typename V2::value_type>(
                 v1.data(), v2.data(), v1.size());
+        } else if constexpr (quad_int_dot_swapped<Accumulator, Result, V1, V2>) {
+            // Reversed 8-bit pairing: swap and take the native instruction. Exact,
+            // because a dot product is symmetric and conj is the identity here.
+            return simd::reduce_dot_widen<Accumulator, typename V2::value_type,
+                                          typename V1::value_type>(
+                v2.data(), v1.data(), v1.size());
         } else if constexpr (widening_int_dot<Accumulator, Result, V1, V2>) {
             // Widening INTEGER fast path (#451 phase 2): 16-bit operands into a
             // 32-bit accumulator, via the hardware's widening multiply-add. conj
@@ -170,6 +200,10 @@ auto dot_real(const V1& v1, const V2& v2) {
             return simd::reduce_dot_widen<Accumulator, typename V1::value_type,
                                           typename V2::value_type>(
                 v1.data(), v2.data(), v1.size());
+        } else if constexpr (quad_int_dot_swapped<Accumulator, Result, V1, V2>) {
+            return simd::reduce_dot_widen<Accumulator, typename V2::value_type,
+                                          typename V1::value_type>(
+                v2.data(), v1.data(), v1.size());
         } else if constexpr (widening_int_dot<Accumulator, Result, V1, V2>) {
             return simd::reduce_dot_widen<Accumulator, typename V1::value_type>(
                 v1.data(), v2.data(), v1.size());

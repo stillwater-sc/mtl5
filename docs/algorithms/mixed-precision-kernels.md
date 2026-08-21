@@ -283,11 +283,20 @@ is for real vectors.
 implements `unsigned × signed` — unsigned activations against signed weights,
 the shape of a quantized layer — and the symmetric `int8 × int8` form only from
 AVX10.2. Before that, the symmetric version costs about three times the native
-one (two `dpbusd` calls plus a shift and subtract). So MTL5 offers the three
-pairings the instruction offers, and **rejects `(int8, uint8)` at compile time**
-rather than silently reordering it: a dot product is symmetric, so swapping the
-arguments gets the native instruction, and being told that beats being quietly
-routed through the emulation.
+one (two `dpbusd` calls plus a shift and subtract). MTL5 handles that asymmetry
+at two levels, and the distinction matters:
+
+- **The kernel** `simd::reduce_dot_widen` offers exactly the three pairings the
+  instruction offers and **rejects `(int8, uint8)` at compile time**, naming the
+  fix. It is a primitive that mirrors the hardware, so a pairing with no
+  instruction should say so rather than quietly cost three times as much.
+- **`dot` and `dot_real` accept every pairing** and stay fast. A dot product is
+  symmetric, so the reversed order is dispatched by **swapping the operands** and
+  running the native instruction. Refusing to compute a well-defined dot product
+  for a hardware reason would break generic code; dropping to the generic loop
+  would cost roughly an order of magnitude with nothing to warn the caller.
+  Neither is necessary. (`conj` is the identity on the integers, so this holds
+  for the Hermitian `dot` too.)
 
 ### What this means for an int8 GEMM
 

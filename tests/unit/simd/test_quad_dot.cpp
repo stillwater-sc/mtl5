@@ -194,9 +194,15 @@ TEST_CASE("dot selects the quad kernel for the pairings that have one",
     STATIC_REQUIRE(mtl::quad_int_dot<std::int32_t,  std::int32_t,  u8v, i8v>);   // VNNI native
     STATIC_REQUIRE(mtl::quad_int_dot<std::uint32_t, std::uint32_t, u8v, u8v>);
 
-    // (int8, uint8) has no hardware pairing -- the generic loop takes it, which
-    // is correct, just not accelerated. Swapping the arguments would be.
+    // (int8, uint8) has no hardware pairing, so the direct predicate is false --
+    // but dot does NOT fall to the generic loop for it. A dot product is
+    // symmetric, so the operands are swapped and the native instruction runs.
     STATIC_REQUIRE_FALSE(mtl::quad_int_dot<std::int32_t, std::int32_t, i8v, u8v>);
+    STATIC_REQUIRE(mtl::quad_int_dot_swapped<std::int32_t, std::int32_t, i8v, u8v>);
+    // The swap applies only where it is needed: a pairing the hardware already
+    // has must not be re-routed through it.
+    STATIC_REQUIRE_FALSE(mtl::quad_int_dot_swapped<std::int32_t, std::int32_t, u8v, i8v>);
+    STATIC_REQUIRE_FALSE(mtl::quad_int_dot_swapped<std::int32_t, std::int32_t, i8v, i8v>);
     // A wider accumulator than the instruction implements also falls back.
     STATIC_REQUIRE_FALSE(mtl::quad_int_dot<std::int64_t, std::int64_t, i8v, i8v>);
     // And 8-bit types are not lanes, so the plain dot path must still reject them.
@@ -244,4 +250,26 @@ TEST_CASE("the int8 GEMM register tile is the float tile", "[simd][quad][blockin
         // kc must be a multiple of 4 and the pack layout quad-interleaved.
         CHECK(i.kc % 4 == 0);
     }
+}
+
+TEST_CASE("the reversed 8-bit pairing is swapped, not demoted",
+          "[simd][quad][operation][dot]") {
+    // dot(i8, u8) and dot(u8, i8) are the same mathematical quantity, and both
+    // must take the native instruction rather than one of them silently
+    // dropping to the generic loop an order of magnitude away.
+    constexpr std::size_t n = 259;
+    mtl::vec::dense_vector<std::int8_t>  a(n);
+    mtl::vec::dense_vector<std::uint8_t> b(n);
+    std::int64_t exact = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        a(i) = gen_b<std::int8_t>(i);
+        b(i) = gen_a<std::uint8_t>(i);
+        exact += std::int64_t(a(i)) * b(i);
+    }
+    CHECK((mtl::dot_real<std::int32_t>(a, b)) == exact);          // reversed order
+    CHECK((mtl::dot_real<std::int32_t>(b, a)) == exact);          // native order
+    CHECK((mtl::dot_real<std::int32_t>(a, b)) == (mtl::dot_real<std::int32_t>(b, a)));
+    // conj is the identity on the integers, so the Hermitian spelling agrees too.
+    CHECK((mtl::dot<std::int32_t>(a, b)) == exact);
+    CHECK((mtl::dot<std::int32_t>(b, a)) == exact);
 }
