@@ -203,24 +203,38 @@ benchmark contract is run under WSL.
 
 The repository now carries a `.gitattributes` pinning `*.sh` to `eol=lf`, which
 prevents it. An **already-checked-out** tree still has the old endings, though;
-attributes only apply at checkout. To repair the two scripts you need:
+attributes only apply at checkout.
+
+Both repairs below **discard uncommitted changes to the files they touch** —
+commit or stash first.
 
 ```bash
+# just the two scripts
 rm benchmarks/run_int_bench.sh benchmarks/machines/ryzen-9-8945hs-int.sh
 git checkout -- benchmarks/run_int_bench.sh benchmarks/machines/ryzen-9-8945hs-int.sh
-```
 
-Or to renormalize the whole working tree at once (**commit or stash first** —
-this discards uncommitted changes):
-
-```bash
+# or the whole working tree
 git rm --cached -r . && git reset --hard
 ```
 
-Do **not** fix it with `sed -i 's/\r$//' …`: that leaves the tree dirty, and
-`preflight` then refuses to run — correctly, since a benchmark on a modified
-tree cannot be attributed to a commit. Re-checkout instead, which leaves the
-tree clean.
+Do **not** reach for `sed -i 's/\r$//' …` instead. It fixes the line endings and
+leaves the tree looking modified, so `preflight` refuses the run. That is worth
+stating precisely, because `git diff` will tell you the file is unchanged:
+
+```console
+$ sed -i 's/\r$//' s.sh
+$ git diff --numstat s.sh          # empty -- no content change
+$ git status --porcelain s.sh
+ M s.sh                            # ... but modified, and it stays that way
+warning: in the working copy of 's.sh', LF will be replaced by CRLF the next time Git touches it
+```
+
+Under `core.autocrlf=true` — the setting that produced the CRLF in the first
+place — Git reports the file modified because the working tree no longer matches
+what a checkout *would* write, not because the content differs. `preflight` tests
+exactly `git status --porcelain`, so it rejects, and correctly: a benchmark run
+on a tree Git considers modified cannot be attributed to a commit. Re-checkout
+instead, which leaves the tree genuinely clean.
 
 ### The guard
 
