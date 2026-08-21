@@ -7,8 +7,9 @@ must be re-derived when a GPU or KPU backend arrives.
 
 This is the accumulated verdict, not an experiment log. The runs behind each
 claim are on [Cache blocking A/B](cache-blocking-ab-study.md) and
-[Multi-core scaling](multicore-scaling-investigation.md); this page records what
-survived them.
+[Multi-core scaling](multicore-scaling-investigation.md); the integer-lane
+numbers in §6 come from `benchmarks/data/ryzen-9-8945hs/int_arms.csv`. This page
+records what survived them.
 
 ## What has been established
 
@@ -79,6 +80,66 @@ machine — but it is a reminder that no parameter in this model can be judged
 alone. #408 is the same lesson: coupling a cache quantity (`mc`) to a register
 quantity (`mr`) cost 7.4% at eight threads.
 
+### 6. Narrowing the operand beats optimising the instruction, by an order of magnitude
+
+The integer-lane work (#451) produced the largest speedups in this programme,
+and almost none of it came from the instruction everyone reaches for.
+
+Measured on a Ryzen 9 8945HS (Zen 4, AVX3_DL, **native `vpdpbusd`** — confirmed
+in the sidecar, not assumed), `dot` with `uint8 × int8` operands against an fp64
+baseline:
+
+| n | 1 024 | 65 536 | 1 048 576 | 4 194 304 |
+|---|---|---|---|---|
+| speedup vs fp64 | 2.3× | 9.2× | 17.9× | **26.0×** |
+
+That 26× is mostly **bytes**: an int8 dot moves one byte per element where fp64
+moves eight, and a dot product is a streaming reduction with no reuse, so at
+large *n* it is bandwidth-bound and the ratio approaches the operand-width
+ratio. The instruction is a small part of it.
+
+How small can be measured **without leaving the machine**, which is what makes
+it trustworthy. Zen 4 has VNNI but not AVX10.2, so in the same run, over the
+same data, `uint8 × int8` is a native `vpdpbusd` while symmetric `int8 × int8`
+is emulated (two `vpdpbusd` plus a shift and a subtract):
+
+| n | 1 024 | 16 384 | 262 144 | 4 194 304 | median |
+|---|---|---|---|---|---|
+| native ÷ emulated | 1.33× | 1.50× | 1.44× | 1.28× | **1.42×** |
+
+**~1.4× from the instruction; ~18× from the operand width.** Notably the native
+form is only 1.4× faster despite issuing about a third of the instructions,
+which says the kernel is not instruction-throughput-bound even at L1-resident
+sizes — the same conclusion §2 reached about `mc` by a different route.
+
+This is the cleanest result the programme has, and it is a **data-movement**
+result. It also carries a caveat worth keeping attached: a *dot* is the worst
+case for showing an instruction off, because there is no operand reuse to
+amortise the traffic. A GEMM reuses each operand O(n) times and is compute-bound
+throughout, so the balance there should move toward the instruction. MTL5 has no
+integer GEMM, so that is a prediction, not a finding.
+
+### 7. Hardware you own is not hardware you can reach
+
+The i7-12700K (Alder Lake) **has** VNNI silicon — `__AVXVNNI__`, the VEX-encoded
+256-bit form — and MTL5 cannot use it. Highway implements the quad
+multiply-accumulate only in its `HWY_AVX3_DL` target, which is gated on AVX-512
+macros; Alder Lake's AVX-512 is fused off, and Highway carries no AVX-VNNI path
+at all. Compiled at `-march=alderlake` the kernel emits `vpmaddwd` and
+`has_native_quad_dot` is false.
+
+Two lessons, both of which generalise past this instance:
+
+- **A feature bit is not a capability.** Three separate gates sit between the
+  silicon and the kernel — the CPU's fuses, the compiler's macros, and the SIMD
+  library's target taxonomy — and any one of them can be the binding constraint.
+  MSVC is a fourth: it defines none of the seven macros Highway requires, so a
+  Windows-native build cannot reach VNNI even on a Zen 4.
+- **Which is why the benchmark records the derived answer.** `build_isa` now
+  carries `AVX512VNNI` and `AVX3_DL`, and the runner refuses to time a
+  decomposed build unless told to. Without that, an i7 run would have produced a
+  plausible CSV measuring the emulation, and nothing in it could have said so.
+
 ## What makes these claims checkable
 
 The measurement apparatus is as much a result as the numbers, and it transfers
@@ -127,7 +188,11 @@ ready to ask:
 2. **What is the invariant?** Data movement per operand — how many times A, B and
    C cross each level — is the quantity that is architecture-independent. Our
    sidecars record the schedule that determined it, so past runs remain
-   interpretable in those terms.
+   interpretable in those terms. §6 is the sharpest evidence for this framing
+   the programme has: narrowing the operand from 8 bytes to 1 bought ~18×, while
+   the specialised instruction bought ~1.4×. If one quantity is going to survive
+   the move to a GPU or KPU, bytes-per-operand is the candidate — and it is the
+   one a schedule specification can state directly.
 3. **Does an explicit schedule remove the need to measure, or move it?** If the
    KPU's schedule specification is complete, the response curve should be
    predictable rather than discovered. That is a falsifiable claim, and the
