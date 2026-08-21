@@ -375,10 +375,38 @@ inline std::string build_isa_list() {
   #if defined(__AVX512F__)
     add("AVX512F");
   #endif
+    // The integer dot-product extensions (#451 phase 4). These are recorded
+    // separately from AVX512F because AVX512F does NOT imply them and the
+    // difference decides which instruction the int8 kernel gets: with them,
+    // `vpdpbusd`; without, a decomposition into `vpmaddwd` that is correct and
+    // several times longer. A benchmark that cannot tell those apart cannot
+    // support a claim about either.
+  #if defined(__AVX512VNNI__)
+    add("AVX512VNNI");
+  #endif
+  #if defined(__AVX10_2__)
+    add("AVX10.2");         // native symmetric i8 x i8 (`vpdpbssd`)
+  #endif
+    // Highway selects its VNNI target (HWY_AVX3_DL) only on the FULL
+    // conjunction below, not on AVX512VNNI alone -- so a machine with VNNI can
+    // still compile to the decomposed path. Recording the derived answer, not
+    // just the ingredients, is what makes a sidecar readable months later.
+  #if defined(__AVX512F__) && defined(__AVX512VNNI__) && defined(__VAES__) && \
+      defined(__VPCLMULQDQ__) && defined(__AVX512VBMI__) &&                   \
+      defined(__AVX512VBMI2__) && defined(__AVX512VPOPCNTDQ__) &&             \
+      defined(__AVX512BITALG__)
+    add("AVX3_DL");
+  #endif
 #elif defined(__aarch64__) || defined(_M_ARM64)
     add("NEON");   // mandatory on AArch64
   #if defined(__ARM_FEATURE_SVE)
     add("SVE");
+  #endif
+  #if defined(__ARM_FEATURE_DOTPROD)
+    add("DOTPROD");         // SDOT / UDOT -- the NEON int8 dot (#451 phase 3)
+  #endif
+  #if defined(__ARM_FEATURE_MATMUL_INT8)
+    add("I8MM");
   #endif
 #endif
     if (s.empty()) s = "baseline";

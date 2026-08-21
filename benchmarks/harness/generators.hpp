@@ -3,6 +3,7 @@
 // Produces repeatable test data for fair cross-backend comparison.
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -74,6 +75,27 @@ vec::dense_vector<T> make_random_vector(std::size_t n, std::uint64_t seed = 123)
     vec::dense_vector<T> v(n);
     for (std::size_t i = 0; i < n; ++i)
         v(i) = static_cast<T>(rng.next_double(-1.0, 1.0));
+    return v;
+}
+
+/// Generate a dense vector of an INTEGER type, filled across the type's range
+/// but bounded so a dot product of two such vectors stays inside the
+/// accumulator (#451 phase 4).
+///
+/// The bound is not cosmetic. An integer dot WRAPS on overflow -- defined, but
+/// then the benchmark's checksum is a function of the vector length rather than
+/// of the arithmetic, and two arms of different width can no longer be compared
+/// on their results. Capping the magnitude at `lim` keeps every arm exact, so
+/// the arms are checked against each other as well as timed.
+template <typename T>
+vec::dense_vector<T> make_random_int_vector(std::size_t n, int lim,
+                                            std::uint64_t seed = 123) {
+    xorshift64 rng(seed);
+    vec::dense_vector<T> v(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto r = static_cast<int>(rng.next_double(-1.0, 1.0) * lim);
+        v(i) = static_cast<T>(std::is_signed_v<T> ? r : (r < 0 ? -r : r));
+    }
     return v;
 }
 

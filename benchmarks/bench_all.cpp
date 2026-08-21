@@ -11,6 +11,7 @@
 // 1.5x neighbours so a plain run measures padding / odd-size overhead.
 
 #include <benchmarks/harness/runner.hpp>
+#include <mtl/simd/batch.hpp>
 #include <mtl/util/system_info.hpp>
 #include <algorithm>
 #include <cstring>
@@ -108,6 +109,18 @@ static void print_build_info(const std::string& label) {
 #endif
     std::cout << " ]\n\n";
 
+    // The two facts a later reader needs to interpret an integer arm (#451
+    // phase 4): which SIMD target actually compiled, and whether that target
+    // has the int8 quad multiply-accumulate. AVX512F does NOT imply it -- only
+    // Highway's AVX3_DL target does on x86 -- so a machine with AVX-512 can
+    // still be timing the decomposition. Without this line the CSV cannot say
+    // which was measured, and the number is uncheckable.
+    std::cout << "SIMD backend:    " << mtl::simd::backend_name()
+              << "   int8 quad dot: "
+              << (mtl::simd::has_native_quad_dot ? "NATIVE (vpdpbusd / SDOT)"
+                                                 : "decomposed")
+              << "\n\n";
+
     // Self-identify the machine so the run is tagged with the hardware, OS, and
     // compiler that produced the numbers (feeds docs/benchmarks/systems.md).
     std::cout << mtl::util::to_string(mtl::util::identify()) << "\n\n";
@@ -123,6 +136,8 @@ static void print_usage() {
         "  --sweep <spec>          Generated sizes for all suites\n"
         "  --blas-sweep <spec>     Generated sizes for BLAS suites\n"
         "  --lapack-sweep <spec>   Generated sizes for LAPACK suites\n"
+        "  --int-sizes <n,...>     Explicit sizes for the integer dot suite\n"
+        "  --int-sweep <spec>      Generated sizes for the integer dot suite\n"
         "  --suite <name>          Suite or group to run (default: all)\n"
         "  --label <name>          Backend label recorded in output\n"
         "                          (default: this build's config)\n"
@@ -139,12 +154,19 @@ static void print_usage() {
         "        gemm-rect (rectangular GEMM shapes: multi-loop 2D grid, #297),\n"
         "        ewise (element-wise vector/matrix expression sweeps, #297),\n"
         "        dot, nrm2, axpy, scal, gemv, ger, symv, trmv, trsv,\n        gemm, trmm, trsm, symm, syrk, syr2k,\n"
-        "        lu, qr, cholesky, eig\n";
+        "        lu, qr, cholesky, eig,\n"
+        "        int (=int-dot+int-gemv; NOT in `all` -- it would change existing baselines),\n"
+        "        int-dot, int-gemv\n";
 }
 
 int main(int argc, char* argv[]) {
     std::vector<std::size_t> blas_sizes   = kDefaultBlasSizes;
     std::vector<std::size_t> lapack_sizes = kDefaultLapackSizes;
+    // The integer suite needs its own sizes: a streaming reduction has to be
+    // swept by FOOTPRINT (L1 -> DRAM), which the BLAS list does not reach, and
+    // an n x n gemv at those lengths would be n^2 elements.
+    std::vector<std::size_t> int_sizes      = mtl::bench::kDefaultIntSizes;
+    std::vector<std::size_t> gemv_int_sizes = kDefaultBlasSizes;
     std::string csv_path;
     std::string suite = "all";
     std::string label = kDefaultLabel;
@@ -158,17 +180,21 @@ int main(int argc, char* argv[]) {
             if (std::strcmp(argv[i], "--csv") == 0) {
                 csv_path = need_arg("--csv");
             } else if (std::strcmp(argv[i], "--sizes") == 0) {
-                blas_sizes = lapack_sizes = parse_sizes(need_arg("--sizes"));
+                blas_sizes = lapack_sizes = gemv_int_sizes = parse_sizes(need_arg("--sizes"));
             } else if (std::strcmp(argv[i], "--blas-sizes") == 0) {
-                blas_sizes = parse_sizes(need_arg("--blas-sizes"));
+                blas_sizes = gemv_int_sizes = parse_sizes(need_arg("--blas-sizes"));
             } else if (std::strcmp(argv[i], "--lapack-sizes") == 0) {
                 lapack_sizes = parse_sizes(need_arg("--lapack-sizes"));
             } else if (std::strcmp(argv[i], "--sweep") == 0) {
-                blas_sizes = lapack_sizes = parse_sweep(need_arg("--sweep"));
+                blas_sizes = lapack_sizes = gemv_int_sizes = parse_sweep(need_arg("--sweep"));
             } else if (std::strcmp(argv[i], "--blas-sweep") == 0) {
-                blas_sizes = parse_sweep(need_arg("--blas-sweep"));
+                blas_sizes = gemv_int_sizes = parse_sweep(need_arg("--blas-sweep"));
             } else if (std::strcmp(argv[i], "--lapack-sweep") == 0) {
                 lapack_sizes = parse_sweep(need_arg("--lapack-sweep"));
+            } else if (std::strcmp(argv[i], "--int-sizes") == 0) {
+                int_sizes = parse_sizes(need_arg("--int-sizes"));
+            } else if (std::strcmp(argv[i], "--int-sweep") == 0) {
+                int_sizes = parse_sweep(need_arg("--int-sweep"));
             } else if (std::strcmp(argv[i], "--suite") == 0) {
                 suite = need_arg("--suite");
             } else if (std::strcmp(argv[i], "--label") == 0) {
@@ -193,6 +219,22 @@ int main(int argc, char* argv[]) {
 
     if (suite == "all") {
         b::run_all(rep, label, blas_sizes, lapack_sizes);
+    } else if (suite == "int") {
+        // Deliberately NOT part of `all`: adding arms to the default run would
+        // change every machine's existing CSV and break comparison with the
+        // committed baselines. Ask for it.
+        std::cout << "=== Integer arms (#451) ===" << std::endl;
+        std::cout << "  note: a dot is bandwidth-bound at large n, where int8 moves"
+                     " 1 byte/element\n        against fp64's 8. The small sizes"
+                     " isolate the instruction; the large\n        ones isolate the"
+                     " traffic. Read the curve, not a single ratio." << std::endl;
+        b::bench_dot_int(rep, label, int_sizes);
+        b::bench_gemv_int(rep, label, gemv_int_sizes);
+        b::note_gemm_int_absent();
+    } else if (suite == "int-dot") {
+        b::bench_dot_int(rep, label, int_sizes);
+    } else if (suite == "int-gemv") {
+        b::bench_gemv_int(rep, label, gemv_int_sizes);
     } else if (suite == "blas") {
         std::cout << "=== BLAS Level 1 ===" << std::endl;
         b::bench_dot(rep, label, blas_sizes);

@@ -424,6 +424,47 @@ public:
 
 #endif
 
+/// Name of the SIMD backend actually compiled -- "scalar", or Highway's target
+/// ("AVX3_DL", "AVX2", "SSE4", "NEON", ...).
+///
+/// This exists for PROVENANCE. Whether the int8 kernel got `vpdpbusd` or a
+/// decomposition into `vpmaddwd` is not visible in a result, only in a
+/// throughput number that nobody can check afterwards -- and the difference is
+/// several times the work. `AVX3_DL` is the target that has the instruction;
+/// anything else on x86 does not, however much AVX-512 the machine supports.
+/// #451 phase 4 records this in every benchmark sidecar for that reason.
+inline const char* backend_name() noexcept {
+#if MTL5_SIMD_USE_HIGHWAY
+    return hwy::TargetName(HWY_TARGET);
+#else
+    return "scalar";
+#endif
+}
+
+/// Does this build have a NATIVE quad multiply-accumulate (the int8 dot), or
+/// will it decompose? Compile-time, and deliberately mirrors Highway's own
+/// target gate rather than guessing from a single feature macro.
+inline constexpr bool has_native_quad_dot =
+#if !MTL5_SIMD_USE_HIGHWAY
+    false;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    // NEON SDOT/UDOT.
+  #if defined(__ARM_FEATURE_DOTPROD)
+    true;
+  #else
+    false;
+  #endif
+#elif defined(__AVX512F__) && defined(__AVX512VNNI__) && defined(__VAES__) &&  \
+      defined(__VPCLMULQDQ__) && defined(__AVX512VBMI__) &&                    \
+      defined(__AVX512VBMI2__) && defined(__AVX512VPOPCNTDQ__) &&              \
+      defined(__AVX512BITALG__)
+    true;
+#elif defined(__AVX10_2__)
+    true;
+#else
+    false;
+#endif
+
 /// Largest multiple of W not exceeding n -- the SIMD body length; iterate the
 /// remainder [vectorizable_length(n) .. n) scalar:
 ///   for (i = 0; i < vectorizable_length(n, W); i += W) { ... }   // SIMD

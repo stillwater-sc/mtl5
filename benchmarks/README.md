@@ -150,12 +150,85 @@ to `native` or `blas`; `run_sweeps.sh` passes `native`/`openblas`/`mkl`).
 | `lapack` | `lu`, `qr`, `cholesky`, `eig` |
 | `gemm-rect` | rectangular GEMM shapes: the BLIS multi-loop 2D grid (#297) |
 | `ewise` | element-wise vector/matrix expression sweeps (#297) |
+| `int` | `int-dot` + `int-gemv` — the integer arms (#451 phase 4) |
+| `int-dot` | fp64/fp32 baselines vs int32, int16→int32, int8→int32, uint8×int8→int32 |
+| `int-gemv` | fp64/fp32 baselines vs int32 |
 
 Any individual op above is also a suite name of its own (`--suite trsm`). The
 authoritative list is always `bench_all --help`.
 
 `gemm-rect` and `ewise` carry their own built-in shape sets and ignore
 `--sizes` / `--sweep`.
+
+`int` is deliberately **not** part of `all`: adding arms to the default run
+would change every machine's committed CSV and break comparison with the
+existing baselines. Ask for it by name.
+
+## Integer arms (#451 phase 4)
+
+```bash
+benchmarks/run_int_bench.sh --outdir benchmarks/data/<machine> [--arch <flag>] [--pin 0,2,4,6]
+benchmarks/machines/ryzen-9-8945hs-int.sh          # Zen 4, under WSL
+```
+
+### Read the curve, not a ratio
+
+A dot product is a streaming reduction: two operands in, two ops each, no reuse.
+At large `n` it is **bandwidth-bound**, and an int8 dot moves one byte per
+element where fp64 moves eight. A large-`n` int8 speedup of ~8× is therefore
+expected **whether or not the machine has VNNI at all** — that is bytes, not
+arithmetic. The instruction only shows where the kernel is compute- or
+latency-bound, which for a reduction means the L1-resident sizes.
+
+So the suite sweeps by *footprint*, 1K → 4M elements, and the shape across that
+range is the result. Measured on a Xeon E5-2420 v2 (SSE4, **no** VNNI), int8
+against fp64:
+
+| n | 1024 | 4 096 | 16 384 | 65 536 | 262 144 | 1 048 576 | 4 194 304 |
+|---|---|---|---|---|---|---|---|
+| `int8/fp64` | 0.96× | 2.25× | 1.87× | 2.49× | 2.95× | 3.69× | **7.34×** |
+
+Flat at the small end, ~7× at the large end — the bandwidth effect with no
+instruction behind it. That machine is the **control**: a Zen 4 advantage at the
+*small* end that this table lacks is the instruction; the large end is bytes on
+both. (Shape check only — not a contract-compliant run.)
+
+### The guard
+
+`run_int_bench.sh` refuses to time a build without the native quad
+multiply-accumulate, because nothing in a timing distinguishes `vpdpbusd` from
+the `vpmaddwd` decomposition, and having the hardware is not sufficient:
+
+- Highway selects its VNNI target (`HWY_AVX3_DL`) only on the **full**
+  conjunction `__AVX512VNNI__ ∧ __VAES__ ∧ __VPCLMULQDQ__ ∧ __AVX512VBMI__ ∧
+  __AVX512VBMI2__ ∧ __AVX512VPOPCNTDQ__ ∧ __AVX512BITALG__`.
+- **MSVC cannot define these.** `/arch:AVX512` covers F/CD/BW/DQ/VL only and
+  there is no `/arch` for VNNI — so the MSVC profile
+  `machines/ryzen-9-8945hs.ps1` cannot produce a VNNI build. Use WSL/gcc
+  (`-march=znver4`) or clang-cl (`/clang:-march=znver4`).
+
+`bench_all` prints the decision, and `build_isa` now records `AVX512VNNI`,
+`AVX3_DL` and `DOTPROD`, so a sidecar says which path was measured:
+
+```
+SIMD backend:    SSE4   int8 quad dot: decomposed
+```
+
+Pass `--allow-decomposed` to measure the decomposition on purpose; the label
+becomes `native-int-decomposed` so the CSV cannot be mistaken for the other.
+
+### No `gemm` arm
+
+The epic asks for int arms for dot, gemv and gemm. There is **no integer GEMM**
+to benchmark — phases 0–3 delivered dot and gemv, and `mult(dense2D<int32_t>,…)`
+runs the generic triple loop. An arm named `gemm_i32` would time the fallback
+while implying the kernel, so there is none.
+
+This is also where VNNI would pay most: a GEMM reuses each operand O(n) times
+and is compute-bound, so the arithmetic density would show instead of being
+masked by memory traffic. The tile is already settled (it is the float tile,
+#464) and `kc` is already a multiple of 4; what remains is the quad-interleaved
+pack layout.
 
 ### BLAS routine coverage
 
