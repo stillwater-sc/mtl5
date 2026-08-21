@@ -317,6 +317,55 @@ void mult(const MA& A, const MB& B, MC& C) {
             return;
         }
 #endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+        // The integer analogue: 8- or 16-bit operands accumulated in 32 bits
+        // through the same blocked nest and the same widening load.
+        //
+        // This is the WIDEN-ON-LOAD path, not the hardware dot product. It
+        // promotes narrow operands into int32 lanes and does an ordinary
+        // multiply-add, so it captures the memory-traffic win -- an int8 GEMM
+        // reads an eighth of the bytes of an fp64 one -- but not `vpdpbusd`,
+        // which needs a different micro-kernel and a quad-interleaved pack
+        // layout. Measured on the dot kernels, traffic is where most of the
+        // integer speedup lives; see docs/performance.
+        //
+        // Same signedness on both operands and the accumulator, matching
+        // batch::load_widen: a mixed pair is a question about the caller's
+        // intent, not something to guess at.
+        if constexpr (std::is_integral_v<Accumulator> &&
+                      simd::is_lane_v<Accumulator> &&
+                      std::is_same_v<typename MC::value_type, Accumulator> &&
+                      std::is_same_v<typename MA::value_type, typename MB::value_type> &&
+                      std::is_integral_v<typename MA::value_type> &&
+                      (sizeof(typename MA::value_type) < sizeof(Accumulator)) &&
+                      (std::is_signed_v<typename MA::value_type> ==
+                       std::is_signed_v<Accumulator>) &&
+                      interface::SimdDenseMatrix<MC> &&
+                      interface::ContiguousMatrixData<MA> &&
+                      interface::ContiguousMatrixData<MB>) {
+            using TAB = typename MA::value_type;
+            const std::size_t M = A.num_rows();
+            const std::size_t N = B.num_cols();
+            const std::size_t K = A.num_cols();
+            const std::ptrdiff_t a_rs = interface::is_row_major_v<MA> ? static_cast<std::ptrdiff_t>(A.num_cols()) : 1;
+            const std::ptrdiff_t a_cs = interface::is_row_major_v<MA> ? 1 : static_cast<std::ptrdiff_t>(A.num_rows());
+            const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
+            const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
+            const unsigned nthreads = detail::gemm_default_threads();
+            if constexpr (interface::is_row_major_v<MC>) {
+                detail::gemm_blocked<Accumulator, TAB>(M, N, K, math::one<Accumulator>(),
+                                                       A.data(), a_rs, a_cs,
+                                                       B.data(), b_rs, b_cs,
+                                                       math::zero<Accumulator>(), C.data(), N, nthreads);
+            } else {
+                detail::gemm_blocked<Accumulator, TAB>(N, M, K, math::one<Accumulator>(),
+                                                       B.data(), b_cs, b_rs,
+                                                       A.data(), a_cs, a_rs,
+                                                       math::zero<Accumulator>(), C.data(), M, nthreads);
+            }
+            return;
+        }
+#endif
         // Custom accumulator: external BLAS / native-fast GEMM use hardware-fixed
         // accumulation, so route to the accumulator-aware generic kernel.
         detail::mult_generic<Accumulator>(A, B, C);
@@ -352,10 +401,16 @@ void mult(const MA& A, const MB& B, MC& C) {
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM
     // Native blocked GEMM: preferred over the generic triple loop for dense
-    // contiguous float/double matrices when no external BLAS handled it above.
-    if constexpr (interface::BlasDenseMatrix<MA> &&
-                  interface::BlasDenseMatrix<MB> &&
-                  interface::BlasDenseMatrix<MC>) {
+    // contiguous matrices when no external BLAS handled it above.
+    //
+    // Gated on the Simd concepts, so int32 matrices reach the blocked nest too.
+    // There is no external ?gemm for int32, so the BLAS branch above cannot have
+    // taken them, and the generic triple loop is what they were falling to.
+    if constexpr (interface::SimdDenseMatrix<MA> &&
+                  interface::SimdDenseMatrix<MB> &&
+                  interface::SimdDenseMatrix<MC> &&
+                  std::is_same_v<typename MA::value_type, typename MC::value_type> &&
+                  std::is_same_v<typename MB::value_type, typename MC::value_type>) {
         using T = typename MC::value_type;
         const std::size_t M = A.num_rows();
         const std::size_t N = B.num_cols();

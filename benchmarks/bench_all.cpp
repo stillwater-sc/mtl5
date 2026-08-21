@@ -155,8 +155,8 @@ static void print_usage() {
         "        ewise (element-wise vector/matrix expression sweeps, #297),\n"
         "        dot, nrm2, axpy, scal, gemv, ger, symv, trmv, trsv,\n        gemm, trmm, trsm, symm, syrk, syr2k,\n"
         "        lu, qr, cholesky, eig,\n"
-        "        int (=int-dot+int-gemv; NOT in `all` -- it would change existing baselines),\n"
-        "        int-dot, int-gemv\n";
+        "        int (=int-dot+int-gemv+int-gemm; NOT in `all` -- it would change existing baselines),\n"
+        "        int-dot, int-gemv, int-gemm\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -167,6 +167,8 @@ int main(int argc, char* argv[]) {
     // an n x n gemv at those lengths would be n^2 elements.
     std::vector<std::size_t> int_sizes      = mtl::bench::kDefaultIntSizes;
     std::vector<std::size_t> gemv_int_sizes = kDefaultBlasSizes;
+    // GEMM is O(n^3): a separate, shorter list so `--suite int` stays runnable.
+    std::vector<std::size_t> gemm_int_sizes  = {128, 256, 512, 1024};
     std::string csv_path;
     std::string suite = "all";
     std::string label = kDefaultLabel;
@@ -180,13 +182,13 @@ int main(int argc, char* argv[]) {
             if (std::strcmp(argv[i], "--csv") == 0) {
                 csv_path = need_arg("--csv");
             } else if (std::strcmp(argv[i], "--sizes") == 0) {
-                blas_sizes = lapack_sizes = gemv_int_sizes = parse_sizes(need_arg("--sizes"));
+                blas_sizes = lapack_sizes = gemv_int_sizes = gemm_int_sizes = parse_sizes(need_arg("--sizes"));
             } else if (std::strcmp(argv[i], "--blas-sizes") == 0) {
                 blas_sizes = gemv_int_sizes = parse_sizes(need_arg("--blas-sizes"));
             } else if (std::strcmp(argv[i], "--lapack-sizes") == 0) {
                 lapack_sizes = parse_sizes(need_arg("--lapack-sizes"));
             } else if (std::strcmp(argv[i], "--sweep") == 0) {
-                blas_sizes = lapack_sizes = gemv_int_sizes = parse_sweep(need_arg("--sweep"));
+                blas_sizes = lapack_sizes = gemv_int_sizes = gemm_int_sizes = parse_sweep(need_arg("--sweep"));
             } else if (std::strcmp(argv[i], "--blas-sweep") == 0) {
                 blas_sizes = gemv_int_sizes = parse_sweep(need_arg("--blas-sweep"));
             } else if (std::strcmp(argv[i], "--lapack-sweep") == 0) {
@@ -230,11 +232,13 @@ int main(int argc, char* argv[]) {
                      " traffic. Read the curve, not a single ratio." << std::endl;
         b::bench_dot_int(rep, label, int_sizes);
         b::bench_gemv_int(rep, label, gemv_int_sizes);
-        b::note_gemm_int_absent();
+        b::bench_gemm_int(rep, label, gemm_int_sizes);
     } else if (suite == "int-dot") {
         b::bench_dot_int(rep, label, int_sizes);
     } else if (suite == "int-gemv") {
         b::bench_gemv_int(rep, label, gemv_int_sizes);
+    } else if (suite == "int-gemm") {
+        b::bench_gemm_int(rep, label, gemm_int_sizes);
     } else if (suite == "blas") {
         std::cout << "=== BLAS Level 1 ===" << std::endl;
         b::bench_dot(rep, label, blas_sizes);

@@ -197,15 +197,26 @@ public:
     /// (e.g. load float, accumulate in double). The float descriptor is rebound
     /// to the same lane count as `T`'s, so exactly `size` source values are read.
     ///
-    /// Floating lanes only. Widening an integer lane is the whole substance of
-    /// #451 phases 2-3 -- it has to pick a signedness convention and an overflow
-    /// contract for the accumulate -- so it is excluded here rather than
-    /// inherited by accident from `sizeof(Src) < sizeof(T)`.
+    /// Integer lanes are permitted too, and the rule is SAME SIGNEDNESS. Phase 0
+    /// excluded them because widening an integer needed a signedness convention
+    /// and an overflow contract that did not exist yet; phases 2-3 settled both,
+    /// and the integer GEMM needs this load. Sign extension for signed sources,
+    /// zero extension for unsigned, and no mixing -- a mixed pair is a question
+    /// about the caller's intent, not about the load.
+    ///
+    /// Note this is the WIDEN-ON-LOAD path, not the hardware dot product: it
+    /// promotes narrow operands into TC-wide lanes and then does an ordinary
+    /// multiply-add. It captures the memory-traffic win (one byte per element
+    /// instead of eight) which is where most of the integer speedup lives --
+    /// see docs/performance -- but not the specialised instruction, which needs
+    /// a different micro-kernel and a quad-interleaved pack layout.
     template <typename Src>
     static batch load_widen(const Src* p) {
-        static_assert(std::is_floating_point_v<T> && std::is_floating_point_v<Src>,
-                      "load_widen is floating-point only; widening integer lanes "
-                      "needs an accumulator contract (#451 phases 2-3)");
+        static_assert((std::is_floating_point_v<T> && std::is_floating_point_v<Src>) ||
+                      (std::is_integral_v<T> && std::is_integral_v<Src> &&
+                       std::is_signed_v<T> == std::is_signed_v<Src>),
+                      "load_widen takes float->float or integer->integer of the "
+                      "SAME signedness; mixing them is a question about intent");
         static_assert(sizeof(Src) < sizeof(T),
                       "load_widen widens; use load_unaligned for equal-width types");
         const hn::Rebind<Src, D> ds;
@@ -344,9 +355,11 @@ public:
     /// widening load; see the Highway variant).
     template <typename Src>
     static batch load_widen(const Src* p) {
-        static_assert(std::is_floating_point_v<T> && std::is_floating_point_v<Src>,
-                      "load_widen is floating-point only; widening integer lanes "
-                      "needs an accumulator contract (#451 phases 2-3)");
+        static_assert((std::is_floating_point_v<T> && std::is_floating_point_v<Src>) ||
+                      (std::is_integral_v<T> && std::is_integral_v<Src> &&
+                       std::is_signed_v<T> == std::is_signed_v<Src>),
+                      "load_widen takes float->float or integer->integer of the "
+                      "SAME signedness; mixing them is a question about intent");
         static_assert(sizeof(Src) < sizeof(T),
                       "load_widen widens; use load_unaligned for equal-width types");
         return batch(static_cast<T>(p[0]));

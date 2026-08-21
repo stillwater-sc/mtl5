@@ -36,10 +36,12 @@ table:
 - **§2 / #458 — the `mc` trough is a partition effect.** One shape, one machine,
   6 cores. The acceptance criterion asks for a rule that holds on three
   machines; we cannot even state the rule.
-- **The GEMM prediction.** §6 says a dot is the worst case for showing an
-  instruction off, and predicts the balance moves toward the instruction when
-  operands are reused O(n) times. There is no integer GEMM, so this is
-  unfalsified.
+- **The GEMM prediction — now resolved, and it sharpens the case for hardware.**
+  The integer GEMM exists. On a machine without VNNI, narrowing the operand buys
+  **nothing** for a GEMM: `gemm_i8_i32` is no faster than `gemm_i32`, because
+  once operands are packed and reused their width in memory stops mattering. So
+  the *only* thing an int8 GEMM can offer over fp32 is the instruction — which
+  makes a VNNI or AMX machine's GEMM number an almost pure measurement of it.
 
 ## Selection criteria
 
@@ -350,9 +352,11 @@ Stated up front, so it can be checked later:
 - **Buying for throughput.** A faster machine at a design point we already have
   produces a number nobody can act on.
 - **Running the dot suite and stopping.** §6 says a dot is the worst case for
-  showing an instruction off. Without an integer GEMM, an AMX or I8MM machine
-  cannot demonstrate what it is for — so the **GEMM kernel should precede the
-  hardware**, not follow it.
+  showing an instruction off, and the GEMM arm now shows why: with no operand
+  reuse the width is everything, and with reuse it is worth nothing. A machine
+  bought for its instruction must be measured on the **GEMM** arm, or it will be
+  credited with a bandwidth effect it did not produce. (The GEMM kernel was
+  built before this plan was acted on, which was the point of saying so.)
 - **Cross-machine comparison without a within-machine control.** Already burned
   us once, at 20% on the headline number.
 

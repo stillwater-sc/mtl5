@@ -147,6 +147,22 @@ concept SimdQuadVector =
         { v.size() };
     };
 
+/// Storage shape only: contiguous `data()` plus dimensions, with NO constraint
+/// on the element type.
+///
+/// Needed where the element type is constrained separately and is not a lane at
+/// all -- the widening GEMM's operands are 8- or 16-bit, narrower than anything
+/// `batch<>` holds, so `SimdDenseMatrix` cannot describe them. Splitting the
+/// layout requirement from the type requirement keeps each predicate saying one
+/// thing.
+template <typename M>
+concept ContiguousMatrixData =
+    requires(const M& m) {
+        { m.data() } -> std::convertible_to<const typename M::value_type*>;
+        { m.num_rows() };
+        { m.num_cols() };
+    };
+
 /// Concept satisfied by dense matrix types eligible for MTL5's own SIMD
 /// kernels -- `BlasDenseMatrix` widened to every `mtl::simd` lane type, for the
 /// same reason as `SimdDenseVector`.

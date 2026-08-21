@@ -190,22 +190,69 @@ inline void bench_gemv_int(reporter& rep, const std::string& label,
     }
 }
 
-/// gemm: deliberately ABSENT, and this note is the deliverable.
+/// gemm: fp64/fp32 baselines against int32 and the widening 8/16-bit forms.
 ///
-/// The epic asks for int arms for dot, gemv and gemm. There is no integer GEMM
-/// to benchmark: phase 0 excluded it explicitly, and phases 2-3 delivered
-/// widening DOT kernels only. `mult(dense2D<int32_t>, ...)` runs the generic
-/// triple loop -- correct, and nothing to do with VNNI -- so an arm called
-/// "gemm_i32" would time the fallback while implying the kernel.
+/// This is the arm the dot suite could not provide. A dot has no operand reuse,
+/// so it is bandwidth-bound at any interesting size and the operand width
+/// dominates everything else. A GEMM reuses each operand O(n) times and is
+/// compute-bound once it is past the caches, so the balance between "moves
+/// fewer bytes" and "does arithmetic faster" is genuinely different here -- and
+/// measuring that difference is the point.
 ///
-/// This is also where an integer GEMM would pay most: unlike a dot, a GEMM
-/// reuses each operand O(n) times and is compute-bound, so the arithmetic
-/// density of `vpdpbusd` would show rather than being masked by memory traffic.
-/// The tile is already settled (it is the float tile, #464) and `kc` is already
-/// a multiple of 4; what remains is the quad-interleaved pack layout.
-inline void note_gemm_int_absent() {
-    std::cout << "  (no int gemm arm: MTL5 has no integer GEMM kernel -- "
-                 "phases 0-3 delivered dot and gemv. See #451.)" << std::endl;
+/// What is measured is the WIDEN-ON-LOAD path: narrow operands promoted into
+/// int32 lanes, then an ordinary multiply-add. Not `vpdpbusd`, which needs a
+/// quad-interleaved pack layout and a different micro-kernel. So the int8 arm
+/// here shows what the OPERAND WIDTH is worth in a compute-bound kernel, with
+/// the instruction's contribution still to come.
+inline void bench_gemm_int(reporter& rep, const std::string& label,
+                           const std::vector<std::size_t>& sizes,
+                           std::size_t warmup = 2, std::size_t iterations = 5) {
+    for (auto n : sizes) {
+        const double ops = 2.0 * double(n) * double(n) * double(n);
+        {
+            auto A = make_random_matrix<double>(n, n), B = make_random_matrix<double>(n, n, 7);
+            mtl::mat::dense2D<double> C(n, n);
+            rep.add(measure([&]{ mtl::mult(A, B, C); }, "gemm_f64", label, n, ops, warmup, iterations));
+        }
+        {
+            auto A = make_random_matrix<float>(n, n), B = make_random_matrix<float>(n, n, 7);
+            mtl::mat::dense2D<float> C(n, n);
+            rep.add(measure([&]{ mtl::mult(A, B, C); }, "gemm_f32", label, n, ops, warmup, iterations));
+        }
+        // Same-type int32 through the blocked nest.
+        {
+            mtl::mat::dense2D<std::int32_t> A(n, n), B(n, n), C(n, n);
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j < n; ++j) {
+                    A(i, j) = static_cast<std::int32_t>((i * 31 + j * 17) % 512 - 256);
+                    B(i, j) = static_cast<std::int32_t>((i * 13 + j * 7) % 512 - 256);
+                }
+            rep.add(measure([&]{ mtl::mult(A, B, C); }, "gemm_i32", label, n, ops, warmup, iterations));
+        }
+        // Widening arms: half and an eighth of fp64's bytes per operand.
+        {
+            mtl::mat::dense2D<std::int16_t> A(n, n), B(n, n);
+            mtl::mat::dense2D<std::int32_t> C(n, n);
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j < n; ++j) {
+                    A(i, j) = static_cast<std::int16_t>((i * 31 + j * 17) % 64 - 32);
+                    B(i, j) = static_cast<std::int16_t>((i * 13 + j * 7) % 64 - 32);
+                }
+            rep.add(measure([&]{ mtl::mult<std::int32_t>(A, B, C); },
+                            "gemm_i16_i32", label, n, ops, warmup, iterations));
+        }
+        {
+            mtl::mat::dense2D<std::int8_t> A(n, n), B(n, n);
+            mtl::mat::dense2D<std::int32_t> C(n, n);
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j < n; ++j) {
+                    A(i, j) = static_cast<std::int8_t>((i * 31 + j * 17) % 32 - 16);
+                    B(i, j) = static_cast<std::int8_t>((i * 13 + j * 7) % 32 - 16);
+                }
+            rep.add(measure([&]{ mtl::mult<std::int32_t>(A, B, C); },
+                            "gemm_i8_i32", label, n, ops, warmup, iterations));
+        }
+    }
 }
 
 // ── BLAS-level suites ──────────────────────────────────────────────────────

@@ -260,302 +260,37 @@ SIMD backend:    SSE4   int8 quad dot: decomposed
 Pass `--allow-decomposed` to measure the decomposition on purpose; the label
 becomes `native-int-decomposed` so the CSV cannot be mistaken for the other.
 
-### No `gemm` arm
-
-The epic asks for int arms for dot, gemv and gemm. There is **no integer GEMM**
-to benchmark — phases 0–3 delivered dot and gemv, and `mult(dense2D<int32_t>,…)`
-runs the generic triple loop. An arm named `gemm_i32` would time the fallback
-while implying the kernel, so there is none.
-
-This is also where VNNI would pay most: a GEMM reuses each operand O(n) times
-and is compute-bound, so the arithmetic density would show instead of being
-masked by memory traffic. The tile is already settled (it is the float tile,
-#464) and `kc` is already a multiple of 4; what remains is the quad-interleaved
-pack layout.
-
-### BLAS routine coverage
-
-Benchmarked, and therefore implemented in MTL5: **L1** `dot`, `nrm2`, `axpy`,
-`scal`; **L2** `gemv`, `ger`, `symv`, `trmv`, `trsv`; **L3** `gemm`, `trmm`,
-`trsm`, `symm`, `syrk`, `syr2k`. That is the full L2/L3 core — #227 closed the
-gap that earlier revisions of this file described as outstanding.
-
-Standard BLAS routines with no public `mtl::` operation, and hence no benchmark:
-L1 `asum`, `iamax`, `rot`, `copy`, `swap`. (`copy` has a raw binding in
-`mtl/interface/blas.hpp` for internal use, but no public op; `copy`/`swap` are
-normally expressed through assignment and `std::swap`.)
-
-### Sweeping size N (padding / odd-size overhead)
-
-Generate sizes with `--sweep` (or per-tier `--blas-sweep` / `--lapack-sweep`):
-
-```bash
-./build-openblas/benchmarks/bench_all --suite l3 --sweep 16:1024:16   # linear
-./build-openblas/benchmarks/bench_all --suite blas --sweep 16:1024:x2 # geometric
-./build-openblas/benchmarks/bench_all --suite l1 --sweep 33:1024:97   # all odd / non-pow2
-./build-openblas/benchmarks/bench_all --suite l3 --sweep 250:262:1    # dense bracket of 256
-```
-
-The **default** size set is intentionally not all powers of two — it brackets
-each power of two with `±1` neighbours and 1.5x midpoints
-(`48, 64, 65, 96, 128, 129, 192, 255, 256, 257, 384, 512, 513, 768, 1024`), so a
-plain run already surfaces odd-size / padding effects.
-
-## Plotting
-
-`plot_results.py` turns the per-backend CSVs into GFLOP/s-vs-N curves
-(matplotlib; standard library otherwise). Pass the native/openblas/mkl CSVs to
-overlay them — one clean curve per backend:
-
-```bash
-./benchmarks/plot_results.py benchmarks/data/blas_sweep_*.csv \
-    --out benchmarks/data/blas_sweep_gflops.png
-./benchmarks/plot_results.py benchmarks/data/lapack_sweep_*.csv \
-    --out benchmarks/data/lapack_sweep_gflops.png
-# single op / wall-clock / log-log:
-./benchmarks/plot_results.py benchmarks/data/lapack_sweep_*.csv --op gemm --metric median_ns --logx --logy
-```
-
-Cross-backend speedups are computed at plot/analysis time across the CSVs (each
-binary measures only its own backend, so there is no in-run baseline).
-
-See `data/README.md` for the committed example sweeps, the platform they were
-run on, and the rendered curves.
-
-> The plotting script is benchmark *tooling*; the NumPy/SciPy bindings live in
-> the separate `mtl5-python` repo.
-
-## The native-fast acceptance gate (epic #82)
-
-The epic's goal is for MTL5's **own** dense kernels (no external BLAS) to land
-**within 10–20% of OpenBLAS** for GEMM at practical sizes, and at the memory
-ceiling for GEMV/L1. `analyze_gate.py` measures this from the CSVs:
-
-```bash
-# Build the gate variants (BLAS suite only -- native LAPACK at large N is slow):
-OUTDIR=benchmarks/data/i7-12700k BENCH_CPU=4 BENCH_SUITES=blas \
-    benchmarks/run_sweeps.sh 65:1025:80
-
-# % of OpenBLAS and % of FMA peak, per op and size (peak = 1 P-core fp64):
-benchmarks/analyze_gate.py benchmarks/data/i7-12700k/blas_sweep_native-fast.csv \
-    benchmarks/data/i7-12700k/blas_sweep_openblas.csv --peak-gflops 78
-
-# Pass/fail gate: median GEMM ratio >= 80% of OpenBLAS for N >= 256,
-# and no individual size below the 70% floor
-benchmarks/analyze_gate.py benchmarks/data/blas_sweep_native-fast.csv \
-    benchmarks/data/blas_sweep_openblas.csv --gate --op gemm \
-    --threshold 0.80 --floor 0.70 --min-size 256
-```
-
-### What the gate asserts, and why
-
-`--gate` exits non-zero if **either**:
-
-- the **median** of the per-size ratios falls below `--threshold` (default 0.80), or
-- **any single size** falls below `--floor` (default 0.70).
-
-The median is the primary assertion because the epic's target — "within 10–20%
-of OpenBLAS" — is an aggregate claim, and because it is the only statistic here
-that reproduces. Two runs of the identical protocol on the same idle machine
-gave — **2026-08-01 measurements, before #382 raised native-fast to ~97% of
-OpenBLAS; the figures are retained because they are the evidence for the rule,
-not a current result**:
-
-| statistic | run A | run B | swing |
-|---|---:|---:|---:|
-| median of ratios | 82.3% | 82.5% | **0.2 pt** |
-| mean | 82.1% | 82.2% | 0.1 pt |
-| min (the pre-#327 rule) | 76.3% | 78.7% | 2.4 pt |
-| worst single size | — | — | **6.2 pt** |
-
-The old rule failed if *any* size was below threshold — gating on the minimum,
-the noisiest statistic available — and the two runs failed at disjoint sets of
-sizes. The median is ~30× more stable.
-
-The floor keeps the rule honest: a genuine cliff at one size must still fail, so
-no size may drop below `--floor`, set well under the threshold so ordinary
-±6-point noise cannot trip it.
-
-> **Raising the iteration count does not help.** Within-run stddev is already
-> only 0.3–2.2% of the median at 10 iterations — the variance is *between* runs
-> (turbo/thermal state, allocation, page layout), not within them.
-
-It is **not** wired into the per-push CI: shared runners have unstable clocks
-and no P-core pinning, which makes absolute perf gates flaky. Run it on
-dedicated hardware.
-
-**Measured results live on the per-system result pages, not here** — see
-[Intel i7-12700K](../docs/benchmarks/i7-12700k.md), indexed from
-[Benchmark systems](../docs/benchmarks/systems.md). Keeping numbers in one place
-means a re-run updates them once; this file documents how to *produce* them.
-
-## Multi-core GEMM scaling (#108)
-
-The native blocked GEMM parallelizes its `ic` (row) loop with the C++ standard
-concurrency runtime (set `MTL5_NUM_THREADS`). `run_scaling.sh` sweeps GEMM over
-thread counts for native-fast **and** threaded OpenBLAS/MKL (their own
-`*_NUM_THREADS`), pinning to physical performance cores; `analyze_scaling.py`
-reports speedup + parallel efficiency and draws the scaling plot.
-
-```bash
-# native-fast / openblas / mkl, T in {1,2,4,8}, pinned to P-cores.
-# OUTDIR is REQUIRED -- one directory per machine (#439).
-OUTDIR=benchmarks/data/i7-12700k BENCH_PCPUS=0,2,4,6,8,10,12,14 \
-    benchmarks/run_scaling.sh
-benchmarks/analyze_scaling.py benchmarks/data/i7-12700k/gemm_scaling_*.csv \
-    --plot benchmarks/data/i7-12700k/gemm_scaling.png
-```
-
-> **Set `BENCH_PCPUS` to your topology** — one logical id per physical core
-> (`lscpu -e=CPU,CORE,MAXMHZ`). The default is an i7-12700K's 8 P-cores.
-
-Measured scaling numbers are on the
-[i7-12700K result page](../docs/benchmarks/i7-12700k.md). The structural finding
-is stable across sessions: native-fast tracks the tuned libraries closely to 2
-threads and loses ground as the count grows, because the per-`(jc,pc)` thread-team
-spawn and `ic`-only partition leave room for a persistent thread pool and
-multi-loop (BLIS-style) parallelization — a future optimization, tracked
-separately from this measurement.
-
-### Which variable sets the thread count
-
-Concurrency is a **runtime** axis of an already-built binary — you do not
-rebuild to change it. Which variable applies depends on what the binary was
-built against:
-
-| Build | Variable |
-|-------|----------|
-| `native-fast` (`-DMTL5_NATIVE_FAST_GEMM=ON -DMTL5_WITH_HIGHWAY=ON`) | `MTL5_NUM_THREADS` |
-| `openblas` (`-DMTL5_WITH_BLAS=ON`) | `OPENBLAS_NUM_THREADS` |
-| `blis` (`-DBLA_VENDOR=FLAME`) | `BLIS_NUM_THREADS` |
-| `mkl` (`-DBLA_VENDOR=Intel10_64lp`) | `MKL_NUM_THREADS` |
-
-`MTL5_NUM_THREADS` is read **once**, on first use of the pool, and clamped to
-the hardware concurrency; unset or invalid means 1 (fully serial). See
-`mtl/detail/thread_pool.hpp` and `docs/algorithms/on-node-threading.md`.
-
-> **A plain build will not show GEMM scaling.** The threaded GEMM/GEMV paths in
-> `mtl/operation/mult.hpp` sit inside `#ifdef MTL5_NATIVE_FAST_GEMM`, so in a
-> build without it (the `release` preset, for instance) `MTL5_NUM_THREADS` leaves
-> `--suite gemm` / `l3` timings unchanged. The L1/L2 reductions (`dot`, `nrm2`,
-> `axpy`, `scal`) use the pool unconditionally and do scale. Build the
-> `native-fast` variant for meaningful dense scaling numbers.
-
-Labelling matters when sweeping by hand: `analyze_scaling.py` recovers the
-thread count by parsing the `backend` CSV column, so pass
-`--label <backend>-t<T>` exactly as the scripts do.
-
-```bash
-for T in 1 2 4 8; do
-  MTL5_NUM_THREADS=$T OMP_NUM_THREADS=$T \
-    taskset -c $(seq -s, 0 2 $((2*T-2))) \
-    ./build-native-fast/benchmarks/bench_all --suite gemm --sizes 1024,2048 \
-      --label native-fast-t$T --csv t$T.csv
-done
-```
-
-## Threaded-kernel scaling across families (#297)
-
-`run_scaling.sh` covers GEMM across backends. `run_scaling_297.sh` is the
-native-only counterpart that sweeps **every** threaded kernel family 1→N,
-writing one CSV per family with the `backend` column labelled `native-t<T>`:
-
-| Suite | Family | Issues |
-|-------|--------|--------|
-| `gemm_rect` | rectangular GEMM, BLIS multi-loop 2D grid | #311 |
-| `lu` / `qr` / `chol` | dense factorizations | #298, #300 |
-| `ewise` | element-wise vector/matrix expression sweeps | #312 |
-| `sparse` | level-scheduled sparse triangular solves | #301–#309 |
-
-```bash
-BENCH_PCPUS=0,2,4,6,8,10,12,14 THREADS="1 2 4 8" benchmarks/run_scaling_297.sh
-benchmarks/analyze_scaling.py benchmarks/data/scaling_*.csv --plot out.png
-benchmarks/analyze_scaling.py benchmarks/data/scaling_ewise.csv --op ewise-vec
-```
-
-Environment: `BENCH_PCPUS`, `THREADS`, `LAPACK_SIZES` (default
-`1024,2048,4096`), `SPARSE_SIZES` (2-D grid sides, default `100,160`), `BUILD`
-(default `build-scaling-297`), `JOBS`. `analyze_scaling.py` keys its series on
-`(operation, size)`, so families that share a size no longer collide.
-
-#### Sparse sizes grow expensive fast
-
-The sparse family's cost is dominated by the **untimed factorization** each case
-performs before its (millisecond) solves are measured, and it scales far worse
-than the grid side suggests. Whole-suite wall clock at `T=1` on an i7-12700K:
-
-| grid side | 2-D case | wall clock |
-|---|---|---|
-| 100 | n=10,000 | 11 s |
-| 160 | n=25,600 | 3 m 38 s |
-| 200 | n=40,000 | 8 m 46 s |
-| 320 | n=102,400 | not measured |
-
-That is **per thread count** — the factorization is serial, so every value in
-`THREADS` pays it again. The default is therefore ~15 minutes for
-`THREADS="1 2 4 8"`, in proportion with the rest of the driver.
-
-The default was `200,320` until #321; a `T=1` run was killed after **3 h 28 min**
-without finishing its first size. #322 clamped the 3-D grid, which is what
-brought side 200 down to the 8 m 46 s above, but `200,320` remains impractical
-for a four-thread-count sweep. Raise `SPARSE_SIZES` deliberately, with the table
-above in mind.
-
-Results are written up in `docs/design/issue-297-threading-results.md`; the plan
-is `docs/design/issue-297-threading-benchmark-plan.md`.
-
-## Sparse direct-solver scoreboards
-
-Three binaries measure the sparse side. Each runs a built-in synthetic suite
-with no arguments, so they are useful immediately after a plain build:
-
-```bash
-./build-release/benchmarks/bench_klu          # 2D Poisson, 32^2 .. 256^2
-./build-release/benchmarks/bench_superlu      # 2D convection-diffusion (unsymmetric)
-./build-release/benchmarks/bench_sparse       # synthetic sparse triangular solves
-```
-
-**`bench_klu`** (#138) — native KLU vs SuiteSparse KLU: factor + solve time,
-fill, block structure, residual.
-
-```bash
-./bench_klu A.mtx B.mtx        # those matrices instead of the built-in suite
-./bench_klu ext:Big.mtx        # external-only row: skip the native run (too slow)
-./bench_klu --csv out.csv      # also write a CSV scoreboard
-```
-
-**`bench_superlu`** (#186) — the same shape for native LU vs SuperLU. SuperLU is
-supernodal (BLAS-3) while native LU is scalar non-supernodal, so the ratio is
-expected to grow with dense fill — quantifying that gap is the point.
-
-The vendor columns require the corresponding build flag; without it each binary
-says so in its header and reports native-only:
-
-```bash
-cmake -B build-klu -DMTL5_BUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release \
-      -DMTL5_WITH_SUITESPARSE_KLU=ON          # or -DMTL5_WITH_SUPERLU=ON
-```
-
-Real matrices come from `fetch_klu_matrices.sh` / `fetch_superlu_matrices.sh`,
-which download the SuiteSparse sets these scoreboards are tuned around.
-
-**`bench_sparse`** (#297) — the level-scheduled solve phase of the native sparse
-Cholesky / LDLT / LU and supernodal solvers. Native-only, no external library.
-The solves are bit-identical across thread counts by construction (proven in
-CI); this measures how much of that level structure becomes wall-clock speedup.
-
-```bash
-MTL5_NUM_THREADS=8 ./bench_sparse --csv t8.csv --label native-t8
-./bench_sparse --file A.mtx B.mtx     # add SPD/general matrices from disk
-./bench_sparse --sizes 100,150        # 2-D grid side lengths (default 100,160)
-```
-
-`run_scaling_297.sh` drives it as its `sparse` family — one process per thread
-count, pinned to physical cores, into `benchmarks/data/scaling_sparse.csv`.
-
-## Adding a new backend (e.g. CUDA)
-
-Because the benchmark uses the public API, a new backend is added in the
-**library** (give the relevant `mtl::` ops a compile-time dispatch path guarded
-by e.g. `MTL5_HAS_CUDA`), then add a build variant + `--label cuda` to
-`run_sweeps.sh`. No harness changes are required.
+### The `gemm` arm, and why it inverts the dot result
+
+A dot has no operand reuse, so it is bandwidth-bound and the operand *width*
+dominates. A GEMM reuses each operand O(n) times: the panels are packed once and
+read from cache and registers thereafter, so how many bytes they occupied in
+memory stops mattering. Measured on a Xeon E5-2420 v2 (SSE4, **no** VNNI), n=512:
+
+| arm | GOP/s |
+|---|---|
+| `gemm_f32` | **18.8** |
+| `gemm_i32` | 13.5 |
+| `gemm_i16_i32` | 12.8 |
+| `gemm_i8_i32` | 13.3 |
+
+**Narrowing the operand buys nothing here** — `gemm_i8_i32` is no faster than
+`gemm_i32`, and every integer arm is *slower* than fp32. That is not a defect:
+the widening path promotes int8 into int32 lanes and then does the same int32
+multiply-add, so it inherits int32's arithmetic cost plus a promotion, and the
+memory saving it was built for is irrelevant once operands are reused. Integer
+multiply is also simply slower than float FMA on this ISA — there is no integer
+FMA, so it is a separate multiply and add.
+
+The consequence is worth stating plainly, because it decides what hardware is
+worth buying: **on a machine without VNNI there is no int8 GEMM win at all.**
+Everything an int8 GEMM can offer over fp32 has to come from the instruction —
+which makes a VNNI or AMX machine's measurement almost purely a measurement of
+the instruction, cleanly separated from bandwidth. That is the opposite of the
+dot suite, where the instruction was ~1.2× against ~18× of traffic.
+
+`gemm_i8_i32` is the **widen-on-load** path: narrow operands promoted to int32
+lanes, then an ordinary multiply-add. It is *not* `vpdpbusd`, which consumes
+four k-values per instruction and needs a quad-interleaved pack layout and a
+different micro-kernel. That remains unbuilt, and this arm is what it would be
+measured against.

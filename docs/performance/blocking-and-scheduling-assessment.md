@@ -149,11 +149,30 @@ have exposed it, because the confound is only visible where the instruction is
 absent.
 
 This is the cleanest result the programme has, and it is a **data-movement**
-result. It also carries a caveat worth keeping attached: a *dot* is the worst
-case for showing an instruction off, because there is no operand reuse to
-amortise the traffic. A GEMM reuses each operand O(n) times and is compute-bound
-throughout, so the balance there should move toward the instruction. MTL5 has no
-integer GEMM, so that is a prediction, not a finding.
+result. It also carries a caveat: a *dot* is the worst case for showing an
+instruction off, because there is no operand reuse to amortise the traffic.
+
+**The GEMM now exists, and it settles that caveat more sharply than predicted.**
+A GEMM reuses each operand O(n) times, so the panels are packed once and read
+from cache thereafter and their width in memory stops mattering. Measured on the
+Xeon (SSE4, no VNNI), n=512:
+
+| `gemm_f32` | `gemm_i32` | `gemm_i16_i32` | `gemm_i8_i32` |
+|---|---|---|---|
+| **18.8** | 13.5 | 12.8 | 13.3 GOP/s |
+
+Narrowing the operand buys **nothing** — `gemm_i8_i32` is no faster than
+`gemm_i32` — and every integer arm is slower than fp32, because the widening
+path promotes into int32 lanes and inherits int32's arithmetic cost, and integer
+multiply has no FMA on this ISA.
+
+So the prediction was right in direction and wrong in magnitude. The balance
+does not merely *move* toward the instruction in a GEMM; at this point the
+operand width contributes **zero** and the instruction is the only thing left.
+Which means: **on a machine without VNNI there is no int8 GEMM win at all**, and
+a VNNI or AMX machine's GEMM number is almost purely a measurement of the
+instruction — the cleanest separation of the two effects the programme can
+construct, and the opposite end of the axis from the dot.
 
 ### 7. Hardware you own is not hardware you can reach
 
