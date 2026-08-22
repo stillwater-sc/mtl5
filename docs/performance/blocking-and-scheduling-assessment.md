@@ -185,13 +185,25 @@ broadcast scalar. Both now exist. Measured on the same Xeon, same n=512, still
 
 | `gemm_f32` | `gemm_i8_i32` | `gemm_i8_i32_quad` | `gemm_u8i8_i32_quad` |
 |---|---|---|---|
-| 19.7 | 13.2 | **16.6** | **21.7** GOP/s |
+| 19.8 | 13.4 | **16.6** | **21.8** GOP/s |
 
-**The controlled comparison is 1.26×** — `gemm_i8_i32_quad` against
-`gemm_i8_i32`, same operands, only the kernel changing. Holding the kernel fixed
-and changing the operand signedness instead is a further 1.31×
-(`gemm_u8i8_i32_quad` against `gemm_i8_i32_quad`), because `u8 × i8` is the
-shape the decomposition handles most cheaply.
+From `benchmarks/data/xeon-e5-2420/int_arms.csv`, produced by `run_int_bench.sh`
+(preflight, native-quad guard, `.sysinfo` sidecar; `label=native-int-decomposed`,
+`build_isa=SSE2 AVX`, `pin=0,1,2,3,4,5`).
+
+**The controlled comparison is ~1.25×** — `gemm_i8_i32_quad` against
+`gemm_i8_i32`, same operands, only the kernel changing — and it GROWS WITH n,
+which is the shape a register-blocking change should have:
+
+| n | 128 | 256 | 512 | 1024 |
+|---|---|---|---|---|
+| kernel, operands fixed | 1.10× | 1.20× | **1.24×** | **1.27×** |
+| signedness, kernel fixed | 1.36× | 1.23× | **1.31×** | **1.30×** |
+
+The small sizes never leave the caches, so the operand-traffic reduction the
+quad layout buys has nothing to pay for yet. Holding the kernel fixed and
+changing the operand signedness instead is a further ~1.30×, because `u8 × i8`
+is the shape the decomposition handles most cheaply.
 
 The 1.64× obtained by dividing the last arm by the first moves **both**
 variables and is not a result about the kernel. It is quotable only as "the best
@@ -219,7 +231,7 @@ than the mixed one, which is the gap between the two quad arms.
 nothing in a GEMM — that finding is untouched, and the preceding conclusion
 holds as a statement about the **widen-on-load** kernel, which is the only one
 that existed when it was written. What was wrong was equating "the instruction"
-with "VNNI silicon": the 1.26× measured here is the four-products-per-lane
+with "VNNI silicon": the ~1.25× measured here is the four-products-per-lane
 **kernel shape**, which a machine without the instruction can partly express
 anyway. A VNNI or AMX machine's GEMM number is still an almost pure measurement
 of arithmetic rather than bandwidth — the opposite end of the axis from the dot

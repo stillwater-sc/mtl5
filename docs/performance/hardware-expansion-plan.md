@@ -47,7 +47,8 @@ table:
   built (`gemm_kernel::quad`), so the int8 GEMM arms are `gemm_i8_i32_quad` and
   `gemm_u8i8_i32_quad` alongside the widening one. **This changes what a VNNI
   machine has left to prove.** On the Xeon, with the instruction *decomposed*,
-  the quad kernel already returns **1.26×** over widen-on-load at fixed operands
+  the quad kernel already returns **~1.25×** over widen-on-load at fixed operands
+  (1.24× at n=512, 1.27× at n=1024; committed run)
   — so a large fraction of the win is the kernel *shape*, not the silicon, and a
   purchase justified by "int8 GEMM is much faster" would be buying something we
   already have. (The larger 1.64× sometimes quoted for `u8 × i8` moves operand

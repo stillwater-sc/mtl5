@@ -295,36 +295,44 @@ instruction, from quad-interleaved panels — against the same operands:
 
 | arm | GOP/s | vs `gemm_i8_i32` |
 |---|---|---|
-| `gemm_f32` | 19.7 | 1.49× |
-| `gemm_i32` | 14.0 | 1.06× |
+| `gemm_f32` | 19.8 | fp32 baseline |
+| `gemm_i32` | 14.1 | i32 × i32, same-type |
 | `gemm_i16_i32` | 12.8 | i16 × i16, widen |
-| `gemm_i8_i32` | 13.2 | i8 × i8, widen |
+| `gemm_i8_i32` | 13.4 | i8 × i8, widen |
 | `gemm_i8_i32_quad` | **16.6** | i8 × i8, quad |
-| `gemm_u8i8_i32_quad` | **21.7** | u8 × i8, quad |
+| `gemm_u8i8_i32_quad` | **21.8** | u8 × i8, quad |
 
-Same Xeon E5-2420 v2, SSE4, n=512, `int8 quad dot: decomposed` — **this machine
-still has no VNNI.** Best of 8 interleaved rounds; the box is noisy and
-individual arms occasionally lose a scheduling slot, though the two quad arms
-were the *most* stable of the six. A committed figure should come from
-`run_int_bench.sh` on a quiet machine.
+Xeon E5-2420 v2, SSE4, n=512, `int8 quad dot: decomposed` — **this machine still
+has no VNNI.** From the committed run in
+`benchmarks/data/xeon-e5-2420/int_arms.csv`, produced by `run_int_bench.sh` with
+its preflight and its native-quad guard (see [The guard](#the-guard) above);
+provenance in the `.sysinfo` sidecar. Figures are best-of-iteration, which is
+the defensible statistic on a 12-year-old shared box: the median is disturbed
+for one arm at n=1024 (14.97 against a best of 21.67) where nothing else moved.
 
 ### Read the ratios one variable at a time
 
 The four int8 numbers differ in **two** things — kernel and operand signedness —
-so only same-row-different-one-thing pairs are controlled comparisons:
+so only same-row-different-one-thing pairs are controlled comparisons. Across
+the four sizes in the committed run:
 
-| comparison | ratio | what varies |
-|---|---|---|
-| `gemm_i8_i32_quad` ÷ `gemm_i8_i32` | **1.26×** | the kernel, operands fixed |
-| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | **1.31×** | operand signedness, kernel fixed |
-| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.64× | **both — not a controlled result** |
+| comparison | n=128 | n=256 | n=512 | n=1024 | what varies |
+|---|---|---|---|---|---|
+| `gemm_i8_i32_quad` ÷ `gemm_i8_i32` | 1.10× | 1.20× | **1.24×** | **1.27×** | the kernel, operands fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | 1.36× | 1.23× | **1.31×** | **1.30×** | operand signedness, kernel fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.50× | 1.48× | 1.63× | 1.65× | **both — not a controlled result** |
 
-**1.26× is the kernel result.** The 1.64× is the product of two effects and must
-not be quoted as what the quad kernel buys; it is at most "the best int8 GEMM
-available after this change, against the best available before", and it is worth
-noting only because there *is* no `u8 × i8` widen-on-load arm to compare against
-— the widening load requires matching signedness, so that pairing previously
-fell to the generic scalar loop.
+**~1.25× is the kernel result**, and it *grows with n* — 1.10× at n=128 up to
+1.27× at n=1024 — which is what a register-blocking change should do: the small
+sizes never leave the caches, so the operand-traffic reduction the quad layout
+buys has nothing to pay for yet.
+
+The last row is the product of two effects and must not be quoted as what the
+quad kernel buys. It is at most "the best int8 GEMM available after this change,
+against the best available before", and it is worth noting only because there
+*is* no `u8 × i8` widen-on-load arm to compare against — the widening load
+requires matching signedness, so that pairing previously fell to the generic
+scalar loop.
 
 This distinction is not pedantry here. The 1.42×-versus-1.17× correction to the
 dot headline in §6 of the assessment came from exactly this error: two arms that
@@ -333,7 +341,7 @@ the instruction had moved.
 
 **The claim this replaces** was that on a machine without VNNI there is no int8
 GEMM win at all. That was true of the *widen-on-load* kernel and does not survive
-changing the kernel: at fixed operands the quad path is 1.26× faster, and the
+changing the kernel: at fixed operands the quad path is ~1.25× faster, and the
 `u8 × i8` shape beats fp32 outright — on a 2013 part with no VNNI silicon
 anywhere in it.
 
@@ -350,7 +358,7 @@ So the operand width still contributes nothing, and the earlier reading of that
 once *the instruction* is read as the four-products-per-lane **kernel shape**
 rather than as *having VNNI silicon*. Those are not the same thing, and this
 machine separates them: it expresses the shape, through a `vpmaddwd`
-decomposition, and gains 1.26× from it with no VNNI at all.
+decomposition, and gains ~1.25× from it with no VNNI at all.
 
 A VNNI or AMX machine's GEMM number therefore remains an almost pure measurement
 of arithmetic rather than bandwidth, but its baseline is now
