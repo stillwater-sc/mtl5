@@ -37,8 +37,9 @@
 //     x86-64-v2, x86-64-v3, skylake-avx512  -> none native
 //     icelake-server, sapphirerapids, znver4 -> u8 x i8 only
 //
-//   `skylake-avx512` reading "none" is the §7 lesson in one line: AVX-512F does
-//   not imply the AVX3_DL set, so an AVX-512 machine can still be emulating.
+//   `skylake-avx512` reading "none" is the section 7 lesson in one line:
+//   AVX-512F does not imply the AVX3_DL set, so an AVX-512 machine can still
+//   be emulating.
 //
 //   ARM was NOT compile-verified locally (no aarch64 sysroot on the dev host);
 //   its clauses are transcribed from arm_neon-inl.h. The ARM64 CI jobs compile
@@ -127,9 +128,9 @@ TEST_CASE("the reported token matches the support level", "[simd][quad][native]"
 }
 
 TEST_CASE("x86 without the AVX3_DL set is never native", "[simd][quad][native]") {
-    // The §7 trap, pinned where it is cheap: AVX-512F does NOT imply the quad
-    // multiply-accumulate. An Alder Lake part HAS AVX-VNNI silicon and still
-    // reads emulated here, because Highway gates the op on its AVX3_DL target.
+    // The section 7 trap, pinned where it is cheap: AVX-512F does NOT imply
+    // the quad multiply-accumulate. An Alder Lake part HAS AVX-VNNI silicon and
+    // still reads emulated, because Highway gates the op on its AVX3_DL target.
     // Skylake-X has AVX-512 and no VNNI at all. Either way, a build that reached
     // only AVX2 or plain AVX-512 must claim nothing.
     // `#if`, not `if constexpr`: outside a template both branches of an
