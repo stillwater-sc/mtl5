@@ -146,6 +146,30 @@ is not.
   Six x86 targets checked this way; ARM could not be, for want of an aarch64
   sysroot.
 
+## The CHANGELOG gap this session closed
+
+Nothing between **#457 and #468** had a CHANGELOG entry, and the run 2026-08-17
+to 2026-08-21 has no session log at all. The last log is 2026-08-13; 5.10.0
+shipped on 08-17, and twelve PRs landed after it without either.
+
+The shape of the gap says what caused it. Those five days are one continuous
+push — the `#451` integer-lane epic, phases 0 through 4, plus the `mc`
+measurement thread (#453 falsified, #457/#458/#459) — and an epic has no natural
+stopping point at which a wrapup feels due. The two prior gaps in this directory
+close the same way: a session log appears when a *thread* ends, not when a day
+does, and the previous ones were written as "fill the CHANGELOG gaps" commits
+after the fact. The release on 08-17 also plausibly absorbed the attention that
+would otherwise have gone to the changelog, since it is the one moment the file
+is definitely being read.
+
+Entries for all nine PRs are written here from their commit messages, which in
+this repository carry the reasoning and the measurements — that is why the gap
+was recoverable at all. **What is not recoverable is the session log**: the
+commit messages record what each PR concluded, not what was tried and abandoned
+between them, and no session log for 08-17..08-21 is reconstructed here for that
+reason. Writing one from the merge history would be fabricating the interesting
+half.
+
 ## Issues and PRs
 
 - **Merged**: #469 (`16ebca8`) — the quad micro-kernel, 23 files, +2677/−103;
@@ -156,6 +180,8 @@ is not.
 - **Validation**: 180/180 (was 176) on gcc+Highway, clang+Highway and the scalar
   fallback, plus UBSan over the integer kernels on both backends. Benchmarks on
   four machines, every arm passing `verify_gemm_int`
+- **Backfilled**: CHANGELOG entries for #457, #459, #460, #463–#468, written from
+  their commit messages
 
 ## Lessons
 
@@ -182,3 +208,10 @@ is not.
 - **Sanitizers do not catch a pointer that is merely formed.** ASan sees no bad
   load and UBSan checks wraparound, not escape from the object. The pack UB was
   found by reading, with clean sanitizer runs on both sides of the fix.
+- **A changelog gap is recoverable; a session-log gap is not.** Nine PRs went
+  five days without either, and the entries could be written afterwards *only*
+  because this repository's commit messages carry the reasoning and the numbers.
+  What no commit records is the path not taken — the measurement that came out
+  flat, the design abandoned at lunchtime — which is most of what a session log
+  is for. The wrapup wants a trigger that fires on a **calendar day**, not on the
+  end of a thread, because an epic supplies no natural end.
