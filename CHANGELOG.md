@@ -3,7 +3,19 @@
 All notable changes to MTL5 are documented in this file.
 Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [Unreleased]
+## [5.11.0] - 2026-08-22
+
+The integer-lane release. `batch<T>` gains 32-bit integer lanes, the two widening
+dot kernels the hardware has instructions for, an integer GEMM, and the VNNI /
+SDOT micro-kernel that puts those instructions inside a GEMM — measured on four
+machines across two ISAs. **No breaking changes.**
+
+**Two fixes here change results for existing `float`/`double` code** and are worth
+reading before upgrading: a **GCC 13 miscompile** of AVX2 integer reductions, and
+**strided vector views reaching contiguous fast paths** through ten operations —
+`dot_real` over a stride-2 view returned 14 where the answer is 44, which
+predates the integer work and affects a column of a row-major matrix. See
+**Fixed**.
 
 ### Added
 
