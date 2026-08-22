@@ -11,6 +11,8 @@
 // 1.5x neighbours so a plain run measures padding / odd-size overhead.
 
 #include <benchmarks/harness/runner.hpp>
+#include <mtl/build_info.hpp>
+#include <mtl/detail/thread_pool.hpp>
 #include <mtl/simd/batch.hpp>
 #include <mtl/util/system_info.hpp>
 #include <algorithm>
@@ -354,10 +356,30 @@ int main(int argc, char* argv[]) {
         rep.write_csv(csv_path);
         // Write a machine-parseable companion tag beside the CSV so each result
         // set records the exact system it was produced on (key=value lines).
+        //
+        // PROVENANCE (#442): what CODE and what BUILD produced these numbers, not
+        // just what machine. This binary emitted only `label` plus the machine
+        // identity for a long time, while bench_blocking_ab emitted the build
+        // fields -- so every CSV from the integer suite, including the four-machine
+        // data the VNNI conclusions rest on, could not be traced to a commit or a
+        // compiler flag. That is the exact failure #442 was written to prevent, and
+        // its own text names the precedent: the Zen 4 run was AVX2 when AVX-512 was
+        // intended and nothing in the data could say so.
+        //
+        // `cxx_flags` matters most of the four. It is the build's EFFECT rather
+        // than its intent -- MTL5_NATIVE_ARCH adds -march=native through
+        // target_compile_options and appears in no CMAKE_CXX_FLAGS variable -- and
+        // it decides the SIMD width that every blocking parameter divides by.
         const std::string sysinfo_path = csv_path + ".sysinfo";
         if (std::ofstream si_out{sysinfo_path}) {
             si_out << "label=" << label << "\n"
-                   << mtl::util::to_keyvals(mtl::util::identify());
+                   << mtl::util::to_keyvals(mtl::util::identify())
+                   << "git_commit="       << mtl::build_git_commit << "\n"
+                   << "git_dirty="        << mtl::build_git_dirty  << "\n"
+                   << "cxx_flags="        << mtl::build_cxx_flags  << "\n"
+                   << "cmake_build_type=" << mtl::build_cmake_type << "\n"
+                   << "pool_size="
+                   << mtl::detail::thread_pool::instance().size() << "\n";
         }
     }
 

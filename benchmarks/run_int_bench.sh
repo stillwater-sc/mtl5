@@ -57,10 +57,22 @@ fi
 cd "$REPO_ROOT"
 
 # ---- run contract: preflight before building, so build logs cannot dirty it --
+# CAPTURE the preflight key-values, do not just run them. This script ran
+# preflight and threw its output away, so the machine state -- governor, thermal
+# headroom, competing load, the dirty-tree verdict -- reached the operator's
+# terminal and never the sidecar. run_blocking_ab.sh has appended it since #442;
+# the integer suite did not, which is why no committed int_arms sidecar records
+# what the machine was doing while it was measured.
+PREFLIGHT_KV=""
 PREFLIGHT_ARGS=(--ignore-path "$OUTDIR")
 [ "$ALLOW_DIRTY" = "1" ] && PREFLIGHT_ARGS+=(--allow-dirty)
 if [ -x benchmarks/preflight.sh ]; then
-    benchmarks/preflight.sh "${PREFLIGHT_ARGS[@]}"
+    if ! PREFLIGHT_KV=$(benchmarks/preflight.sh "${PREFLIGHT_ARGS[@]}"); then
+        printf '%s\n' "$PREFLIGHT_KV" >&2
+        echo "preflight failed -- not measuring." >&2
+        exit 1
+    fi
+    printf '%s\n' "$PREFLIGHT_KV"
 fi
 
 BUILD_DIR="build-int-bench"
@@ -137,6 +149,8 @@ echo "== running: ${RUN[*]}"
     echo "label=$LABEL"
     echo "arch_flag=$ARCH"
     echo "pin=${PIN:-none}"
+    echo "harness=run_int_bench.sh"
+    [ -n "$PREFLIGHT_KV" ] && printf '%s\n' "$PREFLIGHT_KV"
     echo "$BANNER"
 } >> "$CSV.sysinfo" 2>/dev/null || true
 
