@@ -14,6 +14,7 @@
 #include <mtl/simd/batch.hpp>
 #include <mtl/util/system_info.hpp>
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -109,16 +110,30 @@ static void print_build_info(const std::string& label) {
 #endif
     std::cout << " ]\n\n";
 
-    // The two facts a later reader needs to interpret an integer arm (#451
-    // phase 4): which SIMD target actually compiled, and whether that target
-    // has the int8 quad multiply-accumulate. AVX512F does NOT imply it -- only
-    // Highway's AVX3_DL target does on x86 -- so a machine with AVX-512 can
-    // still be timing the decomposition. Without this line the CSV cannot say
-    // which was measured, and the number is uncheckable.
+    // The facts a later reader needs to interpret an integer arm (#451 phase 4):
+    // which SIMD target actually compiled, and whether that target has the int8
+    // quad multiply-accumulate. AVX512F does NOT imply it -- only Highway's
+    // AVX3_DL target does on x86 -- so a machine with AVX-512 can still be
+    // timing the decomposition. Without this line the CSV cannot say which was
+    // measured, and the number is uncheckable.
+    //
+    // PER PAIRING, because support is per pairing and the ISAs disagree about
+    // which one they implement: `u8 x i8` is the native form on x86 and the
+    // EMULATED one on a Cortex-A78, where the symmetric pairings are native. A
+    // single native/decomposed token mislabels at least one arm on every
+    // machine measured so far, which is exactly the kind of unrecoverable
+    // provenance loss this banner exists to prevent.
     std::cout << "SIMD backend:    " << mtl::simd::backend_name()
-              << "   int8 quad dot: "
-              << (mtl::simd::has_native_quad_dot ? "NATIVE (vpdpbusd / SDOT)"
-                                                 : "decomposed")
+              << "   int8 quad dot: " << mtl::simd::quad_dot_support_name() << "\n"
+              << "                 u8*i8 "
+              << (mtl::simd::has_native_quad_dot_v<std::uint8_t, std::int8_t>
+                      ? "native" : "emulated")
+              << "   i8*i8 "
+              << (mtl::simd::has_native_quad_dot_v<std::int8_t, std::int8_t>
+                      ? "native" : "emulated")
+              << "   u8*u8 "
+              << (mtl::simd::has_native_quad_dot_v<std::uint8_t, std::uint8_t>
+                      ? "native" : "emulated")
               << "\n\n";
 
     // Self-identify the machine so the run is tagged with the hardware, OS, and

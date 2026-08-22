@@ -75,10 +75,28 @@ cmake --build "$BUILD_DIR" --target bench_all --parallel "$(nproc)" > /dev/null
 BENCH="$BUILD_DIR/benchmarks/bench_all"
 
 # ---- the guard --------------------------------------------------------------
-# bench_all prints the compiled SIMD target and whether the quad dot is native.
-BANNER="$("$BENCH" --suite int-dot --int-sizes 8 2>/dev/null | grep -E '^SIMD backend:' || true)"
+# bench_all prints the compiled SIMD target and, PER OPERAND PAIRING, whether the
+# quad dot is native. Two lines now, because support is per pairing and the ISAs
+# disagree about which one they implement: `u8 x i8` is native on x86 and
+# emulated on a Cortex-A78, where the symmetric pairings are the native ones.
+BANNER="$("$BENCH" --suite int-dot --int-sizes 8 2>/dev/null | grep -E '^SIMD backend:|^ +u8\*i8' || true)"
 echo "== $BANNER"
-if ! grep -q "NATIVE" <<< "$BANNER"; then
+
+# PARTIAL is the COMMON case, not an edge case: every machine measured so far
+# that has the instruction at all has it for some pairings and not others.
+# AVX3_DL gets `u8 x i8` and emulates the symmetric pair; NEON+DotProd gets the
+# symmetric pair and emulates `u8 x i8`. Only AVX10.2 and NEON+I8MM are `all`.
+# So a partial build is a legitimate measurement -- it just has to be LABELLED,
+# because half its arms are decomposed and nothing in a timing says which half.
+if grep -q "int8 quad dot: PARTIAL" <<< "$BANNER"; then
+    echo ""
+    echo "This build is PARTIALLY native: some pairings use the hardware op and"
+    echo "some are emulated at roughly three times the work. See the per-pairing"
+    echo "line above -- an arm on the emulated side is not comparable with the"
+    echo "same-named arm on a machine where it was native."
+    echo ""
+    LABEL="native-int-partial"
+elif ! grep -q "int8 quad dot: NATIVE" <<< "$BANNER"; then
     echo ""
     echo "This build does NOT have the native int8 quad multiply-accumulate."
     echo "Timing it would measure the decomposition, not the instruction --"
@@ -90,6 +108,11 @@ if ! grep -q "NATIVE" <<< "$BANNER"; then
     echo "Try --arch '-march=znver4' (Zen 4), '-march=icelake-server',"
     echo "or '-march=sapphirerapids'. MSVC cannot define these; use clang-cl,"
     echo "gcc or clang."
+    echo ""
+    echo "Reaching AVX3_DL gets PARTIAL, not full native: it provides the mixed"
+    echo "u8 x i8 form and emulates both symmetric ones, which need AVX10.2."
+    echo "On ARM it is the other way round -- FEAT_DotProd gives the symmetric"
+    echo "pairings and the mixed one needs I8MM."
     echo ""
     echo "Pass --allow-decomposed to measure it anyway (recorded as such)."
     [ "$ALLOW_DECOMPOSED" = "1" ] || exit 3

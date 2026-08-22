@@ -26,7 +26,14 @@
 #
 # Either way the run REFUSES to proceed on a decomposed build (run_int_bench.sh
 # checks the compiled target before timing anything), so a mistake here costs a
-# message rather than a plausible-looking CSV. That guard exists because this
+# message rather than a plausible-looking CSV.
+#
+# EXPECT `PARTIAL`, NOT `NATIVE`. AVX3_DL implements the mixed `u8 x i8` form
+# (`vpdpbusd`) and EMULATES both symmetric ones -- `vpdpbssd`/`vpdpbuud` arrive
+# only with AVX10.2. So `dot_u8i8_i32` and `gemm_u8i8_i32_quad` are the native
+# arms here and `dot_i8_i32` / `gemm_i8_i32_quad` are not, and the run is
+# labelled `native-int-partial`. Committed CSVs taken before the flag became
+# per-pairing say `native-int`, which over-claimed for the symmetric arms. That guard exists because this
 # machine has already produced one silently-wrong run: the first Zen 4 A/B was
 # an AVX2 build when AVX-512 was intended, and nothing in the data could say so.
 #

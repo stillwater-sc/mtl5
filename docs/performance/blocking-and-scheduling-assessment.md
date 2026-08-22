@@ -227,6 +227,39 @@ lane in a handful of instructions, where widen-on-load runs four independent
 promote-multiply-add chains. The symmetric form carries more of that shift work
 than the mixed one, which is the gap between the two quad arms.
 
+#### 6b. The instruction is per pairing, and the two ISAs disagree about which
+
+A cross-machine reading of the arms above needs one more fact, and it inverts
+the obvious interpretation on half the hardware. Support for the quad
+multiply-accumulate is **per operand pairing**, and x86 and ARM implement
+*opposite* pairings first (read from Highway's own gates, not inferred):
+
+| pairing | x86 AVX3_DL | x86 AVX10.2 | NEON + DotProd | NEON + I8MM |
+|---|---|---|---|---|
+| `u8 × i8` | **native** `vpdpbusd` | native | emulated | **native** `USDOT` |
+| `i8 × i8` | emulated | native `vpdpbssd` | **native** `SDOT` | native |
+| `u8 × u8` | emulated | native `vpdpbuud` | **native** `UDOT` | native |
+
+So `gemm_u8i8_i32_quad` — the fastest arm on every x86 measured, and the shape
+VNNI exists for — is the **emulated** one on a Cortex-A78, where the symmetric
+pairings are native. **A comparison that pairs arms across machines by name
+rather than by whether they were native gets the sign of the effect wrong.**
+
+Two consequences worth stating separately:
+
+- **No machine in the fleet is a baseline for another's arms.** x86 gets exactly
+  one pairing before AVX10.2; ARM gets exactly two before I8MM. Neither is a
+  superset.
+- **`PARTIAL` is the normal state, not an edge case.** Zen 4 is partial. A
+  Cortex-A78 is partial, for the complementary half. Only AVX10.2 and NEON+I8MM
+  are fully native, and MTL5 has measured neither. The committed Zen 4 CSV is
+  labelled `native-int`, which over-claimed for its symmetric arms; runs after
+  this change are labelled `native-int-partial` and `bench_all` prints the
+  per-pairing line.
+
+This is the same failure mode as §7 one level down — a capability treated as a
+single bit when the hardware exposes it in pieces.
+
 **What survives and what does not.** The operand *width* still contributes
 nothing in a GEMM — that finding is untouched, and the preceding conclusion
 holds as a statement about the **widen-on-load** kernel, which is the only one

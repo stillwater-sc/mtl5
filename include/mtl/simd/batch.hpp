@@ -515,29 +515,150 @@ inline const char* backend_name() noexcept {
 #endif
 }
 
-/// Does this build have a NATIVE quad multiply-accumulate (the int8 dot), or
-/// will it decompose? Compile-time, and deliberately mirrors Highway's own
-/// target gate rather than guessing from a single feature macro.
-inline constexpr bool has_native_quad_dot =
+// -- native quad multiply-accumulate, PER OPERAND PAIRING ---------------------
+//
+// WHY THIS IS NOT ONE BOOLEAN. The hardware support is per pairing, and the two
+// ISAs that have it disagree about WHICH pairing they implement -- so a single
+// flag cannot describe either machine honestly, and reports the wrong thing
+// about at least one arm on both:
+//
+//                     x86 AVX3_DL   x86 AVX10.2   NEON+DotProd   NEON+I8MM
+//     u8 x i8           NATIVE        native       emulated       NATIVE
+//     i8 x i8          emulated       native        NATIVE        native
+//     u8 x u8          emulated       native        NATIVE        native
+//
+// x86 implements the mixed form first (`vpdpbusd` -- unsigned activations
+// against signed weights, the shape quantized inference produces) and gets the
+// symmetric ones only with AVX10.2's `vpdpbssd`/`vpdpbuud`. ARM implements the
+// symmetric ones first (`SDOT`/`UDOT`, Armv8.2 FEAT_DotProd) and gets the mixed
+// one only with I8MM's `USDOT` (Armv8.6). Everything else is emulated at about
+// three times the work -- two native calls plus a shift and a subtract.
+//
+// The consequence for measurement is the whole reason this exists: the arm that
+// is fastest on every x86 (`u8 x i8`) is the SLOW one on a Cortex-A78, and a
+// cross-machine comparison that pairs arms by NAME rather than by whether they
+// were native gets the sign of the effect wrong.
+//
+// These mirror HIGHWAY'S OWN CONDITIONS -- `HWY_TARGET <= HWY_AVX3_DL` is
+// literally the gate in x86_128-inl.h, and the ARM clauses are those in
+// arm_neon-inl.h -- rather than reconstructing them from feature macros. The
+// previous single flag did reconstruct them, from a seven-macro AVX-512
+// conjunction, which was correct but had to be re-derived by hand every time
+// Highway moved.
+
 #if !MTL5_SIMD_USE_HIGHWAY
-    false;
-#elif defined(__aarch64__) || defined(_M_ARM64)
-    // NEON SDOT/UDOT.
-  #if defined(__ARM_FEATURE_DOTPROD)
-    true;
-  #else
-    false;
-  #endif
-#elif defined(__AVX512F__) && defined(__AVX512VNNI__) && defined(__VAES__) &&  \
-      defined(__VPCLMULQDQ__) && defined(__AVX512VBMI__) &&                    \
-      defined(__AVX512VBMI2__) && defined(__AVX512VPOPCNTDQ__) &&              \
-      defined(__AVX512BITALG__)
-    true;
-#elif defined(__AVX10_2__)
-    true;
+#  define MTL5_QUAD_NATIVE_U8I8 0
+#  define MTL5_QUAD_NATIVE_I8I8 0
+#  define MTL5_QUAD_NATIVE_U8U8 0
+
+#elif HWY_ARCH_X86
+// `HWY_X86_HAVE_AVX10_2_OPS` also carries the COMPILER-version requirement for
+// the AVX10.2 intrinsics, which `__AVX10_2__` alone does not: a compiler too old
+// to emit `vpdpbssd` makes Highway fall back to the emulation even on a target
+// that advertises the ISA. Prefer it, and fall back to the ISA macro only if a
+// future Highway stops defining it.
+#  if defined(HWY_X86_HAVE_AVX10_2_OPS)
+#    define MTL5_X86_QUAD_AVX10_2 HWY_X86_HAVE_AVX10_2_OPS
+#  elif defined(__AVX10_2__)
+#    define MTL5_X86_QUAD_AVX10_2 1
+#  else
+#    define MTL5_X86_QUAD_AVX10_2 0
+#  endif
+#  if HWY_TARGET <= HWY_AVX3_DL
+#    define MTL5_QUAD_NATIVE_U8I8 1        // _mm_dpbusd_epi32
+#  else
+#    define MTL5_QUAD_NATIVE_U8I8 0
+#  endif
+#  define MTL5_QUAD_NATIVE_I8I8 MTL5_X86_QUAD_AVX10_2   // _mm_dpbssd_epi32
+#  define MTL5_QUAD_NATIVE_U8U8 MTL5_X86_QUAD_AVX10_2   // _mm_dpbuud_epi32
+
+#elif HWY_ARCH_ARM
+// SDOT/UDOT: FEAT_DotProd, or the NEON_BF16 target which implies it.
+#  if defined(__ARM_FEATURE_DOTPROD) || HWY_TARGET == HWY_NEON_BF16
+#    define MTL5_QUAD_NATIVE_I8I8 1        // vdotq_s32
+#    define MTL5_QUAD_NATIVE_U8U8 1        // vdotq_u32
+#  else
+#    define MTL5_QUAD_NATIVE_I8I8 0
+#    define MTL5_QUAD_NATIVE_U8U8 0
+#  endif
+// USDOT: FEAT_I8MM. The Apple clause is Highway's, kept verbatim -- those cores
+// have the instruction without the build advertising the feature macro.
+#  if defined(__ARM_FEATURE_MATMUL_INT8) ||                                    \
+      (HWY_TARGET == HWY_NEON_BF16 && HWY_OS_APPLE && HWY_ARCH_ARM_A64 &&      \
+       defined(HWY_HAVE_RUNTIME_DISPATCH) && HWY_HAVE_RUNTIME_DISPATCH)
+#    define MTL5_QUAD_NATIVE_U8I8 1        // vusdotq_s32
+#  else
+#    define MTL5_QUAD_NATIVE_U8I8 0
+#  endif
+
 #else
-    false;
+#  define MTL5_QUAD_NATIVE_U8I8 0
+#  define MTL5_QUAD_NATIVE_I8I8 0
+#  define MTL5_QUAD_NATIVE_U8U8 0
 #endif
+
+/// Does this build have a NATIVE quad multiply-accumulate for the pairing
+/// `(NA, NB)`, or will Highway emulate it? See the table above.
+///
+/// False for any pairing the op does not accept at all -- `(i8, u8)` is absent
+/// on purpose, so it reads as "not native", which is true and is also what a
+/// caller should act on.
+template <typename NA, typename NB>
+inline constexpr bool has_native_quad_dot_v = false;
+
+template <> inline constexpr bool
+    has_native_quad_dot_v<std::uint8_t, std::int8_t>  = (MTL5_QUAD_NATIVE_U8I8 != 0);
+template <> inline constexpr bool
+    has_native_quad_dot_v<std::int8_t,  std::int8_t>  = (MTL5_QUAD_NATIVE_I8I8 != 0);
+template <> inline constexpr bool
+    has_native_quad_dot_v<std::uint8_t, std::uint8_t> = (MTL5_QUAD_NATIVE_U8U8 != 0);
+
+#undef MTL5_QUAD_NATIVE_U8I8
+#undef MTL5_QUAD_NATIVE_I8I8
+#undef MTL5_QUAD_NATIVE_U8U8
+#ifdef MTL5_X86_QUAD_AVX10_2
+#  undef MTL5_X86_QUAD_AVX10_2
+#endif
+
+/// How much of the quad multiply-accumulate this build gets natively.
+///
+/// Three states rather than two, because `partial` is the COMMON case: every
+/// machine measured so far that has the instruction at all has it for some
+/// pairings and not others. A benchmark that reports "native" or "decomposed"
+/// against a partial build is mislabelling at least one of its arms.
+enum class quad_dot_support {
+    none,       ///< every pairing emulated -- e.g. SSE4, AVX2, plain NEON
+    partial,    ///< some native, some emulated -- AVX3_DL, and NEON+DotProd
+    all,        ///< every pairing native -- AVX10.2, or NEON with I8MM
+};
+
+inline constexpr quad_dot_support quad_dot_native_support = [] {
+    constexpr bool a = has_native_quad_dot_v<std::uint8_t, std::int8_t>;
+    constexpr bool b = has_native_quad_dot_v<std::int8_t,  std::int8_t>;
+    constexpr bool c = has_native_quad_dot_v<std::uint8_t, std::uint8_t>;
+    if constexpr (a && b && c) return quad_dot_support::all;
+    else if constexpr (a || b || c) return quad_dot_support::partial;
+    else return quad_dot_support::none;
+}();
+
+/// Does this build have a native quad multiply-accumulate for ANY pairing?
+///
+/// Retained with its original meaning, which is what every existing caller and
+/// every committed sidecar assumed: it is the "did this build get the
+/// instruction at all" question. It is deliberately NOT "all pairings" -- that
+/// would read false on Zen 4 and on a Cortex-A78 alike and erase the distinction
+/// the sidecars exist to record. Use `has_native_quad_dot_v<NA, NB>` to say
+/// anything about a specific arm, and `quad_dot_native_support` to report.
+inline constexpr bool has_native_quad_dot = (quad_dot_native_support != quad_dot_support::none);
+
+/// "NATIVE", "PARTIAL" or "DECOMPOSED" -- the token a benchmark sidecar records.
+inline const char* quad_dot_support_name() noexcept {
+    switch (quad_dot_native_support) {
+        case quad_dot_support::all:     return "NATIVE";
+        case quad_dot_support::partial: return "PARTIAL";
+        default:                        return "DECOMPOSED";
+    }
+}
 
 /// Largest multiple of W not exceeding n -- the SIMD body length; iterate the
 /// remainder [vectorizable_length(n) .. n) scalar:

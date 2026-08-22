@@ -23,7 +23,11 @@
 #                                                  (2x UDOT + shift + subtract)
 #   i8 x i8    EMULATED -- needs AVX10.2           native  `SDOT`
 #              (2x dpbusd + shift + subtract)
-#   u8 x u8    native                              native  `UDOT`
+#   u8 x u8    EMULATED -- needs AVX10.2           native  `UDOT`
+#
+# x86 gets exactly ONE pairing before AVX10.2; ARM gets exactly TWO before I8MM.
+# Neither is a superset of the other, so no single machine here is a baseline for
+# the other's arms.
 #
 # So `gemm_u8i8_i32_quad`, the arm that is VNNI's *native* shape and the fastest
 # on every x86 measured, is the EMULATED one here, and `gemm_i8_i32_quad`, the
@@ -35,18 +39,15 @@
 # cores are Armv8.2. If a future ARM part here reports I8MM, the mixed arm
 # becomes native too and the table above changes.
 #
-# WHAT THE GUARD WILL SAY, AND WHY IT IS COARSER THAN THE TRUTH.
-# `mtl::simd::has_native_quad_dot` is ONE boolean, keyed on `__ARM_FEATURE_DOTPROD`
-# alone, so the banner will read
+# WHAT THE GUARD WILL SAY. The support flag is PER PAIRING, so the banner reads
 #
-#     SIMD backend:    NEON   int8 quad dot: NATIVE (vpdpbusd / SDOT)
+#     SIMD backend:    NEON   int8 quad dot: PARTIAL
+#                      u8*i8 emulated   i8*i8 native   u8*u8 native
 #
-# and run_int_bench.sh will proceed WITHOUT --allow-decomposed -- correctly, for
-# the symmetric arm. It is not correct for `gemm_u8i8_i32_quad` / `dot_u8i8_i32`,
-# which are emulated on this part despite that banner. The flag cannot currently
-# express "native for some pairings", so the CSV must be read with this comment
-# beside it. Recorded as a known limitation rather than worked around here,
-# because widening the flag changes what it means on x86 too.
+# and the run is labelled `native-int-partial`. PARTIAL proceeds without
+# --allow-decomposed -- it is a legitimate measurement, it just has to be
+# labelled, because half its arms are decomposed and nothing in a timing says
+# which half. Zen 4 is PARTIAL too, for the complementary half.
 #
 # POWER MODE DECIDES WHAT THE NUMBERS MEAN, so the output directory follows it: a
 # 15 W run and a MAXN run land in different directories and can never be silently
@@ -112,7 +113,7 @@ PIN="${PIN:-0,1,2,3,4,5}"
 
 # -mcpu=native picks up +dotprod on this part. If a toolchain rejects it, pass
 # --arch '-mcpu=cortex-a78ae' through; the dot-product extension is part of that
-# core's baseline, so the guard should still report NATIVE.
+# core's baseline, so the guard should still report PARTIAL.
 ARCH="${JETSON_ARCH:--mcpu=native}"
 
 echo "profile: jetson-orin-nano-int"
@@ -123,17 +124,18 @@ echo "  pinning:    $PIN    (six physical cores, no SMT)"
 echo "  outdir:     benchmarks/data/jetson-orin-nano-${MODE}"
 echo ""
 echo "  READ THE HEADER OF THIS FILE BEFORE COMPARING WITH x86:"
-echo "    i8 x i8   is NATIVE here and emulated on x86"
-echo "    u8 x i8   is EMULATED here (no I8MM) and native on x86"
-echo "  The guard's 'NATIVE' banner refers to the symmetric pairing only."
+echo "    i8 x i8, u8 x u8   NATIVE here (SDOT/UDOT), emulated on x86 < AVX10.2"
+echo "    u8 x i8            EMULATED here (no I8MM), native on x86 >= AVX3_DL"
+echo "  bench_all prints this per pairing; expect 'int8 quad dot: PARTIAL'."
 echo ""
 echo "  thermal now: $(cat /sys/devices/virtual/thermal/thermal_zone*/temp 2>/dev/null | \
                        awk '{printf "%.1fC ", $1/1000}')"
 echo ""
 
-# No --allow-decomposed: the symmetric arm really is native here, so the guard
-# should pass on its own. If it does NOT, the build did not get FEAT_DotProd and
-# that is worth stopping for rather than measuring around.
+# No --allow-decomposed: two of the three pairings really are native here, so the
+# guard reports PARTIAL and proceeds on its own. If it reports DECOMPOSED, the
+# build did not get FEAT_DotProd and that is worth stopping for rather than
+# measuring around.
 exec "$REPO_ROOT/benchmarks/run_int_bench.sh" \
     --arch "$ARCH" \
     --outdir "benchmarks/data/jetson-orin-nano-${MODE}" \

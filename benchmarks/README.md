@@ -202,15 +202,30 @@ put two threads on three cores and idle the rest.
 cross-machine comparison that pairs arms by name will get the sign of the effect
 wrong:
 
-| | x86 AVX3_DL | ARM NEON + DotProd |
-|---|---|---|
-| `u8 × i8` | **native** `vpdpbusd` | emulated (needs I8MM) |
-| `i8 × i8` | emulated (needs AVX10.2) | **native** `SDOT` |
+| pairing | x86 AVX3_DL | x86 AVX10.2 | NEON + DotProd | NEON + I8MM |
+|---|---|---|---|---|
+| `u8 × i8` | **native** `vpdpbusd` | native | emulated | **native** `USDOT` |
+| `i8 × i8` | emulated | native `vpdpbssd` | **native** `SDOT` | native |
+| `u8 × u8` | emulated | native `vpdpbuud` | **native** `UDOT` | native |
 
 So `gemm_u8i8_i32_quad` is the fast arm on x86 and the *slow* one on the Jetson.
-`has_native_quad_dot` is a single boolean and cannot express this — it reports
-`NATIVE` on the Jetson on the strength of the symmetric pairing alone. See the
-header of `machines/jetson-orin-nano-int.sh`.
+x86 gets exactly one pairing before AVX10.2 and ARM exactly two before I8MM, so
+neither is a superset of the other and **neither machine is a baseline for the
+other's arms**.
+
+`bench_all` therefore reports support **per pairing**, and
+`mtl::simd::has_native_quad_dot_v<NA, NB>` is the compile-time query:
+
+```
+SIMD backend:    AVX3_DL   int8 quad dot: PARTIAL
+                 u8*i8 native   i8*i8 emulated   u8*u8 emulated
+```
+
+`PARTIAL` is the common case — every machine measured so far that has the
+instruction at all has it for some pairings and not others; only AVX10.2 and
+NEON+I8MM report `NATIVE`. A partial build runs without `--allow-decomposed`
+(it is a legitimate measurement) but is labelled `native-int-partial`, because
+half its arms are decomposed and nothing in a timing says which half.
 
 ### Read the curve, not a ratio
 
