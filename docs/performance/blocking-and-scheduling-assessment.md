@@ -290,11 +290,11 @@ three**. GEMM at n=1024, GOP/s, best-of-iteration, single-threaded:
 |---|---|---|---|---|---|---|---|---|
 | Xeon E5-2420 v2 (SSE4) | none | 19.5 | 13.1 | 16.7 | **21.3** | 1.27× | — | 1.09× |
 | i7-12700K (AVX2) | none | 144.8 | 49.2 | 132.9 | **146.5** | **2.70×** | — | 1.01× |
-| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 142.6 | 96.4 | 210.6 | **469.3** | 2.19× | **2.23×** | **3.29×** |
+| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 138.5 | 96.5 | 210.6 | **467.0** | 2.18× | **2.22×** | **3.37×** |
 | Jetson Orin Nano (NEON) | `i8×i8` | 14.3 | 8.7 | **31.5** | 13.1 | **3.64×** | **2.40×** | **2.20×** |
 
 **The kernel effect ranges 1.27× to 3.64×.** It is real everywhere and rises with
-n everywhere (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.77→2.19, Jetson
+n everywhere (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.78→2.18, Jetson
 3.21→3.64), but its magnitude is a property of the machine. Quoting ~1.25× as
 "the kernel result" was the same single-machine over-generalisation this section
 has now made twice — once with the dot's 1.42×, once here.
@@ -309,7 +309,7 @@ native machines, because they implement opposite pairings:
 
 | | raw | shape acts | instruction, net |
 |---|---|---|---|
-| Ryzen 9 8945HS (native `u8×i8`) | 2.23× | *with* the native arm | **1.74–2.02×** |
+| Ryzen 9 8945HS (native `u8×i8`) | 2.22× | *with* the native arm | **1.74–2.01×** |
 | Jetson Orin Nano (native `i8×i8`) | 2.40× | *against* the native arm | **2.64–3.06×** |
 
 The Jetson net figure borrows an x86 control for an ARM decomposition — no ARM
@@ -324,7 +324,7 @@ fully. The Ryzen dot figure reproducing §6's ~1.2× is the cross-check that the
 two suites measure the same thing.
 
 **The two decomposed machines reach parity with fp32 and no more** (1.09×, 1.01×)
-while both native machines clear it by 2.2–3.3×. So the silicon decides whether
+while both native machines clear it by 2.2–3.4×. So the silicon decides whether
 an int8 GEMM is worth running at all, which is the opposite of what §6a inferred
 from the Xeon alone. That column carries no pairing confound — it compares each
 machine's fastest int8 arm against its OWN fp32 GEMM — so this conclusion rests
@@ -332,14 +332,14 @@ on the raw data and survives the netting above.
 
 Physically coherent, worth checking on a 3x claim: one quad instruction does four
 times the multiply-accumulates of an fp32 FMA of the same width, so 4× is the
-ceiling. Measured against each machine's own fp32 GEMM — Ryzen 3.29×, Jetson
+ceiling. Measured against each machine's own fp32 GEMM — Ryzen 3.37×, Jetson
 2.20×, decomposed i7 1.01×.
 
 **And the fastest arm INVERTS between the two native machines**, because they
-implement opposite pairings (§6b). Comparing them by arm NAME gives 469.3 against
+implement opposite pairings (§6b). Comparing them by arm NAME gives 467.0 against
 13.1, a 36× "machine gap" that is almost entirely a naming artifact. The naive
-`u8i8_quad / i8_widen` ratio that §6a warns against reads 4.87× on the Ryzen and
-1.51× on the Jetson, against true kernel effects of 2.19× and 3.64× — it
+`u8i8_quad / i8_widen` ratio that §6a warns against reads 4.84× on the Ryzen and
+1.52× on the Jetson, against true kernel effects of 2.18× and 3.64× — it
 overstates on one machine and understates on the other, which is a sharper
 demonstration of the hazard than the Xeon could give.
 

@@ -51,7 +51,7 @@ table:
   |---|---|---|---|---|
   | Xeon E5-2420 v2 | none | 1.27× | — | 1.09× |
   | i7-12700K | none | **2.70×** | — | 1.01× |
-  | Ryzen 9 8945HS | `u8×i8` | 2.19× | **2.23×** | **3.29×** |
+  | Ryzen 9 8945HS | `u8×i8` | 2.18× | **2.22×** | **3.37×** |
   | Jetson Orin Nano | `i8×i8` | **3.64×** | **2.40×** | **2.20×** |
 
   **THIS REVERSES WHAT THIS BULLET USED TO SAY.** Written from the Xeon alone, it
@@ -64,14 +64,14 @@ table:
     outlier by about a factor of three, and it is the machine the claim
     generalised from.
   - The silicon on top of that is worth a further **1.7×–2.0× on Zen 4**, net of
-    the decomposition-shape control (2.23× raw; the raw ratio moves signedness
+    the decomposition-shape control (2.22× raw; the raw ratio moves signedness
     and decomposition path as well as nativeness). The Jetson's raw 2.40× nets
     *upward*, to ~2.6–3.1×, because there the shape term works against the native
     arm — but that borrows an x86 control for an ARM decomposition, so treat the
     raw number as the measurement.
   - **Only the machines with the instruction beat fp32 at all.** The two
     decomposed parts land at 1.01× and 1.09× — parity. The two native parts reach
-    2.20× and 3.29×. So the silicon decides whether an int8 GEMM is worth running,
+    2.20× and 3.37×. So the silicon decides whether an int8 GEMM is worth running,
     which is the opposite of the previous reading. This column carries no pairing
     confound — each machine's best int8 arm against its *own* fp32 GEMM — so it is
     the one to quote when justifying hardware.
@@ -85,7 +85,7 @@ table:
   That reasoning missed the obvious: **partial support IS the control.** Every
   machine measured so far has the instruction for some pairings and not others
   (§6b), so the native and emulated arms run *in the same binary, on the same
-  machine, in the same run*, differing only in the pairing. Zen 4 gives 2.23× raw
+  machine, in the same run*, differing only in the pairing. Zen 4 gives 2.22× raw
   and the Jetson 2.40× raw that way, with no build-flag manipulation at all.
 
   It is a control, not a clean one: the pairings also differ in decomposition
