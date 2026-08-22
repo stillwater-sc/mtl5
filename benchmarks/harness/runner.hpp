@@ -61,9 +61,10 @@ namespace mtl::bench {
 // the traffic, and the SHAPE of the curve across them is the actual result.
 //
 // The honest place for VNNI's arithmetic density is a GEMM, where operands are
-// reused O(n) times and the kernel is compute-bound throughout. MTL5 has no
-// integer GEMM -- phases 0-3 delivered dot and gemv -- so there is no int gemm
-// arm here rather than a misleading one. See bench_gemm_int below.
+// reused O(n) times and the kernel is compute-bound throughout. That is
+// bench_gemm_int below, which since phase 5 runs the quad multiply-accumulate
+// itself -- not merely narrow operands widened on load -- against the
+// widen-on-load arm as its within-machine control.
 //
 // Every arm is CHECKED as well as timed: the generators bound the operand
 // magnitude so all widths stay inside the int32 accumulator, which makes the
@@ -199,11 +200,31 @@ inline void bench_gemv_int(reporter& rep, const std::string& label,
 /// fewer bytes" and "does arithmetic faster" is genuinely different here -- and
 /// measuring that difference is the point.
 ///
-/// What is measured is the WIDEN-ON-LOAD path: narrow operands promoted into
-/// int32 lanes, then an ordinary multiply-add. Not `vpdpbusd`, which needs a
-/// quad-interleaved pack layout and a different micro-kernel. So the int8 arm
-/// here shows what the OPERAND WIDTH is worth in a compute-bound kernel, with
-/// the instruction's contribution still to come.
+/// TWO INT8 KERNELS RUN HERE, and comparing them IS the experiment (#451 phase
+/// 5). Both compute the same thing, bit for bit -- integer addition is
+/// associative, so a different summation grouping is unobservable in the result:
+///
+///   gemm_i8_i32        widen-on-load: int8 promoted into int32 lanes, one k
+///                      value per multiply-add
+///   gemm_i8_i32_quad   the quad multiply-accumulate: four k values per
+///                      instruction, from quad-interleaved panels
+///
+/// The pair is a WITHIN-MACHINE control, which is the whole reason both are
+/// compiled into one binary. The programme has already paid for the absence of
+/// one: the instruction's share of the dot speedup looked like 1.42x from a
+/// single Zen 4 run and came out at ~1.2x once an i7 could run both arms
+/// decomposed. Comparing a quad number on one machine against a widen number on
+/// another would repeat that mistake with more decimal places.
+///
+/// `gemm_u8i8_i32_quad` is VNNI's NATIVE pairing -- unsigned activations against
+/// signed weights -- and has no widen-on-load counterpart at all: the widening
+/// load requires matching signedness, so before this kernel that pair fell to
+/// the generic scalar loop. Its baseline is the symmetric arm, which every x86
+/// below AVX10.2 emulates with two `vpdpbusd` plus a shift and subtract.
+///
+/// Read `int8 quad dot:` in the header before trusting any of it. On a build
+/// without the instruction these arms measure Highway's decomposition, which is
+/// several times the work and looks like nothing in particular in a timing.
 inline void bench_gemm_int(reporter& rep, const std::string& label,
                            const std::vector<std::size_t>& sizes,
                            std::size_t warmup = 2, std::size_t iterations = 5) {
@@ -251,6 +272,25 @@ inline void bench_gemm_int(reporter& rep, const std::string& label,
                 }
             rep.add(measure([&]{ mtl::mult<std::int32_t>(A, B, C); },
                             "gemm_i8_i32", label, n, ops, warmup, iterations));
+            // The SAME operands through the quad micro-kernel -- the arm the
+            // widen-on-load number above is the control for.
+            rep.add(measure([&]{ mtl::mult_quad<std::int32_t>(A, B, C); },
+                            "gemm_i8_i32_quad", label, n, ops, warmup, iterations));
+        }
+        // VNNI's native pairing. No widen-on-load counterpart exists (the
+        // widening load requires matching signedness), so its baseline is the
+        // symmetric quad arm above, which x86 below AVX10.2 emulates.
+        {
+            mtl::mat::dense2D<std::uint8_t> A(n, n);
+            mtl::mat::dense2D<std::int8_t> B(n, n);
+            mtl::mat::dense2D<std::int32_t> C(n, n);
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j < n; ++j) {
+                    A(i, j) = static_cast<std::uint8_t>((i * 31 + j * 17) % 32);
+                    B(i, j) = static_cast<std::int8_t>((i * 13 + j * 7) % 32 - 16);
+                }
+            rep.add(measure([&]{ mtl::mult_quad<std::int32_t>(A, B, C); },
+                            "gemm_u8i8_i32_quad", label, n, ops, warmup, iterations));
         }
     }
 }

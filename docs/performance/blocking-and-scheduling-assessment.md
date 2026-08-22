@@ -169,10 +169,50 @@ multiply has no FMA on this ISA.
 So the prediction was right in direction and wrong in magnitude. The balance
 does not merely *move* toward the instruction in a GEMM; at this point the
 operand width contributes **zero** and the instruction is the only thing left.
-Which means: **on a machine without VNNI there is no int8 GEMM win at all**, and
-a VNNI or AMX machine's GEMM number is almost purely a measurement of the
-instruction — the cleanest separation of the two effects the programme can
-construct, and the opposite end of the axis from the dot.
+
+#### 6a. The quad micro-kernel, and the part of that which was wrong
+
+The paragraph that used to close this section said: *on a machine without VNNI
+there is no int8 GEMM win at all.* That was a statement about the
+**widen-on-load** kernel, which was the only int8 GEMM that existed when it was
+written, and it does not survive building the other one.
+
+`vpdpbusd` consumes four k-values per instruction, so it needs a
+quad-interleaved pack layout (`Ap[…][i*4+q] == A(i, 4g+q)`, and the same for B)
+and a micro-kernel whose left operand is a **broadcast quad** rather than a
+broadcast scalar. Both now exist. Measured on the same Xeon, same n=512, still
+`int8 quad dot: decomposed`:
+
+| `gemm_f32` | `gemm_i8_i32` | `gemm_i8_i32_quad` | `gemm_u8i8_i32_quad` |
+|---|---|---|---|
+| 19.7 | 13.2 | **16.6** | **21.7** GOP/s |
+
+1.26× over widen-on-load for the symmetric pairing, **1.64×** for `u8 × i8` —
+VNNI's native shape, which the widening path cannot express at all because
+`load_widen` requires matching signedness. The native-shape arm also beats fp32,
+on a 2013 part with no VNNI silicon in it.
+
+The mechanism is checkable in the disassembly, and was checked: Highway's
+decomposition of the quad accumulate is a pair of `vpmaddwd` plus
+sign-extension shifts, which still folds four products into each accumulator
+lane in a handful of instructions, where widen-on-load runs four independent
+promote-multiply-add chains. The symmetric form carries more of that shift work
+than the mixed one, which is the gap between the two quad arms.
+
+**What survives and what does not.** The operand *width* still contributes
+nothing in a GEMM — that finding is untouched. What was wrong was equating "the
+instruction" with "VNNI silicon": most of the win measured here is the
+four-products-per-lane **kernel shape**, which a machine without the instruction
+can partly express anyway. A VNNI or AMX machine's GEMM number is still an
+almost pure measurement of arithmetic rather than bandwidth — the opposite end
+of the axis from the dot — but its baseline is now `gemm_i8_i32_quad` on the
+same machine, not the widening arm, and the increment attributable to the
+silicon is correspondingly smaller than this section previously implied.
+
+This is the second time a claim in this document has been narrowed by supplying
+the control it lacked, and the pattern is the same both times: the original
+statement was true of everything that had been measured, and false of the thing
+that had not been built yet.
 
 ### 7. Hardware you own is not hardware you can reach
 

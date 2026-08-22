@@ -42,6 +42,19 @@ table:
   once operands are packed and reused their width in memory stops mattering. So
   the *only* thing an int8 GEMM can offer over fp32 is the instruction — which
   makes a VNNI or AMX machine's GEMM number an almost pure measurement of it.
+- **The quad micro-kernel exists too, and it moves the baseline.** `vpdpbusd`
+  needs a quad-interleaved pack and a broadcast-quad micro-kernel; both are now
+  built (`gemm_kernel::quad`), so the int8 GEMM arms are `gemm_i8_i32_quad` and
+  `gemm_u8i8_i32_quad` alongside the widening one. **This changes what a VNNI
+  machine has left to prove.** On the Xeon, with the instruction *decomposed*,
+  the quad kernel already returns 1.26× (symmetric) and 1.64× (`u8 × i8`) over
+  widen-on-load — so a large fraction of the win is the kernel *shape*, not the
+  silicon, and a purchase justified by "int8 GEMM is much faster" would be
+  buying something we already have. The question a VNNI part now answers is
+  narrower and better posed: **what does the native instruction add on top of
+  the quad kernel, measured against that same kernel decomposed on the same
+  machine?** The i7 is the ideal control for exactly this and cannot run it
+  (§7); a Zen 4 or Zen 5 part can run both by build flag.
 
 ## Selection criteria
 

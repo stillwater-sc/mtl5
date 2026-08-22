@@ -14,8 +14,12 @@
 // What this is NOT is a VNNI kernel. `vpdpbusd` consumes four k-values per
 // instruction and needs a quad-interleaved pack layout and a different
 // micro-kernel; this path promotes narrow operands into int32 lanes and does an
-// ordinary multiply-add. The distinction is recorded here because the two are
-// easy to conflate and only one of them is implemented.
+// ordinary multiply-add. That kernel exists as of #451 phase 5 and is tested in
+// test_gemm_quad.cpp -- reached through `mult_quad`, never through `mult`, so
+// the two stay separately measurable. The tests here therefore still pin the
+// WIDENING kernel. That `mult` has not been quietly rerouted to the other one
+// is checked in test_gemm_quad.cpp, and has to be checked structurally: the two
+// kernels give bit-identical answers, so no result can tell them apart.
 //
 // Every case is EXACT. Integer arithmetic wraps mod 2^32 (#451), and wrapping
 // addition is associative, so the blocked nest -- which reorders the k loop

@@ -53,6 +53,8 @@
 #include <mtl/detail/aligned_allocator.hpp>
 #include <mtl/detail/gemm_microkernel.hpp>
 #include <mtl/detail/gemm_pack.hpp>
+#include <mtl/detail/gemm_quad_microkernel.hpp>
+#include <mtl/detail/gemm_quad_pack.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/simd/blocking.hpp>
 
@@ -323,23 +325,46 @@ private:
 
 /// C[m x n] (row-major, leading dim ldc) := beta*C + alpha * A[m x k] * B[k x n].
 /// A,B addressed by generic strides (see file header). ldc must be >= n.
-// TC = accumulator / C element type; TAB = A,B (operand) element type. With the
-// default TAB == TC this is the original same-type blocked GEMM. When TAB is
-// narrower (e.g. TAB=float, TC=double) the operands are packed in TAB and the
-// micro-kernel widens them into TC accumulators -- the mixed-precision fast path
-// (#176). Blocking is chosen for TC so the C microtile maps to TC registers.
-template <typename TC, typename TAB = TC>
-    requires (mtl::Scalar<TC> && mtl::Scalar<TAB>)
+// TC = accumulator / C element type; TA and TB = the A and B operand element
+// types. With the defaults TA == TB == TC this is the original same-type blocked
+// GEMM. When the operands are narrower (e.g. float operands, TC=double) they are
+// packed narrow and the micro-kernel widens them into TC accumulators -- the
+// mixed-precision fast path (#176). Blocking is chosen for TC so the C microtile
+// maps to TC registers.
+//
+// THREE KERNELS, ONE NEST. `TA` and `TB` are separate parameters because the
+// quad kernel needs them to differ: `(u8,i8)` -- unsigned activations against
+// signed weights -- is VNNI's native shape (#451 phase 5). Everything around the
+// micro-kernel -- the five loops, the cache blocks, the thread grid, the
+// cooperative B pack, the exception handling across the barrier -- is shared,
+// because none of it depends on which one runs.
+//
+// `Kern` SELECTS, AND IT IS NOT INFERRED FROM THE TYPES. An (i8, i8) pair is
+// valid input to BOTH kernels, so inferring would silently reroute the existing
+// widen-on-load path the moment the quad kernel appeared -- which is precisely
+// what happened when this parameter did not exist: `gemm_i8_i32` and
+// `gemm_i8_i32_quad` benchmarked identically because they had become the same
+// kernel, and the arm that was supposed to be the control had stopped being one.
+// The default is therefore `widening`, every existing caller keeps the code it
+// had, and asking for the quad kernel is something a call site does out loud.
+template <typename TC, typename TA = TC, typename TB = TA,
+          gemm_kernel Kern = gemm_kernel::widening>
+    requires (mtl::Scalar<TC> && mtl::Scalar<TA> && mtl::Scalar<TB>)
 void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                   TC alpha,
-                  const TAB* A, std::ptrdiff_t a_rs, std::ptrdiff_t a_cs,
-                  const TAB* B, std::ptrdiff_t b_rs, std::ptrdiff_t b_cs,
+                  const TA* A, std::ptrdiff_t a_rs, std::ptrdiff_t a_cs,
+                  const TB* B, std::ptrdiff_t b_rs, std::ptrdiff_t b_cs,
                   TC beta,
                   TC* C, std::size_t ldc,
                   unsigned nthreads = 1) {
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
     constexpr std::size_t MR = bp.mr;   // register tile: must match the compiled
     constexpr std::size_t NR = bp.nr;   // micro-kernel, so compile-time only
+    constexpr bool QUAD = (Kern == gemm_kernel::quad);
+    static_assert(!QUAD || is_quad_gemm<TC, TA, TB>(),
+                  "the quad kernel takes an 8-bit operand pair the hardware op "
+                  "accepts -- (i8,i8), (u8,i8) or (u8,u8) -- accumulated in its "
+                  "matching 32-bit type");
     // L1/L2-sized blocks from the detected hierarchy (#222). rbp.mr/rbp.nr equal
     // MR/NR by construction -- detection overrides only cache fields, never the
     // register-file or FMA terms the tile is derived from.
@@ -376,29 +401,46 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // and `Bpack` are caller-owned so each thread/team passes its own buffers.
     auto do_ic_block = [&](std::size_t ic, std::size_t jc, std::size_t nci,
                            std::size_t npanels, std::size_t kci, std::size_t pc,
-                           const TAB* Bpack, TAB* Acbuf) {
+                           const TB* Bpack, TA* Acbuf) {
         const std::size_t mci = std::min(MC_eff, m - ic);
-        pack_A<TAB, MR>(A + static_cast<std::ptrdiff_t>(ic) * a_rs
-                          + static_cast<std::ptrdiff_t>(pc) * a_cs,
-                        a_rs, a_cs, mci, kci, Acbuf);
-        if (!(alpha == TC(1))) {                          // fold alpha into A panel (operand precision)
-            const std::size_t na = packed_A_size(mci, kci, MR);
-            for (std::size_t t = 0; t < na; ++t)
-                Acbuf[t] = static_cast<TAB>(alpha * static_cast<TC>(Acbuf[t]));
+        const TA* Ablock = A + static_cast<std::ptrdiff_t>(ic) * a_rs
+                             + static_cast<std::ptrdiff_t>(pc) * a_cs;
+        if constexpr (QUAD) {
+            pack_A_quad<TA, MR>(Ablock, a_rs, a_cs, mci, kci, Acbuf);
+            // alpha is NOT folded into the panel here -- it would be truncated
+            // back into a byte. gemm_quad_microkernel applies it to the int32
+            // tile on the way out instead; see there.
+        } else {
+            pack_A<TA, MR>(Ablock, a_rs, a_cs, mci, kci, Acbuf);
+            if (!(alpha == TC(1))) {                      // fold alpha into A panel (operand precision)
+                const std::size_t na = packed_A_size(mci, kci, MR);
+                for (std::size_t t = 0; t < na; ++t)
+                    Acbuf[t] = static_cast<TA>(alpha * static_cast<TC>(Acbuf[t]));
+            }
         }
+
+        // Panel depth: the quad layout stores k rounded up to a whole number of
+        // 4-value groups, so it is also the panel STRIDE.
+        const std::size_t kp = QUAD ? quad_depth(kci) : kci;
+        auto run_kernel = [&](const TA* Apanel, const TB* Bpanel, TC* Cd, std::size_t ld) {
+            if constexpr (QUAD)
+                gemm_quad_microkernel<TC, TA, TB, MR, NR>(kp, Apanel, Bpanel, Cd, ld, alpha);
+            else
+                gemm_microkernel<TC, TA, MR, NR>(kci, Apanel, Bpanel, Cd, ld);
+        };
 
         const std::size_t mpanels = (mci + MR - 1) / MR;
         TC* Cmacro = C + static_cast<std::ptrdiff_t>(ic) * static_cast<std::ptrdiff_t>(ldc)
                        + static_cast<std::ptrdiff_t>(jc);
         for (std::size_t jr = 0; jr < npanels; ++jr) {
             const std::size_t nr_eff = std::min(NR, nci - jr * NR);
-            const TAB* Bpanel = Bpack + jr * (NR * kci);
+            const TB* Bpanel = Bpack + jr * (NR * kp);
             for (std::size_t ir = 0; ir < mpanels; ++ir) {
                 const std::size_t mr_eff = std::min(MR, mci - ir * MR);
-                const TAB* Apanel = Acbuf + ir * (MR * kci);
+                const TA* Apanel = Acbuf + ir * (MR * kp);
                 TC* Cblock = Cmacro + (ir * MR) * ldc + jr * NR;
                 if (mr_eff == MR && nr_eff == NR) {
-                    gemm_microkernel<TC, TAB, MR, NR>(kci, Apanel, Bpanel, Cblock, ldc);
+                    run_kernel(Apanel, Bpanel, Cblock, ldc);
                 } else {
                     // Edge: accumulate through a zeroed full mr x nr tile so the
                     // micro-kernel's full-tile load/store stays in bounds.
@@ -407,7 +449,7 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                     for (std::size_t i = 0; i < mr_eff; ++i)
                         for (std::size_t j = 0; j < nr_eff; ++j)
                             tile[i * NR + j] = Cblock[i * ldc + j];
-                    gemm_microkernel<TC, TAB, MR, NR>(kci, Apanel, Bpanel, tile, NR);
+                    run_kernel(Apanel, Bpanel, tile, NR);
                     for (std::size_t i = 0; i < mr_eff; ++i)
                         for (std::size_t j = 0; j < nr_eff; ++j)
                             Cblock[i * ldc + j] = tile[i * NR + j];
@@ -419,16 +461,19 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // Serial nest (also the fallback when the grid degenerates to one worker):
     // shared Ac/Bc buffers, jc -> pc -> ic exactly as the classic 5-loop order.
     auto serial_nest = [&]() {
-        packed_buffer<TAB> Ac(packed_A_size(mc_max, kc_max, MR));
-        packed_buffer<TAB> Bc(packed_B_size(kc_max, nc_max, NR));
+        packed_buffer<TA> Ac(packed_A_size_for<QUAD>(mc_max, kc_max, MR));
+        packed_buffer<TB> Bc(packed_B_size_for<QUAD>(kc_max, nc_max, NR));
         for (std::size_t jc = 0; jc < n; jc += NC) {
             const std::size_t nci = std::min(NC, n - jc);
             const std::size_t npanels = (nci + NR - 1) / NR;
             for (std::size_t pc = 0; pc < k; pc += KC) {
                 const std::size_t kci = std::min(KC, k - pc);
-                pack_B<TAB, NR>(B + static_cast<std::ptrdiff_t>(pc) * b_rs
-                                  + static_cast<std::ptrdiff_t>(jc) * b_cs,
-                                b_rs, b_cs, kci, nci, Bc.data());
+                const TB* Bblock = B + static_cast<std::ptrdiff_t>(pc) * b_rs
+                                     + static_cast<std::ptrdiff_t>(jc) * b_cs;
+                if constexpr (QUAD)
+                    pack_B_quad<TB, NR>(Bblock, b_rs, b_cs, kci, nci, Bc.data());
+                else
+                    pack_B<TB, NR>(Bblock, b_rs, b_cs, kci, nci, Bc.data());
                 // MUST step by MC_eff, not MC: do_ic_block sizes its block as
                 // min(MC_eff, m - ic), so stepping by the larger cache bound
                 // would skip (MC - MC_eff) rows per block and silently drop
@@ -479,10 +524,12 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // barrier per team. Doing every allocation here means the region itself
     // never allocates -- so for the float/double fast path it cannot throw, and
     // a thread can never miss a barrier (which would deadlock the team).
-    std::vector<packed_buffer<TAB>> team_B;   team_B.reserve(jc_nt);
-    for (unsigned j = 0; j < jc_nt; ++j) team_B.emplace_back(packed_B_size(kc_max, nc_max, NR));
-    std::vector<packed_buffer<TAB>> thr_A;    thr_A.reserve(grid);
-    for (unsigned t = 0; t < grid; ++t) thr_A.emplace_back(packed_A_size(mc_max, kc_max, MR));
+    std::vector<packed_buffer<TB>> team_B;   team_B.reserve(jc_nt);
+    for (unsigned j = 0; j < jc_nt; ++j)
+        team_B.emplace_back(packed_B_size_for<QUAD>(kc_max, nc_max, NR));
+    std::vector<packed_buffer<TA>> thr_A;    thr_A.reserve(grid);
+    for (unsigned t = 0; t < grid; ++t)
+        thr_A.emplace_back(packed_A_size_for<QUAD>(mc_max, kc_max, MR));
     std::vector<std::unique_ptr<gemm_barrier>> team_bar(jc_nt);
     for (unsigned j = 0; j < jc_nt; ++j) team_bar[j] = std::make_unique<gemm_barrier>(ic_nt);
 
@@ -510,8 +557,8 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     pool.run(grid, [&](unsigned tid) {
         const unsigned jc_id = tid / ic_nt;
         const unsigned ic_id = tid % ic_nt;
-        TAB* Aloc = thr_A[tid].data();
-        TAB* Bteam = team_B[jc_id].data();
+        TA* Aloc = thr_A[tid].data();
+        TB* Bteam = team_B[jc_id].data();
         gemm_barrier& bar = *team_bar[jc_id];
         for (std::size_t jb = jc_id; jb < njb; jb += jc_nt) {
             const std::size_t jc = jc_starts[jb];
@@ -536,10 +583,16 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                         const std::size_t per = (npanels + ic_nt - 1) / ic_nt;
                         const std::size_t q0  = std::min<std::size_t>(npanels, ic_id * per);
                         const std::size_t q1  = std::min<std::size_t>(npanels, q0 + per);
-                        if (q0 < q1)
-                            pack_B_panels<TAB, NR>(B + static_cast<std::ptrdiff_t>(pc) * b_rs
-                                                     + static_cast<std::ptrdiff_t>(jc) * b_cs,
-                                                   b_rs, b_cs, kci, nci, Bteam, q0, q1);
+                        const TB* Bblock = B + static_cast<std::ptrdiff_t>(pc) * b_rs
+                                             + static_cast<std::ptrdiff_t>(jc) * b_cs;
+                        if (q0 < q1) {
+                            if constexpr (QUAD)
+                                pack_B_quad_panels<TB, NR>(Bblock, b_rs, b_cs, kci, nci,
+                                                           Bteam, q0, q1);
+                            else
+                                pack_B_panels<TB, NR>(Bblock, b_rs, b_cs, kci, nci,
+                                                      Bteam, q0, q1);
+                        }
                     } catch (...) { record_failure(std::current_exception()); }
                 }
                 bar.wait();                                       // publish B to the team

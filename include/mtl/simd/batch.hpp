@@ -45,6 +45,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <type_traits>
 
 // wrap_add / wrap_sub / wrap_mul: the two's-complement helpers the scalar paths
@@ -209,7 +210,10 @@ public:
     /// multiply-add. It captures the memory-traffic win (one byte per element
     /// instead of eight) which is where most of the integer speedup lives --
     /// see docs/performance -- but not the specialised instruction, which needs
-    /// a different micro-kernel and a quad-interleaved pack layout.
+    /// a quad-interleaved pack layout and the broadcast-quad micro-kernel in
+    /// detail/gemm_quad_microkernel.hpp (#451 phase 5). For a GEMM that one is
+    /// measurably faster even where the instruction is emulated, so this path is
+    /// the fallback for pairs the quad op does not accept, not the preferred one.
     template <typename Src>
     static batch load_widen(const Src* p) {
         static_assert((std::is_floating_point_v<T> && std::is_floating_point_v<Src>) ||
@@ -295,6 +299,46 @@ public:
         const hn::Repartition<NA, D> dna;
         const hn::Repartition<NB, D> dnb;
         sum.v_ = hn::SumOfMulQuadAccumulate(d_, hn::LoadU(dna, a), hn::LoadU(dnb, b), sum.v_);
+    }
+
+    /// Quad multiply-accumulate with a BROADCAST left operand -- the GEMM shape
+    /// of the instruction, and the reason the micro-kernel needs a primitive of
+    /// its own (#451 phase 5).
+    ///
+    /// `quad_dot_accumulate` walks two vectors in step, which is a dot product.
+    /// A GEMM does not: one C row needs ONE A element (four of them here, for
+    /// four k values) multiplied against a whole row of B. So the left operand
+    /// is the same four narrow values in every lane, and lane j accumulates
+    ///
+    ///     sum[j] += sum_{q<4} a4[q] * b[4*j + q]
+    ///
+    /// which is exactly the rank-4 update the packed panels are laid out for:
+    /// `a4` is A(i, p..p+3) and `b[4*j+q]` is B(p+q, j). Four k steps per
+    /// instruction, against the widening load's one.
+    ///
+    /// The broadcast is a 32-bit splat of the four bytes AS THEY LIE IN MEMORY
+    /// (memcpy, then `Set`, then a reinterpret back to narrow lanes) -- one
+    /// `vpbroadcastd` / `LD1R`, not four inserts. Note this ties the quad's lane
+    /// order to the byte order of the machine: on a little-endian target lane 0
+    /// receives `a4[0]`, which is what pairs it with the `b` load. Every target
+    /// that HAS this instruction is little-endian, and
+    /// tests/unit/simd/test_quad_dot.cpp checks the pairing against a scalar
+    /// reference, so a big-endian port would fail loudly rather than quietly
+    /// transpose the quad.
+    template <typename NA, typename NB>
+    static void quad_dot_broadcast_accumulate(const NA* a4, const NB* b, batch& sum) {
+        static_assert(is_quad_widenable_v<NA> && is_quad_widenable_v<NB>,
+                      "quad_dot_broadcast_accumulate takes 8-bit operands");
+        static_assert(std::is_same_v<T, quad_accumulator_t<NA, NB>>,
+                      "accumulator must match the operand pairing: i8*i8 and "
+                      "u8*i8 -> int32, u8*u8 -> uint32");
+        static_assert(sizeof(T) == 4 * sizeof(NA), "the broadcast unit is four narrow values");
+        const hn::Repartition<NA, D> dna;
+        const hn::Repartition<NB, D> dnb;
+        T quad;                                  // a4[0..3], in memory order
+        std::memcpy(&quad, a4, sizeof(T));
+        sum.v_ = hn::SumOfMulQuadAccumulate(d_, hn::BitCast(dna, hn::Set(d_, quad)),
+                                            hn::LoadU(dnb, b), sum.v_);
     }
 
     friend batch operator+(batch a, batch b) { return batch(hn::Add(a.v_, b.v_)); }
@@ -405,6 +449,23 @@ public:
         for (std::size_t k = 0; k < 4; ++k)
             sum.v_ = mtl::detail::wrap_add(
                 sum.v_, mtl::detail::wrap_mul(static_cast<T>(a[k]), static_cast<T>(b[k])));
+    }
+
+    /// Quad multiply-accumulate with a broadcast left operand -- scalar
+    /// fallback; see the Highway variant for the contract. With one lane the
+    /// broadcast is a no-op, so this is the same four products as
+    /// quad_dot_accumulate -- which is the definition the SIMD path has to
+    /// reproduce lane by lane, and the reference the tests compare against.
+    template <typename NA, typename NB>
+    static void quad_dot_broadcast_accumulate(const NA* a4, const NB* b, batch& sum) {
+        static_assert(is_quad_widenable_v<NA> && is_quad_widenable_v<NB>,
+                      "quad_dot_broadcast_accumulate takes 8-bit operands");
+        static_assert(std::is_same_v<T, quad_accumulator_t<NA, NB>>,
+                      "accumulator must match the operand pairing: i8*i8 and "
+                      "u8*i8 -> int32, u8*u8 -> uint32");
+        for (std::size_t q = 0; q < 4; ++q)
+            sum.v_ = mtl::detail::wrap_add(
+                sum.v_, mtl::detail::wrap_mul(static_cast<T>(a4[q]), static_cast<T>(b[q])));
     }
 
     friend batch operator+(batch a, batch b) { return batch(mtl::detail::wrap_add(a.v_, b.v_)); }

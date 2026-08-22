@@ -321,13 +321,18 @@ void mult(const MA& A, const MB& B, MC& C) {
         // The integer analogue: 8- or 16-bit operands accumulated in 32 bits
         // through the same blocked nest and the same widening load.
         //
-        // This is the WIDEN-ON-LOAD path, not the hardware dot product. It
+        // This is the WIDEN-ON-LOAD path, not the hardware quad product. It
         // promotes narrow operands into int32 lanes and does an ordinary
         // multiply-add, so it captures the memory-traffic win -- an int8 GEMM
-        // reads an eighth of the bytes of an fp64 one -- but not `vpdpbusd`,
-        // which needs a different micro-kernel and a quad-interleaved pack
-        // layout. Measured on the dot kernels, traffic is where most of the
-        // integer speedup lives; see docs/performance.
+        // reads an eighth of the bytes of an fp64 one -- but not `vpdpbusd`.
+        //
+        // That kernel now exists: see `mult_quad` below, which is FASTER here
+        // (1.26x symmetric, 1.64x for u8 x i8) even on a machine that only
+        // emulates the instruction. This path is deliberately NOT rerouted to
+        // it -- both are correct for an (i8,i8) pair, so switching silently
+        // would destroy the within-machine control the benchmark needs, and
+        // nothing in a timing can tell the two apart afterwards. The default
+        // moves when there is a measurement behind it.
         //
         // Same signedness on both operands and the accumulator, matching
         // batch::load_widen: a mixed pair is a question about the caller's
@@ -440,6 +445,84 @@ void mult(const MA& A, const MB& B, MC& C) {
 #endif
     detail::mult_generic(A, B, C);
     }
+}
+
+/// C = A * B through the QUAD MULTIPLY-ACCUMULATE micro-kernel -- VNNI
+/// `vpdpbusd` on x86, `SDOT`/`UDOT` on NEON (#451 phase 5).
+///
+/// WHY THIS IS A SEPARATE ENTRY POINT and not a silent upgrade inside `mult`.
+/// Both kernels are correct for an `(i8, i8)` pair, so making `mult` choose
+/// between them would mean the same call measures a different thing on different
+/// machines -- and the benchmark README already warns that nothing in a timing
+/// distinguishes `vpdpbusd` from its decomposition. The whole reason to build
+/// this kernel was to find out what the instruction is worth, and that needs
+/// both arms compilable in ONE binary so they can be compared within a machine.
+/// The programme has paid for a missing within-machine control once already: the
+/// instruction's share looked like 1.42x from a single Zen 4 run and came out at
+/// ~1.2x once an i7 could run both arms decomposed. So `mult` is unchanged, this
+/// is explicit, and the default flips later with data behind it.
+///
+/// The operand pair must be one the hardware op accepts -- `(i8,i8)`, `(u8,i8)`
+/// or `(u8,u8)`, accumulating in the matching 32-bit type. `(i8,u8)` is rejected
+/// rather than reordered: unlike a dot product a GEMM is NOT symmetric in its
+/// operands, so there is no argument swap that fixes it for the caller, and
+/// `(u8,i8)` -- unsigned activations against signed weights -- is the shape
+/// quantized inference actually produces.
+///
+/// Falls back to the accumulator-aware generic loop when the matrices are not
+/// dense and contiguous, so this is always correct, never merely fast. One case
+/// is worth naming: COLUMN-MAJOR C is computed as C^T = B^T A^T, which swaps the
+/// operand order, and `(u8,i8)` swapped is `(i8,u8)` -- not a pairing the
+/// instruction has. That combination therefore takes the generic loop. The
+/// symmetric pairs are unaffected.
+template <typename Accumulator, Matrix MA, Matrix MB, Matrix MC>
+void mult_quad(const MA& A, const MB& B, MC& C) {
+    assert(A.num_cols() == B.num_rows());
+    assert(A.num_rows() == C.num_rows());
+    assert(B.num_cols() == C.num_cols());
+
+    using TA = typename MA::value_type;
+    using TB = typename MB::value_type;
+#ifdef MTL5_NATIVE_FAST_GEMM
+    // Row-major C keeps the operand order, so the pair is (TA, TB); col-major C
+    // computes C^T = B^T A^T and therefore needs (TB, TA) to be a pairing too.
+    constexpr bool row_major_c = interface::is_row_major_v<MC>;
+    constexpr bool kernel_ok = row_major_c ? detail::is_quad_gemm<Accumulator, TA, TB>()
+                                           : detail::is_quad_gemm<Accumulator, TB, TA>();
+    if constexpr (kernel_ok &&
+                  std::is_same_v<typename MC::value_type, Accumulator> &&
+                  interface::SimdDenseMatrix<MC> &&
+                  interface::ContiguousMatrixData<MA> &&
+                  interface::ContiguousMatrixData<MB>) {
+        const std::size_t M = A.num_rows();
+        const std::size_t N = B.num_cols();
+        const std::size_t K = A.num_cols();
+        const std::ptrdiff_t a_rs = interface::is_row_major_v<MA> ? static_cast<std::ptrdiff_t>(A.num_cols()) : 1;
+        const std::ptrdiff_t a_cs = interface::is_row_major_v<MA> ? 1 : static_cast<std::ptrdiff_t>(A.num_rows());
+        const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
+        const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
+        const unsigned nthreads = detail::gemm_default_threads();
+        constexpr auto kern = detail::gemm_kernel::quad;   // asked for out loud
+        if constexpr (row_major_c) {
+            detail::gemm_blocked<Accumulator, TA, TB, kern>(
+                M, N, K, math::one<Accumulator>(),
+                A.data(), a_rs, a_cs, B.data(), b_rs, b_cs,
+                math::zero<Accumulator>(), C.data(), N, nthreads);
+        } else {
+            detail::gemm_blocked<Accumulator, TB, TA, kern>(
+                N, M, K, math::one<Accumulator>(),
+                B.data(), b_cs, b_rs, A.data(), a_cs, a_rs,
+                math::zero<Accumulator>(), C.data(), M, nthreads);
+        }
+        return;
+    }
+#endif
+    static_assert(simd::QuadPair<TA, TB>,
+                  "mult_quad takes an 8-bit operand pair the hardware op accepts -- "
+                  "(i8,i8), (u8,i8) or (u8,u8). (i8,u8) is absent on purpose: a GEMM "
+                  "is not symmetric in its operands, so swapping is the caller's "
+                  "decision, not this function's");
+    detail::mult_generic<Accumulator>(A, B, C);
 }
 
 } // namespace mtl
