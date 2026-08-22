@@ -185,7 +185,7 @@ broadcast scalar. Both now exist. Measured on the same Xeon, same n=512, still
 
 | `gemm_f32` | `gemm_i8_i32` | `gemm_i8_i32_quad` | `gemm_u8i8_i32_quad` |
 |---|---|---|---|
-| 19.8 | 13.4 | **16.6** | **21.8** GOP/s |
+| 19.7 | 13.2 | **16.5** | **21.8** GOP/s |
 
 From `benchmarks/data/xeon-e5-2420/int_arms.csv`, produced by `run_int_bench.sh`
 (preflight, native-quad guard, `.sysinfo` sidecar; `label=native-int-decomposed`,
@@ -197,8 +197,8 @@ which is the shape a register-blocking change should have:
 
 | n | 128 | 256 | 512 | 1024 |
 |---|---|---|---|---|
-| kernel, operands fixed | 1.10× | 1.20× | **1.24×** | **1.27×** |
-| signedness, kernel fixed | 1.36× | 1.23× | **1.31×** | **1.30×** |
+| kernel, operands fixed | 1.19× | 1.24× | **1.25×** | **1.27×** |
+| signedness, kernel fixed | 1.27× | 1.29× | **1.32×** | **1.28×** |
 
 The small sizes never leave the caches, so the operand-traffic reduction the
 quad layout buys has nothing to pay for yet. Holding the kernel fixed and

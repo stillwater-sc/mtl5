@@ -336,20 +336,20 @@ instruction, from quad-interleaved panels — against the same operands:
 
 | arm | GOP/s | vs `gemm_i8_i32` |
 |---|---|---|
-| `gemm_f32` | 19.8 | fp32 baseline |
+| `gemm_f32` | 19.7 | fp32 baseline |
 | `gemm_i32` | 14.1 | i32 × i32, same-type |
-| `gemm_i16_i32` | 12.8 | i16 × i16, widen |
-| `gemm_i8_i32` | 13.4 | i8 × i8, widen |
-| `gemm_i8_i32_quad` | **16.6** | i8 × i8, quad |
+| `gemm_i16_i32` | 12.7 | i16 × i16, widen |
+| `gemm_i8_i32` | 13.2 | i8 × i8, widen |
+| `gemm_i8_i32_quad` | **16.5** | i8 × i8, quad |
 | `gemm_u8i8_i32_quad` | **21.8** | u8 × i8, quad |
 
 Xeon E5-2420 v2, SSE4, n=512, `int8 quad dot: decomposed` — **this machine still
 has no VNNI.** From the committed run in
 `benchmarks/data/xeon-e5-2420/int_arms.csv`, produced by `run_int_bench.sh` with
 its preflight and its native-quad guard (see [The guard](#the-guard) above);
-provenance in the `.sysinfo` sidecar. Figures are best-of-iteration, which is
-the defensible statistic on a 12-year-old shared box: the median is disturbed
-for one arm at n=1024 (14.97 against a best of 21.67) where nothing else moved.
+provenance in the `.sysinfo` sidecar. Figures are best-of-iteration; on this run
+the median and the best agree to within 5.1% for every arm at every size, so the
+choice of statistic does not carry the result.
 
 ### Read the ratios one variable at a time
 
@@ -359,11 +359,11 @@ the four sizes in the committed run:
 
 | comparison | n=128 | n=256 | n=512 | n=1024 | what varies |
 |---|---|---|---|---|---|
-| `gemm_i8_i32_quad` ÷ `gemm_i8_i32` | 1.10× | 1.20× | **1.24×** | **1.27×** | the kernel, operands fixed |
-| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | 1.36× | 1.23× | **1.31×** | **1.30×** | operand signedness, kernel fixed |
-| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.50× | 1.48× | 1.63× | 1.65× | **both — not a controlled result** |
+| `gemm_i8_i32_quad` ÷ `gemm_i8_i32` | 1.19× | 1.24× | **1.25×** | **1.27×** | the kernel, operands fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | 1.27× | 1.29× | **1.32×** | **1.28×** | operand signedness, kernel fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.51× | 1.60× | 1.64× | 1.62× | **both — not a controlled result** |
 
-**~1.25× is the kernel result**, and it *grows with n* — 1.10× at n=128 up to
+**~1.25× is the kernel result**, and it *grows with n* — 1.19× at n=128 up to
 1.27× at n=1024 — which is what a register-blocking change should do: the small
 sizes never leave the caches, so the operand-traffic reduction the quad layout
 buys has nothing to pay for yet.
