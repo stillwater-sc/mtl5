@@ -280,13 +280,13 @@ the control it lacked, and the pattern is the same both times: the original
 statement was true of everything that had been measured, and false of the thing
 that had not been built yet.
 
-### 6c. Four machines: the kernel is not a constant, and the silicon is worth 2×
+### 6c. Four machines: the kernel is not a constant, and the silicon is worth ~2×
 
 §6a was written from ONE machine, and generalised. Three more have now run the
 same arms, and the Xeon turns out to be the **low outlier by about a factor of
 three**. GEMM at n=1024, GOP/s, best-of-iteration, single-threaded:
 
-| machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | instruction | best int8 / fp32 |
+| machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | native ÷ emulated (raw) | best int8 / fp32 |
 |---|---|---|---|---|---|---|---|---|
 | Xeon E5-2420 v2 (SSE4) | none | 19.5 | 13.1 | 16.7 | **21.3** | 1.27× | — | 1.09× |
 | i7-12700K (AVX2) | none | 144.8 | 49.2 | 132.9 | **146.5** | **2.70×** | — | 1.01× |
@@ -299,29 +299,36 @@ n everywhere (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.77→2.19, Jetson
 "the kernel result" was the same single-machine over-generalisation this section
 has now made twice — once with the dot's 1.42×, once here.
 
-**THE INSTRUCTION IS WORTH ~2× IN A GEMM, against ~1.2× in a dot.** Within
-machine, kernel fixed, only the pairing's nativeness varying:
+**THE INSTRUCTION IS WORTH ~2× IN A GEMM, against ~1.2× in a dot** — but the
+column above is a RAW pairing ratio, not that figure. The two pairings differ in
+signedness and decomposition path as well as in nativeness, which is the
+two-variable error §6 was itself corrected for. The shape term is measurable, as
+the same ratio on the machines where BOTH pairings are emulated: **1.28× (Xeon),
+1.10× (i7)**, favouring `u8 × i8`. It acts in OPPOSITE directions on the two
+native machines, because they implement opposite pairings:
 
-| | dot (L1-resident) | GEMM (n=1024) |
-|---|---|---|
-| Ryzen 9 8945HS | 1.50× raw → **1.14-1.37×** net of the shape control | **2.23×** |
-| Jetson Orin Nano | **2.75×** raw | **2.40×** |
+| | raw | shape acts | instruction, net |
+|---|---|---|---|
+| Ryzen 9 8945HS (native `u8×i8`) | 2.23× | *with* the native arm | **1.74–2.02×** |
+| Jetson Orin Nano (native `i8×i8`) | 2.40× | *against* the native arm | **2.64–3.06×** |
 
-The Ryzen dot figure reproduces §6's ~1.2×, which is the cross-check that the two
-suites are measuring the same thing. The GEMM figure is roughly double it, and
-that is the prediction §6 made in direction and could not size: a dot is
-bandwidth-bound so instruction efficiency barely shows, while a GEMM is
-compute-bound throughout and shows it fully.
+The Jetson net figure borrows an x86 control for an ARM decomposition — no ARM
+machine here emulates both pairings — so its 2.40× raw is the measurement and the
+netted range is indicative. That is §6's own caveat, pointing the other way.
 
-(The shape control is the same ratio on the machines where BOTH pairings are
-emulated — 1.31× Xeon, 1.10× i7, favouring `u8 × i8`. The Jetson figure stays
-raw: no ARM machine here emulates both, so there is no same-ISA control to divide
-out. That is §6's own caveat pointing the other way.)
+Against the same ratios on the dot (Ryzen 1.50× raw → 1.14–1.37× net; Jetson
+2.75× raw), the GEMM figure is roughly 1.5× the dot's. That is the prediction §6
+made in direction and could not size: a dot is bandwidth-bound so instruction
+efficiency barely shows, while a GEMM is compute-bound throughout and shows it
+fully. The Ryzen dot figure reproducing §6's ~1.2× is the cross-check that the
+two suites measure the same thing.
 
 **The two decomposed machines reach parity with fp32 and no more** (1.09×, 1.01×)
 while both native machines clear it by 2.2–3.3×. So the silicon decides whether
 an int8 GEMM is worth running at all, which is the opposite of what §6a inferred
-from the Xeon alone.
+from the Xeon alone. That column carries no pairing confound — it compares each
+machine's fastest int8 arm against its OWN fp32 GEMM — so this conclusion rests
+on the raw data and survives the netting above.
 
 Physically coherent, worth checking on a 3x claim: one quad instruction does four
 times the multiply-accumulates of an fp32 FMA of the same width, so 4× is the

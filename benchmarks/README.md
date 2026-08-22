@@ -314,8 +314,8 @@ SIMD backend:    SSE4   int8 quad dot: DECOMPOSED
                  u8*i8 emulated   i8*i8 emulated   u8*u8 emulated
 ```
 
-Three states, and **`PARTIAL` is the common one** — every machine with the
-instruction at all has it for some pairings and not others, because x86 and ARM
+Three states, and **`PARTIAL` is what every machine measured so far reports** —
+each has the instruction for some pairings and not others, because x86 and ARM
 implement opposite ones (see [the quad arms](#the-quad-arms-and-what-they-revise)
 below). Only AVX10.2 and NEON+I8MM report `NATIVE`, and neither has been
 measured.
@@ -404,7 +404,7 @@ real everywhere and *grows with n* everywhere, but its magnitude is a property o
 the machine, not a constant. GEMM at n=1024, GOP/s, best-of-iteration,
 single-threaded:
 
-| machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | instruction | best int8 ÷ fp32 |
+| machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | native ÷ emulated (raw) | best int8 ÷ fp32 |
 |---|---|---|---|---|---|---|---|---|
 | Xeon E5-2420 v2 (SSE4) | none | 19.5 | 13.1 | 16.7 | **21.3** | 1.27× | — | 1.09× |
 | i7-12700K (AVX2) | none | 144.8 | 49.2 | 132.9 | **146.5** | **2.70×** | — | 1.01× |
@@ -416,8 +416,11 @@ single-threaded:
   (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.77→2.19, Jetson 3.21→3.64), which is
   what a register-blocking change should do: the small sizes never leave cache,
   so the operand-traffic reduction has nothing to pay for yet.
-- **instruction** = the machine's native pairing ÷ its emulated one, *same
-  kernel, same machine, same run*. Only the two `PARTIAL` machines can supply it.
+- **native ÷ emulated (raw)** = the machine's native pairing ÷ its emulated one,
+  *same kernel, same machine, same run*. Only the two `PARTIAL` machines can
+  supply it. **This is a RAW ratio, not the instruction's contribution** — the two
+  pairings also differ in signedness and in decomposition path, so it moves two
+  variables. Netted below.
 - Note the two decomposed machines reach **parity with fp32 and no more**
   (1.09×, 1.01×), while both native machines clear it by 2.2–3.3×.
 
@@ -429,29 +432,52 @@ entirely a naming artifact.
 
 ### What the instruction is worth, and why the dot understated it
 
-Within-machine, kernel held fixed, only the pairing's nativeness varying:
+The raw native-over-emulated ratios above move **two** variables — nativeness and
+the pairing's decomposition shape — which is the error this page warns about two
+sections earlier. The shape term is measurable: it is the same ratio on the
+machines where *both* pairings are emulated.
+
+| | shape control (both emulated) |
+|---|---|
+| Xeon E5-2420 v2 | 1.28× |
+| i7-12700K | 1.10× |
+
+favouring `u8 × i8`. Dividing that out — and noting it acts in *opposite
+directions* on the two native machines, because they implement opposite pairings:
+
+| | raw | shape acts | **instruction, net** |
+|---|---|---|---|
+| Ryzen 9 8945HS (native `u8×i8`) | 2.23× | *with* the native arm | **1.74–2.02×** |
+| Jetson Orin Nano (native `i8×i8`) | 2.40× | *against* the native arm | **2.64–3.06×** |
+
+**The Jetson figure carries a caveat the Ryzen one does not.** No ARM machine
+here emulates both pairings, so its shape control is borrowed from x86, where the
+decomposition is structurally similar (two native calls plus a shift and a
+subtract) but not identical. Treat 2.64–3.06× as indicative and the 2.40× raw
+ratio as the measurement.
+
+The same ratios on the **dot**, for contrast:
 
 | | dot (L1-resident, n=1024) | GEMM (n=1024) |
 |---|---|---|
-| Ryzen 9 8945HS | 1.50× raw → **1.14–1.37×** net of the shape control | **2.23×** |
-| Jetson Orin Nano | **2.75×** raw | **2.40×** |
+| Ryzen 9 8945HS | 1.50× raw → **1.14–1.37×** net | 2.23× raw → **1.74–2.02×** net |
+| Jetson Orin Nano | **2.75×** raw (no same-ISA control) | 2.40× raw |
 
-(The shape control is the same ratio on the machines where *both* pairings are
-emulated: 1.31× on the Xeon, 1.10× on the i7, favouring `u8 × i8`. The Jetson
-figure is raw because no ARM machine here emulates both, so there is no
-same-ISA control to divide out — the caveat §6 already carries in the other
-direction.)
-
-The Ryzen dot figure reproduces §6's ~1.2×. **In a GEMM the same instruction is
-worth roughly twice that**, and that is exactly what the hardware plan predicted
-in direction: a dot is bandwidth-bound, so instruction efficiency barely shows,
-while a GEMM is compute-bound throughout and shows it fully. The magnitude is now
-measured rather than assumed.
+The Ryzen dot figure reproduces §6's ~1.2×, which is the cross-check that both
+suites measure the same thing. **The GEMM figure is roughly 1.5× that**, and that
+is what the hardware plan predicted in direction: a dot is bandwidth-bound, so
+instruction efficiency barely shows, while a GEMM is compute-bound throughout and
+shows it fully. The magnitude is now measured rather than assumed.
 
 Physically coherent, which is worth checking on a 3× result: one quad instruction
 does four times the multiply-accumulates of an fp32 FMA of the same width, so 4×
 is the ceiling. Measured against each machine's own fp32 GEMM: Ryzen 3.29×,
 Jetson 2.20×, decomposed i7 1.01×.
+
+**The best-int8-over-fp32 column is not affected by any of this.** It compares
+each machine's fastest int8 arm against its *own* fp32 GEMM, so no pairing
+confound enters — which is why the conclusion that rests on it (only the machines
+with the instruction beat fp32) stands on the raw data.
 
 ### What this replaced
 
@@ -469,8 +495,10 @@ promote-multiply-add chains.
 So the operand width still contributes nothing in a GEMM. What has changed is the
 size of what remains: *the instruction*, read as the four-products-per-lane
 **kernel shape**, is worth 1.27–3.64× and needs no VNNI silicon at all; *the
-silicon on top of that* is worth a further 2.2–2.4×. Those are separate
-quantities and this table is the first time the programme could measure both.
+silicon on top of that* is worth a further **1.7–2.0× on Zen 4** net of the shape
+control (2.23× raw), and more than that on the Jetson though without a same-ISA
+control to pin it. Those are separate quantities and this is the first time the
+programme could measure both.
 
 Both int8 arms are compiled into the same binary on purpose. They compute
 bit-identical results — integer addition is associative — so nothing in an

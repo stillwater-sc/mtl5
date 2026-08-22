@@ -47,7 +47,7 @@ table:
   broadcast-quad micro-kernel; both are built (`gemm_kernel::quad`). All four
   machines have run the arms. GEMM, n=1024:
 
-  | machine | native pairing | kernel (quad ÷ widen) | instruction | best int8 ÷ fp32 |
+  | machine | native pairing | kernel (quad ÷ widen) | native ÷ emulated (raw) | best int8 ÷ fp32 |
   |---|---|---|---|---|
   | Xeon E5-2420 v2 | none | 1.27× | — | 1.09× |
   | i7-12700K | none | **2.70×** | — | 1.01× |
@@ -63,12 +63,18 @@ table:
   - The kernel shape is worth **1.27×–3.64×**, not ~1.25× — the Xeon is the low
     outlier by about a factor of three, and it is the machine the claim
     generalised from.
-  - The silicon on top of that is worth a further **2.2×–2.4×**, measured
-    within-machine on two different ISAs.
+  - The silicon on top of that is worth a further **1.7×–2.0× on Zen 4**, net of
+    the decomposition-shape control (2.23× raw; the raw ratio moves signedness
+    and decomposition path as well as nativeness). The Jetson's raw 2.40× nets
+    *upward*, to ~2.6–3.1×, because there the shape term works against the native
+    arm — but that borrows an x86 control for an ARM decomposition, so treat the
+    raw number as the measurement.
   - **Only the machines with the instruction beat fp32 at all.** The two
     decomposed parts land at 1.01× and 1.09× — parity. The two native parts reach
     2.20× and 3.29×. So the silicon decides whether an int8 GEMM is worth running,
-    which is the opposite of the previous reading.
+    which is the opposite of the previous reading. This column carries no pairing
+    confound — each machine's best int8 arm against its *own* fp32 GEMM — so it is
+    the one to quote when justifying hardware.
 
 - **The within-machine control turned out to already exist, on every partial
   machine.** This bullet previously said an honest measurement of the instruction
@@ -77,16 +83,23 @@ table:
   with VNNI and makes it a two-variable comparison.
 
   That reasoning missed the obvious: **partial support IS the control.** Every
-  machine with the instruction has it for some pairings and not others (§6b), so
-  the native and emulated arms run *in the same binary, on the same machine, in
-  the same run*, differing only in the pairing. Zen 4 gives 2.23× and the Jetson
-  2.40× that way, with no build-flag manipulation at all. The only residue is the
-  decomposition-shape difference between pairings, which the two fully-decomposed
-  machines measure directly (1.10×–1.31×).
+  machine measured so far has the instruction for some pairings and not others
+  (§6b), so the native and emulated arms run *in the same binary, on the same
+  machine, in the same run*, differing only in the pairing. Zen 4 gives 2.23× raw
+  and the Jetson 2.40× raw that way, with no build-flag manipulation at all.
+
+  It is a control, not a clean one: the pairings also differ in decomposition
+  path, so the raw ratio still moves two variables. The two fully-decomposed
+  machines measure that residue directly (1.10×–1.28× on the GEMM), which nets
+  Zen 4 to ~1.7–2.0×. The Jetson has no same-ISA control, so its netted figure
+  borrows an x86 one.
 
   An AVX10.2 part would still be worth having — it is the one that makes *all*
-  pairings native and so removes the residue entirely — but it is no longer
-  needed to get a number, only to tighten one.
+  pairings native, so the emulated arm disappears and the residue with it — but it
+  is no longer needed to get a number, only to tighten one. **An ARM part that
+  emulates both pairings would be worth as much**, and for a reason the plan did
+  not previously have: it is the missing same-ISA control for the Jetson's
+  figure.
 
 ## Selection criteria
 
