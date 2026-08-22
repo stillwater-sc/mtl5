@@ -15,7 +15,7 @@
 #
 # and that number is the baseline any VNNI part has to beat before its silicon
 # can be credited with anything. Committed run: data/xeon-e5-2420/int_arms.csv,
-# 1.10x at n=128 rising to 1.27x at n=1024 -- it grows with n, because the small
+# 1.19x at n=128 rising to 1.27x at n=1024 -- it grows with n, because the small
 # sizes never leave cache and the traffic reduction has nothing to pay for yet.
 #
 # WHY --allow-decomposed IS BAKED IN HERE. run_int_bench.sh refuses to time a

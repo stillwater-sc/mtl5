@@ -216,7 +216,7 @@ other's arms**.
 `bench_all` therefore reports support **per pairing**, and
 `mtl::simd::has_native_quad_dot_v<NA, NB>` is the compile-time query:
 
-```
+```text
 SIMD backend:    AVX3_DL   int8 quad dot: PARTIAL
                  u8*i8 native   i8*i8 emulated   u8*u8 emulated
 ```
