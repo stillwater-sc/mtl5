@@ -480,6 +480,17 @@ benchmarks/machines/i7-12700k.sh            # P-cores 0,2,...,14, T in {1,8}
 benchmarks/machines/jetson-orin-nano.sh     # 6 cores, T in {1,6}, OUTDIR follows nvpmodel
 ```
 
+The integer suite (#451) has its own profile per machine, named `*-int.sh`, since
+it needs a different flag set — the ISA flag decides whether the quad
+multiply-accumulate is native, which the blocking A/B does not care about:
+
+```bash
+bash benchmarks/machines/ryzen-9-8945hs-int.sh    # znver4, native vpdpbusd
+bash benchmarks/machines/jetson-orin-nano-int.sh  # A78AE, native SDOT; OUTDIR follows nvpmodel
+bash benchmarks/machines/i7-12700k-int.sh         # alderlake, decomposed (AVX-VNNI unreachable)
+bash benchmarks/machines/xeon-e5-2420-int.sh      # SSE4, decomposed; pins 0-5, not 0,2,4,...
+```
+
 ```powershell
 pwsh benchmarks/machines/ryzen-9-8945hs.ps1  # /arch:AVX512, 8 physical cores
 ```

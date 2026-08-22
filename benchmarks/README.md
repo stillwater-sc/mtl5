@@ -168,8 +168,49 @@ existing baselines. Ask for it by name.
 
 ```bash
 benchmarks/run_int_bench.sh --outdir benchmarks/data/<machine> [--arch <flag>] [--pin 0,2,4,6]
-benchmarks/machines/ryzen-9-8945hs-int.sh          # Zen 4, under WSL
 ```
+
+One committed profile per machine, so the arch flag, pin list, output directory
+and the `--allow-decomposed` decision live in the repository rather than in a
+shell history:
+
+```bash
+bash benchmarks/machines/ryzen-9-8945hs-int.sh      # Zen 4, under WSL -- the only NATIVE x86 part
+bash benchmarks/machines/jetson-orin-nano-int.sh    # A78AE, native SDOT; OUTDIR follows nvpmodel
+bash benchmarks/machines/i7-12700k-int.sh           # Alder Lake: has AVX-VNNI, cannot reach it (§7)
+bash benchmarks/machines/xeon-e5-2420-int.sh        # SSE4: no VNNI at all -- the control
+```
+
+| machine | arch flag | pin | quad dot | why it is in the set |
+|---|---|---|---|---|
+| Ryzen 9 8945HS | `-march=znver4` | `0,2,…,14` | native `vpdpbusd` | the only native x86 datapoint |
+| Jetson Orin Nano | `-mcpu=native` | `0,…,5` | native `SDOT`/`UDOT` | native, and **not x86** |
+| i7-12700K | `-march=alderlake` | `0,2,…,14` | decomposed | modern memory system, instruction absent |
+| Xeon E5-2420 v2 | `-march=native` | `0,…,5` | decomposed | no VNNI silicon exists — the control |
+
+The two decomposed profiles pass `--allow-decomposed` on the operator's behalf,
+because on those parts the decomposition is the measurement rather than a
+misconfiguration. The two native profiles deliberately do **not**: if the guard
+trips there, the build did not get the ISA it was supposed to, and that is worth
+stopping for.
+
+The Xeon pins `0,1,2,3,4,5` where the others pin `0,2,4,…` — its SMT siblings are
+**blocked** (`0,6`), (`1,7`) … not adjacent pairs, so the interleaved list would
+put two threads on three cores and idle the rest.
+
+⚠️ **The two native machines are native for *opposite* pairings**, and a
+cross-machine comparison that pairs arms by name will get the sign of the effect
+wrong:
+
+| | x86 AVX3_DL | ARM NEON + DotProd |
+|---|---|---|
+| `u8 × i8` | **native** `vpdpbusd` | emulated (needs I8MM) |
+| `i8 × i8` | emulated (needs AVX10.2) | **native** `SDOT` |
+
+So `gemm_u8i8_i32_quad` is the fast arm on x86 and the *slow* one on the Jetson.
+`has_native_quad_dot` is a single boolean and cannot express this — it reports
+`NATIVE` on the Jetson on the strength of the symmetric pairing alone. See the
+header of `machines/jetson-orin-nano-int.sh`.
 
 ### Read the curve, not a ratio
 
