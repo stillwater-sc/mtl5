@@ -30,7 +30,7 @@ The same shape recurred all day, in the numbers rather than the code:
 | Green suite means the dispatch is right | Both kernels agree exactly, so no *result* can distinguish them. Only a structural test can, and only the benchmark noticed |
 | The quad kernel is worth ~1.25× | True of the Xeon and nothing else. Four machines: **1.27×–3.64×**, and the machine it was generalised from is the low outlier by ~3× |
 | `native ÷ emulated` = the instruction's contribution | A **raw pairing ratio** — the pairings differ in signedness and decomposition path too. Netted: Zen 4 1.74–2.02×, not 2.23× |
-| A VNNI purchase buys "something we already have" | Backwards. Only the machines *with* the instruction beat fp32 at all: 1.01×/1.09× decomposed against 2.20×/3.29× native |
+| A VNNI purchase buys "something we already have" | Backwards. Only the machines *with* the instruction beat fp32 by a margin worth having: 1.01×/1.09× decomposed — beside it, not below — against 2.20×/3.29× native |
 | An honest instruction measurement needs AVX10.2 hardware | **Partial support is the control.** Native and emulated arms already run in one binary on one machine |
 
 The habit the previous session named — *the issue's remedy is a hypothesis* —
@@ -113,8 +113,9 @@ is not.
   the scepticism went to the numbers I doubted.
 - **I told the reader not to buy the hardware.** The plan said a VNNI purchase
   would be "buying something we already have". The data says only the machines
-  with the instruction beat fp32 at all. Wrong in the direction that costs money
-  by *not* spending it.
+  with the instruction beat fp32 by a margin worth having — the decomposed parts
+  sit beside it at 1.01× and 1.09×, the native ones at 2.20× and 3.29×. Wrong in
+  the direction that costs money by *not* spending it.
 - **I claimed a control did not exist that already did.** Partial support means
   native and emulated arms run in the same binary on the same machine. I argued
   at length that this needed AVX10.2 hardware.

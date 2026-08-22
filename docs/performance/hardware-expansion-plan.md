@@ -69,12 +69,13 @@ table:
     *upward*, to ~2.6–3.1×, because there the shape term works against the native
     arm — but that borrows an x86 control for an ARM decomposition, so treat the
     raw number as the measurement.
-  - **Only the machines with the instruction beat fp32 at all.** The two
-    decomposed parts land at 1.01× and 1.09× — parity. The two native parts reach
-    2.20× and 3.37×. So the silicon decides whether an int8 GEMM is worth running,
-    which is the opposite of the previous reading. This column carries no pairing
-    confound — each machine's best int8 arm against its *own* fp32 GEMM — so it is
-    the one to quote when justifying hardware.
+  - **Only the machines with the instruction beat fp32 by a margin worth having.**
+    The two decomposed parts land at 1.01× and 1.09× — the i7's 1% is inside its
+    own 1.8% run-to-run spread, and the Xeon's 9% is a real but small edge. The
+    two native parts reach 2.20× and 3.37×. So the silicon decides whether an int8
+    GEMM is worth *choosing*, which is the opposite of the previous reading. This
+    column carries no pairing confound — each machine's best int8 arm against its
+    *own* fp32 GEMM — so it is the one to quote when justifying hardware.
 
 - **The within-machine control turned out to already exist, on every partial
   machine.** This bullet previously said an honest measurement of the instruction

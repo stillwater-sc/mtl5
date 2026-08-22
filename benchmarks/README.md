@@ -477,7 +477,9 @@ Jetson 2.20×, decomposed i7 1.01×.
 **The best-int8-over-fp32 column is not affected by any of this.** It compares
 each machine's fastest int8 arm against its *own* fp32 GEMM, so no pairing
 confound enters — which is why the conclusion that rests on it (only the machines
-with the instruction beat fp32) stands on the raw data.
+with the instruction beat fp32 by a margin worth having) stands on the raw data.
+The decomposed parts are not *below* fp32; they are beside it, at 1.01× and
+1.09×, where the first is inside the i7's own 1.8% spread.
 
 ### What this replaced
 
