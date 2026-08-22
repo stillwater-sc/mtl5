@@ -484,16 +484,24 @@ void mult_quad(const MA& A, const MB& B, MC& C) {
     using TA = typename MA::value_type;
     using TB = typename MB::value_type;
 #ifdef MTL5_NATIVE_FAST_GEMM
+    // The layout gate comes FIRST, and `orientation` is part of it. `Matrix` does
+    // not require that alias -- a sparse matrix and a transposed view both lack
+    // it -- and `interface::is_row_major_v` has no default, so naming it outside
+    // a discarded branch turns "falls back to the generic loop" into a hard
+    // compile error for exactly the types the fallback exists for.
+    if constexpr (interface::SimdDenseMatrix<MC> &&
+                  interface::ContiguousMatrixData<MA> &&
+                  interface::ContiguousMatrixData<MB> &&
+                  std::is_same_v<typename MC::value_type, Accumulator> &&
+                  requires { typename MA::orientation;
+                             typename MB::orientation;
+                             typename MC::orientation; }) {
     // Row-major C keeps the operand order, so the pair is (TA, TB); col-major C
     // computes C^T = B^T A^T and therefore needs (TB, TA) to be a pairing too.
     constexpr bool row_major_c = interface::is_row_major_v<MC>;
     constexpr bool kernel_ok = row_major_c ? detail::is_quad_gemm<Accumulator, TA, TB>()
                                            : detail::is_quad_gemm<Accumulator, TB, TA>();
-    if constexpr (kernel_ok &&
-                  std::is_same_v<typename MC::value_type, Accumulator> &&
-                  interface::SimdDenseMatrix<MC> &&
-                  interface::ContiguousMatrixData<MA> &&
-                  interface::ContiguousMatrixData<MB>) {
+    if constexpr (kernel_ok) {
         const std::size_t M = A.num_rows();
         const std::size_t N = B.num_cols();
         const std::size_t K = A.num_cols();
@@ -515,6 +523,7 @@ void mult_quad(const MA& A, const MB& B, MC& C) {
                 math::zero<Accumulator>(), C.data(), M, nthreads);
         }
         return;
+    }
     }
 #endif
     static_assert(simd::QuadPair<TA, TB>,

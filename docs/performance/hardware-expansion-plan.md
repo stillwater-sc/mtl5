@@ -47,14 +47,30 @@ table:
   built (`gemm_kernel::quad`), so the int8 GEMM arms are `gemm_i8_i32_quad` and
   `gemm_u8i8_i32_quad` alongside the widening one. **This changes what a VNNI
   machine has left to prove.** On the Xeon, with the instruction *decomposed*,
-  the quad kernel already returns 1.26× (symmetric) and 1.64× (`u8 × i8`) over
-  widen-on-load — so a large fraction of the win is the kernel *shape*, not the
-  silicon, and a purchase justified by "int8 GEMM is much faster" would be
-  buying something we already have. The question a VNNI part now answers is
-  narrower and better posed: **what does the native instruction add on top of
-  the quad kernel, measured against that same kernel decomposed on the same
-  machine?** The i7 is the ideal control for exactly this and cannot run it
-  (§7); a Zen 4 or Zen 5 part can run both by build flag.
+  the quad kernel already returns **1.26×** over widen-on-load at fixed operands
+  — so a large fraction of the win is the kernel *shape*, not the silicon, and a
+  purchase justified by "int8 GEMM is much faster" would be buying something we
+  already have. (The larger 1.64× sometimes quoted for `u8 × i8` moves operand
+  signedness *and* kernel at once and is not a result about either; see the
+  benchmarks README.) The question a VNNI part now answers is narrower and
+  better posed: **what does the native instruction add on top of the quad
+  kernel, measured against that same kernel decomposed on the same machine?**
+
+  **That control is harder to build than it looks, and no machine we have runs
+  it.** `--allow-decomposed` only permits the runner to *time* a decomposed
+  build; it does not select one. Selection is the `--arch` flag, and on Zen 4
+  the shipped profile passes `-march=znver4`, which defines all seven AVX3_DL
+  macros and takes the native path. Getting the decomposed arm on the same part
+  means dropping to something like `-march=x86-64-v3`, which removes AVX-512
+  along with VNNI — so the two arms would differ in vector width and register
+  count as well as in the instruction, which is a two-variable comparison of
+  exactly the kind §6 has already been burned by. The i7 would be the ideal
+  single-variable control and cannot run the native side at all (§7). **An
+  honest within-machine measurement of the instruction alone therefore needs
+  either a Highway AVX-VNNI path (256-bit, no AVX-512 — see §7) or an AVX10.2
+  part**, and any run that compares `znver4` against `x86-64-v3` must record
+  `build_isa`, the `int8 quad dot:` label and the arm's `native-int-decomposed`
+  tag, and be reported as the two-variable result it is.
 
 ## Selection criteria
 

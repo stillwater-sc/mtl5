@@ -86,10 +86,14 @@ void pack_A_quad(const T* A, std::ptrdiff_t rs, std::ptrdiff_t cs,
         const std::size_t mr = (m - i0 < MR) ? (m - i0) : MR;   // rows in this panel
         for (std::size_t p = 0; p < KP; p += 4) {
             for (std::size_t i = 0; i < MR; ++i) {
-                const T* row = A + static_cast<std::ptrdiff_t>(i0 + i) * rs;
+                // The whole index is formed INSIDE the guard. Hoisting a `row`
+                // pointer out of it would compute A + (i0+i)*rs for a padded
+                // row, which is past the end of the source object -- undefined
+                // even though the value is never loaded.
                 for (std::size_t t = 0; t < 4; ++t)
                     Ap[dst++] = (i < mr && p + t < k)
-                        ? row[static_cast<std::ptrdiff_t>(p + t) * cs]
+                        ? A[static_cast<std::ptrdiff_t>(i0 + i) * rs +
+                            static_cast<std::ptrdiff_t>(p + t) * cs]
                         : T(0);   // ragged rows and the k tail both pad with zero
             }
         }
@@ -120,10 +124,11 @@ void pack_B_quad_panels(const T* B, std::ptrdiff_t rs, std::ptrdiff_t cs,
         std::size_t dst = q * NR * KP;                          // this panel's slot
         for (std::size_t p = 0; p < KP; p += 4) {
             for (std::size_t j = 0; j < NR; ++j) {
-                const T* col = B + static_cast<std::ptrdiff_t>(j0 + j) * cs;
+                // Index formed inside the guard; see pack_A_quad.
                 for (std::size_t t = 0; t < 4; ++t)
                     Bp[dst++] = (j < nr && p + t < k)
-                        ? col[static_cast<std::ptrdiff_t>(p + t) * rs]
+                        ? B[static_cast<std::ptrdiff_t>(p + t) * rs +
+                            static_cast<std::ptrdiff_t>(j0 + j) * cs]
                         : T(0);
             }
         }

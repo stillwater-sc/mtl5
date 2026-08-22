@@ -297,10 +297,10 @@ instruction, from quad-interleaved panels — against the same operands:
 |---|---|---|
 | `gemm_f32` | 19.7 | 1.49× |
 | `gemm_i32` | 14.0 | 1.06× |
-| `gemm_i16_i32` | 12.8 | 0.97× |
-| `gemm_i8_i32` (widen-on-load) | 13.2 | 1.00× |
-| `gemm_i8_i32_quad` | **16.6** | **1.26×** |
-| `gemm_u8i8_i32_quad` | **21.7** | **1.64×** |
+| `gemm_i16_i32` | 12.8 | i16 × i16, widen |
+| `gemm_i8_i32` | 13.2 | i8 × i8, widen |
+| `gemm_i8_i32_quad` | **16.6** | i8 × i8, quad |
+| `gemm_u8i8_i32_quad` | **21.7** | u8 × i8, quad |
 
 Same Xeon E5-2420 v2, SSE4, n=512, `int8 quad dot: decomposed` — **this machine
 still has no VNNI.** Best of 8 interleaved rounds; the box is noisy and
@@ -308,11 +308,34 @@ individual arms occasionally lose a scheduling slot, though the two quad arms
 were the *most* stable of the six. A committed figure should come from
 `run_int_bench.sh` on a quiet machine.
 
+### Read the ratios one variable at a time
+
+The four int8 numbers differ in **two** things — kernel and operand signedness —
+so only same-row-different-one-thing pairs are controlled comparisons:
+
+| comparison | ratio | what varies |
+|---|---|---|
+| `gemm_i8_i32_quad` ÷ `gemm_i8_i32` | **1.26×** | the kernel, operands fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | **1.31×** | operand signedness, kernel fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.64× | **both — not a controlled result** |
+
+**1.26× is the kernel result.** The 1.64× is the product of two effects and must
+not be quoted as what the quad kernel buys; it is at most "the best int8 GEMM
+available after this change, against the best available before", and it is worth
+noting only because there *is* no `u8 × i8` widen-on-load arm to compare against
+— the widening load requires matching signedness, so that pairing previously
+fell to the generic scalar loop.
+
+This distinction is not pedantry here. The 1.42×-versus-1.17× correction to the
+dot headline in §6 of the assessment came from exactly this error: two arms that
+differed in the instruction *and* in the decomposition shape, read as though only
+the instruction had moved.
+
 **The claim this replaces** was that on a machine without VNNI there is no int8
-GEMM win at all. That was true of the *widen-on-load* kernel and does not
-survive changing the kernel: the quad path beats it by 1.26× symmetric and
-1.64× in VNNI's native `u8 × i8` shape — the latter also beating fp32, on a
-2013 part with no VNNI silicon anywhere in it.
+GEMM win at all. That was true of the *widen-on-load* kernel and does not survive
+changing the kernel: at fixed operands the quad path is 1.26× faster, and the
+`u8 × i8` shape beats fp32 outright — on a 2013 part with no VNNI silicon
+anywhere in it.
 
 The reason is visible in the disassembly rather than inferred. Highway's
 *decomposition* of the quad accumulate is a pair of `vpmaddwd` plus
@@ -323,13 +346,17 @@ more of that shift work than `u8 × i8` (4 `vpsraw` + 2 `vpsllw` against 2 + 1
 plus a mask), which is exactly the 16.6-against-21.7 gap.
 
 So the operand width still contributes nothing, and the earlier reading of that
-— "everything an int8 GEMM offers must come from the instruction" — stands. What
-was wrong was equating *the instruction* with *having VNNI silicon*: most of the
-win here is the four-products-per-lane **kernel shape**, which a machine without
-the instruction can still partly express. A VNNI or AMX machine's GEMM number
-therefore remains an almost pure measurement of arithmetic rather than
-bandwidth, but its baseline is now `gemm_i8_i32_quad` on the same machine, not
-the widening arm.
+— "everything an int8 GEMM offers must come from the instruction" — stands only
+once *the instruction* is read as the four-products-per-lane **kernel shape**
+rather than as *having VNNI silicon*. Those are not the same thing, and this
+machine separates them: it expresses the shape, through a `vpmaddwd`
+decomposition, and gains 1.26× from it with no VNNI at all.
+
+A VNNI or AMX machine's GEMM number therefore remains an almost pure measurement
+of arithmetic rather than bandwidth, but its baseline is now
+`gemm_i8_i32_quad` **on the same machine**, not the widening arm — and the
+increment left for the silicon is correspondingly smaller than the previous
+wording implied.
 
 Both int8 arms are compiled into the same binary on purpose. They compute
 bit-identical results — integer addition is associative — so nothing in an

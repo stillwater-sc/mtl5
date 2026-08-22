@@ -17,6 +17,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -66,10 +68,21 @@ namespace mtl::bench {
 // itself -- not merely narrow operands widened on load -- against the
 // widen-on-load arm as its within-machine control.
 //
-// Every arm is CHECKED as well as timed: the generators bound the operand
-// magnitude so all widths stay inside the int32 accumulator, which makes the
-// arms' results comparable to each other and to a 64-bit reference. An arm that
-// silently wrapped would otherwise still produce a plausible time.
+// Every arm is CHECKED as well as timed, in two distinct senses that are easy
+// to conflate:
+//
+//   the generators bound the operand magnitude so all widths stay inside the
+//   int32 accumulator, which makes the arms comparable to each other and to a
+//   64-bit reference. An arm that silently wrapped would otherwise still
+//   produce a plausible time.
+//
+//   AND, for the GEMM arms, the output is actually READ afterwards and compared
+//   against that reference (verify_gemm_int). The first sense alone was not
+//   enough: `measure` only calls the lambda and records the time, so a kernel
+//   returning nonsense still produced a well-formed CSV row, and an output
+//   nobody reads is also the shape of work a compiler may delete. This PR's own
+//   history is the argument -- its two int8 arms were briefly the SAME kernel,
+//   and no timing could have revealed it.
 
 /// Sizes spanning L1 -> L2 -> L3 -> DRAM for a streaming reduction. Chosen by
 /// FOOTPRINT rather than by round numbers: at n = 4M the fp64 arm touches 64 MB
@@ -219,12 +232,75 @@ inline void bench_gemv_int(reporter& rep, const std::string& label,
 /// `gemm_u8i8_i32_quad` is VNNI's NATIVE pairing -- unsigned activations against
 /// signed weights -- and has no widen-on-load counterpart at all: the widening
 /// load requires matching signedness, so before this kernel that pair fell to
-/// the generic scalar loop. Its baseline is the symmetric arm, which every x86
-/// below AVX10.2 emulates with two `vpdpbusd` plus a shift and subtract.
+/// the generic scalar loop. Its baseline is therefore the SYMMETRIC QUAD arm,
+/// not the widening one: those two differ in one variable (operand signedness)
+/// where the widening arm differs in two.
+///
+/// WHAT THE SYMMETRIC FORM COSTS DEPENDS ON THE TARGET, and the difference is
+/// not cosmetic:
+///
+///   HWY_AVX3_DL / AVX10.2   `vpdpbusd` exists. Symmetric i8 x i8 is emulated
+///                           with two of them plus a shift and subtract
+///                           (native only from AVX10.2's `vpdpbssd`).
+///   SSE4 / AVX2             `vpdpbusd` does NOT exist. Highway decomposes BOTH
+///                           pairings through `vpmaddwd` plus sign-extension
+///                           shifts, and the symmetric form carries more of that
+///                           shift work -- verified by disassembly on SSE4:
+///                           4 `vpsraw` + 2 `vpsllw` against 2 + 1 plus a mask.
+///
+/// So "two `vpdpbusd` plus a shift and subtract" describes only the first row.
+/// Saying it of an SSE4 or AVX2 build would name an instruction the binary does
+/// not contain.
 ///
 /// Read `int8 quad dot:` in the header before trusting any of it. On a build
-/// without the instruction these arms measure Highway's decomposition, which is
-/// several times the work and looks like nothing in particular in a timing.
+/// without the instruction these arms measure Highway's decomposition, which
+/// looks like nothing in particular in a timing.
+/// Check a SAMPLE of C against a 64-bit reference, and throw if it disagrees.
+///
+/// `measure` only calls the lambda and records elapsed time, so before this
+/// existed no GEMM arm ever READ its own output: a kernel that returned nonsense
+/// still produced a perfectly plausible benchmark row, and an unread output is
+/// also the shape of computation a compiler is entitled to delete. That is
+/// precisely the failure this PR's own history argues against -- the two int8
+/// arms were briefly the SAME kernel, and no timing could have said so.
+///
+/// Sampled rather than exhaustive because a full O(n^3) scalar reference at
+/// n = 1024 costs more than the measurement it guards. `stride` cells, each an
+/// exact 64-bit dot over the full k, is O(samples * n) and catches a wrong
+/// kernel, a wrong pack layout or a dropped block immediately -- the errors that
+/// survive to this point are structural, not single-cell.
+///
+/// Called OUTSIDE the timed lambda, so it never enters the reported time.
+template <typename MA, typename MB, typename MC>
+void verify_gemm_int(const MA& A, const MB& B, const MC& C, const char* arm, std::size_t n) {
+    using TC = typename MC::value_type;
+    const std::size_t K = A.num_cols();
+    const std::size_t step = (n / 8) ? (n / 8) : 1;   // ~64 cells on the diagonal grid
+    for (std::size_t i = 0; i < n; i += step)
+        for (std::size_t j = 0; j < n; j += step) {
+            std::uint64_t acc = 0;
+            for (std::size_t k = 0; k < K; ++k)
+                acc += static_cast<std::uint64_t>(
+                           static_cast<std::uint32_t>(static_cast<TC>(A(i, k)))) *
+                       static_cast<std::uint32_t>(static_cast<TC>(B(k, j)));
+            const TC want = static_cast<TC>(static_cast<std::uint32_t>(acc));
+            if (C(i, j) != want) {
+                // FAIL, do not warn, and do not let the run reach the CSV: a
+                // sidecar written from a build that computes the wrong answer is
+                // worse than no sidecar, because it looks like data. Exit rather
+                // than throw so the operator sees one line instead of a
+                // terminate handler -- the same convention as the guards in
+                // bench_blocking_ab.cpp.
+                std::fprintf(stderr,
+                             "\nINTEGRITY FAILURE: %s at n=%zu -- C(%zu,%zu) = %lld, expected %lld\n"
+                             "The kernel under test computes the wrong answer; no results written.\n",
+                             arm, n, i, j,
+                             static_cast<long long>(C(i, j)), static_cast<long long>(want));
+                std::exit(2);
+            }
+        }
+}
+
 inline void bench_gemm_int(reporter& rep, const std::string& label,
                            const std::vector<std::size_t>& sizes,
                            std::size_t warmup = 2, std::size_t iterations = 5) {
@@ -249,6 +325,7 @@ inline void bench_gemm_int(reporter& rep, const std::string& label,
                     B(i, j) = static_cast<std::int32_t>((i * 13 + j * 7) % 512 - 256);
                 }
             rep.add(measure([&]{ mtl::mult(A, B, C); }, "gemm_i32", label, n, ops, warmup, iterations));
+            verify_gemm_int(A, B, C, "gemm_i32", n);
         }
         // Widening arms: half and an eighth of fp64's bytes per operand.
         {
@@ -261,6 +338,7 @@ inline void bench_gemm_int(reporter& rep, const std::string& label,
                 }
             rep.add(measure([&]{ mtl::mult<std::int32_t>(A, B, C); },
                             "gemm_i16_i32", label, n, ops, warmup, iterations));
+            verify_gemm_int(A, B, C, "gemm_i16_i32", n);
         }
         {
             mtl::mat::dense2D<std::int8_t> A(n, n), B(n, n);
@@ -272,10 +350,12 @@ inline void bench_gemm_int(reporter& rep, const std::string& label,
                 }
             rep.add(measure([&]{ mtl::mult<std::int32_t>(A, B, C); },
                             "gemm_i8_i32", label, n, ops, warmup, iterations));
+            verify_gemm_int(A, B, C, "gemm_i8_i32", n);
             // The SAME operands through the quad micro-kernel -- the arm the
             // widen-on-load number above is the control for.
             rep.add(measure([&]{ mtl::mult_quad<std::int32_t>(A, B, C); },
                             "gemm_i8_i32_quad", label, n, ops, warmup, iterations));
+            verify_gemm_int(A, B, C, "gemm_i8_i32_quad", n);
         }
         // VNNI's native pairing. No widen-on-load counterpart exists (the
         // widening load requires matching signedness), so its baseline is the
@@ -291,6 +371,7 @@ inline void bench_gemm_int(reporter& rep, const std::string& label,
                 }
             rep.add(measure([&]{ mtl::mult_quad<std::int32_t>(A, B, C); },
                             "gemm_u8i8_i32_quad", label, n, ops, warmup, iterations));
+            verify_gemm_int(A, B, C, "gemm_u8i8_i32_quad", n);
         }
     }
 }

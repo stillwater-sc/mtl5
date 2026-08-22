@@ -22,6 +22,7 @@
 
 #include <mtl/detail/gemm_quad_pack.hpp>
 
+#include <algorithm>   // std::min, in the cooperative-split case
 #include <cstddef>
 #include <cstdint>
 #include <vector>

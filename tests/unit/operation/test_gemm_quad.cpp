@@ -82,6 +82,28 @@ const std::size_t kShapes[][3] = {
     {96, 128, 64}, {67, 53, 41},
 };
 
+/// A `Matrix` with NO `orientation` alias -- which the concept does not require,
+/// and which a sparse matrix and a transposed view both lack in this library.
+/// `interface::is_row_major_v` has no default, so naming it outside a discarded
+/// branch is a hard error for such a type; this pins that `mult_quad` reaches
+/// its documented generic fallback instead of failing to compile.
+template <typename M>
+concept HasOrientation = requires { typename M::orientation; };
+
+template <typename T>
+struct no_orientation_matrix {
+    using value_type = T;
+    using size_type  = std::size_t;
+    std::size_t r_, c_;
+    std::vector<T> d_;
+    no_orientation_matrix(std::size_t r, std::size_t c) : r_(r), c_(c), d_(r * c) {}
+    std::size_t size() const { return d_.size(); }
+    std::size_t num_rows() const { return r_; }
+    std::size_t num_cols() const { return c_; }
+    T&       operator()(std::size_t i, std::size_t j)       { return d_[i * c_ + j]; }
+    const T& operator()(std::size_t i, std::size_t j) const { return d_[i * c_ + j]; }
+};
+
 /// Run a shape sweep for one operand pairing.
 template <typename TA, typename TB>
 void sweep() {
@@ -283,6 +305,36 @@ TEST_CASE("column-major C still gets the right answer", "[operation][gemm][quad]
     }
 }
 
+TEST_CASE("a matrix without an orientation alias falls back, not fails to compile",
+          "[operation][gemm][quad]") {
+    // `mult_quad` documents a generic fallback for matrices that are not dense
+    // and contiguous -- "always correct, never merely fast". That promise was
+    // false for any Matrix lacking `orientation`: the layout test named
+    // `is_row_major_v<MC>` at function scope, outside any discarded branch, so
+    // the fallback path could not be reached because naming it was already an
+    // error. The gate now tests `orientation` before using it.
+    STATIC_REQUIRE(mtl::Matrix<no_orientation_matrix<std::uint8_t>>);
+    STATIC_REQUIRE_FALSE(HasOrientation<no_orientation_matrix<std::uint8_t>>);
+    STATIC_REQUIRE(HasOrientation<mtl::mat::dense2D<std::uint8_t, rowmaj>>);   // for contrast
+
+    constexpr std::size_t M = 5, N = 4, K = 6;
+    no_orientation_matrix<std::uint8_t> A(M, K);
+    no_orientation_matrix<std::int8_t>  B(K, N);
+    no_orientation_matrix<std::int32_t> C(M, N);
+    for (std::size_t i = 0; i < M; ++i)
+        for (std::size_t k = 0; k < K; ++k) A(i, k) = gen_a<std::uint8_t>(i, k);
+    for (std::size_t k = 0; k < K; ++k)
+        for (std::size_t j = 0; j < N; ++j) B(k, j) = gen_b<std::int8_t>(k, j);
+
+    mtl::mult_quad<std::int32_t>(A, B, C);   // compiles, and is right
+
+    bool all = true;
+    for (std::size_t i = 0; i < M && all; ++i)
+        for (std::size_t j = 0; j < N && all; ++j)
+            all = (C(i, j) == ref_cell<std::int32_t>(A, B, i, j, K));
+    CHECK(all);
+}
+
 TEST_CASE("column-major OPERANDS pack through their strides", "[operation][gemm][quad]") {
     // Generic (rs, cs) means orientation is handled by the pack, not by a
     // special case in the kernel. Same logical product, operands stored the
@@ -305,12 +357,16 @@ TEST_CASE("column-major OPERANDS pack through their strides", "[operation][gemm]
     CHECK(all);
 }
 
-TEST_CASE("the quad GEMM wraps rather than overflowing", "[operation][gemm][quad]") {
-    // Full-range 8-bit operands over a long k. int8 into int32 is the pairing
-    // with real headroom -- a product needs 15 bits, leaving ~16, so of the
-    // order of 10^5 terms -- but headroom is not immunity, and past it the
-    // answer is the true product-sum reduced mod 2^32: defined, not undefined,
-    // and not saturated. K is chosen well past 2^16 / 127^2 * ... to force it.
+TEST_CASE("full-range operands stay exact inside the accumulator headroom",
+          "[operation][gemm][quad]") {
+    // The headroom claim, measured rather than asserted. u8 x i8 into int32 is
+    // the pairing the instruction exists for: a product needs ~15 bits, leaving
+    // ~16, so of the order of 10^4-10^5 terms fit. At the extreme operands
+    // (255 x 127) and K = 5000 the true sum is 161 925 000 -- comfortably under
+    // 2^31, so nothing wraps and the result is the exact product-sum.
+    //
+    // The NEXT test takes the same operands past that boundary; the two together
+    // are the claim, one on each side of it.
     constexpr std::size_t M = 5, N = 5, K = 5000;
     mtl::mat::dense2D<std::uint8_t, rowmaj> A(M, K);
     mtl::mat::dense2D<std::int8_t, rowmaj> B(K, N);
@@ -322,13 +378,14 @@ TEST_CASE("the quad GEMM wraps rather than overflowing", "[operation][gemm][quad
 
     mtl::mult_quad<std::int32_t>(A, B, C);
 
-    // 255 * 127 * 5000 = 161 925 000, which still fits; push it with a bigger K
-    // via the reference itself so the check is on agreement, not on a constant.
-    bool all = true;
-    for (std::size_t i = 0; i < M && all; ++i)
-        for (std::size_t j = 0; j < N && all; ++j)
-            all = (C(i, j) == ref_cell<std::int32_t>(A, B, i, j, K));
+    bool all = true, any_negative = false;
+    for (std::size_t i = 0; i < M; ++i)
+        for (std::size_t j = 0; j < N; ++j) {
+            all = all && (C(i, j) == ref_cell<std::int32_t>(A, B, i, j, K));
+            any_negative = any_negative || (C(i, j) < 0);
+        }
     CHECK(all);
+    CHECK_FALSE(any_negative);   // i.e. it really did NOT wrap, unlike the next
 }
 
 TEST_CASE("the quad GEMM wraps past the accumulator, exactly", "[operation][gemm][quad]") {
@@ -421,6 +478,45 @@ TEST_CASE("alpha and beta are honoured by the quad nest", "[operation][gemm][qua
 
     bool all = true;
     for (std::size_t t = 0; t < M * N && all; ++t) all = (C[t] == want[t]);
+    CHECK(all);
+}
+
+TEST_CASE("alpha survives a kc-split k", "[operation][gemm][quad]") {
+    // The alpha test above uses a k that fits ONE kc block, so it cannot show
+    // the property the per-block scaling actually rests on: alpha is applied to
+    // each block's int32 tile separately, and the blocks must sum to alpha times
+    // the whole product. That is distributivity mod 2^32, and it is only
+    // observable once the pc loop splits k.
+    const std::size_t KC = mtl::simd::runtime_blocking<std::int32_t>().kc;
+    const std::size_t K = 2 * KC + 7;
+    constexpr std::size_t M = 9, N = 11;
+    const std::int32_t alpha = 3, beta = 5;
+    mtl::mat::dense2D<std::uint8_t, rowmaj> A(M, K);
+    mtl::mat::dense2D<std::int8_t, rowmaj> B(K, N);
+    std::vector<std::int32_t> C(M * N), want(M * N);
+    for (std::size_t i = 0; i < M; ++i)
+        for (std::size_t k = 0; k < K; ++k) A(i, k) = gen_a<std::uint8_t>(i, k);
+    for (std::size_t k = 0; k < K; ++k)
+        for (std::size_t j = 0; j < N; ++j) B(k, j) = gen_b<std::int8_t>(k, j);
+    for (std::size_t t = 0; t < M * N; ++t) C[t] = static_cast<std::int32_t>(t % 17) - 8;
+
+    for (std::size_t i = 0; i < M; ++i)
+        for (std::size_t j = 0; j < N; ++j) {
+            const std::uint32_t prod =
+                static_cast<std::uint32_t>(ref_cell<std::int32_t>(A, B, i, j, K));
+            want[i * N + j] = static_cast<std::int32_t>(
+                static_cast<std::uint32_t>(beta) * static_cast<std::uint32_t>(C[i * N + j]) +
+                static_cast<std::uint32_t>(alpha) * prod);
+        }
+
+    mtl::detail::gemm_blocked<std::int32_t, std::uint8_t, std::int8_t,
+                              mtl::detail::gemm_kernel::quad>(
+        M, N, K, alpha, A.data(), static_cast<std::ptrdiff_t>(K), 1,
+        B.data(), static_cast<std::ptrdiff_t>(N), 1, beta, C.data(), N, 1);
+
+    bool all = true;
+    for (std::size_t t = 0; t < M * N && all; ++t) all = (C[t] == want[t]);
+    INFO("K=" << K << " over kc=" << KC << ", alpha=" << alpha << " beta=" << beta);
     CHECK(all);
 }
 

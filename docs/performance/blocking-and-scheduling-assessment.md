@@ -187,10 +187,26 @@ broadcast scalar. Both now exist. Measured on the same Xeon, same n=512, still
 |---|---|---|---|
 | 19.7 | 13.2 | **16.6** | **21.7** GOP/s |
 
-1.26× over widen-on-load for the symmetric pairing, **1.64×** for `u8 × i8` —
-VNNI's native shape, which the widening path cannot express at all because
-`load_widen` requires matching signedness. The native-shape arm also beats fp32,
-on a 2013 part with no VNNI silicon in it.
+**The controlled comparison is 1.26×** — `gemm_i8_i32_quad` against
+`gemm_i8_i32`, same operands, only the kernel changing. Holding the kernel fixed
+and changing the operand signedness instead is a further 1.31×
+(`gemm_u8i8_i32_quad` against `gemm_i8_i32_quad`), because `u8 × i8` is the
+shape the decomposition handles most cheaply.
+
+The 1.64× obtained by dividing the last arm by the first moves **both**
+variables and is not a result about the kernel. It is quotable only as "the best
+int8 GEMM available after this change against the best available before", and it
+exists at all because there is no `u8 × i8` widen-on-load arm to compare with:
+`load_widen` requires matching signedness, so that pairing previously fell to the
+generic scalar loop.
+
+That care is owed to §6's own history. The 1.42× → 1.17× correction recorded
+above came from precisely this mistake — two arms differing in the instruction
+*and* in the decomposition shape, read as though only the instruction had moved.
+Reproducing it one section later would be hard to excuse.
+
+The `u8 × i8` arm nonetheless beats fp32 outright, on a 2013 part with no VNNI
+silicon in it.
 
 The mechanism is checkable in the disassembly, and was checked: Highway's
 decomposition of the quad accumulate is a pair of `vpmaddwd` plus
@@ -200,14 +216,16 @@ promote-multiply-add chains. The symmetric form carries more of that shift work
 than the mixed one, which is the gap between the two quad arms.
 
 **What survives and what does not.** The operand *width* still contributes
-nothing in a GEMM — that finding is untouched. What was wrong was equating "the
-instruction" with "VNNI silicon": most of the win measured here is the
-four-products-per-lane **kernel shape**, which a machine without the instruction
-can partly express anyway. A VNNI or AMX machine's GEMM number is still an
-almost pure measurement of arithmetic rather than bandwidth — the opposite end
-of the axis from the dot — but its baseline is now `gemm_i8_i32_quad` on the
-same machine, not the widening arm, and the increment attributable to the
-silicon is correspondingly smaller than this section previously implied.
+nothing in a GEMM — that finding is untouched, and the preceding conclusion
+holds as a statement about the **widen-on-load** kernel, which is the only one
+that existed when it was written. What was wrong was equating "the instruction"
+with "VNNI silicon": the 1.26× measured here is the four-products-per-lane
+**kernel shape**, which a machine without the instruction can partly express
+anyway. A VNNI or AMX machine's GEMM number is still an almost pure measurement
+of arithmetic rather than bandwidth — the opposite end of the axis from the dot
+— but its baseline is now `gemm_i8_i32_quad` on the same machine, not the
+widening arm, and the increment attributable to the silicon is correspondingly
+smaller than this section previously implied.
 
 This is the second time a claim in this document has been narrowed by supplying
 the control it lacked, and the pattern is the same both times: the original
