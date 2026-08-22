@@ -261,10 +261,10 @@ Two consequences worth stating separately:
   superset.
 - **`PARTIAL` is the normal state, not an edge case.** Zen 4 is partial. A
   Cortex-A78 is partial, for the complementary half. Only AVX10.2 and NEON+I8MM
-  are fully native, and MTL5 has measured neither. The committed Zen 4 CSV is
-  labelled `native-int`, which over-claimed for its symmetric arms; runs after
-  this change are labelled `native-int-partial` and `bench_all` prints the
-  per-pairing line.
+  are fully native, and MTL5 has measured neither. The Zen 4 data taken *before*
+  this change was labelled `native-int`, which over-claimed for its symmetric
+  arms; it was re-run and the committed CSV now reads `native-int-partial`, with
+  `bench_all` printing the per-pairing line beside it.
 
 This is the same failure mode as §7 one level down — a capability treated as a
 single bit when the hardware exposes it in pieces.

@@ -32,10 +32,13 @@
 # (`vpdpbusd`) and EMULATES both symmetric ones -- `vpdpbssd`/`vpdpbuud` arrive
 # only with AVX10.2. So `dot_u8i8_i32` and `gemm_u8i8_i32_quad` are the native
 # arms here and `dot_i8_i32` / `gemm_i8_i32_quad` are not, and the run is
-# labelled `native-int-partial`. Committed CSVs taken before the flag became
-# per-pairing say `native-int`, which over-claimed for the symmetric arms. That guard exists because this
-# machine has already produced one silently-wrong run: the first Zen 4 A/B was
-# an AVX2 build when AVX-512 was intended, and nothing in the data could say so.
+# labelled `native-int-partial`. The data taken here before the flag became
+# per-pairing said `native-int`, which over-claimed for the symmetric arms; it
+# has been re-run, so the committed CSV and the code now agree.
+#
+# That guard exists because this machine has already produced one silently-wrong
+# run: the first Zen 4 A/B was an AVX2 build when AVX-512 was intended, and
+# nothing in the data could say so.
 #
 # WHAT TO EXPECT, so a result is not over-read. A dot product is a streaming
 # reduction: at large n it is bandwidth-bound, and int8 moves one byte per
