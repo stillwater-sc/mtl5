@@ -143,6 +143,14 @@ form is barely faster despite issuing about a third of the instructions says the
 kernel is not instruction-throughput-bound even at L1-resident sizes — the same
 conclusion §2 reached about `mc` by a different route.
 
+**Read that ~1.2× as a statement about a DOT ON ZEN 4, not about the
+instruction.** Both qualifiers turned out to matter. On a *dot*, the Jetson's
+native-over-emulated ratio is **2.75×**, not 1.2× — so the figure is not even
+constant across ISAs for the same kernel. And in a *GEMM*, which is
+compute-bound rather than bandwidth-bound, the same instruction is worth
+**~2.2–2.4×** on both native machines. §6c has the four-machine table; this
+paragraph stands only for the arms it was measured on.
+
 This is what the control was for. The claim was written from the Zen 4 run alone
 and stood for a day before the i7 corrected it; nothing in the Zen 4 data could
 have exposed it, because the confound is only visible where the instruction is
@@ -191,9 +199,9 @@ From `benchmarks/data/xeon-e5-2420/int_arms.csv`, produced by `run_int_bench.sh`
 (preflight, native-quad guard, `.sysinfo` sidecar; `label=native-int-decomposed`,
 `build_isa=SSE2 AVX`, `pin=0,1,2,3,4,5`).
 
-**The controlled comparison is ~1.25×** — `gemm_i8_i32_quad` against
-`gemm_i8_i32`, same operands, only the kernel changing — and it GROWS WITH n,
-which is the shape a register-blocking change should have:
+**The controlled comparison is the kernel ratio** — `gemm_i8_i32_quad` against
+`gemm_i8_i32`, same operands, only the kernel changing. On the Xeon it is ~1.25×
+and it GROWS WITH n, which is the shape a register-blocking change should have:
 
 | n | 128 | 256 | 512 | 1024 |
 |---|---|---|---|---|
@@ -201,9 +209,10 @@ which is the shape a register-blocking change should have:
 | signedness, kernel fixed | 1.27× | 1.29× | **1.32×** | **1.28×** |
 
 The small sizes never leave the caches, so the operand-traffic reduction the
-quad layout buys has nothing to pay for yet. Holding the kernel fixed and
-changing the operand signedness instead is a further ~1.30×, because `u8 × i8`
-is the shape the decomposition handles most cheaply.
+quad layout buys has nothing to pay for yet.
+
+**THAT ~1.25× IS THE XEON'S NUMBER, NOT THE KERNEL'S**, and the three machines
+that followed make the Xeon the low outlier by about a factor of three. See §6c.
 
 The 1.64× obtained by dividing the last arm by the first moves **both**
 variables and is not a result about the kernel. It is quotable only as "the best
@@ -261,21 +270,71 @@ This is the same failure mode as §7 one level down — a capability treated as 
 single bit when the hardware exposes it in pieces.
 
 **What survives and what does not.** The operand *width* still contributes
-nothing in a GEMM — that finding is untouched, and the preceding conclusion
-holds as a statement about the **widen-on-load** kernel, which is the only one
-that existed when it was written. What was wrong was equating "the instruction"
-with "VNNI silicon": the ~1.25× measured here is the four-products-per-lane
-**kernel shape**, which a machine without the instruction can partly express
-anyway. A VNNI or AMX machine's GEMM number is still an almost pure measurement
-of arithmetic rather than bandwidth — the opposite end of the axis from the dot
-— but its baseline is now `gemm_i8_i32_quad` on the same machine, not the
-widening arm, and the increment attributable to the silicon is correspondingly
-smaller than this section previously implied.
+nothing in a GEMM — that finding is untouched, and the preceding conclusion holds
+as a statement about the **widen-on-load** kernel, which is the only one that
+existed when it was written. What was wrong was equating "the instruction" with
+"VNNI silicon". Those are two separate quantities, and §6c measures both.
 
 This is the second time a claim in this document has been narrowed by supplying
 the control it lacked, and the pattern is the same both times: the original
 statement was true of everything that had been measured, and false of the thing
 that had not been built yet.
+
+### 6c. Four machines: the kernel is not a constant, and the silicon is worth 2×
+
+§6a was written from ONE machine, and generalised. Three more have now run the
+same arms, and the Xeon turns out to be the **low outlier by about a factor of
+three**. GEMM at n=1024, GOP/s, best-of-iteration, single-threaded:
+
+| machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | instruction | best int8 / fp32 |
+|---|---|---|---|---|---|---|---|---|
+| Xeon E5-2420 v2 (SSE4) | none | 19.5 | 13.1 | 16.7 | **21.3** | 1.27× | — | 1.09× |
+| i7-12700K (AVX2) | none | 144.8 | 49.2 | 132.9 | **146.5** | **2.70×** | — | 1.01× |
+| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 142.6 | 96.4 | 210.6 | **469.3** | 2.19× | **2.23×** | **3.29×** |
+| Jetson Orin Nano (NEON) | `i8×i8` | 14.3 | 8.7 | **31.5** | 13.1 | **3.64×** | **2.40×** | **2.20×** |
+
+**The kernel effect ranges 1.27× to 3.64×.** It is real everywhere and rises with
+n everywhere (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.77→2.19, Jetson
+3.21→3.64), but its magnitude is a property of the machine. Quoting ~1.25× as
+"the kernel result" was the same single-machine over-generalisation this section
+has now made twice — once with the dot's 1.42×, once here.
+
+**THE INSTRUCTION IS WORTH ~2× IN A GEMM, against ~1.2× in a dot.** Within
+machine, kernel fixed, only the pairing's nativeness varying:
+
+| | dot (L1-resident) | GEMM (n=1024) |
+|---|---|---|
+| Ryzen 9 8945HS | 1.50× raw → **1.14-1.37×** net of the shape control | **2.23×** |
+| Jetson Orin Nano | **2.75×** raw | **2.40×** |
+
+The Ryzen dot figure reproduces §6's ~1.2×, which is the cross-check that the two
+suites are measuring the same thing. The GEMM figure is roughly double it, and
+that is the prediction §6 made in direction and could not size: a dot is
+bandwidth-bound so instruction efficiency barely shows, while a GEMM is
+compute-bound throughout and shows it fully.
+
+(The shape control is the same ratio on the machines where BOTH pairings are
+emulated — 1.31× Xeon, 1.10× i7, favouring `u8 × i8`. The Jetson figure stays
+raw: no ARM machine here emulates both, so there is no same-ISA control to divide
+out. That is §6's own caveat pointing the other way.)
+
+**The two decomposed machines reach parity with fp32 and no more** (1.09×, 1.01×)
+while both native machines clear it by 2.2–3.3×. So the silicon decides whether
+an int8 GEMM is worth running at all, which is the opposite of what §6a inferred
+from the Xeon alone.
+
+Physically coherent, worth checking on a 3x claim: one quad instruction does four
+times the multiply-accumulates of an fp32 FMA of the same width, so 4× is the
+ceiling. Measured against each machine's own fp32 GEMM — Ryzen 3.29×, Jetson
+2.20×, decomposed i7 1.01×.
+
+**And the fastest arm INVERTS between the two native machines**, because they
+implement opposite pairings (§6b). Comparing them by arm NAME gives 469.3 against
+13.1, a 36× "machine gap" that is almost entirely a naming artifact. The naive
+`u8i8_quad / i8_widen` ratio that §6a warns against reads 4.87× on the Ryzen and
+1.51× on the Jetson, against true kernel effects of 2.19× and 3.64× — it
+overstates on one machine and understates on the other, which is a sharper
+demonstration of the hazard than the Xeon could give.
 
 ### 7. Hardware you own is not hardware you can reach
 

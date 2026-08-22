@@ -306,15 +306,28 @@ the `vpmaddwd` decomposition, and having the hardware is not sufficient:
   `machines/ryzen-9-8945hs.ps1` cannot produce a VNNI build. Use WSL/gcc
   (`-march=znver4`) or clang-cl (`/clang:-march=znver4`).
 
-`bench_all` prints the decision, and `build_isa` now records `AVX512VNNI`,
-`AVX3_DL` and `DOTPROD`, so a sidecar says which path was measured:
+`bench_all` prints the decision **per operand pairing**, and `build_isa` records
+`AVX512VNNI`, `AVX3_DL` and `DOTPROD`, so a sidecar says which path was measured:
 
+```text
+SIMD backend:    SSE4   int8 quad dot: DECOMPOSED
+                 u8*i8 emulated   i8*i8 emulated   u8*u8 emulated
 ```
-SIMD backend:    SSE4   int8 quad dot: decomposed
-```
+
+Three states, and **`PARTIAL` is the common one** — every machine with the
+instruction at all has it for some pairings and not others, because x86 and ARM
+implement opposite ones (see [the quad arms](#the-quad-arms-and-what-they-revise)
+below). Only AVX10.2 and NEON+I8MM report `NATIVE`, and neither has been
+measured.
+
+| state | guard | label |
+|---|---|---|
+| `NATIVE` | runs | `native-int` |
+| `PARTIAL` | runs — it is a legitimate measurement, it just has to be labelled | `native-int-partial` |
+| `DECOMPOSED` | **refuses** without `--allow-decomposed` | `native-int-decomposed` |
 
 Pass `--allow-decomposed` to measure the decomposition on purpose; the label
-becomes `native-int-decomposed` so the CSV cannot be mistaken for the other.
+records it so the CSV cannot be mistaken for the other.
 
 ### The `gemm` arm, and why it inverts the dot result
 
@@ -369,8 +382,8 @@ choice of statistic does not carry the result.
 ### Read the ratios one variable at a time
 
 The four int8 numbers differ in **two** things — kernel and operand signedness —
-so only same-row-different-one-thing pairs are controlled comparisons. Across
-the four sizes in the committed run:
+so only same-row-different-one-thing pairs are controlled comparisons. On the
+Xeon, across the four sizes:
 
 | comparison | n=128 | n=256 | n=512 | n=1024 | what varies |
 |---|---|---|---|---|---|
@@ -378,49 +391,86 @@ the four sizes in the committed run:
 | `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | 1.27× | 1.29× | **1.32×** | **1.28×** | operand signedness, kernel fixed |
 | `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.51× | 1.60× | 1.64× | 1.62× | **both — not a controlled result** |
 
-**~1.25× is the kernel result**, and it *grows with n* — 1.19× at n=128 up to
-1.27× at n=1024 — which is what a register-blocking change should do: the small
-sizes never leave the caches, so the operand-traffic reduction the quad layout
-buys has nothing to pay for yet.
-
 The last row is the product of two effects and must not be quoted as what the
-quad kernel buys. It is at most "the best int8 GEMM available after this change,
-against the best available before", and it is worth noting only because there
-*is* no `u8 × i8` widen-on-load arm to compare against — the widening load
-requires matching signedness, so that pairing previously fell to the generic
-scalar loop.
+quad kernel buys. That distinction is not pedantry, and the four-machine data
+below shows how badly it misleads: the same naive ratio reads **4.87×** on the
+Ryzen and **1.51×** on the Jetson, while the actual kernel effect on those
+machines is 2.19× and 3.64× — overstating on one, understating on the other.
 
-This distinction is not pedantry here. The 1.42×-versus-1.17× correction to the
-dot headline in §6 of the assessment came from exactly this error: two arms that
-differed in the instruction *and* in the decomposition shape, read as though only
-the instruction had moved.
+### Four machines, and what the Xeon alone could not say
 
-**The claim this replaces** was that on a machine without VNNI there is no int8
-GEMM win at all. That was true of the *widen-on-load* kernel and does not survive
-changing the kernel: at fixed operands the quad path is ~1.25× faster, and the
-`u8 × i8` shape beats fp32 outright — on a 2013 part with no VNNI silicon
-anywhere in it.
+**The Xeon is the low outlier, by about a factor of three.** The kernel effect is
+real everywhere and *grows with n* everywhere, but its magnitude is a property of
+the machine, not a constant. GEMM at n=1024, GOP/s, best-of-iteration,
+single-threaded:
+
+| machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | instruction | best int8 ÷ fp32 |
+|---|---|---|---|---|---|---|---|---|
+| Xeon E5-2420 v2 (SSE4) | none | 19.5 | 13.1 | 16.7 | **21.3** | 1.27× | — | 1.09× |
+| i7-12700K (AVX2) | none | 144.8 | 49.2 | 132.9 | **146.5** | **2.70×** | — | 1.01× |
+| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 142.6 | 96.4 | 210.6 | **469.3** | 2.19× | **2.23×** | **3.29×** |
+| Jetson Orin Nano (NEON) | `i8×i8` | 14.3 | 8.7 | **31.5** | 13.1 | **3.64×** | **2.40×** | **2.20×** |
+
+- **kernel** = `gemm_i8_i32_quad ÷ gemm_i8_i32` — same operands, quad against
+  widen-on-load. Ranges **1.27× to 3.64×**. It rises with n on every machine
+  (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.77→2.19, Jetson 3.21→3.64), which is
+  what a register-blocking change should do: the small sizes never leave cache,
+  so the operand-traffic reduction has nothing to pay for yet.
+- **instruction** = the machine's native pairing ÷ its emulated one, *same
+  kernel, same machine, same run*. Only the two `PARTIAL` machines can supply it.
+- Note the two decomposed machines reach **parity with fp32 and no more**
+  (1.09×, 1.01×), while both native machines clear it by 2.2–3.3×.
+
+**Which arm is fastest inverts between the two native machines**, because they
+implement opposite pairings: `u8i8_quad` is 2.2× the `i8_quad` on the Ryzen, and
+the `i8_quad` is 2.4× the `u8i8_quad` on the Jetson. Comparing those two machines
+by arm *name* gives 469.3 against 13.1 — a 36× "machine gap" that is almost
+entirely a naming artifact.
+
+### What the instruction is worth, and why the dot understated it
+
+Within-machine, kernel held fixed, only the pairing's nativeness varying:
+
+| | dot (L1-resident, n=1024) | GEMM (n=1024) |
+|---|---|---|
+| Ryzen 9 8945HS | 1.50× raw → **1.14–1.37×** net of the shape control | **2.23×** |
+| Jetson Orin Nano | **2.75×** raw | **2.40×** |
+
+(The shape control is the same ratio on the machines where *both* pairings are
+emulated: 1.31× on the Xeon, 1.10× on the i7, favouring `u8 × i8`. The Jetson
+figure is raw because no ARM machine here emulates both, so there is no
+same-ISA control to divide out — the caveat §6 already carries in the other
+direction.)
+
+The Ryzen dot figure reproduces §6's ~1.2×. **In a GEMM the same instruction is
+worth roughly twice that**, and that is exactly what the hardware plan predicted
+in direction: a dot is bandwidth-bound, so instruction efficiency barely shows,
+while a GEMM is compute-bound throughout and shows it fully. The magnitude is now
+measured rather than assumed.
+
+Physically coherent, which is worth checking on a 3× result: one quad instruction
+does four times the multiply-accumulates of an fp32 FMA of the same width, so 4×
+is the ceiling. Measured against each machine's own fp32 GEMM: Ryzen 3.29×,
+Jetson 2.20×, decomposed i7 1.01×.
+
+### What this replaced
+
+The original claim was that on a machine without VNNI there is no int8 GEMM win
+at all. That was true of the *widen-on-load* kernel and does not survive changing
+the kernel — the i7, with no usable instruction anywhere in it, gets **2.70×**
+from the kernel shape alone.
 
 The reason is visible in the disassembly rather than inferred. Highway's
 *decomposition* of the quad accumulate is a pair of `vpmaddwd` plus
 sign-extension shifts, which still folds four products per accumulator lane in a
 handful of instructions — where widen-on-load runs four independent
-promote-multiply-add chains. And the symmetric `i8 × i8` form carries visibly
-more of that shift work than `u8 × i8` (4 `vpsraw` + 2 `vpsllw` against 2 + 1
-plus a mask), which is exactly the 16.6-against-21.7 gap.
+promote-multiply-add chains.
 
-So the operand width still contributes nothing, and the earlier reading of that
-— "everything an int8 GEMM offers must come from the instruction" — stands only
-once *the instruction* is read as the four-products-per-lane **kernel shape**
-rather than as *having VNNI silicon*. Those are not the same thing, and this
-machine separates them: it expresses the shape, through a `vpmaddwd`
-decomposition, and gains ~1.25× from it with no VNNI at all.
-
-A VNNI or AMX machine's GEMM number therefore remains an almost pure measurement
-of arithmetic rather than bandwidth, but its baseline is now
-`gemm_i8_i32_quad` **on the same machine**, not the widening arm — and the
-increment left for the silicon is correspondingly smaller than the previous
-wording implied.
+So the operand width still contributes nothing in a GEMM. What has changed is the
+size of what remains: *the instruction*, read as the four-products-per-lane
+**kernel shape**, is worth 1.27–3.64× and needs no VNNI silicon at all; *the
+silicon on top of that* is worth a further 2.2–2.4×. Those are separate
+quantities and this table is the first time the programme could measure both.
 
 Both int8 arms are compiled into the same binary on purpose. They compute
 bit-identical results — integer addition is associative — so nothing in an

@@ -19,8 +19,8 @@ what separates them.
 |---|---|---|---|---|
 | Xeon E5-2420 v2 (2013) | SSE4 | decomposed | 128-bit | 6, homogeneous |
 | i7-12700K (Alder Lake) | AVX2 | decomposed *(has AVX-VNNI, unreachable)* | 256-bit | 8P + 4E, pinned to P |
-| Ryzen 9 8945HS (Zen 4) | AVX3_DL | **native `vpdpbusd`** | 512-bit ISA, 256-bit datapath | 8, homogeneous |
-| Jetson Orin Nano (A78AE) | NEON | *(untested for int)* | 128-bit | 6, homogeneous |
+| Ryzen 9 8945HS (Zen 4) | AVX3_DL | **native `vpdpbusd`** (partial: no AVX10.2) | 512-bit ISA, 256-bit datapath | 8, homogeneous |
+| Jetson Orin Nano (A78AE) | NEON | **native `SDOT`/`UDOT`** (partial: no I8MM) | 128-bit | 6, homogeneous |
 
 Every open question in
 [the assessment](blocking-and-scheduling-assessment.md) is limited by that
@@ -42,36 +42,51 @@ table:
   once operands are packed and reused their width in memory stops mattering. So
   the *only* thing an int8 GEMM can offer over fp32 is the instruction — which
   makes a VNNI or AMX machine's GEMM number an almost pure measurement of it.
-- **The quad micro-kernel exists too, and it moves the baseline.** `vpdpbusd`
-  needs a quad-interleaved pack and a broadcast-quad micro-kernel; both are now
-  built (`gemm_kernel::quad`), so the int8 GEMM arms are `gemm_i8_i32_quad` and
-  `gemm_u8i8_i32_quad` alongside the widening one. **This changes what a VNNI
-  machine has left to prove.** On the Xeon, with the instruction *decomposed*,
-  the quad kernel already returns **~1.25×** over widen-on-load at fixed operands
-  (1.25× at n=512, 1.27× at n=1024; committed run)
-  — so a large fraction of the win is the kernel *shape*, not the silicon, and a
-  purchase justified by "int8 GEMM is much faster" would be buying something we
-  already have. (The larger 1.64× sometimes quoted for `u8 × i8` moves operand
-  signedness *and* kernel at once and is not a result about either; see the
-  benchmarks README.) The question a VNNI part now answers is narrower and
-  better posed: **what does the native instruction add on top of the quad
-  kernel, measured against that same kernel decomposed on the same machine?**
+- **The quad micro-kernel exists, and the four-machine run has now sized both
+  halves of the question.** `vpdpbusd` needs a quad-interleaved pack and a
+  broadcast-quad micro-kernel; both are built (`gemm_kernel::quad`). All four
+  machines have run the arms. GEMM, n=1024:
 
-  **That control is harder to build than it looks, and no machine we have runs
-  it.** `--allow-decomposed` only permits the runner to *time* a decomposed
-  build; it does not select one. Selection is the `--arch` flag, and on Zen 4
-  the shipped profile passes `-march=znver4`, which defines all seven AVX3_DL
-  macros and takes the native path. Getting the decomposed arm on the same part
-  means dropping to something like `-march=x86-64-v3`, which removes AVX-512
-  along with VNNI — so the two arms would differ in vector width and register
-  count as well as in the instruction, which is a two-variable comparison of
-  exactly the kind §6 has already been burned by. The i7 would be the ideal
-  single-variable control and cannot run the native side at all (§7). **An
-  honest within-machine measurement of the instruction alone therefore needs
-  either a Highway AVX-VNNI path (256-bit, no AVX-512 — see §7) or an AVX10.2
-  part**, and any run that compares `znver4` against `x86-64-v3` must record
-  `build_isa`, the `int8 quad dot:` label and the arm's `native-int-decomposed`
-  tag, and be reported as the two-variable result it is.
+  | machine | native pairing | kernel (quad ÷ widen) | instruction | best int8 ÷ fp32 |
+  |---|---|---|---|---|
+  | Xeon E5-2420 v2 | none | 1.27× | — | 1.09× |
+  | i7-12700K | none | **2.70×** | — | 1.01× |
+  | Ryzen 9 8945HS | `u8×i8` | 2.19× | **2.23×** | **3.29×** |
+  | Jetson Orin Nano | `i8×i8` | **3.64×** | **2.40×** | **2.20×** |
+
+  **THIS REVERSES WHAT THIS BULLET USED TO SAY.** Written from the Xeon alone, it
+  concluded that "a large fraction of the win is the kernel *shape*, not the
+  silicon, and a purchase justified by *int8 GEMM is much faster* would be buying
+  something we already have." That was wrong, and wrong in the direction that
+  costs money by *not* spending it:
+
+  - The kernel shape is worth **1.27×–3.64×**, not ~1.25× — the Xeon is the low
+    outlier by about a factor of three, and it is the machine the claim
+    generalised from.
+  - The silicon on top of that is worth a further **2.2×–2.4×**, measured
+    within-machine on two different ISAs.
+  - **Only the machines with the instruction beat fp32 at all.** The two
+    decomposed parts land at 1.01× and 1.09× — parity. The two native parts reach
+    2.20× and 3.29×. So the silicon decides whether an int8 GEMM is worth running,
+    which is the opposite of the previous reading.
+
+- **The within-machine control turned out to already exist, on every partial
+  machine.** This bullet previously said an honest measurement of the instruction
+  alone "needs either a Highway AVX-VNNI path or an AVX10.2 part", because forcing
+  a decomposed build on Zen 4 means `-march=x86-64-v3`, which drops AVX-512 along
+  with VNNI and makes it a two-variable comparison.
+
+  That reasoning missed the obvious: **partial support IS the control.** Every
+  machine with the instruction has it for some pairings and not others (§6b), so
+  the native and emulated arms run *in the same binary, on the same machine, in
+  the same run*, differing only in the pairing. Zen 4 gives 2.23× and the Jetson
+  2.40× that way, with no build-flag manipulation at all. The only residue is the
+  decomposition-shape difference between pairings, which the two fully-decomposed
+  machines measure directly (1.10×–1.31×).
+
+  An AVX10.2 part would still be worth having — it is the one that makes *all*
+  pairings native and so removes the residue entirely — but it is no longer
+  needed to get a number, only to tighten one.
 
 ## Selection criteria
 
