@@ -292,6 +292,30 @@ exactly `git status --porcelain`, so it rejects, and correctly: a benchmark run
 on a tree Git considers modified cannot be attributed to a commit. Re-checkout
 instead, which leaves the tree genuinely clean.
 
+### Every committed CSV needs its sidecar
+
+`benchmarks/check_sidecars.sh` fails if a CSV under `benchmarks/data/` has no
+`.sysinfo` beside it, and CI runs it on every push. A result without provenance
+cannot be traced to a commit, a build configuration or a machine state — which is
+what makes it checkable a year later — and the sidecar is written by the
+**binary**, so a producer that was never taught to write one keeps emitting
+untraceable CSVs. Twenty-eight such files reached the repository before anyone
+noticed (#477), and they were found by auditing an open issue rather than by
+anything failing.
+
+It is a **ratchet, not a gate on history**: those files are listed in
+`benchmarks/data/.sidecar-exempt` and cost nothing, but adding another one fails.
+The list only ever shrinks — re-run the producer under the contract, commit the
+CSV together with its sidecar, and delete the line. The checker also fails when
+an exempt file has *gained* a sidecar, so a stale exemption cannot sit there as a
+permanent amnesty.
+
+Run it locally before committing benchmark data:
+
+```bash
+benchmarks/check_sidecars.sh
+```
+
 ### The guard
 
 `run_int_bench.sh` refuses to time a build without the native quad

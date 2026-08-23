@@ -50,6 +50,22 @@ jobs:
           fi
           echo "OK: all source files are ASCII-only."
 
+  # Every committed CSV must carry its .sysinfo (#477). A benchmark result
+  # without provenance cannot be traced to a commit, a build configuration or a
+  # machine state -- 28 such files reached the repository before anyone noticed,
+  # and they were found by auditing an open issue rather than by anything
+  # failing. Those are grandfathered in benchmarks/data/.sidecar-exempt; this
+  # job forbids adding another, and also fails on a stale exemption so the list
+  # cannot rot into a permanent amnesty.
+  sidecar-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check every committed CSV has a provenance sidecar
+        run: benchmarks/check_sidecars.sh
+
   # -- Tier 1: Fast unit tests on all platforms (~2 min) ---------------
   # Runs on every push and every PR (draft or ready).
   build:

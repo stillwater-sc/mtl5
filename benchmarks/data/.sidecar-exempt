@@ -1,0 +1,40 @@
+# CSVs committed before the measurement contract covered their producer (#477).
+#
+# Each line is a path, relative to the repository root, that check_sidecars.sh
+# will not fail on. The information these files would need was never captured --
+# see docs/benchmarks/systems.md on reading a result with no provenance -- so
+# they are grandfathered rather than retro-fitted, which would mean inventing it.
+#
+# THIS LIST ONLY EVER SHRINKS. Re-run the producer under the contract, commit the
+# CSV together with its .sysinfo, and delete the line. The checker fails if an
+# entry here HAS a sidecar, so a stale exemption cannot sit here unnoticed.
+#
+# Blank lines and #-comments are ignored.
+benchmarks/data/gemm_scaling_blis.csv
+benchmarks/data/gemm_scaling_mkl.csv
+benchmarks/data/gemm_scaling_native-fast.csv
+benchmarks/data/gemm_scaling_openblas.csv
+benchmarks/data/klu_scoreboard.csv
+benchmarks/data/lapack_sweep_mkl.csv
+benchmarks/data/lapack_sweep_native.csv
+benchmarks/data/lapack_sweep_openblas.csv
+benchmarks/data/ryzen-9-8945hs/gemm_scaling_mkl.csv
+benchmarks/data/ryzen-9-8945hs/gemm_scaling_native-fast.csv
+benchmarks/data/ryzen-9-8945hs/gemm_scaling_openblas.csv
+benchmarks/data/ryzen-9-8945hs/klu_scoreboard.csv
+benchmarks/data/ryzen-9-8945hs/scaling_chol.csv
+benchmarks/data/ryzen-9-8945hs/scaling_ewise.csv
+benchmarks/data/ryzen-9-8945hs/scaling_gemm_rect.csv
+benchmarks/data/ryzen-9-8945hs/scaling_lu.csv
+benchmarks/data/ryzen-9-8945hs/scaling_qr.csv
+benchmarks/data/ryzen-9-8945hs/scaling_sparse.csv
+benchmarks/data/ryzen-9-8945hs/superlu_scoreboard.csv
+benchmarks/data/scaling_chol.csv
+benchmarks/data/scaling_ewise.csv
+benchmarks/data/scaling_gemm_rect.csv
+benchmarks/data/scaling_lu.csv
+benchmarks/data/scaling_qr.csv
+benchmarks/data/scaling_sparse.csv
+benchmarks/data/superlu_scoreboard.csv
+benchmarks/data/xeon-e5-2420-sweep/blocking_sweep_T1_2048.csv
+benchmarks/data/xeon-e5-2420-sweep/blocking_sweep_T6_2048.csv
