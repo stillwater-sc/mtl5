@@ -11,7 +11,7 @@ compiler=GCC
 compiler_version=13.3.0
 cpp_standard=202002
 build_type=Release
-git_commit=0730ceb163f4
+git_commit=4edf18a38c05
 git_dirty=0
 cxx_flags= -O3 -DNDEBUG [MTL5_NATIVE_ARCH=ON]
 cmake_build_type=Release
@@ -23,3 +23,10 @@ mr=6 nr=4 kc=512 mc=32 nc=2048
 l3_default_bytes=8388608
 l3_detected_bytes=15728640
 l3_sharing_cores=6
+shapes_total=20
+shapes_separating_any=20
+shapes_differing_vs_m0_m1_balanced=8
+shapes_differing_vs_m0_m2_detected=14
+shapes_differing_vs_m0_m3_per_team=20
+shapes_differing_vs_m0_m4_per_sharer=20
+shapes_differing_vs_m0_m5_exact=14
