@@ -294,8 +294,13 @@ estimates the interference as much as the kernel.
 - **Every arm's result is compared bit-for-bit against M0.** `nc` regroups
   columns; it must not reorder any C element's FMA chain. A mismatch is a defect
   in the blocking, not a tolerance question — the binary refuses to write a CSV.
-- **`--threads 1` is rejected** (`FORCE_T1=1` overrides). At `jc_nt == 1` every
-  balancing model is a no-op *by construction*.
+- **`--threads 1` is rejected by the runner** (`FORCE_T1=1` overrides); the
+  binary accepts it and prints a warning, because a deliberate single-thread
+  control run is a legitimate thing to ask a binary for. At `jc_nt == 1` every
+  balancing model is a no-op *by construction*, so it cannot address #429.
+- **The sweep is a prerequisite, checked per dtype.** `run_nc_bench.sh` refuses
+  when a requested dtype has no sweep, or when its sweep reports `0 of 20`.
+  float and double have different blocking, hence different discrimination.
 - **`MTL5_NC_MODEL` is rejected by `bench_blocking_ab`**, which does not vary the
   model: it would move the jc partition under every arm's label, two variables
   under one name.

@@ -57,7 +57,7 @@ ARCH="-march=native"
 OUTDIR=""
 THREADS=""
 REPS=3
-ROUNDS=7
+ROUNDS=12
 DTYPES="double"
 ALLOW_DIRTY=0
 BUILD_DIR="build-nc-bench"
@@ -95,21 +95,42 @@ fi
 # The sweep answers that in seconds; refusing to look is how an hour gets spent
 # comparing a binary against itself (#470 did exactly that with the quad kernel
 # and lost a benchmark round to it).
-SWEEP_CSV="$OUTDIR/nc_model_sweep_double.csv"
-if [ -f "$SWEEP_CSV.sysinfo" ]; then
-    N="$(sed -n 's/^shapes_differing_vs_m0_m1_balanced=//p' "$SWEEP_CSV.sysinfo" | head -1)"
-    if [ -n "$N" ]; then
-        echo "== sweep for this machine says M1 differs from M0 on $N shape(s)"
-        if [ "$N" = "0" ]; then
-            echo "   Nothing to measure: every arm would be byte-identical to the" >&2
-            echo "   baseline. This is a RESULT -- record it and skip the session." >&2
-            [ "${FORCE:-0}" = "1" ] || exit 2
-        fi
+#
+# CHECKED PER DTYPE, not once against `double`. float and double have different
+# blocking parameters -- different nr, different kc, therefore a different nc and
+# a different set of shapes where the models disagree. Gating a `--dtypes float`
+# session on the double sweep asks about the wrong binary. On all four machines
+# swept so far the two dtypes happen to give the same count, which is exactly the
+# kind of coincidence that makes a wrong check look right until the machine that
+# breaks it arrives.
+sweep_fail=0
+for dt in $DTYPES; do
+    si="$OUTDIR/nc_model_sweep_$dt.csv.sysinfo"
+    if [ ! -f "$si" ]; then
+        echo "== no $dt sweep at $si" >&2
+        echo "   Run benchmarks/machines/<machine>-nc-sweep.sh first. It takes seconds" >&2
+        echo "   and says whether this session can measure anything at all; this one" >&2
+        echo "   takes tens of minutes and needs the box to itself." >&2
+        sweep_fail=1
+        continue
     fi
-else
-    echo "== NOTE: no sweep found at $SWEEP_CSV.sysinfo"
-    echo "   Run benchmarks/machines/<machine>-nc-sweep.sh first; it takes seconds"
-    echo "   and tells you whether this session is worth running at all."
+    N="$(sed -n 's/^shapes_differing_vs_m0_m1_balanced=//p' "$si" | head -1)"
+    if [ -z "$N" ]; then
+        echo "== $dt sweep has no M1-vs-M0 count; re-run the sweep." >&2
+        sweep_fail=1
+        continue
+    fi
+    echo "== $dt sweep says M1 differs from M0 on $N shape(s)"
+    if [ "$N" = "0" ]; then
+        echo "   Nothing to measure for $dt: every arm would be byte-identical to" >&2
+        echo "   the baseline. This is a RESULT -- record it and skip the session." >&2
+        sweep_fail=1
+    fi
+done
+if [ "$sweep_fail" != "0" ]; then
+    echo "" >&2
+    echo "Refusing to measure. Set FORCE=1 to override (and say so when reporting)." >&2
+    [ "${FORCE:-0}" = "1" ] || exit 2
 fi
 
 # ---- run contract: preflight BEFORE building, so build load cannot dirty it --

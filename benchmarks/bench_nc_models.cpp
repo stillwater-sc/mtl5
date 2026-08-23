@@ -71,7 +71,8 @@ std::uint64_t fold(const std::vector<T>& v) {
 
 struct arm_result {
     double        best_secs = 1e300;   // min across rounds; see run()
-    std::uint64_t checksum  = 0;
+    std::uint64_t checksum  = 0;       // DIAGNOSTIC only -- see `exact`
+    bool          exact     = true;    // element-wise equal to M0's result
     std::size_t   nc = 0, mc = 0, nib = 0, njb = 0;
     unsigned      ic_nt = 1, jc_nt = 1;
 };
@@ -97,18 +98,57 @@ std::vector<arm_result> run(const nc_point& p, unsigned reps, unsigned rounds,
     std::vector<arm_result> out(NMODELS);
     std::vector<double> first_secs(NMODELS, 0.0);
 
-    // Warm up once, outside the timed region: first touch of C, the pool's
-    // threads, and the packed buffers' pages all cost time that belongs to no
-    // arm in particular. Charging it to whichever model happens to run first
-    // would be a systematic bias in model order, not noise.
-    std::fill(C.begin(), C.end(), T(0));
-    mtl::detail::gemm_blocked<T>(m, n, k, T(1),
-        A.data(), static_cast<std::ptrdiff_t>(k), 1,
-        B.data(), static_cast<std::ptrdiff_t>(n), 1,
-        T(0), C.data(), n, p.threads, nc_model::m0_default);
+    // ---- pass 1: verify + warm, both untimed ------------------------------
+    //
+    // EVERY model runs once here, not just M0. Two jobs in one pass:
+    //
+    // (a) EXACT verification. The result is compared to M0's element by element,
+    //     not by checksum: `fold` reduces a whole buffer to 64 bits, and equal
+    //     checksums do not prove equal elements. A collision would set
+    //     `checksum_ok=1` on a genuinely wrong arm and let its timings into the
+    //     CSV. The comparison is cheap, certain, and outside the timed region,
+    //     so there is no reason to accept a probabilistic answer. The checksum
+    //     stays, as a diagnostic that survives into the CSV.
+    //
+    // (b) WARMUP FOR ALL SIX. First touch of C, the pool's threads, and each
+    //     model's own packed-B buffer (they differ in size -- M2's nc is nearly
+    //     twice M0's here) cost time that belongs to no arm in particular.
+    //     Warming only M0, as the first draft did, handed the baseline a warm
+    //     first round and every candidate a cold one.
+    std::vector<T> ref;
+    bool mismatch[NMODELS] = {};
+    for (std::size_t mi = 0; mi < NMODELS; ++mi) {
+        const nc_model mo = mtl::detail::all_nc_models[mi];
+        std::fill(C.begin(), C.end(), T(0));
+        mtl::detail::gemm_blocked<T>(m, n, k, T(1),
+            A.data(), static_cast<std::ptrdiff_t>(k), 1,
+            B.data(), static_cast<std::ptrdiff_t>(n), 1,
+            T(0), C.data(), n, p.threads, mo);
+        out[mi].checksum = fold(C);
+        if (mi == 0) ref = C;                       // the baseline's exact result
+        else mismatch[mi] = (std::memcmp(ref.data(), C.data(),
+                                         ref.size() * sizeof(T)) != 0);
+        const auto pl = mtl::detail::gemm_plan_for<T>(m, n, p.threads, mo);
+        out[mi].nc = pl.nc;   out[mi].mc = pl.mc;
+        out[mi].nib = pl.nib; out[mi].njb = pl.njb;
+        out[mi].ic_nt = pl.ic_nt; out[mi].jc_nt = pl.jc_nt;
+        out[mi].exact = !mismatch[mi];
+    }
 
+    // ---- pass 2: timing, with the model order rotated per round -----------
+    //
+    // COUNTERBALANCED, because the minimum is taken per model across rounds and
+    // a fixed order gives every model the SAME position every time -- so a
+    // position effect never averages out, it becomes a model effect. M0 ran
+    // first in every round and M5 last, which is the worst arrangement
+    // available: the baseline every ratio is divided by would have carried
+    // whatever position 0 is worth on this machine.
+    //
+    // Rotating by the round index gives each model each position as evenly as
+    // `rounds` allows. With rounds a multiple of 6 it is exact.
     for (unsigned r = 0; r < rounds; ++r) {
-        for (std::size_t mi = 0; mi < NMODELS; ++mi) {
+        for (std::size_t j = 0; j < NMODELS; ++j) {
+            const std::size_t mi = (j + r) % NMODELS;
             const nc_model mo = mtl::detail::all_nc_models[mi];
             std::fill(C.begin(), C.end(), T(0));
             const auto t0 = std::chrono::steady_clock::now();
@@ -121,14 +161,7 @@ std::vector<arm_result> run(const nc_point& p, unsigned reps, unsigned rounds,
             const double secs =
                 std::chrono::duration<double>(t1 - t0).count() / double(reps);
             if (secs < out[mi].best_secs) out[mi].best_secs = secs;
-            if (r == 0) {
-                first_secs[mi] = secs;
-                out[mi].checksum = fold(C);
-                const auto pl = mtl::detail::gemm_plan_for<T>(m, n, p.threads, mo);
-                out[mi].nc = pl.nc;   out[mi].mc = pl.mc;
-                out[mi].nib = pl.nib; out[mi].njb = pl.njb;
-                out[mi].ic_nt = pl.ic_nt; out[mi].jc_nt = pl.jc_nt;
-            }
+            if (r == 0) first_secs[mi] = secs;
         }
     }
 
@@ -280,7 +313,13 @@ int main(int argc, char* argv[]) {
             // Every arm must have computed the same answer. `nc` groups columns;
             // it does not reorder any C element's FMA chain. A mismatch means the
             // timings are not comparable and the row is not a measurement.
-            const bool ok = (a.checksum == arms[0].checksum);
+            //
+            // Decided by the ELEMENT-WISE comparison in run()'s first pass, not
+            // by the checksum: equal 64-bit folds do not prove equal buffers, and
+            // a collision would admit a wrong arm's timings to the CSV. The
+            // checksum is carried as a diagnostic so two runs can be compared
+            // after the fact.
+            const bool ok = a.exact;
             if (!ok) ++integrity_failures;
 
             const bool same_nc = (a.nc == arms[0].nc);
@@ -301,7 +340,7 @@ int main(int argc, char* argv[]) {
             std::printf("    %-14s nc=%-6zu njb=%-4zu jc_nt=%u  jc_imb=%.3f  "
                         "%8.3f GF/s  x%.4f%s\n",
                         mtl::detail::nc_model_name(mo), a.nc, a.njb, a.jc_nt,
-                        jc_imb, gf, ratio, ok ? "" : "  *** CHECKSUM MISMATCH ***");
+                        jc_imb, gf, ratio, ok ? "" : "  *** RESULT DIFFERS FROM M0 ***");
 
             std::snprintf(buf, sizeof buf,
                 "%s,%s,%zu,%zu,%zu,%u,%u,%d,%zu,%zu,%zu,%zu,%u,%u,"
@@ -366,7 +405,7 @@ int main(int argc, char* argv[]) {
     if (!out) { std::fprintf(stderr, "cannot write %s\n", csv.c_str()); return 1; }
     out << "model,dtype,m,n,k,threads,pool,discriminates,nc,mc,nib,njb,ic_nt,jc_nt,"
            "ic_imbalance,jc_imbalance,packedB_bytes,l3_detected,reps,rounds,"
-           "best_seconds,gflops,ratio_vs_m0,checksum_ok,checksum\n";
+           "best_seconds,gflops,ratio_vs_m0,exact_vs_m0,checksum\n";
     for (const std::string& r : rows) out << r << "\n";
     out.flush();
     if (!out) { std::fprintf(stderr, "failed writing %s\n", csv.c_str()); return 1; }

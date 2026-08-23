@@ -28,5 +28,12 @@ echo "  arch:    -mcpu=native"
 echo "  threads: 6"
 echo ""
 
+# "$@" comes FIRST so the profile's own --arch/--threads/--outdir come last
+# and WIN. The runner takes the last occurrence of a repeated option, so with
+# "$@" trailing a caller could silently redirect this machine's data into
+# another machine's directory -- the cross-machine overwrite #439 already cost
+# a set of results. Pass-through still works for everything the profile does
+# not pin (--reps, --rounds, --dtypes, --allow-dirty).
 exec "$REPO_ROOT/benchmarks/run_nc_sweep.sh" \
-    --arch "-mcpu=native" --threads 6 --outdir "benchmarks/data/jetson-orin-nano-15W" "$@"
+    "$@" \
+    --arch "-mcpu=native" --threads 6 --outdir "benchmarks/data/jetson-orin-nano-15W"

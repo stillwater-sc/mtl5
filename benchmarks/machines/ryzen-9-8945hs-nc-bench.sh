@@ -29,10 +29,17 @@ fi
 
 echo "profile: ryzen-9-8945hs-nc-bench"
 echo "  cpu:     $ACTUAL"
-echo "  reps:    3   rounds: 7"
+echo "  reps:    3   rounds: 12"
 echo "  arch:    -march=znver4"
 echo "  threads: 8"
 echo ""
 
+# "$@" comes FIRST so the profile's own --arch/--threads/--outdir come last
+# and WIN. The runner takes the last occurrence of a repeated option, so with
+# "$@" trailing a caller could silently redirect this machine's data into
+# another machine's directory -- the cross-machine overwrite #439 already cost
+# a set of results. Pass-through still works for everything the profile does
+# not pin (--reps, --rounds, --dtypes, --allow-dirty).
 exec "$REPO_ROOT/benchmarks/run_nc_bench.sh" \
-    --arch "-march=znver4" --threads 8 --outdir "benchmarks/data/ryzen-9-8945hs" "$@"
+    "$@" \
+    --arch "-march=znver4" --threads 8 --outdir "benchmarks/data/ryzen-9-8945hs"
