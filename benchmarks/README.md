@@ -225,6 +225,81 @@ hand, which is why `run_nc_sweep.sh` does the ordering for you and then
 **verifies the stamp against `git rev-parse`** rather than trusting it. If it
 reports a mismatch, do not commit the data.
 
+## The nc-model timing session (#479)
+
+The sweep above says **where** the models disagree. This says **what that is
+worth**. Two scripts, and they are not interchangeable:
+
+| | plans | measures | needs a quiet box | takes |
+|---|---|---|---|---|
+| `*-nc-sweep.sh` | ✅ | ❌ | no | seconds |
+| `*-nc-bench.sh` | ❌ | ✅ | **yes** | tens of minutes |
+
+**Run the sweep first.** If it says `m1_balanced 0 of 20`, the timing session
+would spend an hour comparing byte-identical code. `run_nc_bench.sh` reads the
+sweep's sidecar and refuses on `0` for that reason.
+
+```bash
+bash benchmarks/machines/xeon-e5-2420-nc-bench.sh
+bash benchmarks/machines/i7-12700k-nc-bench.sh
+bash benchmarks/machines/ryzen-9-8945hs-nc-bench.sh   # WSL; GCC >= 12 for znver4
+bash benchmarks/machines/jetson-orin-nano-nc-bench.sh
+```
+
+All six arms run **in one process**, interleaved within each round, so they share
+one thermal state and one warmed pool. Six processes would make the machine, not
+the model, the thing under test. The nest takes the model as a per-call
+parameter (`gemm_blocked(..., nc_model)`) precisely so this is possible;
+`MTL5_NC_MODEL` sets the process-wide default for anything that does not pass one.
+
+### The three lines to read
+
+```text
+Noise floor: 2.14%  (worst deviation among 24 arm(s) whose nc equalled M0's,
+             i.e. byte-identical code)
+Best M1-over-M0 gain where M1's nc actually differed: 8.90% (over 8 arm(s))
+Worst first-round excess over the minimum: 11.2%
+```
+
+**The noise floor is measured, not assumed.** Those 24 arms chose the *same* `nc`
+as the baseline, so they ran byte-identical code and every deviation from `1.0`
+is this session's own noise. A gain that is not comfortably above the floor is a
+measurement of the box. The binary says so itself rather than leaving it to be
+noticed.
+
+Three distinct verdicts, and the sidecar's `effect_above_noise` carries all
+three — `1`, `0`, or `unmeasured`:
+
+- **`noise_floor_arms=0`** — no arm matched M0's `nc`, so the floor is *unmeasured*,
+  which is **not** the same as zero. Every ratio is an upper bound.
+- **`m1_differing_arms=0`** — M1 never differed here; this machine cannot address
+  #429 at this thread count.
+- **gain ≤ floor** — the effect is below what this session can see.
+
+The first of those is a real trap and cost a rewrite here: the natural definition
+of a control — *a shape where every model agrees* — never fires on a machine
+whose detected L3 differs from the compile-time figure, because M2 and M4 then
+always move. The control count was zero, the spread printed `0.00%`, and "is the
+effect above the noise" became a comparison against nothing that no run could
+fail. It read like a clean result. The control is therefore **per arm**, not per
+shape.
+
+`Worst first-round excess` large (say >25%) means the minimum has not converged —
+raise `--rounds`. Timings are the **min** across rounds, not the mean: every
+perturbation available on a shared box adds time and none removes it, so the mean
+estimates the interference as much as the kernel.
+
+### What the harness checks for you
+
+- **Every arm's result is compared bit-for-bit against M0.** `nc` regroups
+  columns; it must not reorder any C element's FMA chain. A mismatch is a defect
+  in the blocking, not a tolerance question — the binary refuses to write a CSV.
+- **`--threads 1` is rejected** (`FORCE_T1=1` overrides). At `jc_nt == 1` every
+  balancing model is a no-op *by construction*.
+- **`MTL5_NC_MODEL` is rejected by `bench_blocking_ab`**, which does not vary the
+  model: it would move the jc partition under every arm's label, two variables
+  under one name.
+
 ## Integer arms (#451 phase 4)
 
 ```bash

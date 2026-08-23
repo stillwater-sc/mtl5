@@ -232,10 +232,15 @@ TEST_CASE("mult is NOT silently rerouted through the quad kernel",
     // Checked STRUCTURALLY, because the two kernels agree bit for bit (above) --
     // a result genuinely cannot tell them apart, which is exactly what made the
     // defect survive a full green test suite.
+    // The trailing `nc_model` is #479's harness arm -- the nest takes the jc
+    // model per call so six arms can be timed in one process. It is defaulted,
+    // so no caller changed; this signature has to name it because a function
+    // POINTER carries every parameter, defaults included.
     using Fn = void (*)(std::size_t, std::size_t, std::size_t, std::int32_t,
                         const std::int8_t*, std::ptrdiff_t, std::ptrdiff_t,
                         const std::int8_t*, std::ptrdiff_t, std::ptrdiff_t,
-                        std::int32_t, std::int32_t*, std::size_t, unsigned);
+                        std::int32_t, std::int32_t*, std::size_t, unsigned,
+                        mtl::detail::nc_model);
     const Fn defaulted = &mtl::detail::gemm_blocked<std::int32_t, std::int8_t, std::int8_t>;
     const Fn widening  = &mtl::detail::gemm_blocked<std::int32_t, std::int8_t, std::int8_t,
                                                     mtl::detail::gemm_kernel::widening>;

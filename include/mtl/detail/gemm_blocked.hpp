@@ -55,8 +55,10 @@
 #include <mtl/detail/gemm_pack.hpp>
 #include <mtl/detail/gemm_quad_microkernel.hpp>
 #include <mtl/detail/gemm_quad_pack.hpp>
+#include <mtl/detail/nc_model.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/simd/blocking.hpp>
+#include <mtl/util/cache_info.hpp>
 
 namespace mtl::detail {
 
@@ -104,61 +106,9 @@ inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt
     return mc == 0 ? mc_max : mc;
 }
 
-/// Choose the jc-block size that balances the threaded n-partition -- the jc-side
-/// counterpart of `balanced_mc` (#479, feeding #429).
-///
-/// `nc_max` is an UPPER bound set by the L3 budget, so any smaller value is
-/// still cache-legal and we are free to trade block size for a partition that
-/// divides evenly across the teams. The threaded nest hands jc-blocks to the
-/// `jc_nt` teams round-robin, so the most-loaded team gets `ceil(njb / jc_nt)`
-/// blocks and the critical path is minimised when `njb` is a MULTIPLE of
-/// `jc_nt`. This picks the largest `nc <= nc_max` achieving that.
-///
-/// WHY THE ic SIDE ALREADY HAS THIS AND THE jc SIDE DOES NOT. `balanced_mc`
-/// exists because #408 measured what its absence costs: an mc that moved 64 ->
-/// 60 took nib from 16 (exactly 2.00 blocks per thread on 8 threads) to 18
-/// (2.25), a 1.41x critical path that turned a +21.5% single-thread win into a
-/// -7.4% eight-thread regression. The jc loop has the same arithmetic and no
-/// such repair, which is why `with_detected_caches` withholds L3 from `nc`
-/// (see blocking.hpp) -- applying it moves the jc BLOCK COUNT and there is
-/// nothing to absorb the imbalance.
-///
-/// NOT YET WIRED INTO THE NEST. #479 measures whether it should be, on the
-/// machines that can show it; #429 is the change that would apply it. Shipping
-/// it unmeasured is exactly the mistake #426 made with cache detection.
-///
-/// Returns `nc_max` unchanged for the serial case, where there is nothing to
-/// balance.
-///
-/// IT DOES NOT ROUND THE BALANCED `nc` TO A MULTIPLE OF `nr`, and that omission
-/// is the whole lesson of #408 restated on this axis. Rounding `nc` after
-/// balancing changes `njb` again and destroys the property just established:
-/// the first draft of this function did round, and the pre-registered control
-/// below caught it -- `m4_per_sharer` at n = 276681, jc_nt = 4 went from a
-/// perfectly even partition to 1.0038, i.e. the balancing step made the
-/// imbalance WORSE. That is #408's defect exactly: a register-tile quantity
-/// perturbing a partition quantity.
-///
-/// `balanced_mc` takes the same position for the same reason -- it rounds to
-/// whole `mr` panels only on the SERIAL path, where there is no partition to
-/// perturb. A multiple of `nr` is an optimisation, not a requirement: the nest
-/// computes `npanels = ceil(nci / NR)` and the micro-kernel's edge path already
-/// handles a ragged final panel, since `n` is not a multiple of `nc` in general.
-inline std::size_t balanced_nc(std::size_t n, std::size_t nc_max, unsigned jc_nt,
-                               std::size_t nr = 1) {
-    if (jc_nt <= 1 || n == 0 || nc_max == 0) {
-        // Serial: nothing to balance, so take the largest cache-legal block and
-        // round it to whole nr-column panels -- harmless here, and it removes the
-        // ragged panel from every jc block rather than only the last.
-        if (nr > 1 && nc_max >= nr) return (nc_max / nr) * nr;
-        return nc_max;
-    }
-    std::size_t njb = (n + nc_max - 1) / nc_max;        // fewest blocks the bound allows
-    njb = ((njb + jc_nt - 1) / jc_nt) * jc_nt;          // round up to a multiple of jc_nt
-    if (njb == 0) return nc_max;
-    const std::size_t nc = (n + njb - 1) / njb;         // cols per block; <= nc_max
-    return nc == 0 ? nc_max : nc;
-}
+// `balanced_nc` now lives in nc_model.hpp, beside the models that are its only
+// callers -- and so that this header can include that one for `nc_for_model`
+// without a cycle. See the note there.
 
 /// How much of a round-robin partition's capacity the most-loaded worker wastes:
 /// `ceil(blocks / workers) * workers / blocks`, which is 1.0 exactly when the
@@ -310,6 +260,51 @@ inline unsigned gemm_default_threads() {
     return thread_pool::instance().size();
 }
 
+/// The jc block size this nest will step by, under `model` (#479's harness arm).
+///
+/// M0 SHORT-CIRCUITS TO THE SHIPPED CONSTANT rather than recomputing itself.
+/// `nc_from_budget(l3_default, kc, sdata, nr)` and `derive_blocking`'s
+/// `round_down(l3/(kc*sdata), nr)` are the same formula, so the two agree today
+/// -- test_nc_models asserts exactly that, and it is the assertion that would
+/// fire if either drifted. But "they agree because I checked the algebra" is not
+/// the property the M0 arm needs. It needs to be the code that ships, so that a
+/// six-arm comparison has a control which cannot have moved. The equality is
+/// therefore a TEST, not a load-bearing assumption of the default path.
+///
+/// TWO PASSES, because a model needs `jc_nt` to balance against and `jc_nt`
+/// depends on `nc`, which is what the model computes. Plan once at the baseline
+/// `nc` to learn the grid, ask the model, and let the caller re-plan. This is
+/// the same shape the nest already uses for `mc` -- `plan_gemm_grid` then
+/// `balanced_mc` -- and it is deliberately IDENTICAL to `evaluate()` in
+/// benchmarks/sweep_nc_models.cpp, so the shapes that sweep nominates are the
+/// shapes this arm actually runs.
+///
+/// It feeds the model `bp.kc` (compile-time) for the same reason: that is what
+/// the sweep fed it, and a harness that quietly substituted `rbp.kc` would
+/// answer a different question than the one the committed sweeps asked. Where
+/// the two differ -- a machine whose detected L1 moves `kc`, see the pin at
+/// blocking.hpp:351 -- the nest builds a `rbp.kc x nc` panel while the models
+/// reasoned about `bp.kc x nc`. That is a real caveat on such a machine, so the
+/// harness REPORTS the divergence rather than papering over it here.
+template <typename TC>
+inline std::size_t nc_for_plan(std::size_t m, std::size_t n, unsigned budget,
+                               nc_model model) {
+    constexpr simd::blocking_params bp = simd::default_blocking<TC>;
+    if (model == nc_model::m0_default) return bp.nc;     // the shipped path, untouched
+
+    const simd::blocking_params& rbp = simd::runtime_blocking<TC>();
+    // Pass 1: the grid the baseline nc produces, to learn jc_nt.
+    const gemm_grid g0 = plan_gemm_grid(m, n, rbp.mc, bp.nc, bp.mr, budget);
+
+    const auto& ci = util::cached_cache_info();
+    const nc_model_inputs in{n, bp.kc, bp.nr, sizeof(TC),
+                             simd::default_hw_traits.l3_bytes,
+                             ci.l3_bytes, ci.l3_sharing_cores, g0.jc_nt};
+    const std::size_t nc = nc_for_model(model, in);
+    // nc is a loop step and a divisor: never leave here as 0.
+    return nc == 0 ? bp.nc : nc;
+}
+
 /// Everything the threaded nest decides for one call: the ic step it will
 /// actually use, the block counts that follow, and the thread grid.
 ///
@@ -322,27 +317,38 @@ inline unsigned gemm_default_threads() {
 /// threads, which left the parameter under test unrecoverable from the record.
 struct gemm_plan {
     std::size_t mc;      ///< ic step actually used (post-cap, post-balance)
+    std::size_t nc;      ///< jc step actually used (the selected model's, #479)
     std::size_t nib;     ///< ic blocks that mc produces
     std::size_t njb;     ///< jc blocks
     unsigned    ic_nt;   ///< ic threads (1 when the nest runs serially)
     unsigned    jc_nt;   ///< jc teams  (1 when the nest runs serially)
     unsigned    budget;  ///< threads the pool actually allowed
+    nc_model    model;   ///< which nc model produced `nc`
 };
 
 /// The plan `gemm_blocked<TC>` will follow for an m x n problem on `nthreads`.
 /// Reads its parameters from exactly the places the nest reads them, so a caller
 /// that records this records what ran.
+///
+/// `model` defaults to the process selection rather than to M0 so that a caller
+/// which records the plan records the plan that will RUN. Defaulting to M0 here
+/// would give a benchmark harness a recording function that silently disagreed
+/// with the nest the moment `MTL5_NC_MODEL` was set -- which is the whole point
+/// of the variable -- and the CSV would carry the baseline's blocking against
+/// the model's timings.
 template <typename TC>
-inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads) {
+inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads,
+                               nc_model model = nc_model_selection()) {
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
     const simd::blocking_params& rbp = simd::runtime_blocking<TC>();
-    const std::size_t MC = rbp.mc, NC = bp.nc, MR = bp.mr;
+    const std::size_t MC = rbp.mc, MR = bp.mr;
 
     const unsigned budget = (nthreads <= 1)
         ? 1u : std::min(nthreads, thread_pool::instance().size());
+    const std::size_t NC = nc_for_plan<TC>(m, n, budget, model);
 
     auto finish = [&](std::size_t mc, unsigned ic_nt, unsigned jc_nt) {
-        gemm_plan p{mc, 0, 0, ic_nt, jc_nt, budget};
+        gemm_plan p{mc, NC, 0, 0, ic_nt, jc_nt, budget, model};
         p.nib = mc ? (m + mc - 1) / mc : 0;
         p.njb = NC ? (n + NC - 1) / NC : 0;
         return p;
@@ -436,7 +442,8 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
                   const TB* B, std::ptrdiff_t b_rs, std::ptrdiff_t b_cs,
                   TC beta,
                   TC* C, std::size_t ldc,
-                  unsigned nthreads = 1) {
+                  unsigned nthreads = 1,
+                  nc_model model = nc_model_selection()) {
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
     constexpr std::size_t MR = bp.mr;   // register tile: must match the compiled
     constexpr std::size_t NR = bp.nr;   // micro-kernel, so compile-time only
@@ -450,11 +457,35 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // register-file or FMA terms the tile is derived from.
     const simd::blocking_params& rbp = simd::runtime_blocking<TC>();
     const std::size_t KC = rbp.kc, MC = rbp.mc;
-    // NC stays compile-time: it sets the jc BLOCK COUNT, and this nest hands jc
-    // blocks to teams round-robin, so changing it perturbs the thread partition
-    // (measured regression; see with_detected_caches). Detection of L3 is
-    // deliberately not applied until the jc loop has a balanced_nc.
-    const std::size_t NC = bp.nc;
+    // NC defaults to the compile-time constant: it sets the jc BLOCK COUNT, and
+    // this nest hands jc blocks to teams round-robin, so changing it perturbs the
+    // thread partition (measured regression; see with_detected_caches). Detection
+    // of L3 is deliberately not applied until the jc loop has a balanced_nc.
+    //
+    // `nc_model_selection()` is M0 unless a benchmark asked otherwise, and
+    // `nc_for_plan` short-circuits M0 to `bp.nc`, so the shipped path is the line
+    // it replaced. The budget is computed with the SAME expression
+    // `gemm_plan_for` uses, because both must reach the same NC: this function
+    // builds `jc_starts` from it while the plan reports `njb` from it, and a
+    // disagreement would mean the nest stepped a partition the plan did not
+    // describe -- the #430 defect (recording a configured mc the loops never
+    // stepped) reappearing on the jc axis.
+    // `model` is a PARAMETER, defaulted to the process selection, rather than
+    // read from the environment here. Six arms have to be timed back-to-back in
+    // one process to share a thermal state and one warmed pool; six processes
+    // would put the arms on six different machine states and make the comparison
+    // the thing under test. It is also what lets a single test assert that all
+    // six agree bit-for-bit, which is the property that says the wiring is right.
+    //
+    // ONE plan, computed here and reused by the threaded path below, so NC has a
+    // single source. An earlier draft recomputed the budget and the model's NC
+    // with a copy of `gemm_plan_for`'s expression; the two agreed, but only by
+    // inspection, and a nest that stepped a partition its own plan did not
+    // describe is #430's defect (a recorded mc no loop ever stepped) reappearing
+    // on the jc axis. Cheap to hoist: for nthreads <= 1 `gemm_plan_for` does not
+    // touch the pool, and for m/n/k == 0 it degenerates without dividing.
+    const gemm_plan plan = gemm_plan_for<TC>(m, n, nthreads, model);
+    const std::size_t NC = plan.nc;
     // The ic-block size actually used. Equal to the cache bound MC everywhere
     // except the threaded nest, which lowers it to balance the m-partition once
     // ic_nt is known (#408). Captured by reference below and finalized before
@@ -573,12 +604,11 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // forever (deadlock).
     thread_pool& pool = thread_pool::instance();
 
-    // One call decides everything: the budget (never past the pool -- pool.run()
-    // clamps its worker count, so a grid sized past it would leave team members
-    // that never run and a barrier that waits forever), the ic step, and the
-    // grid. gemm_plan_for is the single implementation, so what a benchmark
-    // records is what this nest runs.
-    const gemm_plan plan = gemm_plan_for<TC>(m, n, nthreads);
+    // `plan` was computed once at the top -- it decides everything: the budget
+    // (never past the pool -- pool.run() clamps its worker count, so a grid sized
+    // past it would leave team members that never run and a barrier that waits
+    // forever), the ic step, the jc step, and the grid. gemm_plan_for is the
+    // single implementation, so what a benchmark records is what this nest runs.
     const unsigned ic_nt = plan.ic_nt;
     const unsigned jc_nt = plan.jc_nt;
     const unsigned grid  = ic_nt * jc_nt;

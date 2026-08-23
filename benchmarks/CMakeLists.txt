@@ -100,6 +100,17 @@ endforeach()
 # of consuming one.
 add_executable(sweep_nc_models sweep_nc_models.cpp)
 target_link_libraries(sweep_nc_models PRIVATE MTL5::mtl5)
+target_include_directories(sweep_nc_models PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+add_dependencies(sweep_nc_models mtl5_build_info)
+
+# The timing half of #479: what the disagreement the sweep found is WORTH.
+# Shares nc_shapes.hpp with the sweep, so the shapes nominated there are the
+# shapes measured here -- by construction, not by two lists agreeing.
+add_executable(bench_nc_models bench_nc_models.cpp)
+target_link_libraries(bench_nc_models PRIVATE MTL5::mtl5)
+target_include_directories(bench_nc_models PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_target_properties(bench_nc_models PROPERTIES FOLDER "Benchmarks")
+add_dependencies(bench_nc_models mtl5_build_info)
 
 add_executable(bench_blocking_sweep bench_blocking_ab.cpp)
 target_link_libraries(bench_blocking_sweep PRIVATE MTL5::mtl5)

@@ -139,6 +139,19 @@ void usage() {
 } // namespace
 
 int main(int argc, char** argv) {
+    // MTL5_NC_MODEL belongs to bench_nc_models (#479), not here. It changes the
+    // jc block size for every GEMM in the process, so an arm labelled "kc-only"
+    // or "ccap" would silently be measuring a different jc partition as well --
+    // two variables moving under one label, which has already produced a wrong
+    // conclusion twice in this line of work. Refuse rather than warn: the CSV
+    // would be well-formed, plausible, and about something other than its label.
+    if (const char* e = std::getenv("MTL5_NC_MODEL"); e && *e) {
+        std::fprintf(stderr,
+            "MTL5_NC_MODEL=\"%s\" is set, and this harness does not vary the nc model.\n"
+            "It would change the jc partition under every arm's label. Unset it, or\n"
+            "use bench_nc_models, which varies the model deliberately and records it.\n", e);
+        return 2;
+    }
     std::string label = "unlabelled", csv, shapes_spec, dtype = "double";
     std::vector<unsigned> threads{1};
     int reps = 5;
@@ -267,9 +280,15 @@ int main(int argc, char** argv) {
             // #430 left this line of work in.
             const double ic_imb = mtl::detail::grid_imbalance(plan.nib, plan.ic_nt);
             const double jc_imb = mtl::detail::grid_imbalance(plan.njb, plan.jc_nt);
+            // `plan.nc`, not `bp.nc`: the configured value and the one the jc
+            // loop steps are the same thing only under M0, and recording the
+            // configured one when they differ is #430's defect exactly -- the
+            // committed i7 rows say mc=213 for runs that stepped 210 and 128.
+            // This harness pins M0 (see the refusal in main), so the two agree
+            // here today; reading the plan is what keeps that true if they stop.
             const std::size_t pb = mtl::detail::packed_b_bytes(
-                plan.jc_nt, bp.kc, bp.nc, dtype == "float" ? sizeof(float)
-                                                           : sizeof(double));
+                plan.jc_nt, bp.kc, plan.nc, dtype == "float" ? sizeof(float)
+                                                             : sizeof(double));
             std::snprintf(buf, sizeof buf,
                 "%s,%s,%zu,%zu,%zu,%u,%u,%zu,%zu,%zu,%zu,%zu,"
                 "%zu,%zu,%zu,%u,%u,%.6f,%.6f,%zu,%zu,%d,%.6f,%.3f,%.6f",
