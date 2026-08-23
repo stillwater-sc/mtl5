@@ -40,7 +40,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <system_error>
 #include <string>
 #include <vector>
 
@@ -149,6 +151,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Normalise BEFORE anything reports it. `derive_shapes` clamps its own copy
+    // to 1, so a `--threads 0` run would emit rows saying threads=1 while the
+    // header and the sidecar said 0 -- a committed CSV whose provenance
+    // contradicts its own contents. Reject rather than silently clamp: 0 is not
+    // a thread count anyone means.
+    if (tmax == 0) {
+        std::fprintf(stderr, "--threads must be >= 1 (got 0)\n");
+        return 2;
+    }
+
     const bool f32 = (dtype == "float");
     const std::size_t sdata = f32 ? sizeof(float) : sizeof(double);
     const mtl::simd::blocking_params bp =
@@ -165,7 +177,7 @@ int main(int argc, char* argv[]) {
     std::printf("  L3 default=%zu  detected=%zu  sharers=%zu  threads=%u\n\n",
                 l3_default, l3_detected, l3_sharers, tmax);
 
-    if (tmax <= 1) {
+    if (tmax == 1) {
         std::printf(
             "WARNING: --threads is 1.\n"
             "  At jc_nt == 1 every balancing model is a no-op BY CONSTRUCTION, so this\n"
@@ -251,7 +263,14 @@ int main(int argc, char* argv[]) {
         // different `mr`, `nr`, `kc` and `nc`, and therefore a different answer
         // to "where do the models disagree". A reader who cannot recover
         // `cxx_flags` cannot tell which machine's question this CSV answers.
-        if (std::ofstream si{csv + ".sysinfo"}) {
+        // Path built through std::filesystem::path per the project rule. It is a
+        // suffix, not a join, so this is about intent and consistency rather
+        // than correctness; the real consolidation is the shared sidecar writer
+        // #477 asks for, which would let all three producers share one.
+        std::filesystem::path side = std::filesystem::path{csv};
+        side += ".sysinfo";
+        std::ofstream si{side};
+        if (si) {
             si << "label=nc_model_sweep\n"
                << mtl::util::to_keyvals(mtl::util::identify())
                << "git_commit="       << mtl::build_git_commit << "\n"
@@ -274,7 +293,24 @@ int main(int argc, char* argv[]) {
                    << mtl::detail::nc_model_name(mtl::detail::all_nc_models[i])
                    << "=" << pair_diff[i] << "\n";
         }
-        std::printf("wrote %s (%zu rows) + .sysinfo\n", csv.c_str(), rows.size());
+        // FAIL, do not report success. A silent sidecar failure produces exactly
+        // the untraceable CSV #478 exists to reject -- and the tool would have
+        // said "+ .sysinfo" while returning 0, so the next thing to notice would
+        // be CI, on a file already committed. Check the final stream state too:
+        // an ofstream that opened can still fail on a full disk mid-write.
+        si.flush();
+        if (!si) {
+            std::fprintf(stderr,
+                         "failed to write %s -- the CSV would be untraceable, so it is\n"
+                         "not left behind. See benchmarks/check_sidecars.sh.\n",
+                         side.string().c_str());
+            std::error_code ec;
+            std::filesystem::remove(csv, ec);
+            std::filesystem::remove(side, ec);
+            return 1;
+        }
+        std::printf("wrote %s (%zu rows) + %s\n", csv.c_str(), rows.size(),
+                    side.filename().string().c_str());
     }
     return 0;
 }
