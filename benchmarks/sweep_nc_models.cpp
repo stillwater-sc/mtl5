@@ -29,6 +29,7 @@
 // model for its `nc` given that `jc_nt`, then re-plan. That is the same shape
 // `gemm_blocked` already uses for `mc` -- `plan_gemm_grid` then `balanced_mc`.
 
+#include <mtl/build_info.hpp>
 #include <mtl/detail/gemm_blocked.hpp>
 #include <mtl/detail/nc_model.hpp>
 #include <mtl/detail/thread_pool.hpp>
@@ -207,7 +208,34 @@ int main(int argc, char* argv[]) {
         if (!out) { std::fprintf(stderr, "cannot write %s\n", csv.c_str()); return 1; }
         out << "model,dtype,m,n,k,threads,nc,nib,njb,ic_nt,jc_nt,jc_imbalance,packedB_bytes\n";
         for (const auto& r : rows) out << r << "\n";
-        std::printf("wrote %s (%zu rows)\n", csv.c_str(), rows.size());
+
+        // Sidecar (#442, #477). This tool MEASURES NOTHING, so the machine-state
+        // half of the contract -- governor, thermal headroom, competing load --
+        // is irrelevant here and deliberately absent. The BUILD half is not
+        // merely relevant, it is the whole story: every number in this CSV comes
+        // from `default_blocking<T>`, which is derived from the compiled SIMD
+        // width. The same source built for SSE4 and for AVX-512 produces
+        // different `mr`, `nr`, `kc` and `nc`, and therefore a different answer
+        // to "where do the models disagree". A reader who cannot recover
+        // `cxx_flags` cannot tell which machine's question this CSV answers.
+        if (std::ofstream si{csv + ".sysinfo"}) {
+            si << "label=nc_model_sweep\n"
+               << mtl::util::to_keyvals(mtl::util::identify())
+               << "git_commit="       << mtl::build_git_commit << "\n"
+               << "git_dirty="        << mtl::build_git_dirty  << "\n"
+               << "cxx_flags="        << mtl::build_cxx_flags  << "\n"
+               << "cmake_build_type=" << mtl::build_cmake_type << "\n"
+               << "harness=sweep_nc_models\n"
+               << "measures=nothing (pure enumeration)\n"
+               << "dtype="            << dtype << "\n"
+               << "threads="          << tmax << "\n"
+               << "mr=" << bp.mr << " nr=" << bp.nr << " kc=" << bp.kc
+               << " mc=" << bp.mc << " nc=" << bp.nc << "\n"
+               << "l3_default_bytes="  << l3_default  << "\n"
+               << "l3_detected_bytes=" << l3_detected << "\n"
+               << "l3_sharing_cores="  << l3_sharers  << "\n";
+        }
+        std::printf("wrote %s (%zu rows) + .sysinfo\n", csv.c_str(), rows.size());
     }
     return 0;
 }
