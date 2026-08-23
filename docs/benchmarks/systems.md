@@ -491,6 +491,19 @@ bash benchmarks/machines/i7-12700k-int.sh         # alderlake, decomposed (AVX-V
 bash benchmarks/machines/xeon-e5-2420-int.sh      # SSE4, decomposed; pins 0-5, not 0,2,4,...
 ```
 
+The nc-model sweep (#479) has its own profile per machine, named `*-nc-sweep.sh`.
+It **measures nothing** — pure enumeration — so it needs no preflight, no pinning
+and no quiet machine, and exists to tell you which shapes a later timing session
+should bother with. See [the benchmarks README](../../benchmarks/README.md) for
+what to read in the output:
+
+```bash
+bash benchmarks/machines/xeon-e5-2420-nc-sweep.sh
+bash benchmarks/machines/i7-12700k-nc-sweep.sh
+bash benchmarks/machines/ryzen-9-8945hs-nc-sweep.sh
+bash benchmarks/machines/jetson-orin-nano-nc-sweep.sh
+```
+
 ```powershell
 pwsh benchmarks/machines/ryzen-9-8945hs.ps1  # /arch:AVX512, 8 physical cores
 ```

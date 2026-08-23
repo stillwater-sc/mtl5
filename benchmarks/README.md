@@ -164,6 +164,67 @@ authoritative list is always `bench_all --help`.
 would change every machine's committed CSV and break comparison with the
 existing baselines. Ask for it by name.
 
+## The nc-model sweep (#479)
+
+**What it is for.** #429 wants to balance the jc partition (`balanced_nc`), and
+#479 must choose between six ways of sizing `nc` before that can ship. Choosing
+needs evidence from **at least three microarchitectures** — a model picked from
+one machine is how the hardcoded Haswell defaults arrived in the first place.
+
+Timing six models on four machines is a large session, and most of it would
+measure nothing: for most shapes every model computes the *same* `nc`, so timing
+them compares a binary against itself. This sweep finds, per machine, the shapes
+where the models actually differ — so the expensive session only runs those.
+
+**It measures nothing itself.** Pure enumeration over `nc_for_model` and
+`plan_gemm_grid`. It takes seconds, needs no preflight, no pinning and no quiet
+machine, and can be run while the box is busy.
+
+### Running it
+
+One profile per machine, carrying that host's ISA flag and thread count:
+
+```bash
+bash benchmarks/machines/xeon-e5-2420-nc-sweep.sh
+bash benchmarks/machines/i7-12700k-nc-sweep.sh
+bash benchmarks/machines/ryzen-9-8945hs-nc-sweep.sh     # WSL; needs GCC >= 12 for znver4
+bash benchmarks/machines/jetson-orin-nano-nc-sweep.sh
+```
+
+Each refuses to run on a machine it does not recognise, and refuses to run on a
+dirty tree — see the provenance note below. Commit **both** files per dtype, the
+CSV and its `.sysinfo`; CI rejects a CSV without one.
+
+### The one line to read
+
+```text
+m1_balanced     8 of 20   <- the pair #429 needs
+```
+
+That is how many shapes are worth *timing* on this machine. **`0 of 20` is a
+result, not a failure** — it says this machine cannot separate M0 from M1 and
+should not be booked for that question. The Xeon gives 8.
+
+The summary's other line, "N of 20 shapes separate at least two models", is
+**not** the number to read: it counts a shape if any of the six differ, and at
+`--threads 1` it happily reports "5 of 5" while M1 equals M0 on every one.
+
+### Why the runner is fussy about ordering
+
+The sidecar is written by the **binary**, and reports what `build_info.hpp` said
+when the binary was *compiled*. So the tree must be clean and the build must be a
+full one **before** the run:
+
+```text
+clean tree  →  FULL build (not --target)  →  run  →  commit
+```
+
+Every way of getting this wrong is silent — the sidecar comes out well-formed,
+internally consistent, and naming the wrong commit. It took four attempts by
+hand, which is why `run_nc_sweep.sh` does the ordering for you and then
+**verifies the stamp against `git rev-parse`** rather than trusting it. If it
+reports a mismatch, do not commit the data.
+
 ## Integer arms (#451 phase 4)
 
 ```bash
