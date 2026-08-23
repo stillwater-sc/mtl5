@@ -11,9 +11,9 @@ compiler=GCC
 compiler_version=13.3.0
 cpp_standard=202002
 build_type=Release
-git_commit=86bba2fb2d36
+git_commit=7e459f5a196a
 git_dirty=0
-cxx_flags= -O3 -DNDEBUG [MTL5_NATIVE_ARCH=ON]
+cxx_flags=-march=native -O3 -DNDEBUG
 cmake_build_type=Release
 harness=sweep_nc_models
 measures=nothing (pure enumeration)
