@@ -86,6 +86,28 @@ using packed_buffer = std::vector<T, aligned_allocator<T>>;
 /// -7.4% eight-thread REGRESSION. The rounding is gone and the balance is chosen
 /// here, where `m` and the thread count are actually known.
 ///
+/// IT NEVER RETURNS A BLOCK SHORTER THAN ONE REGISTER TILE (#488). Balancing
+/// works by RAISING the block count, which lowers `mc`, and pushed far enough
+/// that lands below `mr` -- at which point every ic block is a ragged tile and
+/// takes the micro-kernel's edge path, through a zeroed `mr x nr` temporary with
+/// a copy in and a copy out. Not just the trailing block, which is the case the
+/// edge path was written for: EVERY block.
+///
+/// `plan_gemm_grid` already floors `mc` at `mr` for exactly this reason ("a block
+/// shorter than mr would waste the micro-kernel") and this function used to undo
+/// that floor a moment later: `balanced_mc(m=18, mc_max=6, ic_nt=2, mr=6)`
+/// returned 5, because `nib = ceil(18/6) = 3` rounds up to 4 and `ceil(18/4) = 5`.
+/// Measured on the #479 timing runs, where a re-plan moved `ic_nt` 3 -> 2 and
+/// `mc` 6 -> 5, throughput fell to x0.818-0.950 against a 4.3-5.5% noise floor.
+/// That is #408's own repair damaging the thing #408 protects.
+///
+/// WHEN THE EVEN PARTITION IS SUB-TILE, THERE IS NO OTHER EVEN ONE. The balanced
+/// candidates are the multiples of `ic_nt` at or above `nib_min`, and `mc`
+/// DECREASES as that count grows -- so if the smallest such multiple is already
+/// sub-tile, every larger one is too. Balance cannot be traded here, only
+/// abandoned; the fallback takes the least-imbalanced block that is still a whole
+/// tile, preferring the larger block on a tie.
+///
 /// Returns `mc_max` unchanged for the serial case, where there is nothing to
 /// balance and the largest cache-legal block is best.
 inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt,
@@ -99,11 +121,47 @@ inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt
         if (mr > 1 && mc_max >= mr) return (mc_max / mr) * mr;
         return mc_max;
     }
-    std::size_t nib = (m + mc_max - 1) / mc_max;        // fewest blocks the bound allows
-    nib = ((nib + ic_nt - 1) / ic_nt) * ic_nt;          // round up to a multiple of ic_nt
+    const std::size_t nib_min = (m + mc_max - 1) / mc_max;   // fewest blocks the bound allows
+    std::size_t nib = ((nib_min + ic_nt - 1) / ic_nt) * ic_nt;   // round up to a multiple of ic_nt
     if (nib == 0) return mc_max;
     const std::size_t mc = (m + nib - 1) / nib;         // rows per block; <= mc_max
-    return mc == 0 ? mc_max : mc;
+    if (mc == 0) return mc_max;
+
+    // The even partition is tile-legal: take it, exactly as before.
+    if (mr <= 1 || mc >= mr || mc_max < mr) return mc;
+
+    // Sub-tile, so no even partition is tile-legal. Choose among the WHOLE-TILE
+    // block sizes instead: `mr, 2*mr, ... ` up to the cache bound.
+    //
+    // CANDIDATES ARE BLOCK SIZES, NOT BLOCK COUNTS. `mc` is a loop STEP -- the
+    // nest takes `min(mc, m - ic)` -- so a step of `mc_max` gives full blocks
+    // plus one remainder, which is not the same as the even split
+    // `ceil(m / nib)`. Generating counts and inverting them missed that: at
+    // m = 5, mc_max = 4, mr = 4 it produced 3 (two ragged blocks) where a step of
+    // 4 gives [4, 1] -- one whole tile and a remainder.
+    //
+    // THE OBJECTIVE IS CRITICAL ROWS, NOT BLOCK COUNT. Minimising blocks on the
+    // busiest thread lets the partition collapse: at m = 16, ic_nt = 16, mr = 2
+    // every candidate up to 16 puts one block on one thread, so "fewest blocks,
+    // largest block" chose a single 16-row block and idled 15 threads -- 16x
+    // worse than the sub-tile answer it was replacing. Rows on the busiest
+    // thread is the quantity that matters, estimated as
+    // `ceil(nib / ic_nt) * mc`; it is exact for uniform blocks and an upper
+    // bound otherwise, which is the safe direction.
+    //
+    // Ties go to the larger block (fewer, longer panels), so the comparison is
+    // strict and a later equal candidate does not displace an earlier one.
+    std::size_t best_mc = 0, best_rows = 0;
+    for (std::size_t cand = mr; cand <= mc_max; cand += mr) {
+        const std::size_t nib  = (m + cand - 1) / cand;
+        if (nib == 0) continue;
+        const std::size_t rows = ((nib + ic_nt - 1) / ic_nt) * cand;  // busiest thread
+        if (best_mc == 0 || rows < best_rows) { best_mc = cand; best_rows = rows; }
+        if (cand >= m) break;                     // larger blocks cannot help once one covers m
+    }
+    // `mr <= mc_max` was established above, so the loop always records a
+    // candidate; the fallback is for a degenerate call rather than a real path.
+    return best_mc == 0 ? mc : best_mc;
 }
 
 // `balanced_nc` now lives in nc_model.hpp, beside the models that are its only
