@@ -165,19 +165,37 @@ int main(int argc, char* argv[]) {
     std::printf("  L3 default=%zu  detected=%zu  sharers=%zu  threads=%u\n\n",
                 l3_default, l3_detected, l3_sharers, tmax);
 
+    if (tmax <= 1) {
+        std::printf(
+            "WARNING: --threads is 1.\n"
+            "  At jc_nt == 1 every balancing model is a no-op BY CONSTRUCTION, so this\n"
+            "  run cannot say anything about M1 vs M0 -- the pair #429 needs. The shape\n"
+            "  search also finds no jc-parallel shapes, so only the negative controls\n"
+            "  are enumerated. That is a valid control run and a useless planning run.\n"
+            "  Re-run with --threads set to the count you intend to MEASURE at.\n\n");
+    }
+
     const auto shapes = derive_shapes(bp, tmax);
     std::vector<std::string> rows;
     std::size_t disagreeing = 0;
+    // Disagreement against the BASELINE, per model. The bare "N of M shapes
+    // discriminate" line is not the answer and has actively misled once: at
+    // --threads 1 it reads "5 of 5" while M1 equals M0 on every one of them,
+    // because M2/M3/M4 differ and the total does not say which pair moved. The
+    // question a planning run is asked is always about a specific pair.
+    std::size_t pair_diff[6] = {0, 0, 0, 0, 0, 0};
     char buf[512];
 
     for (const auto& p : shapes) {
         outcome base{};
         bool first = true, differs = false;
         std::vector<outcome> outs;
+        std::size_t mi = 0;
         for (auto m : mtl::detail::all_nc_models) {
             const outcome o = evaluate(m, p, bp, sdata, l3_default, l3_detected, l3_sharers);
             if (first) { base = o; first = false; }
-            else if (o.nc != base.nc) differs = true;
+            else if (o.nc != base.nc) { differs = true; ++pair_diff[mi]; }
+            ++mi;
             outs.push_back(o);
             std::snprintf(buf, sizeof buf,
                           "%s,%s,%zu,%zu,%zu,%u,%zu,%zu,%zu,%u,%u,%.6f,%zu",
@@ -196,12 +214,27 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::printf("\n%zu of %zu shapes discriminate between the models.\n",
+    std::printf("\n%zu of %zu shapes separate at least two models.\n\n",
                 disagreeing, shapes.size());
-    if (disagreeing == 0)
-        std::printf("On this machine no derived shape separates them -- measuring here\n"
-                    "would compare a binary against itself. That is a result, not a\n"
-                    "failure: it says this machine cannot contribute to the choice.\n");
+    std::printf("Against the baseline M0, per model -- this is the number to read:\n");
+    for (std::size_t i = 1; i < 6; ++i)
+        std::printf("  %-14s %2zu of %2zu%s\n",
+                    mtl::detail::nc_model_name(mtl::detail::all_nc_models[i]),
+                    pair_diff[i], shapes.size(),
+                    i == 1 ? "   <- the pair #429 needs" : "");
+
+    const std::size_t m1 = pair_diff[1];
+    std::printf("\n");
+    if (m1 == 0) {
+        std::printf("M1 NEVER DIFFERS FROM M0 on this machine's derived shapes.\n"
+                    "  That is a RESULT, not a failure: this machine cannot contribute to\n"
+                    "  the M0-vs-M1 choice, and a throughput run here would compare a\n"
+                    "  binary against itself. Worth knowing before booking the machine.\n");
+    } else {
+        std::printf("Measure the %zu shape%s where M1 differs from M0; the other %zu would\n"
+                    "compare a binary against itself.\n",
+                    m1, m1 == 1 ? "" : "s", shapes.size() - m1);
+    }
 
     if (!csv.empty()) {
         std::ofstream out(csv);
@@ -233,7 +266,13 @@ int main(int argc, char* argv[]) {
                << " mc=" << bp.mc << " nc=" << bp.nc << "\n"
                << "l3_default_bytes="  << l3_default  << "\n"
                << "l3_detected_bytes=" << l3_detected << "\n"
-               << "l3_sharing_cores="  << l3_sharers  << "\n";
+               << "l3_sharing_cores="  << l3_sharers  << "\n"
+               << "shapes_total=" << shapes.size() << "\n"
+               << "shapes_separating_any=" << disagreeing << "\n";
+            for (std::size_t i = 1; i < 6; ++i)
+                si << "shapes_differing_vs_m0_"
+                   << mtl::detail::nc_model_name(mtl::detail::all_nc_models[i])
+                   << "=" << pair_diff[i] << "\n";
         }
         std::printf("wrote %s (%zu rows) + .sysinfo\n", csv.c_str(), rows.size());
     }
