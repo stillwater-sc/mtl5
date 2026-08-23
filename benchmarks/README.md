@@ -364,9 +364,9 @@ instruction, from quad-interleaved panels — against the same operands:
 
 | arm | GOP/s | vs `gemm_i8_i32` |
 |---|---|---|
-| `gemm_f32` | 19.7 | fp32 baseline |
-| `gemm_i32` | 14.1 | i32 × i32, same-type |
-| `gemm_i16_i32` | 12.7 | i16 × i16, widen |
+| `gemm_f32` | 18.4 | fp32 baseline |
+| `gemm_i32` | 13.2 | i32 × i32, same-type |
+| `gemm_i16_i32` | 12.1 | i16 × i16, widen |
 | `gemm_i8_i32` | 13.2 | i8 × i8, widen |
 | `gemm_i8_i32_quad` | **16.5** | i8 × i8, quad |
 | `gemm_u8i8_i32_quad` | **21.8** | u8 × i8, quad |
@@ -387,15 +387,15 @@ Xeon, across the four sizes:
 
 | comparison | n=128 | n=256 | n=512 | n=1024 | what varies |
 |---|---|---|---|---|---|
-| `gemm_i8_i32_quad` ÷ `gemm_i8_i32` | 1.19× | 1.24× | **1.25×** | **1.27×** | the kernel, operands fixed |
-| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | 1.27× | 1.29× | **1.32×** | **1.28×** | operand signedness, kernel fixed |
-| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.51× | 1.60× | 1.64× | 1.62× | **both — not a controlled result** |
+| `gemm_i8_i32_quad` ÷ `gemm_i8_i32` | 1.18× | 1.23× | **1.25×** | **1.25×** | the kernel, operands fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32_quad` | 1.27× | 1.32× | **1.32×** | **1.32×** | operand signedness, kernel fixed |
+| `gemm_u8i8_i32_quad` ÷ `gemm_i8_i32` | 1.50× | 1.62× | 1.65× | 1.66× | **both — not a controlled result** |
 
 The last row is the product of two effects and must not be quoted as what the
 quad kernel buys. That distinction is not pedantry, and the four-machine data
-below shows how badly it misleads: the same naive ratio reads **4.84×** on the
+below shows how badly it misleads: the same naive ratio reads **4.78×** on the
 Ryzen and **1.52×** on the Jetson, while the actual kernel effect on those
-machines is 2.18× and 3.64× — overstating on one, understating on the other.
+machines is 2.15× and 3.64× — overstating on one, understating on the other.
 
 ### Four machines, and what the Xeon alone could not say
 
@@ -406,28 +406,32 @@ single-threaded:
 
 | machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | native ÷ emulated (raw) | best int8 ÷ fp32 |
 |---|---|---|---|---|---|---|---|---|
-| Xeon E5-2420 v2 (SSE4) | none | 19.5 | 13.1 | 16.7 | **21.3** | 1.27× | — | 1.09× |
-| i7-12700K (AVX2) | none | 144.8 | 49.2 | 132.9 | **146.5** | **2.70×** | — | 1.01× |
-| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 138.5 | 96.5 | 210.6 | **467.0** | 2.18× | **2.22×** | **3.37×** |
-| Jetson Orin Nano (NEON) | `i8×i8` | 14.3 | 8.7 | **31.5** | 13.1 | **3.64×** | **2.40×** | **2.20×** |
+| Xeon E5-2420 v2 (SSE4) | none | 19.7 | 13.4 | 16.8 | **22.2** | 1.25× | — | 1.12× |
+| i7-12700K (AVX2) | none | 146.3 | 49.2 | 134.4 | **145.9** | **2.73×** | — | 1.00× |
+| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 141.4 | 96.5 | 207.9 | **461.0** | 2.15× | **2.22×** | **3.26×** |
+| Jetson Orin Nano (NEON) | `i8×i8` | 14.3 | 8.6 | **31.5** | 13.1 | **3.64×** | **2.40×** | **2.20×** |
 
 - **kernel** = `gemm_i8_i32_quad ÷ gemm_i8_i32` — same operands, quad against
-  widen-on-load. Ranges **1.27× to 3.64×**. It rises with n on every machine
-  (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.78→2.18, Jetson 3.21→3.64), which is
-  what a register-blocking change should do: the small sizes never leave cache,
-  so the operand-traffic reduction has nothing to pay for yet.
+  widen-on-load. Ranges **1.25× to 3.64×**. It rises with n — i7 2.19→2.73,
+  Ryzen 1.69→2.15, Jetson 3.21→3.64 — which is what a register-blocking change
+  should do: the small sizes never leave cache, so the operand-traffic reduction
+  has nothing to pay for yet. (The Xeon rises 1.18→1.25 and then goes flat: its
+  last two points differ by 0.1%, against a 9.6% run-to-run spread on that
+  machine. Three of four rise monotonically and the fourth does not contradict
+  them.)
 - **native ÷ emulated (raw)** = the machine's native pairing ÷ its emulated one,
   *same kernel, same machine, same run*. Only the two `PARTIAL` machines can
   supply it. **This is a RAW ratio, not the instruction's contribution** — the two
   pairings also differ in signedness and in decomposition path, so it moves two
   variables. Netted below.
 - Note the two decomposed machines reach **parity with fp32 and no more**
-  (1.09×, 1.01×), while both native machines clear it by 2.2–3.4×.
+  (1.12×, 1.00×; the Xeon's 12% sits against a 9.6% spread on that machine),
+  while both native machines clear it by 2.2–3.3×.
 
 **Which arm is fastest inverts between the two native machines**, because they
 implement opposite pairings: `u8i8_quad` is 2.2× the `i8_quad` on the Ryzen, and
 the `i8_quad` is 2.4× the `u8i8_quad` on the Jetson. Comparing those two machines
-by arm *name* gives 467.0 against 13.1 — a 36× "machine gap" that is almost
+by arm *name* gives 461.0 against 13.1 — a 35× "machine gap" that is almost
 entirely a naming artifact.
 
 ### What the instruction is worth, and why the dot understated it
@@ -439,28 +443,28 @@ machines where *both* pairings are emulated.
 
 | | shape control (both emulated) |
 |---|---|
-| Xeon E5-2420 v2 | 1.28× |
-| i7-12700K | 1.10× |
+| Xeon E5-2420 v2 | 1.32× |
+| i7-12700K | 1.09× |
 
 favouring `u8 × i8`. Dividing that out — and noting it acts in *opposite
 directions* on the two native machines, because they implement opposite pairings:
 
 | | raw | shape acts | **instruction, net** |
 |---|---|---|---|
-| Ryzen 9 8945HS (native `u8×i8`) | 2.22× | *with* the native arm | **1.74–2.01×** |
-| Jetson Orin Nano (native `i8×i8`) | 2.40× | *against* the native arm | **2.64–3.06×** |
+| Ryzen 9 8945HS (native `u8×i8`) | 2.22× | *with* the native arm | **1.68–2.04×** |
+| Jetson Orin Nano (native `i8×i8`) | 2.40× | *against* the native arm | **2.60–3.18×** |
 
 **The Jetson figure carries a caveat the Ryzen one does not.** No ARM machine
 here emulates both pairings, so its shape control is borrowed from x86, where the
 decomposition is structurally similar (two native calls plus a shift and a
-subtract) but not identical. Treat 2.64–3.06× as indicative and the 2.40× raw
+subtract) but not identical. Treat 2.60–3.18× as indicative and the 2.40× raw
 ratio as the measurement.
 
 The same ratios on the **dot**, for contrast:
 
 | | dot (L1-resident, n=1024) | GEMM (n=1024) |
 |---|---|---|
-| Ryzen 9 8945HS | 1.50× raw → **1.14–1.37×** net | 2.22× raw → **1.74–2.01×** net |
+| Ryzen 9 8945HS | 1.50× raw → **1.13–1.35×** net | 2.22× raw → **1.68–2.04×** net |
 | Jetson Orin Nano | **2.75×** raw (no same-ISA control) | 2.40× raw |
 
 The Ryzen dot figure reproduces §6's ~1.2×, which is the cross-check that both
@@ -471,21 +475,21 @@ shows it fully. The magnitude is now measured rather than assumed.
 
 Physically coherent, which is worth checking on a 3× result: one quad instruction
 does four times the multiply-accumulates of an fp32 FMA of the same width, so 4×
-is the ceiling. Measured against each machine's own fp32 GEMM: Ryzen 3.37×,
-Jetson 2.20×, decomposed i7 1.01×.
+is the ceiling. Measured against each machine's own fp32 GEMM: Ryzen 3.26×,
+Jetson 2.20×, decomposed i7 1.00×.
 
 **The best-int8-over-fp32 column is not affected by any of this.** It compares
 each machine's fastest int8 arm against its *own* fp32 GEMM, so no pairing
 confound enters — which is why the conclusion that rests on it (only the machines
 with the instruction beat fp32 by a margin worth having) stands on the raw data.
-The decomposed parts are not *below* fp32; they are beside it, at 1.01× and
-1.09×, where the first is inside the i7's own 1.8% spread.
+The decomposed parts are not *below* fp32; they are beside it, at 1.00× and
+1.12×, the first exactly at parity and the second against a 9.6% spread.
 
 ### What this replaced
 
 The original claim was that on a machine without VNNI there is no int8 GEMM win
 at all. That was true of the *widen-on-load* kernel and does not survive changing
-the kernel — the i7, with no usable instruction anywhere in it, gets **2.70×**
+the kernel — the i7, with no usable instruction anywhere in it, gets **2.73×**
 from the kernel shape alone.
 
 The reason is visible in the disassembly rather than inferred. Highway's
@@ -496,7 +500,7 @@ promote-multiply-add chains.
 
 So the operand width still contributes nothing in a GEMM. What has changed is the
 size of what remains: *the instruction*, read as the four-products-per-lane
-**kernel shape**, is worth 1.27–3.64× and needs no VNNI silicon at all; *the
+**kernel shape**, is worth 1.25–3.64× and needs no VNNI silicon at all; *the
 silicon on top of that* is worth a further **1.7–2.0× on Zen 4** net of the shape
 control (2.22× raw), and more than that on the Jetson though without a same-ISA
 control to pin it. Those are separate quantities and this is the first time the

@@ -193,7 +193,7 @@ broadcast scalar. Both now exist. Measured on the same Xeon, same n=512, still
 
 | `gemm_f32` | `gemm_i8_i32` | `gemm_i8_i32_quad` | `gemm_u8i8_i32_quad` |
 |---|---|---|---|
-| 19.7 | 13.2 | **16.5** | **21.8** GOP/s |
+| 18.4 | 13.2 | **16.5** | **21.8** GOP/s |
 
 From `benchmarks/data/xeon-e5-2420/int_arms.csv`, produced by `run_int_bench.sh`
 (preflight, native-quad guard, `.sysinfo` sidecar; `label=native-int-decomposed`,
@@ -205,8 +205,8 @@ and it GROWS WITH n, which is the shape a register-blocking change should have:
 
 | n | 128 | 256 | 512 | 1024 |
 |---|---|---|---|---|
-| kernel, operands fixed | 1.19× | 1.24× | **1.25×** | **1.27×** |
-| signedness, kernel fixed | 1.27× | 1.29× | **1.32×** | **1.28×** |
+| kernel, operands fixed | 1.18× | 1.23× | **1.25×** | **1.25×** |
+| signedness, kernel fixed | 1.27× | 1.32× | **1.32×** | **1.32×** |
 
 The small sizes never leave the caches, so the operand-traffic reduction the
 quad layout buys has nothing to pay for yet.
@@ -288,14 +288,16 @@ three**. GEMM at n=1024, GOP/s, best-of-iteration, single-threaded:
 
 | machine | native pairing | fp32 | `i8` widen | `i8_quad` | `u8i8_quad` | kernel | native ÷ emulated (raw) | best int8 / fp32 |
 |---|---|---|---|---|---|---|---|---|
-| Xeon E5-2420 v2 (SSE4) | none | 19.5 | 13.1 | 16.7 | **21.3** | 1.27× | — | 1.09× |
-| i7-12700K (AVX2) | none | 144.8 | 49.2 | 132.9 | **146.5** | **2.70×** | — | 1.01× |
-| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 138.5 | 96.5 | 210.6 | **467.0** | 2.18× | **2.22×** | **3.37×** |
-| Jetson Orin Nano (NEON) | `i8×i8` | 14.3 | 8.7 | **31.5** | 13.1 | **3.64×** | **2.40×** | **2.20×** |
+| Xeon E5-2420 v2 (SSE4) | none | 19.7 | 13.4 | 16.8 | **22.2** | 1.25× | — | 1.12× |
+| i7-12700K (AVX2) | none | 146.3 | 49.2 | 134.4 | **145.9** | **2.73×** | — | 1.00× |
+| Ryzen 9 8945HS (AVX3_DL) | `u8×i8` | 141.4 | 96.5 | 207.9 | **461.0** | 2.15× | **2.22×** | **3.26×** |
+| Jetson Orin Nano (NEON) | `i8×i8` | 14.3 | 8.6 | **31.5** | 13.1 | **3.64×** | **2.40×** | **2.20×** |
 
-**The kernel effect ranges 1.27× to 3.64×.** It is real everywhere and rises with
-n everywhere (Xeon 1.19→1.27, i7 2.20→2.70, Ryzen 1.78→2.18, Jetson
-3.21→3.64), but its magnitude is a property of the machine. Quoting ~1.25× as
+**The kernel effect ranges 1.25× to 3.64×.** It is real everywhere and rises with
+n on three of the four (i7 2.19→2.73, Ryzen 1.69→2.15, Jetson 3.21→3.64; the
+Xeon rises 1.18→1.25 and then goes flat, its last two points differing by 0.1%
+against a 9.6% spread on that machine), but its magnitude is a property of the
+machine. Quoting ~1.25× as
 "the kernel result" was the same single-machine over-generalisation this section
 has now made twice — once with the dot's 1.42×, once here.
 
@@ -303,28 +305,29 @@ has now made twice — once with the dot's 1.42×, once here.
 column above is a RAW pairing ratio, not that figure. The two pairings differ in
 signedness and decomposition path as well as in nativeness, which is the
 two-variable error §6 was itself corrected for. The shape term is measurable, as
-the same ratio on the machines where BOTH pairings are emulated: **1.28× (Xeon),
-1.10× (i7)**, favouring `u8 × i8`. It acts in OPPOSITE directions on the two
+the same ratio on the machines where BOTH pairings are emulated: **1.32× (Xeon),
+1.09× (i7)**, favouring `u8 × i8`. It acts in OPPOSITE directions on the two
 native machines, because they implement opposite pairings:
 
 | | raw | shape acts | instruction, net |
 |---|---|---|---|
-| Ryzen 9 8945HS (native `u8×i8`) | 2.22× | *with* the native arm | **1.74–2.01×** |
-| Jetson Orin Nano (native `i8×i8`) | 2.40× | *against* the native arm | **2.64–3.06×** |
+| Ryzen 9 8945HS (native `u8×i8`) | 2.22× | *with* the native arm | **1.68–2.04×** |
+| Jetson Orin Nano (native `i8×i8`) | 2.40× | *against* the native arm | **2.60–3.18×** |
 
 The Jetson net figure borrows an x86 control for an ARM decomposition — no ARM
 machine here emulates both pairings — so its 2.40× raw is the measurement and the
 netted range is indicative. That is §6's own caveat, pointing the other way.
 
-Against the same ratios on the dot (Ryzen 1.50× raw → 1.14–1.37× net; Jetson
+Against the same ratios on the dot (Ryzen 1.50× raw → 1.13–1.35× net; Jetson
 2.75× raw), the GEMM figure is roughly 1.5× the dot's. That is the prediction §6
 made in direction and could not size: a dot is bandwidth-bound so instruction
 efficiency barely shows, while a GEMM is compute-bound throughout and shows it
 fully. The Ryzen dot figure reproducing §6's ~1.2× is the cross-check that the
 two suites measure the same thing.
 
-**The two decomposed machines reach parity with fp32 and no more** (1.09×, 1.01×)
-while both native machines clear it by 2.2–3.4×. So the silicon decides whether
+**The two decomposed machines reach parity with fp32 and no more** (1.12×, 1.00×;
+the Xeon's 12% sits against a 9.6% spread on that machine) while both native
+machines clear it by 2.2–3.3×. So the silicon decides whether
 an int8 GEMM is worth running at all, which is the opposite of what §6a inferred
 from the Xeon alone. That column carries no pairing confound — it compares each
 machine's fastest int8 arm against its OWN fp32 GEMM — so this conclusion rests
@@ -332,14 +335,14 @@ on the raw data and survives the netting above.
 
 Physically coherent, worth checking on a 3x claim: one quad instruction does four
 times the multiply-accumulates of an fp32 FMA of the same width, so 4× is the
-ceiling. Measured against each machine's own fp32 GEMM — Ryzen 3.37×, Jetson
-2.20×, decomposed i7 1.01×.
+ceiling. Measured against each machine's own fp32 GEMM — Ryzen 3.26×, Jetson
+2.20×, decomposed i7 1.00×.
 
 **And the fastest arm INVERTS between the two native machines**, because they
-implement opposite pairings (§6b). Comparing them by arm NAME gives 467.0 against
-13.1, a 36× "machine gap" that is almost entirely a naming artifact. The naive
-`u8i8_quad / i8_widen` ratio that §6a warns against reads 4.84× on the Ryzen and
-1.52× on the Jetson, against true kernel effects of 2.18× and 3.64× — it
+implement opposite pairings (§6b). Comparing them by arm NAME gives 461.0 against
+13.1, a 35× "machine gap" that is almost entirely a naming artifact. The naive
+`u8i8_quad / i8_widen` ratio that §6a warns against reads 4.78× on the Ryzen and
+1.52× on the Jetson, against true kernel effects of 2.15× and 3.64× — it
 overstates on one machine and understates on the other, which is a sharper
 demonstration of the hazard than the Xeon could give.
 

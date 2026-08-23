@@ -49,9 +49,9 @@ table:
 
   | machine | native pairing | kernel (quad ÷ widen) | native ÷ emulated (raw) | best int8 ÷ fp32 |
   |---|---|---|---|---|
-  | Xeon E5-2420 v2 | none | 1.27× | — | 1.09× |
-  | i7-12700K | none | **2.70×** | — | 1.01× |
-  | Ryzen 9 8945HS | `u8×i8` | 2.18× | **2.22×** | **3.37×** |
+  | Xeon E5-2420 v2 | none | 1.25× | — | 1.12× |
+  | i7-12700K | none | **2.73×** | — | 1.00× |
+  | Ryzen 9 8945HS | `u8×i8` | 2.15× | **2.22×** | **3.26×** |
   | Jetson Orin Nano | `i8×i8` | **3.64×** | **2.40×** | **2.20×** |
 
   **THIS REVERSES WHAT THIS BULLET USED TO SAY.** Written from the Xeon alone, it
@@ -60,7 +60,7 @@ table:
   something we already have." That was wrong, and wrong in the direction that
   costs money by *not* spending it:
 
-  - The kernel shape is worth **1.27×–3.64×**, not ~1.25× — the Xeon is the low
+  - The kernel shape is worth **1.25×–3.64×**, not one number — the Xeon is the low
     outlier by about a factor of three, and it is the machine the claim
     generalised from.
   - The silicon on top of that is worth a further **1.7×–2.0× on Zen 4**, net of
@@ -70,9 +70,9 @@ table:
     arm — but that borrows an x86 control for an ARM decomposition, so treat the
     raw number as the measurement.
   - **Only the machines with the instruction beat fp32 by a margin worth having.**
-    The two decomposed parts land at 1.01× and 1.09× — the i7's 1% is inside its
-    own 1.8% run-to-run spread, and the Xeon's 9% is a real but small edge. The
-    two native parts reach 2.20× and 3.37×. So the silicon decides whether an int8
+    The two decomposed parts land at 1.00× and 1.12× — the i7 is exactly at
+    parity, and the Xeon's 12% sits against a 9.6% run-to-run spread on that
+    machine. The two native parts reach 2.20× and 3.26×. So the silicon decides whether an int8
     GEMM is worth *choosing*, which is the opposite of the previous reading. This
     column carries no pairing confound — each machine's best int8 arm against its
     *own* fp32 GEMM — so it is the one to quote when justifying hardware.
@@ -91,7 +91,7 @@ table:
 
   It is a control, not a clean one: the pairings also differ in decomposition
   path, so the raw ratio still moves two variables. The two fully-decomposed
-  machines measure that residue directly (1.10×–1.28× on the GEMM), which nets
+  machines measure that residue directly (1.09×–1.32× on the GEMM), which nets
   Zen 4 to ~1.7–2.0×. The Jetson has no same-ISA control, so its netted figure
   borrows an x86 one.
 
