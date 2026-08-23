@@ -35,6 +35,7 @@
 #include <vector>
 
 #include <mtl/detail/gemm_blocked.hpp>
+#include <mtl/detail/nc_model.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/simd/blocking.hpp>
 #include <mtl/util/cache_info.hpp>
@@ -258,13 +259,25 @@ int main(int argc, char** argv) {
             // second. Recording only the request cost a wrong analysis of the
             // Jetson run, where 8 was asked for on a 6-core part and the shortfall
             // was visible only as a suspiciously low speedup.
+            // THE MEDIATORS (#479). Throughput alone can say a model was
+            // faster; these are what say it was faster BECAUSE it balanced the
+            // partition, or that the packed-B working set did or did not fit.
+            // Without them the experiment picks a winner it cannot explain, and
+            // the next hardware change starts from zero -- which is the position
+            // #430 left this line of work in.
+            const double ic_imb = mtl::detail::grid_imbalance(plan.nib, plan.ic_nt);
+            const double jc_imb = mtl::detail::grid_imbalance(plan.njb, plan.jc_nt);
+            const std::size_t pb = mtl::detail::packed_b_bytes(
+                plan.jc_nt, bp.kc, bp.nc, dtype == "float" ? sizeof(float)
+                                                           : sizeof(double));
             std::snprintf(buf, sizeof buf,
                 "%s,%s,%zu,%zu,%zu,%u,%u,%zu,%zu,%zu,%zu,%zu,"
-                "%zu,%zu,%zu,%u,%u,%d,%.6f,%.3f,%.6f",
+                "%zu,%zu,%zu,%u,%u,%.6f,%.6f,%zu,%zu,%d,%.6f,%.3f,%.6f",
                 label.c_str(), dtype.c_str(), sh.m, sh.n, sh.k, nt,
                 mtl::detail::thread_pool::instance().size(),
                 bp.mr, bp.nr, bp.kc, bp.mc, bp.nc,
                 plan.mc, plan.nib, plan.njb, plan.ic_nt, plan.jc_nt,
+                ic_imb, jc_imb, pb, ci.l3_bytes,
                 reps, secs, gf, chk);
             rows.emplace_back(buf);
             std::fprintf(stderr,
@@ -285,7 +298,8 @@ int main(int argc, char** argv) {
     if (!out) { std::fprintf(stderr, "cannot write %s\n", csv.c_str()); return 1; }
     if (fresh)
         out << "arm,dtype,m,n,k,threads,pool,mr,nr,kc,mc,nc,"
-               "mc_used,nib,njb,ic_nt,jc_nt,reps,min_s,gflops,checksum\n";
+               "mc_used,nib,njb,ic_nt,jc_nt,ic_imbalance,jc_imbalance,"
+               "packedB_bytes,l3_bytes,reps,min_s,gflops,checksum\n";
     for (const auto& r : rows) out << r << "\n";
 
     // Sidecar, matching the convention bench_all uses, plus the cache figures --

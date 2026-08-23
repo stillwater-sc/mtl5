@@ -95,6 +95,12 @@ endforeach()
 # Blocking response-curve sweep (#453): the same bench_blocking_ab source, built
 # with the diagnostic override so kc/mc/nc can be set per run from the
 # environment. Separate target so no other binary carries the knob.
+# Offline enumeration of where the candidate nc models disagree (#479). Measures
+# nothing -- pure functions only -- so it plans a scarce-hardware session instead
+# of consuming one.
+add_executable(sweep_nc_models sweep_nc_models.cpp)
+target_link_libraries(sweep_nc_models PRIVATE MTL5::mtl5)
+
 add_executable(bench_blocking_sweep bench_blocking_ab.cpp)
 target_link_libraries(bench_blocking_sweep PRIVATE MTL5::mtl5)
 target_include_directories(bench_blocking_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)

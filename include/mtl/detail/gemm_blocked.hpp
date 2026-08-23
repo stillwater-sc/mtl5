@@ -104,6 +104,86 @@ inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt
     return mc == 0 ? mc_max : mc;
 }
 
+/// Choose the jc-block size that balances the threaded n-partition -- the jc-side
+/// counterpart of `balanced_mc` (#479, feeding #429).
+///
+/// `nc_max` is an UPPER bound set by the L3 budget, so any smaller value is
+/// still cache-legal and we are free to trade block size for a partition that
+/// divides evenly across the teams. The threaded nest hands jc-blocks to the
+/// `jc_nt` teams round-robin, so the most-loaded team gets `ceil(njb / jc_nt)`
+/// blocks and the critical path is minimised when `njb` is a MULTIPLE of
+/// `jc_nt`. This picks the largest `nc <= nc_max` achieving that.
+///
+/// WHY THE ic SIDE ALREADY HAS THIS AND THE jc SIDE DOES NOT. `balanced_mc`
+/// exists because #408 measured what its absence costs: an mc that moved 64 ->
+/// 60 took nib from 16 (exactly 2.00 blocks per thread on 8 threads) to 18
+/// (2.25), a 1.41x critical path that turned a +21.5% single-thread win into a
+/// -7.4% eight-thread regression. The jc loop has the same arithmetic and no
+/// such repair, which is why `with_detected_caches` withholds L3 from `nc`
+/// (see blocking.hpp) -- applying it moves the jc BLOCK COUNT and there is
+/// nothing to absorb the imbalance.
+///
+/// NOT YET WIRED INTO THE NEST. #479 measures whether it should be, on the
+/// machines that can show it; #429 is the change that would apply it. Shipping
+/// it unmeasured is exactly the mistake #426 made with cache detection.
+///
+/// Returns `nc_max` unchanged for the serial case, where there is nothing to
+/// balance.
+///
+/// IT DOES NOT ROUND THE BALANCED `nc` TO A MULTIPLE OF `nr`, and that omission
+/// is the whole lesson of #408 restated on this axis. Rounding `nc` after
+/// balancing changes `njb` again and destroys the property just established:
+/// the first draft of this function did round, and the pre-registered control
+/// below caught it -- `m4_per_sharer` at n = 276681, jc_nt = 4 went from a
+/// perfectly even partition to 1.0038, i.e. the balancing step made the
+/// imbalance WORSE. That is #408's defect exactly: a register-tile quantity
+/// perturbing a partition quantity.
+///
+/// `balanced_mc` takes the same position for the same reason -- it rounds to
+/// whole `mr` panels only on the SERIAL path, where there is no partition to
+/// perturb. A multiple of `nr` is an optimisation, not a requirement: the nest
+/// computes `npanels = ceil(nci / NR)` and the micro-kernel's edge path already
+/// handles a ragged final panel, since `n` is not a multiple of `nc` in general.
+inline std::size_t balanced_nc(std::size_t n, std::size_t nc_max, unsigned jc_nt,
+                               std::size_t nr = 1) {
+    if (jc_nt <= 1 || n == 0 || nc_max == 0) {
+        // Serial: nothing to balance, so take the largest cache-legal block and
+        // round it to whole nr-column panels -- harmless here, and it removes the
+        // ragged panel from every jc block rather than only the last.
+        if (nr > 1 && nc_max >= nr) return (nc_max / nr) * nr;
+        return nc_max;
+    }
+    std::size_t njb = (n + nc_max - 1) / nc_max;        // fewest blocks the bound allows
+    njb = ((njb + jc_nt - 1) / jc_nt) * jc_nt;          // round up to a multiple of jc_nt
+    if (njb == 0) return nc_max;
+    const std::size_t nc = (n + njb - 1) / njb;         // cols per block; <= nc_max
+    return nc == 0 ? nc_max : nc;
+}
+
+/// How much of a round-robin partition's capacity the most-loaded worker wastes:
+/// `ceil(blocks / workers) * workers / blocks`, which is 1.0 exactly when the
+/// blocks divide evenly and grows as the remainder does.
+///
+/// This is the MEDIATOR #479 turns on. Recording throughput alone can say a
+/// model was faster; recording this alongside it is what says the model was
+/// faster BECAUSE it balanced the partition. Without it the experiment picks a
+/// winner it cannot explain, and the next hardware change starts from zero.
+constexpr double grid_imbalance(std::size_t blocks, unsigned workers) noexcept {
+    if (blocks == 0 || workers == 0) return 1.0;
+    const std::size_t per = (blocks + workers - 1) / workers;   // ceil
+    return static_cast<double>(per * workers) / static_cast<double>(blocks);
+}
+
+/// Bytes of packed B held simultaneously: one `kc x nc` panel per jc-team.
+///
+/// Tests the capacity story that models M3 and M4 rest on -- that `nc` should be
+/// divided by the team count or the sharer count -- directly, against the L3 the
+/// machine actually reports, rather than by inference from a throughput change.
+constexpr std::size_t packed_b_bytes(unsigned jc_nt, std::size_t kc, std::size_t nc,
+                                     std::size_t sdata) noexcept {
+    return static_cast<std::size_t>(jc_nt == 0 ? 1u : jc_nt) * kc * nc * sdata;
+}
+
 /// The largest mc for which the packed A block AND the strip of C it accumulates
 /// both fit in L2. Returns 0 for "no bound" on degenerate input.
 ///
