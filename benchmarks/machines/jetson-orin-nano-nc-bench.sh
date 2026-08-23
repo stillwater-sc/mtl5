@@ -18,17 +18,11 @@
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-EXPECT="Orin"
-ACTUAL="$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//' \
-          || tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo unknown)"
-if [[ "$ACTUAL" != *"$EXPECT"* ]]; then
-    echo "This profile is for a $EXPECT; this machine reports:"
-    echo "  $ACTUAL"
-    [ "${FORCE:-0}" = "1" ] || { echo "Refusing to write $EXPECT data. Set FORCE=1 if this really is one."; exit 2; }
-fi
+. "$(dirname "${BASH_SOURCE[0]}")/_identify.sh"
+require_machine "Orin" "Jetson Orin"
 
 echo "profile: jetson-orin-nano-nc-bench"
-echo "  cpu:     $ACTUAL"
+echo "  cpu:     $MTL5_MACHINE_ID"
 echo "  reps:    3   rounds: 12"
 echo "  arch:    -mcpu=native"
 echo "  threads: 6"
