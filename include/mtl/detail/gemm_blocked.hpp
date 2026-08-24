@@ -348,7 +348,7 @@ template <typename TC>
 inline std::size_t nc_for_plan(std::size_t m, std::size_t n, unsigned budget,
                                nc_model model) {
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
-    if (model == nc_model::m0_default) return bp.nc;     // the shipped path, untouched
+    if (model == nc_model::m0_default) return bp.nc;     // the pre-#429 path, untouched
 
     const simd::blocking_params& rbp = simd::runtime_blocking<TC>();
     // Pass 1: the grid the baseline nc produces, to learn jc_nt.
@@ -359,8 +359,44 @@ inline std::size_t nc_for_plan(std::size_t m, std::size_t n, unsigned budget,
                              simd::default_hw_traits.l3_bytes,
                              ci.l3_bytes, ci.l3_sharing_cores, g0.jc_nt};
     const std::size_t nc = nc_for_model(model, in);
-    // nc is a loop step and a divisor: never leave here as 0.
-    return nc == 0 ? bp.nc : nc;
+    if (nc == 0) return bp.nc;      // nc is a loop step and a divisor; never 0
+
+    // ---- M6's guard (#429) -------------------------------------------------
+    //
+    // M1 is right on 42 of 44 measured arms and loses ~18% on the other two.
+    // Both losses are the same event: a smaller `nc` raises `njb`, which lets
+    // `plan_gemm_grid` re-factor the grid and take `jc_nt` 2 -> 4. Each team
+    // holds its own `kc x nc` packed-B panel, so four teams instead of two moves
+    // the resident set 16 MB -> 24 MB. On an i7-12700K (25 MB L3) that still
+    // fits and the arm GAINS x1.02; on a Ryzen 9 8945HS (16 MB) it does not, and
+    // the arm loses to x0.82. Measured across three independent sessions there:
+    // 0.8181 / 0.8181 / 0.8203.
+    //
+    // So the guard is BOTH terms. "Grew" alone fires on 4 arms and would decline
+    // two real gains; "exceeds L3" alone fires on 35. Together they fire on
+    // exactly the 2 regressing arms across four microarchitectures and two
+    // dtypes, with no false positives -- and unlike the grid-change predicate
+    // that was tried first, this one is the mechanism stated directly rather
+    // than a correlate fitted to the losses.
+    //
+    // IT NEEDS THE RE-PLANNED jc_nt, which is why it cannot live in
+    // `nc_for_model`: that function sees only pass 1's grid, and `jc_nt` is
+    // exactly what the candidate `nc` changes.
+    //
+    // `sizeof(TC)` overstates the panel for a mixed-precision GEMM, where B is
+    // packed in the narrower operand type -- #486. That makes the guard
+    // CONSERVATIVE there (it sees a larger set than is really resident, so it
+    // declines slightly too eagerly), never permissive. It also matches what the
+    // #479 measurements used, so the guard tests the quantity that was measured.
+    if (model == nc_model::m6_guarded) {
+        if (nc == bp.nc) return nc;             // nothing changed, nothing to guard
+        const std::size_t l3 = ci.l3_bytes ? ci.l3_bytes : simd::default_hw_traits.l3_bytes;
+        const gemm_grid g1 = plan_gemm_grid(m, n, rbp.mc, nc, bp.mr, budget);
+        const std::size_t pb_new = packed_b_bytes(g1.jc_nt, rbp.kc, nc, sizeof(TC));
+        const std::size_t pb_old = packed_b_bytes(g0.jc_nt, rbp.kc, bp.nc, sizeof(TC));
+        if (nc_guard_declines(pb_new, pb_old, l3)) return bp.nc;   // fall back to M0
+    }
+    return nc;
 }
 
 /// Everything the threaded nest decides for one call: the ic step it will

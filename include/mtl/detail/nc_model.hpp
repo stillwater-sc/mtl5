@@ -8,30 +8,40 @@
 // #408 measured at 1.41x critical path, on a loop that now has `balanced_mc`
 // and a jc loop that has nothing.
 //
-// SIX MODELS, NOT ONE HYPOTHESIS. They are here as pure functions so the
+// SEVEN MODELS, NOT ONE HYPOTHESIS. They are here as pure functions so the
 // disagreement between them can be enumerated OFFLINE -- for a given machine's
 // blocking parameters, most shapes give every model the same answer, and only
 // the shapes where they differ are worth spending machine time on. That is what
-// makes a six-model sweep across four machines affordable at all.
+// makes a seven-model sweep across four machines affordable at all.
 //
-// THE NEST DEFAULTS TO M0 AND STILL DOES. `gemm_blocked` can now be asked for
-// another model at runtime -- that is the harness arm #479 needs, without which
-// the six models cannot be TIMED against each other in one binary -- but the
-// default is M0 and nothing selects anything else unless a caller or the
-// `MTL5_NC_MODEL` environment variable says so out loud. See
-// `nc_model_selection` below for why the default is a short-circuit to the
-// shipped constant rather than "M0 computed", and `nc_for_plan` in
-// gemm_blocked.hpp for the two-pass the selection needs.
+// THE DEFAULT IS NOW M6 (#429), AND THAT IS A MEASURED CHOICE. #479 timed all
+// six candidates on four microarchitectures and two dtypes -- 840 arms, every
+// one verified bit-identical to the baseline. What it found:
 //
-// Choosing between the models is #479's job and needs >= 3 microarchitectures;
-// making the winner the DEFAULT is #429, and is not this. Shipping one unmeasured
-// would repeat #426, where runtime cache detection was merged on the assumption
-// that real sizes must beat constants tuned for a Haswell core, and then lost on
-// every machine that ran it.
+//   M6 = M1 + guard  DEFAULT. 42 of 44 arms taken, median x1.161, worst
+//                    x1.0002, zero regressions. See `nc_for_plan`.
+//   M1 balanced      median x1.152 but TWO regressions to x0.82-0.89, both on
+//                    a Zen 4 whose 16 MB L3 cannot hold the grown packed-B set.
+//   M2 detected L3   FALSIFIED. Up to 45% slower (x0.548), 37 regressions --
+//                    and it already includes balanced_nc, so balancing does not
+//                    rescue it. #426's lesson a second time: a larger cache
+//                    block is not a faster one. This is why the tripwire in
+//                    test_cache_info.cpp asserting l3 is NOT applied stays.
+//   M5 exact         Same failure as M2, x0.548 worst, 39 regressions.
+//   M4 per-sharer    The LARGEST wins measured anywhere here, median x1.763 --
+//                    but confined to the jc-parallel shapes the sweep selects,
+//                    and it costs ~1.2% on SQUARE GEMM, the common case.
+//   M3 per-team      median x1.223, taxes T=1.
 //
-// M3 is included despite having been REJECTED on #426 as modelling the wrong
-// cause -- the regression there was block-count imbalance, not capacity. It is
-// cheap to evaluate, and the data should settle it rather than the argument.
+// M3 and M4 were rejected on #426 as "modelling the wrong cause -- the
+// regression is block-count imbalance, not capacity". The measurement reverses
+// that: M4's speedup does NOT track imbalance (r = 0.29) and does track `nc`
+// being reduced. Capacity was not the wrong cause; on those shapes it is the
+// dominant one. They are not the default only because they do not generalise.
+//
+// M0 IS KEPT AS THE PRE-#429 BASELINE so the experiment stays reproducible: an
+// arm labelled "the old behaviour" has to BE the old behaviour, not a
+// reconstruction of it. `MTL5_NC_MODEL=m0_default` restores it exactly.
 
 #include <cstddef>
 #include <cstdio>    // fprintf, for the selector's refusal message
@@ -100,12 +110,14 @@ inline std::size_t balanced_nc(std::size_t n, std::size_t nc_max, unsigned jc_nt
 
 /// Candidate models for sizing `nc`. See the file header for why each exists.
 enum class nc_model {
-    m0_default,     ///< today: compile-time L3, no balancing. The baseline.
+    m0_default,     ///< pre-#429: compile-time L3, no balancing. The baseline.
     m1_balanced,    ///< M0 + balanced_nc
-    m2_detected,    ///< detected L3 + balanced_nc
+    m2_detected,    ///< detected L3 + balanced_nc -- FALSIFIED, see below
     m3_per_team,    ///< (detected L3 / jc_nt) + balanced -- rejected on #426, measured anyway
     m4_per_sharer,  ///< (detected L3 / L3 sharing cores) + balanced
     m5_exact,       ///< pick nc so njb == jc_nt exactly, where n allows
+    m6_guarded,     ///< M1, declined where the packed-B set would grow past L3.
+                    ///< THE DEFAULT since #429. See nc_for_plan in gemm_blocked.hpp.
 };
 
 /// Everything a model needs. Kept as one struct so adding a model cannot
@@ -150,6 +162,10 @@ inline std::size_t nc_for_model(nc_model model, const nc_model_inputs& in) noexc
             return nc_from_budget(in.l3_default_bytes, in.kc, in.sdata, in.nr);
 
         case nc_model::m1_balanced:
+        case nc_model::m6_guarded:
+            // Same arithmetic. M6's guard needs the jc_nt that the RE-PLAN
+            // produces, and this function only sees the first pass's, so the
+            // guard lives in `nc_for_plan`. Here M6 is M1.
             return balanced_nc(in.n, nc_from_budget(in.l3_default_bytes, in.kc, in.sdata, in.nr),
                                teams, in.nr);
 
@@ -181,6 +197,31 @@ inline std::size_t nc_for_model(nc_model model, const nc_model_inputs& in) noexc
     return nc_from_budget(in.l3_default_bytes, in.kc, in.sdata, in.nr);
 }
 
+/// M6's rule, as a named predicate: decline the balanced `nc` when it would BOTH
+/// grow the resident packed-B set AND push it past L3 (#429, measured in #479).
+///
+/// BOTH TERMS ARE LOAD-BEARING, and the measurement says so rather than the
+/// argument. Over 44 arms on four microarchitectures and two dtypes:
+///
+///   grew                  fires  4 -- catches both regressions, declines 2 GAINS
+///   exceeds L3            fires 35 -- catches both, declines 33 gains
+///   grew AND exceeds L3   fires  2 -- catches both, declines nothing else
+///
+/// The mechanism it encodes: `balanced_nc` lowers `nc`, which raises `njb`, which
+/// can let `plan_gemm_grid` re-factor the grid and take `jc_nt` 2 -> 4. Each team
+/// holds its own `kc x nc` packed-B panel, so the resident set moves 16 MB ->
+/// 24 MB. An i7-12700K (25 MB L3) absorbs that and gains x1.02; a Ryzen 9 8945HS
+/// (16 MB) does not and loses to x0.82 -- reproduced at 0.8181 / 0.8181 / 0.8203
+/// across three independent sessions, the last with a pinned governor.
+///
+/// A set that merely EXCEEDS L3 is not the problem: where the set shrank, the
+/// same Ryzen gained x1.06-1.74 whether it overflowed or not. It is the growth
+/// across the boundary that costs.
+constexpr bool nc_guard_declines(std::size_t packed_b_new, std::size_t packed_b_old,
+                                 std::size_t l3_bytes) noexcept {
+    return packed_b_new > packed_b_old && packed_b_new > l3_bytes;
+}
+
 /// Short stable token for CSV columns and command lines.
 constexpr const char* nc_model_name(nc_model m) noexcept {
     switch (m) {
@@ -190,6 +231,7 @@ constexpr const char* nc_model_name(nc_model m) noexcept {
         case nc_model::m3_per_team:   return "m3_per_team";
         case nc_model::m4_per_sharer: return "m4_per_sharer";
         case nc_model::m5_exact:      return "m5_exact";
+        case nc_model::m6_guarded:    return "m6_guarded";
     }
     return "unknown";
 }
@@ -197,6 +239,7 @@ constexpr const char* nc_model_name(nc_model m) noexcept {
 inline constexpr nc_model all_nc_models[] = {
     nc_model::m0_default, nc_model::m1_balanced, nc_model::m2_detected,
     nc_model::m3_per_team, nc_model::m4_per_sharer, nc_model::m5_exact,
+    nc_model::m6_guarded,
 };
 
 /// Parse a model name; `ok` reports whether it was recognised.
@@ -217,7 +260,7 @@ inline nc_model nc_model_from_name(const char* s, bool& ok) noexcept {
     return nc_model::m0_default;
 }
 
-/// The model this process runs, from `MTL5_NC_MODEL`; M0 when unset.
+/// The model this process runs, from `MTL5_NC_MODEL`; M6 when unset (#429).
 ///
 /// Read ONCE into a function-local static: the value is baked into the plan
 /// every GEMM makes, so a mid-run change would split one CSV row's timings
@@ -231,7 +274,7 @@ inline nc_model nc_model_from_name(const char* s, bool& ok) noexcept {
 inline nc_model nc_model_selection() {
     static const nc_model sel = [] {
         const char* e = std::getenv("MTL5_NC_MODEL");
-        if (e == nullptr || *e == '\0') return nc_model::m0_default;
+        if (e == nullptr || *e == '\0') return nc_model::m6_guarded;   // #429
         bool ok = false;
         const nc_model m = nc_model_from_name(e, ok);
         if (!ok) {

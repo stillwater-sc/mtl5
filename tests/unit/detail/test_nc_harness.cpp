@@ -72,18 +72,37 @@ TEST_CASE("M0 computed equals the constant the nest ships", "[detail][gemm][nc]"
     check(float{}, l3);
 }
 
-TEST_CASE("the harness arm is inert until asked", "[detail][gemm][nc]") {
-    // No MTL5_NC_MODEL in the environment -> M0, and a plan that reports exactly
-    // the compile-time constant. If this fails, some model became the default
-    // without the measurement #479 exists to produce.
-    CHECK(nc_model_selection() == nc_model::m0_default);
+TEST_CASE("the default is the measured winner, and only that",
+          "[detail][gemm][nc]") {
+    // THIS ASSERTION USED TO READ `== m0_default`, and #429 changed it on
+    // purpose. It was written in #484 as a tripwire against a model becoming the
+    // default without the measurement #479 exists to produce, and it fired when
+    // that measurement arrived and M6 was adopted -- which is the tripwire
+    // working, not failing.
+    //
+    // It still guards the same thing, now stated against the model that earned
+    // the position: 44 arms on four microarchitectures and two dtypes, median
+    // x1.161, worst x1.0002, zero regressions. Any OTHER value here means the
+    // default drifted again.
+    CHECK(nc_model_selection() == nc_model::m6_guarded);
 
+    // The two falsified models must never be reachable as a default. M2 and M5
+    // lose up to 45% (x0.548) with 37 and 39 regressions -- #426's lesson twice
+    // over -- and the only way they come back is by someone editing this line.
+    CHECK(nc_model_selection() != nc_model::m2_detected);
+    CHECK(nc_model_selection() != nc_model::m5_exact);
+
+    // M0 stays exactly reachable, so the pre-#429 arm IS the old behaviour
+    // rather than a reconstruction of it.
     constexpr auto bpd = mtl::simd::default_blocking<double>;
     for (unsigned t : {1u, 2u, 4u, 8u}) {
         INFO("threads=" << t);
-        CHECK(gemm_plan_for<double>(4096, 8192, t).nc == bpd.nc);
         CHECK(nc_for_plan<double>(4096, 8192, t, nc_model::m0_default) == bpd.nc);
     }
+
+    // And on a shape where balancing is a no-op, the default still lands on the
+    // compile-time constant -- the new default is not a blanket change.
+    CHECK(gemm_plan_for<double>(4096, 8192, 1).nc == bpd.nc);
 }
 
 TEST_CASE("the model argument reaches the block size", "[detail][gemm][nc]") {
