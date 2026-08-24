@@ -248,6 +248,15 @@ inline constexpr nc_model all_nc_models[] = {
     nc_model::m6_guarded,
 };
 
+/// How many models there are. Derived, because a hardcoded copy of this number
+/// silently EXCLUDED a model once: `bench_nc_models` and `sweep_nc_models` both
+/// carried a literal `6`, and when M6 was added in #429 neither tool measured
+/// it -- the shipped default was the one arm missing from the harness that
+/// exists to check the default. Nothing failed; the CSVs just had six rows per
+/// shape instead of seven.
+inline constexpr std::size_t nc_model_count =
+    sizeof(all_nc_models) / sizeof(all_nc_models[0]);
+
 /// Parse a model name; `ok` reports whether it was recognised.
 ///
 /// UNRECOGNISED NAMES ARE NOT SILENTLY M0. A typo'd `MTL5_NC_MODEL=m1_balnced`

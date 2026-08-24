@@ -88,15 +88,16 @@ struct arm_result {
 /// quietly reported as a result.
 template <typename T>
 std::vector<arm_result> run(const nc_point& p, unsigned reps, unsigned rounds,
-                            double& worst_spread) {
+                            double& worst_spread, double& worst_tail) {
     const std::size_t m = p.m, n = p.n, k = p.k;
     std::vector<T> A(m * k), B(k * n), C(m * n);
     for (std::size_t i = 0; i < A.size(); ++i) A[i] = T((i * 37) % 101) - T(50);
     for (std::size_t i = 0; i < B.size(); ++i) B[i] = T((i * 53) % 97) - T(48);
 
-    constexpr std::size_t NMODELS = 6;
+    constexpr std::size_t NMODELS = mtl::detail::nc_model_count;
     std::vector<arm_result> out(NMODELS);
     std::vector<double> first_secs(NMODELS, 0.0);
+    std::vector<std::vector<double>> per_round(NMODELS);   // for the tail test
 
     // ---- pass 1: verify + warm, both untimed ------------------------------
     //
@@ -162,17 +163,47 @@ std::vector<arm_result> run(const nc_point& p, unsigned reps, unsigned rounds,
                 std::chrono::duration<double>(t1 - t0).count() / double(reps);
             if (secs < out[mi].best_secs) out[mi].best_secs = secs;
             if (r == 0) first_secs[mi] = secs;
+            per_round[mi].push_back(secs);
         }
     }
 
-    // How far the first round sat above the eventual minimum, worst arm. A large
-    // value means the minimum is not converged and `--rounds` is too low.
+    // ---- two DIFFERENT questions, which this used to conflate ---------------
+    //
+    // (a) CONVERGENCE -- has the minimum stopped moving? This is the question
+    //     "--rounds" answers, and it is measured by asking what the LAST THIRD
+    //     of the rounds bought: the best time over all rounds against the best
+    //     over the earlier two thirds. Near zero means the tail contributed
+    //     nothing and more rounds would not either.
+    //
+    // (b) WARMUP -- how cold was round 0? Reported, because a large value says
+    //     the untimed warmup pass did not fully warm and is worth knowing. It
+    //     carries NO advice: raising `--rounds` cannot change round 0.
+    //
+    // The original code computed (b) and printed (a)'s advice against it. On the
+    // Xeon session behind #485 that fired at 45.62% and told the operator to
+    // spend twice the machine time on a session whose 24 control arms -- each an
+    // independent minimum over 12 rounds -- agreed to within 1.48%. Minima that
+    // unconverged could not do that. The advice was wrong and it was written
+    // into a committed sidecar.
     worst_spread = 0.0;
-    for (std::size_t mi = 0; mi < NMODELS; ++mi)
-        if (out[mi].best_secs > 0.0) {
-            const double s = first_secs[mi] / out[mi].best_secs - 1.0;
-            if (s > worst_spread) worst_spread = s;
-        }
+    worst_tail = 0.0;
+    const std::size_t head = (rounds >= 3) ? (per_round[0].size() * 2) / 3
+                                           : per_round[0].size();
+    for (std::size_t mi = 0; mi < NMODELS; ++mi) {
+        if (out[mi].best_secs <= 0.0) continue;
+        const double s = first_secs[mi] / out[mi].best_secs - 1.0;
+        if (s > worst_spread) worst_spread = s;
+
+        // Best over the earlier rounds only. With fewer than 3 rounds there is
+        // no tail to speak of and this degenerates to 0, which is honest: the
+        // run cannot answer the convergence question either way.
+        if (head == 0 || head >= per_round[mi].size()) continue;
+        double head_best = per_round[mi][0];
+        for (std::size_t r = 1; r < head; ++r)
+            if (per_round[mi][r] < head_best) head_best = per_round[mi][r];
+        const double gain = head_best / out[mi].best_secs - 1.0;
+        if (gain > worst_tail) worst_tail = gain;
+    }
     return out;
 }
 
@@ -282,13 +313,15 @@ int main(int argc, char* argv[]) {
     std::size_t control_n      = 0;     // how many such arms -- 0 makes the above vacuous
     double      best_disc_gain = 0.0;   // largest M1-over-M0 gain where M1's nc DIFFERS
     std::size_t disc_m1_n      = 0;
-    double      worst_convergence = 0.0;
+    double      worst_warmup = 0.0;     // round-0 coldness; a DIAGNOSTIC, no advice
+    double      worst_tail_gain = 0.0;  // what the last third of rounds bought
 
     for (const nc_point& p : shapes) {
-        double spread = 0.0;
-        const auto arms = f32 ? run<float>(p, reps, rounds, spread)
-                              : run<double>(p, reps, rounds, spread);
-        if (spread > worst_convergence) worst_convergence = spread;
+        double spread = 0.0, tail = 0.0;
+        const auto arms = f32 ? run<float>(p, reps, rounds, spread, tail)
+                              : run<double>(p, reps, rounds, spread, tail);
+        if (spread > worst_warmup) worst_warmup = spread;
+        if (tail > worst_tail_gain) worst_tail_gain = tail;
 
         const double flops = 2.0 * double(p.m) * double(p.n) * double(p.k);
         const double base  = arms[0].best_secs;
@@ -362,9 +395,24 @@ int main(int argc, char* argv[]) {
                 control_spread * 100.0, control_n);
     std::printf("Best M1-over-M0 gain where M1's nc actually differed: %.2f%% "
                 "(over %zu arm(s))\n", best_disc_gain * 100.0, disc_m1_n);
-    std::printf("Worst first-round excess over the minimum: %.2f%%%s\n",
-                worst_convergence * 100.0,
-                worst_convergence > 0.25 ? "  (raise --rounds)" : "");
+    // CONVERGENCE, judged against this session's OWN noise floor rather than a
+    // hardcoded threshold. If the last third of the rounds improved the best
+    // time by more than the spread of arms running byte-identical code, the
+    // minimum is still moving materially and more rounds would help. The old
+    // check compared a warmup statistic against a bare `> 0.25` with no
+    // recorded rationale.
+    const bool converged = (control_n > 0) ? (worst_tail_gain <= control_spread)
+                                           : (worst_tail_gain <= 0.01);
+    std::printf("Convergence: the last third of rounds improved the best time by "
+                "%.2f%%%s\n", worst_tail_gain * 100.0,
+                converged ? "  (converged)" : "  <- raise --rounds");
+    if (control_n == 0)
+        std::printf("  (judged against a 1%% fallback -- no control arms to "
+                    "measure this session's noise)\n");
+    std::printf("Warmup: round 0 sat %.2f%% above the eventual minimum, worst arm.\n"
+                "  A diagnostic only -- it says the untimed warmup pass did not fully\n"
+                "  warm. Raising --rounds cannot change round 0.\n",
+                worst_warmup * 100.0);
 
     // The comparison that decides whether this session says anything at all --
     // and the guard that keeps it from being vacuous. With no control arms there
@@ -444,7 +492,9 @@ int main(int argc, char* argv[]) {
            << "noise_floor_arms=" << control_n << "\n"
            << "best_m1_gain="   << best_disc_gain << "\n"
            << "m1_differing_arms=" << disc_m1_n << "\n"
-           << "worst_first_round_excess=" << worst_convergence << "\n"
+           << "worst_first_round_excess=" << worst_warmup << "\n"      // warmup only
+           << "worst_tail_gain=" << worst_tail_gain << "\n"             // convergence
+           << "converged=" << (converged ? 1 : 0) << "\n"
            // Three states, not two: unmeasured is not the same as "no effect",
            // and a reader who sees only a 0/1 flag cannot tell them apart.
            << "effect_above_noise="

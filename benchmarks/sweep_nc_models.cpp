@@ -151,7 +151,7 @@ int main(int argc, char* argv[]) {
     // --threads 1 it reads "5 of 5" while M1 equals M0 on every one of them,
     // because M2/M3/M4 differ and the total does not say which pair moved. The
     // question a planning run is asked is always about a specific pair.
-    std::size_t pair_diff[6] = {0, 0, 0, 0, 0, 0};
+    std::vector<std::size_t> pair_diff(mtl::detail::nc_model_count, 0);
     char buf[512];
 
     for (const auto& p : shapes) {
@@ -185,7 +185,7 @@ int main(int argc, char* argv[]) {
     std::printf("\n%zu of %zu shapes separate at least two models.\n\n",
                 disagreeing, shapes.size());
     std::printf("Against the baseline M0, per model -- this is the number to read:\n");
-    for (std::size_t i = 1; i < 6; ++i)
+    for (std::size_t i = 1; i < mtl::detail::nc_model_count; ++i)
         std::printf("  %-14s %2zu of %2zu%s\n",
                     mtl::detail::nc_model_name(mtl::detail::all_nc_models[i]),
                     pair_diff[i], shapes.size(),
@@ -244,7 +244,7 @@ int main(int argc, char* argv[]) {
                << "l3_sharing_cores="  << l3_sharers  << "\n"
                << "shapes_total=" << shapes.size() << "\n"
                << "shapes_separating_any=" << disagreeing << "\n";
-            for (std::size_t i = 1; i < 6; ++i)
+            for (std::size_t i = 1; i < mtl::detail::nc_model_count; ++i)
                 si << "shapes_differing_vs_m0_"
                    << mtl::detail::nc_model_name(mtl::detail::all_nc_models[i])
                    << "=" << pair_diff[i] << "\n";
