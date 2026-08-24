@@ -288,16 +288,38 @@ bash benchmarks/machines/<machine>-nc-sweep.sh
 sudo cpupower frequency-set -g performance      # if available
 bash benchmarks/machines/<machine>-nc-bench.sh --dtypes "double float"
 
-# 3. Read the last three lines: noise floor, best gain, first-round excess.
+# 3. Read the summary: noise floor, best gain, convergence, warmup.
 #    A gain not comfortably above the floor is a measurement of the box.
 
 # 4. Commit the CSV and its .sysinfo together. CI rejects a bare CSV.
 ```
 
-**Known metric defect:** `worst_first_round_excess` triggers advice to raise
-`--rounds`, but it measures round-0 warmth rather than convergence. The real
-convergence evidence is the control arms agreeing across independent minima.
-The threshold needs recalibrating.
+### Convergence and warmup are separate questions
+
+The summary reports both, and they answer different things:
+
+```
+Convergence: the last third of rounds improved the best time by 4.86%
+             over 84 arm(s)  (converged)
+Warmup:      round 0 sat 29.72% above the eventual minimum, worst arm.
+```
+
+**Convergence** is what `--rounds` answers: the best time over all rounds against
+the best over the earlier two thirds — what the tail actually bought. Judged
+against the session's own noise floor, not a hardcoded threshold, so "still
+moving" means *moving by more than this box's noise*. Below three rounds there is
+no tail and it reports **`UNMEASURED`**, which is not the same as converged.
+
+**Warmup** is a diagnostic with no advice attached: a large value says the untimed
+warmup pass did not fully warm. Raising `--rounds` cannot change round 0.
+
+> These were one statistic until #493. It computed round-0 warmth and printed
+> convergence advice against it — telling an operator to double their machine
+> time on a session whose 24 control arms agreed to 1.48%. The first fix then
+> reported `(converged)` at `--rounds 2`, where no tail exists: a clean verdict
+> from an absent measurement, i.e. the *same* defect as a `0.00%` floor over zero
+> control arms, rebuilt inside its own repair. Both are fixed; the episode is
+> kept here because the pattern recurs.
 
 ---
 
