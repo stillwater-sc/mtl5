@@ -106,8 +106,27 @@ TEST_CASE("detected_hw_traits overrides only what was detected",
     // nc, and nc sets the jc block count that the threaded nest partitions
     // round-robin. Applying a detected 15 MB L3 on this class of machine measured
     // a 10-25% regression on wide/short threaded GEMM (njb 8 -> 5 across 2 teams).
+    //
+    // THE CONDITION THIS USED TO NAME HAS BEEN MET, AND THE ANSWER IS STILL NO.
+    // The comment here read "if a future balanced_nc lets L3 back in, this is
+    // what fails first" -- i.e. it treated the missing jc-side balancer as the
+    // reason L3 was withheld. `balanced_nc` now exists and is the DEFAULT
+    // (#429/#490), and the detected L3 is still not applied, because #479
+    // measured that pairing directly:
+    //
+    //     M2 = detected L3 + balanced_nc   102 arms, worst x0.548, 37 regressions
+    //     M5 = exact partition             102 arms, worst x0.548, 39 regressions
+    //
+    // Up to 45% slower on an i7-12700K, and M2 ALREADY INCLUDES the balancing --
+    // so balancing does not rescue it. The premise was falsified, not deferred.
+    //
+    // So this assertion is no longer waiting on anything. Anyone reaching for it
+    // needs a new measurement across >= 3 microarchitectures, not the argument
+    // that the blocker is gone. See docs/performance/benchmarking-methodology.md
+    // for the hypothesis register and what has already been ruled out.
+    //
     // Unconditional, so it holds on a machine with a huge L3 as well as one with
-    // none -- if a future balanced_nc lets L3 back in, this is what fails first.
+    // none.
     REQUIRE(hw.l3_bytes == def.l3_bytes);
 
     // Non-cache fields are never touched: they select the register tile, which

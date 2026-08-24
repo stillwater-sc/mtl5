@@ -60,17 +60,23 @@ namespace mtl::detail {
 /// blocks and the critical path is minimised when `njb` is a MULTIPLE of
 /// `jc_nt`. This picks the largest `nc <= nc_max` achieving that.
 ///
-/// WHY THE ic SIDE ALREADY HAS THIS AND THE jc SIDE DOES NOT. `balanced_mc`
-/// exists because #408 measured what its absence costs: an mc that moved 64 ->
-/// 60 took nib from 16 (exactly 2.00 blocks per thread on 8 threads) to 18
-/// (2.25), a 1.41x critical path that turned a +21.5% single-thread win into a
-/// -7.4% eight-thread regression. The jc loop has the same arithmetic and no
-/// such repair, which is why `with_detected_caches` withholds L3 from `nc`
-/// (see blocking.hpp) -- applying it moves the jc BLOCK COUNT and there is
-/// nothing to absorb the imbalance.
+/// WHY THE ic SIDE GOT THIS FIRST. `balanced_mc` exists because #408 measured
+/// what its absence costs: an mc that moved 64 -> 60 took nib from 16 (exactly
+/// 2.00 blocks per thread on 8 threads) to 18 (2.25), a 1.41x critical path that
+/// turned a +21.5% single-thread win into a -7.4% eight-thread regression. The
+/// jc loop has the same arithmetic and went without the repair for longer; this
+/// is that repair, default since #429/#490 as `m6_guarded`.
+///
+/// IT DOES NOT LET THE DETECTED L3 BACK IN, and the reason is worth stating
+/// because the old version of this comment implied the opposite. `nc` was
+/// withheld from cache detection on the theory that an unbalanced partition was
+/// the only hazard. #479 measured the pairing: detected L3 WITH balancing (M2)
+/// still loses up to 45%, 37 regressions. Balancing does not rescue it, so the
+/// theory was wrong rather than merely untested -- and `with_detected_caches`
+/// keeps pinning `nc` to the compile-time derivation. See blocking.hpp.
 ///
 /// IT LIVES HERE, NOT IN gemm_blocked.hpp, because it exists FOR the models
-/// below: every one of M1..M5 is "some capacity budget, then this". Keeping it
+/// below: every one of M1..M6 is "some capacity budget, then this". Keeping it
 /// beside them also breaks the include cycle the harness arm would otherwise
 /// need -- `gemm_blocked` now includes this header to reach `nc_for_model`, so
 /// this header can no longer include `gemm_blocked`.

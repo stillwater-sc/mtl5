@@ -209,10 +209,28 @@ inline constexpr blocking_params default_blocking = derive_blocking<T>(width<T>)
 ///
 /// This is #408's failure mode one loop over -- there a register-tile change
 /// moved mc 64 -> 60 and nib 16 -> 18, unbalancing the ic partition. The ic loop
-/// has detail::balanced_mc to absorb it; the jc loop has no equivalent yet. Once
-/// a balanced_nc exists, L3 can be applied here. Tracked separately so that
-/// partition change gets its own measurement rather than riding along with cache
-/// detection.
+/// has detail::balanced_mc to absorb it.
+///
+/// THE jc LOOP NOW HAS ONE TOO, AND L3 STILL DOES NOT GO IN. This comment used
+/// to end "once a balanced_nc exists, L3 can be applied here". `balanced_nc`
+/// exists and is the DEFAULT (#429/#490, as detail::nc_model::m6_guarded), so
+/// that condition has been met -- and #479 measured the pairing directly on four
+/// microarchitectures before anyone could act on it:
+///
+///     M2 = detected L3 + balanced_nc   102 arms, worst x0.548, 37 regressions
+///     M5 = exact partition             102 arms, worst x0.548, 39 regressions
+///
+/// Up to 45% slower on an i7-12700K. M2 ALREADY INCLUDES the balancing, so the
+/// premise -- that an unbalanced partition was the only thing making the
+/// detected L3 unsafe -- is FALSIFIED rather than deferred. Balancing does not
+/// rescue it, and the imbalance was never the whole cause: what the same study
+/// found is that `nc` on these machines is too LARGE, not merely ragged, which
+/// is why the models that SHRINK it (M3, M4) win where M2 and M5 lose.
+///
+/// So this is not waiting on anything. Reaching for it needs a fresh measurement
+/// across >= 3 microarchitectures, not the observation that the old blocker is
+/// gone. test_cache_info.cpp asserts it unconditionally and fails first.
+/// docs/performance/benchmarking-methodology.md carries the hypothesis register.
 ///
 /// A SHARED cache contributes only its per-core share. The BLIS model wants the
 /// L1/L2 one core gets to itself, and `cache_info` reports the instance size
