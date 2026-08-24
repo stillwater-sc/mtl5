@@ -88,7 +88,8 @@ struct arm_result {
 /// quietly reported as a result.
 template <typename T>
 std::vector<arm_result> run(const nc_point& p, unsigned reps, unsigned rounds,
-                            double& worst_spread, double& worst_tail) {
+                            double& worst_spread, double& worst_tail,
+                            std::size_t& tail_arms) {
     const std::size_t m = p.m, n = p.n, k = p.k;
     std::vector<T> A(m * k), B(k * n), C(m * n);
     for (std::size_t i = 0; i < A.size(); ++i) A[i] = T((i * 37) % 101) - T(50);
@@ -187,6 +188,7 @@ std::vector<arm_result> run(const nc_point& p, unsigned reps, unsigned rounds,
     // into a committed sidecar.
     worst_spread = 0.0;
     worst_tail = 0.0;
+    tail_arms = 0;
     const std::size_t head = (rounds >= 3) ? (per_round[0].size() * 2) / 3
                                            : per_round[0].size();
     for (std::size_t mi = 0; mi < NMODELS; ++mi) {
@@ -194,14 +196,19 @@ std::vector<arm_result> run(const nc_point& p, unsigned reps, unsigned rounds,
         const double s = first_secs[mi] / out[mi].best_secs - 1.0;
         if (s > worst_spread) worst_spread = s;
 
-        // Best over the earlier rounds only. With fewer than 3 rounds there is
-        // no tail to speak of and this degenerates to 0, which is honest: the
-        // run cannot answer the convergence question either way.
+        // Best over the earlier rounds only. Below 3 rounds there is no tail,
+        // so nothing is counted and `tail_arms` stays 0 -- which the caller
+        // MUST read as unmeasured rather than as a gain of zero. The first
+        // draft left this comment saying the run "cannot answer the convergence
+        // question either way" and then let the summary print "(converged)"
+        // from it: exactly the vacuous-verdict defect this file already fixed
+        // once, for the noise floor, rebuilt in its replacement.
         if (head == 0 || head >= per_round[mi].size()) continue;
         double head_best = per_round[mi][0];
         for (std::size_t r = 1; r < head; ++r)
             if (per_round[mi][r] < head_best) head_best = per_round[mi][r];
         const double gain = head_best / out[mi].best_secs - 1.0;
+        ++tail_arms;
         if (gain > worst_tail) worst_tail = gain;
     }
     return out;
@@ -315,13 +322,16 @@ int main(int argc, char* argv[]) {
     std::size_t disc_m1_n      = 0;
     double      worst_warmup = 0.0;     // round-0 coldness; a DIAGNOSTIC, no advice
     double      worst_tail_gain = 0.0;  // what the last third of rounds bought
+    std::size_t tail_arm_count = 0;     // arms that HAD a tail -- 0 => unmeasured
 
     for (const nc_point& p : shapes) {
         double spread = 0.0, tail = 0.0;
-        const auto arms = f32 ? run<float>(p, reps, rounds, spread, tail)
-                              : run<double>(p, reps, rounds, spread, tail);
+        std::size_t ta = 0;
+        const auto arms = f32 ? run<float>(p, reps, rounds, spread, tail, ta)
+                              : run<double>(p, reps, rounds, spread, tail, ta);
         if (spread > worst_warmup) worst_warmup = spread;
         if (tail > worst_tail_gain) worst_tail_gain = tail;
+        tail_arm_count += ta;
 
         const double flops = 2.0 * double(p.m) * double(p.n) * double(p.k);
         const double base  = arms[0].best_secs;
@@ -401,14 +411,29 @@ int main(int argc, char* argv[]) {
     // minimum is still moving materially and more rounds would help. The old
     // check compared a warmup statistic against a bare `> 0.25` with no
     // recorded rationale.
-    const bool converged = (control_n > 0) ? (worst_tail_gain <= control_spread)
-                                           : (worst_tail_gain <= 0.01);
-    std::printf("Convergence: the last third of rounds improved the best time by "
-                "%.2f%%%s\n", worst_tail_gain * 100.0,
-                converged ? "  (converged)" : "  <- raise --rounds");
-    if (control_n == 0)
-        std::printf("  (judged against a 1%% fallback -- no control arms to "
-                    "measure this session's noise)\n");
+    // THREE STATES, NOT TWO. Below 3 rounds there is no tail to compare, so
+    // `worst_tail_gain` is 0 because nothing was measured -- not because the
+    // minimum settled. Reporting that as "converged" would be a clean-looking
+    // verdict drawn from an absent measurement, which is the same defect the
+    // noise floor had (a 0.00% spread over ZERO control arms) and which this
+    // file exists to have fixed.
+    const bool tail_measured = (tail_arm_count > 0);
+    const bool converged = tail_measured &&
+        ((control_n > 0) ? (worst_tail_gain <= control_spread)
+                         : (worst_tail_gain <= 0.01));
+    if (!tail_measured) {
+        std::printf("Convergence: UNMEASURED -- %u round(s) leaves no tail to "
+                    "compare.\n  Not the same as converged. Use --rounds 3 or "
+                    "more to find out.\n", rounds);
+    } else {
+        std::printf("Convergence: the last third of rounds improved the best time by "
+                    "%.2f%% over %zu arm(s)%s\n", worst_tail_gain * 100.0,
+                    tail_arm_count,
+                    converged ? "  (converged)" : "  <- raise --rounds");
+        if (control_n == 0)
+            std::printf("  (judged against a 1%% fallback -- no control arms to "
+                        "measure this session's noise)\n");
+    }
     std::printf("Warmup: round 0 sat %.2f%% above the eventual minimum, worst arm.\n"
                 "  A diagnostic only -- it says the untimed warmup pass did not fully\n"
                 "  warm. Raising --rounds cannot change round 0.\n",
@@ -494,7 +519,10 @@ int main(int argc, char* argv[]) {
            << "m1_differing_arms=" << disc_m1_n << "\n"
            << "worst_first_round_excess=" << worst_warmup << "\n"      // warmup only
            << "worst_tail_gain=" << worst_tail_gain << "\n"             // convergence
-           << "converged=" << (converged ? 1 : 0) << "\n"
+           << "tail_arms=" << tail_arm_count << "\n"
+           // Three states: unmeasured is not the same as "did not converge".
+           << "converged="
+           << (!tail_measured ? "unmeasured" : (converged ? "1" : "0")) << "\n"
            // Three states, not two: unmeasured is not the same as "no effect",
            // and a reader who sees only a 0/1 flag cannot tell them apart.
            << "effect_above_noise="
