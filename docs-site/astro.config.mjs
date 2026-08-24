@@ -94,6 +94,7 @@ export default defineConfig({
           // issues and PRs often enough to deserve a top-level home.
           label: 'Performance studies',
           items: [
+            { slug: 'performance/benchmarking-methodology' },
             { slug: 'performance/blocking-and-scheduling-assessment' },
             { slug: 'performance/hardware-expansion-plan' },
             { slug: 'performance/cache-blocking-ab-study' },

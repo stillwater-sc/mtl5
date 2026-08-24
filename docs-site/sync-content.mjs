@@ -89,6 +89,7 @@ const FILE_MAP = {
   'design/parallelization-patterns-and-pitfalls.md': 'design/parallelization-patterns-and-pitfalls.md',
   'performance/issue-297-threading-benchmark-plan.md': 'performance/issue-297-threading-benchmark-plan.md',
   'performance/issue-297-threading-results.md': 'performance/issue-297-threading-results.md',
+  'performance/benchmarking-methodology.md':  'performance/benchmarking-methodology.md',
   'performance/cache-blocking-ab-study.md':    'performance/cache-blocking-ab-study.md',
   'performance/blocking-and-scheduling-assessment.md': 'performance/blocking-and-scheduling-assessment.md',
   'performance/hardware-expansion-plan.md':    'performance/hardware-expansion-plan.md',
