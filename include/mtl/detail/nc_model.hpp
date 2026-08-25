@@ -124,6 +124,8 @@ enum class nc_model {
     m5_exact,       ///< pick nc so njb == jc_nt exactly, where n allows
     m6_guarded,     ///< M1, declined where the packed-B set would grow past L3.
                     ///< THE DEFAULT since #429. See nc_for_plan in gemm_blocked.hpp.
+    m7_sharer_gated,///< M4, but ONLY where the grid is jc-parallel. A CANDIDATE
+                    ///< for #492, not the default -- see below.
 };
 
 /// Everything a model needs. Kept as one struct so adding a model cannot
@@ -187,6 +189,32 @@ inline std::size_t nc_for_model(nc_model model, const nc_model_inputs& in) noexc
             return balanced_nc(in.n, nc_from_budget(l3_det / shar, in.kc, in.sdata, in.nr),
                                teams, in.nr);
 
+        case nc_model::m7_sharer_gated:
+            // M4 where the grid is jc-parallel, M0 everywhere else (#492).
+            //
+            // THE GATE IS STRUCTURAL, not fitted to a throughput outcome. `jc_nt`
+            // comes from the BASELINE grid, before any model has run, and on the
+            // four measured machines it separates the shape classes exactly:
+            // all 105 jc-parallel arms have `jc_nt >= 2`, and all 35 square,
+            // tall/thin and serial controls have `jc_nt == 1`. So the classes M4
+            // wins on and the classes it taxes are told apart by a property of
+            // the partition rather than by the timings.
+            //
+            // That matters because M4 ungated is not shippable: median x1.769
+            // overall but ~1.2% net LOSS on square GEMM, the common case. Gated,
+            // the controls keep M0's `nc` by construction and cannot move.
+            //
+            // NOT THE DEFAULT. On existing data the gated model is median
+            // x1.9266 over 105 arms with zero regressions, but that data was
+            // inspected before this predicate was written, so it is a
+            // consistency check and not a confirmation. #492 holds the
+            // pre-registered rule and needs a fresh run on >= 3
+            // microarchitectures before this can ship.
+            if (teams < 2)
+                return nc_from_budget(in.l3_default_bytes, in.kc, in.sdata, in.nr);
+            return balanced_nc(in.n, nc_from_budget(l3_det / shar, in.kc, in.sdata, in.nr),
+                               teams, in.nr);
+
         case nc_model::m5_exact: {
             // Exactly one jc block per team, when n is large enough to supply
             // them AND the result still fits the detected budget. Where it does
@@ -238,6 +266,7 @@ constexpr const char* nc_model_name(nc_model m) noexcept {
         case nc_model::m4_per_sharer: return "m4_per_sharer";
         case nc_model::m5_exact:      return "m5_exact";
         case nc_model::m6_guarded:    return "m6_guarded";
+        case nc_model::m7_sharer_gated: return "m7_sharer_gated";
     }
     return "unknown";
 }
@@ -245,7 +274,7 @@ constexpr const char* nc_model_name(nc_model m) noexcept {
 inline constexpr nc_model all_nc_models[] = {
     nc_model::m0_default, nc_model::m1_balanced, nc_model::m2_detected,
     nc_model::m3_per_team, nc_model::m4_per_sharer, nc_model::m5_exact,
-    nc_model::m6_guarded,
+    nc_model::m6_guarded, nc_model::m7_sharer_gated,
 };
 
 /// How many models there are. Derived, because a hardcoded copy of this number

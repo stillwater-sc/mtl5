@@ -216,3 +216,54 @@ TEST_CASE("m6_guarded round-trips through its name", "[detail][gemm][nc][guard]"
     for (nc_model mo : all_nc_models) if (mo == nc_model::m6_guarded) present = true;
     CHECK(present);
 }
+
+// --- M7: the shape-gated per-sharer budget (#492 candidate) -----------------
+
+TEST_CASE("M7 is M0 wherever the grid is not jc-parallel", "[detail][gemm][nc][m7]") {
+    // The whole safety property. M4 ungated taxes square GEMM ~1.2%; gated, the
+    // controls keep the baseline `nc` BY CONSTRUCTION and cannot move at all.
+    // The gate reads `jc_nt` from the BASELINE grid, so it is a property of the
+    // partition rather than of any timing.
+    for (const recorded& r : MACHINES)
+        for (std::size_t m : {std::size_t{64}, std::size_t{1024}, std::size_t{2048},
+                              std::size_t{8192}})
+            for (unsigned mult : {1u, 2u, 5u}) {
+                const std::size_t n = (m == 8192) ? 64 : r.nc * mult;
+                const gemm_grid g0 = plan_gemm_grid(m, n, r.mc, r.nc, r.mr, r.threads);
+                if (g0.jc_nt >= 2) continue;              // gate admits; not this test
+                const nc_model_inputs in{n, r.kc, r.nr, r.sdata, L3_DEFAULT,
+                                         r.l3_detected, r.l3_sharers, g0.jc_nt};
+                INFO(r.machine << " [" << r.dtype << "] m=" << m << " n=" << n
+                               << " jc_nt=" << g0.jc_nt);
+                CHECK(nc_for_model(nc_model::m7_sharer_gated, in)
+                      == nc_for_model(nc_model::m0_default, in));
+            }
+}
+
+TEST_CASE("M7 is M4 wherever the grid IS jc-parallel", "[detail][gemm][nc][m7]") {
+    std::size_t admitted = 0;
+    for (const recorded& r : MACHINES)
+        for (std::size_t m : {std::size_t{6}, std::size_t{12}, std::size_t{18}})
+            for (unsigned mult : {2u, 3u, 5u, 7u, 8u}) {
+                const std::size_t n = r.nc * mult;
+                const gemm_grid g0 = plan_gemm_grid(m, n, r.mc, r.nc, r.mr, r.threads);
+                if (g0.jc_nt < 2) continue;
+                ++admitted;
+                const nc_model_inputs in{n, r.kc, r.nr, r.sdata, L3_DEFAULT,
+                                         r.l3_detected, r.l3_sharers, g0.jc_nt};
+                INFO(r.machine << " [" << r.dtype << "] m=" << m << " n=" << n);
+                CHECK(nc_for_model(nc_model::m7_sharer_gated, in)
+                      == nc_for_model(nc_model::m4_per_sharer, in));
+            }
+    // The measured set: 105 arms across the four machines and both dtypes.
+    CHECK(admitted == 105);
+}
+
+TEST_CASE("M7 is a candidate, not the default", "[detail][gemm][nc][m7]") {
+    // #492 needs a fresh run on >= 3 microarchitectures before this can ship.
+    // The existing data was inspected before the gate was written, so it is a
+    // consistency check and not a confirmation -- adopting on it would be the
+    // fitted-guard mistake #429 already made once.
+    CHECK(nc_model_selection() == nc_model::m6_guarded);
+    CHECK(nc_model_selection() != nc_model::m7_sharer_gated);
+}
