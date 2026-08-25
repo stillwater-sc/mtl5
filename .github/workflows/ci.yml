@@ -362,6 +362,12 @@ jobs:
   # under MTL5_NUM_THREADS=4 to catch data races the plain threaded run can
   # miss. Scoped to the _mt tests to stay cheap; add new *_mt targets to the
   # build list below as more threaded coverage lands. (#299)
+  #
+  # The build list is hand-maintained but the run step is `ctest -R _mt`, which
+  # discovers every _mt test whether or not it was built -- so forgetting to add
+  # one here fails this lane with "Could not find executable", not with a race.
+  # That is what a new test looks like when it is missing from the list, and it
+  # is the first thing to check before reading the failure as a real finding.
   tsan:
     name: Linux x64 ThreadSanitizer (mt tests)
     runs-on: ubuntu-24.04
@@ -386,6 +392,7 @@ jobs:
         run: >
           cmake --build build-tsan --parallel 2
           --target op_test_gemm_mt op_test_factorization_mt op_test_ewise_sweep_mt
+          op_test_mult_generic_mt
           sparse_test_trisolve_level_schedule_mt
           sparse_test_supernodal_ldlt_mt
           sparse_test_supernodal_lu_mt
