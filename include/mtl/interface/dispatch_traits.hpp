@@ -2,6 +2,8 @@
 // MTL5 -- Compile-time traits for BLAS/LAPACK dispatch decisions
 // Used by operation files to select hardware-accelerated paths when available.
 
+#include <algorithm>
+#include <cstddef>
 #include <type_traits>
 #include <complex>
 #include <mtl/tag/orientation.hpp>
@@ -174,6 +176,88 @@ concept SimdDenseMatrix =
         { m.num_rows() };
         { m.num_cols() };
     };
+
+// -- Threading eligibility ---------------------------------------------------
+//
+// "May this be handed to OpenBLAS / a SIMD micro-kernel?" and "may this be split
+// across cores?" are DIFFERENT questions, and `is_blas_scalar_v` used to answer
+// both (#446). It has to answer the first: `cblas_dgemm` needs real doubles, and
+// `batch<>` needs a lane the ISA has. It has no business answering the second --
+// a row partition hands each worker a disjoint set of output elements and calls
+// the SAME per-element code the serial loop would, whatever that element type is.
+//
+// The cost of conflating them was that every emulated format -- posit, cfloat,
+// lns, the dd/qd cascades -- ran its dense GEMV/GEMM on one core. Measured on an
+// i7 with 12 cores, GEMM n=64: `double` 0.00038s -> 0.00016s from 1 to 4 threads,
+// while `posit<32,2>` sat at 1.107s -> 1.115s and `cfloat<32,8>` at 0.157s ->
+// 0.140s. Those are the formats that run 100x-6000x a native flop, i.e. exactly
+// where the cores were worth having. `mat::operator*(compressed2D,
+// dense_vector)` had already been threading its row loop for any value type; the
+// concepts below say the same thing for the dense path.
+
+/// Concept satisfied by dense matrix types whose OUTPUT ROWS may be partitioned
+/// across threads: the storage shape only, with NO constraint on the element type.
+///
+/// Structurally identical to `ContiguousMatrixData` today, and deliberately a
+/// separate name: the two record different reasons. `ContiguousMatrixData` says
+/// "a kernel may walk `data()` with a stride"; this says "distinct rows are
+/// distinct objects, so distinct threads may write them". Requiring `data()` is
+/// not because the threaded generic kernel uses the pointer -- it indexes through
+/// `operator()` like the serial one -- but because owning contiguous storage is
+/// the cheap, conservative proxy for "plain dense matrix, element access is a
+/// pure read, no lazily-populated or shared internal state". Expression templates
+/// and views, which may have either, are excluded and stay serial.
+template <typename M>
+concept ThreadableDenseMatrix = ContiguousMatrixData<M>;
+
+/// Concept satisfied by dense vector types usable as an operand or an output of a
+/// row-partitioned kernel. Same reasoning as `ThreadableDenseMatrix`, plus the
+/// `ContiguousVector` stride check that every other dense-shape concept here
+/// carries.
+template <typename V>
+concept ThreadableDenseVector =
+    ContiguousVector<V> &&
+    requires(const V& v) {
+        { v.data() } -> std::convertible_to<const typename V::value_type*>;
+        { v.size() };
+    };
+
+/// Iteration units that make one parallel chunk worth dispatching, for element
+/// type `T`.
+///
+/// A chunk must hold enough work to amortize the pool's condition-variable
+/// handoff, and "enough" is a WALL-CLOCK quantity, so counting operations only
+/// works if you know what an operation costs. 65536 is the budget the native
+/// paths have always used, and it is right for a type whose multiply-add is one
+/// instruction.
+///
+/// A class-type scalar is not that type. Its multiply-add is at minimum a
+/// non-inlined call, and for the software-emulated formats this predicate exists
+/// to serve it measures 100x-6000x a `double` flop (#446). Charging them the same
+/// 65536 units per chunk asks for hundreds of times more wall-clock per chunk
+/// than the handoff needs, and the cost is paid in PARALLELISM, not overhead:
+/// `parallel_for` caps the team at `n / grain` chunks, so a posit GEMM at n=64
+/// (4096 units per output row -> grain 16) would form 4 chunks and leave half of
+/// an 8-way pool idle on a problem that already takes a second. 1024 units keeps
+/// the chunk far above the handoff cost for any emulated format while letting the
+/// small-n case fill the pool.
+///
+/// `std::is_arithmetic_v` is the split because it is exactly the line between
+/// "the hardware does this" and "software does this". `std::complex<double>` is
+/// class-typed and lands on the smaller budget -- a few times too small rather
+/// than orders of magnitude too large, which is the safe side to miss on.
+template <typename T>
+inline constexpr std::size_t parallel_chunk_units =
+    std::is_arithmetic_v<T> ? std::size_t{65536} : std::size_t{1024};
+
+/// Grain (in output rows) for a kernel that partitions over rows, given the work
+/// each row costs in iteration units -- `num_cols()` for a GEMV, `N*K` for a
+/// GEMM. At least 1, and 1 for a zero-width row (nothing to balance).
+template <typename T>
+inline constexpr std::size_t row_grain(std::size_t units_per_row) {
+    return units_per_row ? std::max(std::size_t{1}, parallel_chunk_units<T> / units_per_row)
+                         : std::size_t{1};
+}
 
 /// Check if a matrix type uses row-major orientation.
 template <typename M>
