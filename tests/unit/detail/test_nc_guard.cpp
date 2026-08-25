@@ -154,12 +154,15 @@ TEST_CASE("nc_guard_declines is the stated conjunction", "[detail][gemm][nc][gua
     CHECK_FALSE(nc_guard_declines(8, 16, 4));    // shrank
 }
 
-TEST_CASE("M6 is the default, and M0 still restores the pre-#429 behaviour",
+TEST_CASE("M0 still restores the pre-#429 behaviour exactly",
           "[detail][gemm][nc][guard]") {
-    // #429 makes the measured winner the default. M0 is kept so an arm labelled
-    // "the old behaviour" IS the old behaviour rather than a reconstruction.
-    CHECK(nc_model_selection() == nc_model::m6_guarded);
-
+    // Every model that has held the default is kept reachable, so an arm
+    // labelled "the old behaviour" IS the old behaviour rather than a
+    // reconstruction of it. That is what let #492 compare M7 against M6 and M0
+    // in one process, and what would let the next study compare against M7.
+    //
+    // The default itself moved M6 -> M7 in #492; it is asserted once, in the
+    // test above, so a change to it fails in one place rather than three.
     constexpr auto bp = mtl::simd::default_blocking<double>;
     for (unsigned t : {1u, 2u, 4u, 8u}) {
         INFO("threads=" << t);
@@ -259,11 +262,39 @@ TEST_CASE("M7 is M4 wherever the grid IS jc-parallel", "[detail][gemm][nc][m7]")
     CHECK(admitted == 105);
 }
 
-TEST_CASE("M7 is a candidate, not the default", "[detail][gemm][nc][m7]") {
-    // #492 needs a fresh run on >= 3 microarchitectures before this can ship.
-    // The existing data was inspected before the gate was written, so it is a
-    // consistency check and not a confirmation -- adopting on it would be the
-    // fitted-guard mistake #429 already made once.
-    CHECK(nc_model_selection() == nc_model::m6_guarded);
-    CHECK(nc_model_selection() != nc_model::m7_sharer_gated);
+TEST_CASE("M7 is the default, on a pre-registered run", "[detail][gemm][nc][m7]") {
+    // The gate was fixed and published on #492 BEFORE the confirming run, which
+    // is the discipline #429's first guard skipped -- that one was fitted to its
+    // losses and evaporated when #488 was fixed. Against M6 on the arms it
+    // admits: Xeon +74%, i7 +108..116%, Ryzen +73..76%, Jetson +15..22%; zero
+    // arms worse than M6, zero regressions against M0, 40 of 40 controls
+    // unchanged, 1280 of 1280 bit-identical.
+    CHECK(nc_model_selection() == nc_model::m7_sharer_gated);
+
+    // The falsified models must never be reachable as a default: M2 and M5 lose
+    // up to 45% (x0.548), with 37 and 39 regressions.
+    CHECK(nc_model_selection() != nc_model::m2_detected);
+    CHECK(nc_model_selection() != nc_model::m5_exact);
+}
+
+TEST_CASE("M7 reduces to M6 -- and to M0 -- off the jc-parallel regime",
+          "[detail][gemm][nc][m7]") {
+    // Why M7 SUPERSEDES M6 rather than competing with it: below jc_nt == 2,
+    // `balanced_nc` is a no-op, so M6 never differed from M0 either. Adopting M7
+    // therefore changes nothing on square, tall/thin or serial shapes -- which is
+    // what bounds the blast radius of the new default, and it was confirmed on
+    // all 40 control arms of the #492 run.
+    for (const recorded& r : MACHINES)
+        for (std::size_t m : {std::size_t{64}, std::size_t{1024}, std::size_t{2048}})
+            for (unsigned mult : {1u, 2u, 5u}) {
+                const std::size_t n = r.nc * mult;
+                const gemm_grid g0 = plan_gemm_grid(m, n, r.mc, r.nc, r.mr, r.threads);
+                if (g0.jc_nt >= 2) continue;
+                const nc_model_inputs in{n, r.kc, r.nr, r.sdata, L3_DEFAULT,
+                                         r.l3_detected, r.l3_sharers, g0.jc_nt};
+                INFO(r.machine << " [" << r.dtype << "] m=" << m << " n=" << n);
+                const std::size_t m0 = nc_for_model(nc_model::m0_default, in);
+                CHECK(nc_for_model(nc_model::m6_guarded, in) == m0);
+                CHECK(nc_for_model(nc_model::m7_sharer_gated, in) == m0);
+            }
 }

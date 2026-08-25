@@ -81,10 +81,11 @@ TEST_CASE("the default is the measured winner, and only that",
     // working, not failing.
     //
     // It still guards the same thing, now stated against the model that earned
-    // the position: 44 arms on four microarchitectures and two dtypes, median
-    // x1.161, worst x1.0002, zero regressions. Any OTHER value here means the
-    // default drifted again.
-    CHECK(nc_model_selection() == nc_model::m6_guarded);
+    // the position. M6 held it from #429 on 44 arms; M7 took it in #492 on a
+    // PRE-REGISTERED run over four microarchitectures -- +74% to +116% against
+    // M6 on three of them, zero arms worse, zero regressions, 1280 of 1280
+    // bit-identical. Any OTHER value here means the default drifted again.
+    CHECK(nc_model_selection() == nc_model::m7_sharer_gated);
 
     // The two falsified models must never be reachable as a default. M2 and M5
     // lose up to 45% (x0.548) with 37 and 39 regressions -- #426's lesson twice

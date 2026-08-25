@@ -267,6 +267,9 @@ Status: **✅ validated** · **❌ falsified** · **⚠️ partial** · **🔬 o
 | #429 | `balanced_nc` evens the jc partition and wins | ⚠️ | Wins on 42/44 arms, median ×1.161 — **but only with the packed-B guard**; plain M1 loses 18% on Zen 4 |
 | #429 | Then apply the detected L3 to `nc` | ❌ | **Up to 45% slower** (×0.548), 37 regressions — and it already includes `balanced_nc`, so balancing does not rescue it |
 | #426/#429 | Per-team L3 budget "models the wrong cause" | ❌ | **Reversed by measurement.** M4's speedup does *not* track imbalance (r=0.29), does track `nc` reduction. Capacity was the dominant cause on those shapes |
+| #492 | The per-sharer budget can be confined to where it wins | ✅ | **`jc_nt >= 2`, read from the baseline grid, separates the classes exactly** (105/105 admitted, 0/35 controls). Pre-registered, then confirmed |
+| #492 | The confined model beats the shipped default | ✅ | **Adopted as the default.** vs M6: Xeon +74%, i7 +108–116%, Ryzen +73–76%, Jetson +15–22%. 0 arms worse, 0 regressions, 40/40 controls unchanged, 1280/1280 bit-identical |
+| #429/#492 | Balancing the jc partition is the main effect | ❌ | Real but **second-order**: M6 is ×1.16 where M7 is ×1.7–2.2. `nc` being too *large* dominates being *ragged* |
 | #479 | The jc imbalance metric mediates the throughput change | ⚠️ | True for M1 (r=0.957 Xeon, 0.71 pooled) but it recovers only ~40% of the theoretical saving; **not** true for M4 (r=0.29) |
 | #488 | `balanced_mc`'s rounding buys real balance | ❌ | Padded critical path **identical** in all 383,934 changed cases; it bought nothing and cost 2.28× total work |
 | #486 | `nc` may be sized from the accumulator type | ❌ | The packed-B panel is in *operand* precision; overstated 2× for fp32→fp64, 4× for i8→i32. **Accounting corrected**, cross-checked against the packers |

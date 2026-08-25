@@ -14,30 +14,40 @@
 // the shapes where they differ are worth spending machine time on. That is what
 // makes a seven-model sweep across four machines affordable at all.
 //
-// THE DEFAULT IS NOW M6 (#429), AND THAT IS A MEASURED CHOICE. #479 timed all
-// six candidates on four microarchitectures and two dtypes -- 840 arms, every
-// one verified bit-identical to the baseline. What it found:
+// THE DEFAULT IS M7 (#492), AND EVERY STEP TO IT WAS MEASURED. Two rounds of
+// timing across four microarchitectures and two dtypes, every arm verified
+// bit-identical to the baseline (840 arms in #479, 1280 in #492):
 //
-//   M6 = M1 + guard  DEFAULT. 42 of 44 arms taken, median x1.161, worst
-//                    x1.0002, zero regressions. See `nc_for_plan`.
-//   M1 balanced      median x1.152 but TWO regressions to x0.82-0.89, both on
-//                    a Zen 4 whose 16 MB L3 cannot hold the grown packed-B set.
-//   M2 detected L3   FALSIFIED. Up to 45% slower (x0.548), 37 regressions --
-//                    and it already includes balanced_nc, so balancing does not
-//                    rescue it. #426's lesson a second time: a larger cache
-//                    block is not a faster one. This is why the tripwire in
-//                    test_cache_info.cpp asserting l3 is NOT applied stays.
-//   M5 exact         Same failure as M2, x0.548 worst, 39 regressions.
-//   M4 per-sharer    The LARGEST wins measured anywhere here, median x1.763 --
-//                    but confined to the jc-parallel shapes the sweep selects,
-//                    and it costs ~1.2% on SQUARE GEMM, the common case.
-//   M3 per-team      median x1.223, taxes T=1.
+//   M7 = M4, gated  THE DEFAULT. Against M6 on the arms it admits: Xeon +74%,
+//                   i7 +108..116%, Ryzen +73..76%, Jetson +15..22%. Zero arms
+//                   worse than M6, zero regressions against M0, and all 40
+//                   control arms unchanged.
+//   M6 = M1 + guard The #429 default, now superseded. 42 of 44 arms, median
+//                   x1.161, zero regressions. M7 reduces to it -- in fact to M0
+//                   -- wherever the grid is not jc-parallel.
+//   M1 balanced     median x1.152 but TWO regressions to x0.82-0.89, both on a
+//                   Zen 4 whose 16 MB L3 cannot hold the grown packed-B set.
+//   M2 detected L3  FALSIFIED. Up to 45% slower (x0.548), 37 regressions --
+//                   and it already includes balanced_nc, so balancing does not
+//                   rescue it. #426's lesson a second time: a larger cache
+//                   block is not a faster one. This is why the tripwire in
+//                   test_cache_info.cpp asserting l3 is NOT applied stays.
+//   M5 exact        Same failure as M2, x0.548 worst, 39 regressions.
+//   M4 per-sharer   The largest raw wins, median x1.763 -- but UNGATED it costs
+//                   ~1.2% on SQUARE GEMM, the common case. M7 is this model
+//                   with the regime it wins in made explicit.
+//   M3 per-team     median x1.223, taxes T=1.
 //
 // M3 and M4 were rejected on #426 as "modelling the wrong cause -- the
 // regression is block-count imbalance, not capacity". The measurement reverses
 // that: M4's speedup does NOT track imbalance (r = 0.29) and does track `nc`
 // being reduced. Capacity was not the wrong cause; on those shapes it is the
-// dominant one. They are not the default only because they do not generalise.
+// DOMINANT one, and M7 is the consequence of taking that seriously.
+//
+// THE SHAPE OF THE ANSWER, since it is easy to lose in the numbers: `nc` on
+// these machines is too LARGE on jc-parallel shapes, not merely ragged. The
+// models that shrink it win by 1.7-2.2x; the models that grow it lose by up to
+// 45%. Balancing the partition (M1/M6) is real but second-order at x1.16.
 //
 // M0 IS KEPT AS THE PRE-#429 BASELINE so the experiment stays reproducible: an
 // arm labelled "the old behaviour" has to BE the old behaviour, not a
@@ -123,9 +133,9 @@ enum class nc_model {
     m4_per_sharer,  ///< (detected L3 / L3 sharing cores) + balanced
     m5_exact,       ///< pick nc so njb == jc_nt exactly, where n allows
     m6_guarded,     ///< M1, declined where the packed-B set would grow past L3.
-                    ///< THE DEFAULT since #429. See nc_for_plan in gemm_blocked.hpp.
-    m7_sharer_gated,///< M4, but ONLY where the grid is jc-parallel. A CANDIDATE
-                    ///< for #492, not the default -- see below.
+                    ///< The default for #429; superseded by M7 (#492).
+    m7_sharer_gated,///< M4, but ONLY where the grid is jc-parallel.
+                    ///< THE DEFAULT since #492. See the case below.
 };
 
 /// Everything a model needs. Kept as one struct so adding a model cannot
@@ -204,12 +214,31 @@ inline std::size_t nc_for_model(nc_model model, const nc_model_inputs& in) noexc
             // overall but ~1.2% net LOSS on square GEMM, the common case. Gated,
             // the controls keep M0's `nc` by construction and cannot move.
             //
-            // NOT THE DEFAULT. On existing data the gated model is median
-            // x1.9266 over 105 arms with zero regressions, but that data was
-            // inspected before this predicate was written, so it is a
-            // consistency check and not a confirmation. #492 holds the
-            // pre-registered rule and needs a fresh run on >= 3
-            // microarchitectures before this can ship.
+            // THE DEFAULT SINCE #492, on a run that was pre-registered before it
+            // was made. The gate above was fixed and published on the issue, and
+            // THEN four machines were re-measured against it -- the discipline
+            // #429's first guard skipped, which is why that one evaporated when
+            // #488 was fixed.
+            //
+            // M7 against M6, the previous default, on the arms the gate admits:
+            //
+            //     machine  effect   vs noise floor   vs session instability
+            //     Xeon     +74%          82.7x              60.6x   DECISIVE
+            //     i7      +108..116%     25..28x            21..27x DECISIVE
+            //     Ryzen    +73..76%      11.3x              5.6x    DECISIVE
+            //     Jetson   +15..22%      1.0..1.7x          0.5x    supportive
+            //
+            // Zero arms worse than M6 anywhere; zero regressions against M0;
+            // 40 of 40 control arms unchanged; 1280 of 1280 arms bit-identical.
+            // Three microarchitectures decisive is the >= 3 the issue required;
+            // the Jetson agrees in direction but its sessions were too noisy to
+            // count as independent confirmation.
+            //
+            // IT SUPERSEDES M6 RATHER THAN COMPETING WITH IT. Below `jc_nt == 2`
+            // both reduce to M0 -- `balanced_nc` is a no-op when there is one
+            // team, so M6 never differed there either. Verified on all 40
+            // control arms. So M7 is M6 everywhere M6 did anything at all, plus
+            // the jc-parallel regime.
             if (teams < 2)
                 return nc_from_budget(in.l3_default_bytes, in.kc, in.sdata, in.nr);
             return balanced_nc(in.n, nc_from_budget(l3_det / shar, in.kc, in.sdata, in.nr),
@@ -304,7 +333,7 @@ inline nc_model nc_model_from_name(const char* s, bool& ok) noexcept {
     return nc_model::m0_default;
 }
 
-/// The model this process runs, from `MTL5_NC_MODEL`; M6 when unset (#429).
+/// The model this process runs, from `MTL5_NC_MODEL`; M7 when unset (#492).
 ///
 /// Read ONCE into a function-local static: the value is baked into the plan
 /// every GEMM makes, so a mid-run change would split one CSV row's timings
@@ -318,7 +347,7 @@ inline nc_model nc_model_from_name(const char* s, bool& ok) noexcept {
 inline nc_model nc_model_selection() {
     static const nc_model sel = [] {
         const char* e = std::getenv("MTL5_NC_MODEL");
-        if (e == nullptr || *e == '\0') return nc_model::m6_guarded;   // #429
+        if (e == nullptr || *e == '\0') return nc_model::m7_sharer_gated;  // #492
         bool ok = false;
         const nc_model m = nc_model_from_name(e, ok);
         if (!ok) {
