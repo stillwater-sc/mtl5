@@ -378,7 +378,8 @@ int main(int argc, char* argv[]) {
 
             const double jc_imb = mtl::detail::grid_imbalance(a.njb, a.jc_nt);
             const double ic_imb = mtl::detail::grid_imbalance(a.nib, a.ic_nt);
-            const std::size_t pb = mtl::detail::packed_b_bytes(a.jc_nt, rbp.kc, a.nc, sdata);
+            const std::size_t pb = mtl::detail::packed_b_bytes(a.jc_nt, rbp.kc, a.nc,
+                                                              bp.nr, sdata);
 
             std::printf("    %-14s nc=%-6zu njb=%-4zu jc_nt=%u  jc_imb=%.3f  "
                         "%8.3f GF/s  x%.4f%s\n",

@@ -182,14 +182,48 @@ constexpr double grid_imbalance(std::size_t blocks, unsigned workers) noexcept {
     return static_cast<double>(per * workers) / static_cast<double>(blocks);
 }
 
-/// Bytes of packed B held simultaneously: one `kc x nc` panel per jc-team.
+/// Bytes of packed B held simultaneously: one panel per jc-team, **as the packer
+/// actually lays it out**.
 ///
 /// Tests the capacity story that models M3 and M4 rest on -- that `nc` should be
 /// divided by the team count or the sharer count -- directly, against the L3 the
 /// machine actually reports, rather than by inference from a throughput change.
+/// It is also the left-hand side of M6's guard, so it has to be true rather than
+/// approximately true.
+///
+/// THREE THINGS THIS USED TO GET WRONG, all of them making it report a panel the
+/// nest does not build (#486):
+///
+///   `elem_bytes` IS THE OPERAND TYPE, NOT THE ACCUMULATOR. The panel is a
+///   `packed_buffer<TB>`; blocking is chosen for `TC` because the C microtile
+///   maps to `TC` registers, and callers inherited `sizeof(TC)` from that. For a
+///   mixed pair the two differ: 2x for float operands into an fp64 accumulator
+///   (#176), 4x for i8 into i32 (#451).
+///
+///   `n` IS PADDED TO A WHOLE `nr` PANEL. `packed_B_size` reserves
+///   `ceil(n/NR)*NR*k`, and `balanced_nc` deliberately does NOT round `nc` to a
+///   multiple of `nr` on the threaded path -- rounding after balancing would
+///   undo the balance -- so a ragged `nc` is the normal case, not an edge one.
+///
+///   `k` IS PADDED TO A WHOLE QUAD GROUP when the quad kernel runs, because
+///   `packed_B_quad_size` reserves `quad_depth(k)`. Pass `k_group = 4` there.
+///
+/// WHY THIS DOES NOT CHANGE `nc` ITSELF, which is the question #486 really
+/// raises. Correcting the same `sizeof` inside `nc_from_budget` would ENLARGE
+/// `nc` by 2-4x for the mixed pairs -- and #479 measured that direction and
+/// falsified it: M2 enlarged `nc` about 1.9x by applying the detected L3 and
+/// lost up to 45% (x0.548, 37 regressions), with `balanced_nc` already included
+/// so balancing did not rescue it. A bigger panel is not a faster one. So the
+/// ACCOUNTING is corrected here, and the BUDGET POLICY stays where the
+/// measurement left it. See nc_from_budget in nc_model.hpp.
 constexpr std::size_t packed_b_bytes(unsigned jc_nt, std::size_t kc, std::size_t nc,
-                                     std::size_t sdata) noexcept {
-    return static_cast<std::size_t>(jc_nt == 0 ? 1u : jc_nt) * kc * nc * sdata;
+                                     std::size_t nr, std::size_t elem_bytes,
+                                     std::size_t k_group = 1) noexcept {
+    if (nr == 0) nr = 1;
+    if (k_group == 0) k_group = 1;
+    const std::size_t kp = ((kc + k_group - 1) / k_group) * k_group;   // quad pads k
+    const std::size_t np = ((nc + nr - 1) / nr) * nr;                  // cols pad to NR
+    return static_cast<std::size_t>(jc_nt == 0 ? 1u : jc_nt) * kp * np * elem_bytes;
 }
 
 /// The largest mc for which the packed A block AND the strip of C it accumulates
@@ -344,7 +378,7 @@ inline unsigned gemm_default_threads() {
 /// blocking.hpp:351 -- the nest builds a `rbp.kc x nc` panel while the models
 /// reasoned about `bp.kc x nc`. That is a real caveat on such a machine, so the
 /// harness REPORTS the divergence rather than papering over it here.
-template <typename TC>
+template <typename TC, typename TB = TC, std::size_t KGroup = 1>
 inline std::size_t nc_for_plan(std::size_t m, std::size_t n, unsigned budget,
                                nc_model model) {
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
@@ -392,8 +426,12 @@ inline std::size_t nc_for_plan(std::size_t m, std::size_t n, unsigned budget,
         if (nc == bp.nc) return nc;             // nothing changed, nothing to guard
         const std::size_t l3 = ci.l3_bytes ? ci.l3_bytes : simd::default_hw_traits.l3_bytes;
         const gemm_grid g1 = plan_gemm_grid(m, n, rbp.mc, nc, bp.mr, budget);
-        const std::size_t pb_new = packed_b_bytes(g1.jc_nt, rbp.kc, nc, sizeof(TC));
-        const std::size_t pb_old = packed_b_bytes(g0.jc_nt, rbp.kc, bp.nc, sizeof(TC));
+        // sizeof(TB) and the layout's padding, not sizeof(TC) -- see
+        // packed_b_bytes. For a homogeneous pair these are the same call.
+        const std::size_t pb_new =
+            packed_b_bytes(g1.jc_nt, rbp.kc, nc,     bp.nr, sizeof(TB), KGroup);
+        const std::size_t pb_old =
+            packed_b_bytes(g0.jc_nt, rbp.kc, bp.nc,  bp.nr, sizeof(TB), KGroup);
         if (nc_guard_declines(pb_new, pb_old, l3)) return bp.nc;   // fall back to M0
     }
     return nc;
@@ -430,7 +468,7 @@ struct gemm_plan {
 /// with the nest the moment `MTL5_NC_MODEL` was set -- which is the whole point
 /// of the variable -- and the CSV would carry the baseline's blocking against
 /// the model's timings.
-template <typename TC>
+template <typename TC, typename TB = TC, std::size_t KGroup = 1>
 inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads,
                                nc_model model = nc_model_selection()) {
     constexpr simd::blocking_params bp = simd::default_blocking<TC>;
@@ -439,7 +477,7 @@ inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads,
 
     const unsigned budget = (nthreads <= 1)
         ? 1u : std::min(nthreads, thread_pool::instance().size());
-    const std::size_t NC = nc_for_plan<TC>(m, n, budget, model);
+    const std::size_t NC = nc_for_plan<TC, TB, KGroup>(m, n, budget, model);
 
     auto finish = [&](std::size_t mc, unsigned ic_nt, unsigned jc_nt) {
         gemm_plan p{mc, NC, 0, 0, ic_nt, jc_nt, budget, model};
@@ -578,7 +616,8 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // describe is #430's defect (a recorded mc no loop ever stepped) reappearing
     // on the jc axis. Cheap to hoist: for nthreads <= 1 `gemm_plan_for` does not
     // touch the pool, and for m/n/k == 0 it degenerates without dividing.
-    const gemm_plan plan = gemm_plan_for<TC>(m, n, nthreads, model);
+    const gemm_plan plan =
+        gemm_plan_for<TC, TB, QUAD ? 4u : 1u>(m, n, nthreads, model);
     const std::size_t NC = plan.nc;
     // The ic-block size actually used. Equal to the cache bound MC everywhere
     // except the threaded nest, which lowers it to balance the m-partition once

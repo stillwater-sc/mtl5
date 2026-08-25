@@ -81,8 +81,8 @@ verdict replay(const recorded& r, std::size_t m, std::size_t n) {
     const std::size_t nc = nc_for_model(nc_model::m1_balanced, in);
     if (nc == 0 || nc == r.nc) return {r.nc, r.nc, false};
     const gemm_grid g1 = plan_gemm_grid(m, n, r.mc, nc, r.mr, r.threads);
-    const std::size_t pb_new = packed_b_bytes(g1.jc_nt, r.kc, nc, r.sdata);
-    const std::size_t pb_old = packed_b_bytes(g0.jc_nt, r.kc, r.nc, r.sdata);
+    const std::size_t pb_new = packed_b_bytes(g1.jc_nt, r.kc, nc, r.nr, r.sdata);
+    const std::size_t pb_old = packed_b_bytes(g0.jc_nt, r.kc, r.nc, r.nr, r.sdata);
     return {r.nc, nc, nc_guard_declines(pb_new, pb_old, r.l3_detected)};
 }
 
@@ -134,8 +134,8 @@ TEST_CASE("both terms of the guard are load-bearing", "[detail][gemm][nc][guard]
                 const std::size_t nc = nc_for_model(nc_model::m1_balanced, in);
                 if (nc == 0 || nc == r.nc) continue;
                 const gemm_grid g1 = plan_gemm_grid(m, n, r.mc, nc, r.mr, r.threads);
-                const std::size_t pn = packed_b_bytes(g1.jc_nt, r.kc, nc, r.sdata);
-                const std::size_t po = packed_b_bytes(g0.jc_nt, r.kc, r.nc, r.sdata);
+                const std::size_t pn = packed_b_bytes(g1.jc_nt, r.kc, nc, r.nr, r.sdata);
+                const std::size_t po = packed_b_bytes(g0.jc_nt, r.kc, r.nc, r.nr, r.sdata);
                 if (pn > po) ++grew_only;
                 if (pn > r.l3_detected) ++over_only;
                 if (nc_guard_declines(pn, po, r.l3_detected)) ++both;

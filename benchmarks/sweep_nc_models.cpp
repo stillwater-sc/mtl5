@@ -75,7 +75,7 @@ outcome evaluate(mtl::detail::nc_model model, const mtl::bench::nc_point& p,
     const gemm_grid g = plan_gemm_grid(p.m, p.n, bp.mc, nc, bp.mr, p.threads);
     return outcome{nc, g.nib, g.njb, g.ic_nt, g.jc_nt,
                    grid_imbalance(g.njb, g.jc_nt),
-                   packed_b_bytes(g.jc_nt, bp.kc, nc, sdata)};
+                   packed_b_bytes(g.jc_nt, bp.kc, nc, bp.nr, sdata)};
 }
 
 // The shape derivation moved to benchmarks/nc_shapes.hpp so the TIMING harness

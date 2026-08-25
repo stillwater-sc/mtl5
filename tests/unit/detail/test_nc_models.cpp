@@ -248,8 +248,8 @@ TEST_CASE("the mediator metrics say what they claim", "[detail][gemm][nc]") {
     CHECK(grid_imbalance(0, 4) == 1.0);                 // degenerate, not a divide by zero
     CHECK(grid_imbalance(8, 0) == 1.0);
     // One kc x nc panel per team.
-    CHECK(packed_b_bytes(2, 256, 1024, 8) == 2u * 256 * 1024 * 8);
-    CHECK(packed_b_bytes(0, 256, 1024, 8) == 256u * 1024 * 8);   // treated as one team
+    CHECK(packed_b_bytes(2, 256, 1024, 8, 8) == 2u * 256 * 1024 * 8);
+    CHECK(packed_b_bytes(0, 256, 1024, 8, 8) == 256u * 1024 * 8);   // treated as one team
 }
 
 TEST_CASE("model names are stable and distinct", "[detail][gemm][nc]") {

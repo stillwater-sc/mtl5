@@ -287,8 +287,8 @@ int main(int argc, char** argv) {
             // This harness pins M0 (see the refusal in main), so the two agree
             // here today; reading the plan is what keeps that true if they stop.
             const std::size_t pb = mtl::detail::packed_b_bytes(
-                plan.jc_nt, bp.kc, plan.nc, dtype == "float" ? sizeof(float)
-                                                             : sizeof(double));
+                plan.jc_nt, bp.kc, plan.nc, bp.nr,
+                dtype == "float" ? sizeof(float) : sizeof(double));
             std::snprintf(buf, sizeof buf,
                 "%s,%s,%zu,%zu,%zu,%u,%u,%zu,%zu,%zu,%zu,%zu,"
                 "%zu,%zu,%zu,%u,%u,%.6f,%.6f,%zu,%zu,%d,%.6f,%.3f,%.6f",
