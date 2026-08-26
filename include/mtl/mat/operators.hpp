@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/interface/dispatch_traits.hpp>   // interface::row_grain
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/traits/is_expression.hpp>
@@ -153,12 +154,19 @@ auto operator*(const compressed2D<V, P>& A,
     const auto& indices = A.ref_minor();
     const auto& data    = A.ref_data();
     // Parallelize over output rows: each y(r) is an independent sparse dot, so
-    // the result is bit-identical across thread counts. Grain targets ~64K
-    // nonzeros per chunk (avg nnz/row). Serial by default (MTL5_NUM_THREADS=1).
+    // the result is bit-identical across thread counts. Grain targets one
+    // chunk's worth of nonzeros (avg nnz/row). Serial by default
+    // (MTL5_NUM_THREADS=1).
+    //
+    // `row_grain` rather than a literal 65536 (#446): that budget is a
+    // wall-clock quantity counted in operations, so it only fits a type whose
+    // multiply-add is one instruction. A class-typed value type gets the smaller
+    // budget and therefore enough chunks to fill the pool. Unchanged for
+    // float/double -- row_grain<double>(avg) IS 65536/avg.
     const std::size_t nrows = A.num_rows();
     const std::size_t nnz   = data.size();
     const std::size_t avg   = nrows ? std::max<std::size_t>(std::size_t{1}, nnz / nrows) : std::size_t{1};
-    const std::size_t grain = std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / avg);
+    const std::size_t grain = interface::row_grain<result_t>(avg);
     detail::thread_pool::instance().parallel_for(nrows, grain,
         [&](std::size_t rb, std::size_t re) {
             for (std::size_t r = rb; r < re; ++r) {

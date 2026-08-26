@@ -92,10 +92,71 @@ void mult_generic(const M& A, const VIn& x, VOut& y) {
                                    static_cast<std::size_t>(A.num_rows()));
 }
 
+/// Sparse CRS mat*vec over the OUTPUT ROW RANGE [rb, re): the loop body of
+/// `mult_sparse_crs` below, split out for the threaded caller exactly as the
+/// dense kernels are.
+///
+/// Each y(r) reads only row r's slice of the CSR arrays and writes only y(r), so
+/// a partition into row bands is bit-identical to the serial loop. The GATHER
+/// from x is what makes this safe to parallelize and its transpose not: reads of
+/// x(indices[k]) may collide across bands, and concurrent reads are not a race.
+/// y must not alias x.
+///
+/// The assertions are `mult`'s, restated -- see `mult_generic_rows` for why that
+/// matters beyond documentation.
+template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
+void mult_sparse_crs_rows(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y,
+                          std::size_t rb, std::size_t re) {
+    assert(A.num_cols() == x.size());
+    assert(A.num_rows() == y.size());
+    assert(re <= static_cast<std::size_t>(A.num_rows()));
+    using Result = typename VOut::value_type;
+    using size_type = typename mat::compressed2D<V, P>::size_type;
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    if constexpr (std::is_void_v<Accumulator>) {
+        using Value = std::common_type_t<V, typename VIn::value_type>;
+        for (std::size_t r = rb; r < re; ++r) {
+            auto acc = math::zero<Result>();
+            for (size_type k = starts[r]; k < starts[r + 1]; ++k)
+                acc += static_cast<Result>(static_cast<Value>(data[k]) * static_cast<Value>(x(indices[k])));
+            y(r) = acc;
+        }
+    } else {
+        using Value = std::common_type_t<V, typename VIn::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        for (std::size_t r = rb; r < re; ++r) {
+            Accumulator acc{};
+            AT::clear(acc);
+            for (size_type k = starts[r]; k < starts[r + 1]; ++k)
+                AT::add_product(acc, static_cast<Value>(data[k]), static_cast<Value>(x(indices[k])));
+            y(r) = AT::template value<Result>(acc);
+        }
+    }
+}
+
 /// Sparse CRS mat*vec: y = A * x, iterating only stored nonzeros. Mirrors
 /// mat::operator*(compressed2D, dense_vector)'s traversal but adds
 /// Accumulator support (accumulator_traits), so mixed-precision / quire
 /// accumulation works on sparse matrices too, not just dense ones.
+///
+/// Serial; `mult_sparse_crs_par` is the threading entry point.
+///
+/// THIS LOOP IS DUPLICATED from `mult_sparse_crs_rows` above, deliberately, and
+/// the duplication is worth more than it costs. Expressing it as a whole-range
+/// call to the row-range kernel -- the shape the dense path uses -- measured 6.5%
+/// SLOWER here (0.004396s -> 0.004681s, n=200000 nnz=2.4M, min of 5): starting
+/// the loop at a parameter rather than a literal 0 costs the optimizer something
+/// on the `starts[r] / starts[r+1]` pair the CSR traversal indexes with, and the
+/// restated assertions that recovered the dense case did not recover this one.
+/// That 6.5% lands on `dense_vector<double>` SpMV at MTL5_NUM_THREADS=1, which is
+/// the default and is the inner loop of every Krylov iteration in itl/ -- the one
+/// place in this file where a few percent is not a rounding error. The threaded
+/// path has no such constraint: it is already paying for a pool handoff.
+///
+/// Keep the two bodies in step. They are the same arithmetic, and a test asserts
+/// they agree exactly.
 template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
 void mult_sparse_crs(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y) {
     using Result = typename VOut::value_type;
@@ -123,6 +184,41 @@ void mult_sparse_crs(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y) {
             y(r) = AT::template value<Result>(acc);
         }
     }
+}
+
+/// Sparse CRS mat*vec with the output rows spread over the pool.
+///
+/// `mat::operator*(compressed2D, dense_vector)` has threaded this same traversal
+/// for any value type since #221; this is the accumulator-aware entry point
+/// catching up, so `mult(compressed2D, x, y)` and `A * x` no longer disagree
+/// about whether a sparse matvec uses the machine.
+///
+/// GRAIN IS AVERAGED, and for a sparse matrix that is an approximation rather
+/// than a measurement: a row's cost is its own nnz, so contiguous bands sized off
+/// nnz/nrows balance well for a banded or roughly regular matrix and badly for a
+/// power-law one, where a handful of dense rows can dominate a band. Averaging is
+/// what the operator* path already does, and the alternative -- partitioning on
+/// the prefix sum of `starts` so each band holds equal nnz -- changes which rows
+/// land together without changing any result, so it is a pure scheduling
+/// improvement that belongs behind a measurement rather than in this change.
+template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
+void mult_sparse_crs_par(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y) {
+    if constexpr (interface::ThreadableDenseVector<VIn> &&
+                  interface::ThreadableDenseVector<VOut>) {
+        const std::size_t nrows = static_cast<std::size_t>(A.num_rows());
+        const std::size_t nnz   = A.ref_data().size();
+        const std::size_t avg   = nrows ? std::max(std::size_t{1}, nnz / nrows) : std::size_t{1};
+        const std::size_t grain = interface::row_grain<V>(avg);
+        thread_pool& pool = thread_pool::instance();
+        if (pool.size() > 1 && nrows >= grain * 2) {
+            pool.parallel_for(nrows, grain,
+                [&](std::size_t b, std::size_t e) {
+                    mult_sparse_crs_rows<Accumulator>(A, x, y, b, e);
+                });
+            return;
+        }
+    }
+    mult_sparse_crs<Accumulator>(A, x, y);
 }
 
 /// Generic mat*mat over the OUTPUT ROW RANGE [rb, re) of C -- the mat*mat
@@ -269,6 +365,20 @@ void mult_generic_par(const MA& A, const MB& B, MC& C) {
 /// on transposed sparse matvecs too. Scatter pattern means each y(j)
 /// receives contributions from multiple rows r, so accumulation is done
 /// per-output-element rather than per-row.
+///
+/// STAYS SERIAL, and the scatter is exactly why (#446 follow-up). The forward
+/// kernel above threads because a row band owns its output elements outright;
+/// here row r contributes to y(indices[k]) for every stored column, so two bands
+/// racing to update the same y(j) is the normal case, not an edge one. The fixes
+/// both cost something this kernel is not willing to pay: atomics do not exist
+/// for a custom number type and would not be deterministic if they did, and
+/// per-thread privatization needs O(threads * y.size()) accumulators -- already
+/// the expensive part here, since a configuration-3 super-accumulator is one to
+/// two orders of magnitude larger per element than the value type -- and changes
+/// the summation grouping, which forfeits the bit-identity every other threaded
+/// path in this file guarantees. Threading this wants a different algorithm (a
+/// CSC view, or a symbolic split of the output range), not a partition of this
+/// loop.
 template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
 void mult_sparse_crs_transposed(const mat::view::transposed_view<mat::compressed2D<V, P>>& At,
                                  const VIn& x, VOut& y) {
@@ -323,7 +433,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
     assert(A.num_rows() == y.size());
 
     if constexpr (interface::is_compressed2D_v<M>) {
-        detail::mult_sparse_crs<Accumulator>(A, x, y);
+        detail::mult_sparse_crs_par<Accumulator>(A, x, y);
         return;
     } else if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         detail::mult_generic_par<Accumulator>(A, x, y);
