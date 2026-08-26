@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>   // interface::row_grain
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
@@ -95,7 +96,7 @@ auto operator*(const M& A, const V& x) {
     for (typename M::size_type r = 0; r < A.num_rows(); ++r) {
         auto acc = math::zero<result_t>();
         for (typename M::size_type c = 0; c < A.num_cols(); ++c) {
-            acc += A(r, c) * x(c);
+            acc = detail::generic_fma<result_t>(acc, A(r, c), x(c));
         }
         y(r) = acc;
     }
@@ -116,7 +117,7 @@ auto operator*(const M1& A, const M2& B) {
         for (typename M2::size_type c = 0; c < B.num_cols(); ++c) {
             auto acc = math::zero<result_t>();
             for (typename M1::size_type k = 0; k < A.num_cols(); ++k) {
-                acc += A(r, k) * B(k, c);
+                acc = detail::generic_fma<result_t>(acc, A(r, k), B(k, c));
             }
             C(r, c) = acc;
         }
@@ -172,7 +173,7 @@ auto operator*(const compressed2D<V, P>& A,
             for (std::size_t r = rb; r < re; ++r) {
                 auto acc = math::zero<result_t>();
                 for (size_type k = starts[r]; k < starts[r + 1]; ++k)
-                    acc += static_cast<result_t>(data[k]) * static_cast<result_t>(x(indices[k]));
+                    acc = detail::generic_fma<result_t>(acc, data[k], x(indices[k]));
                 y(r) = acc;
             }
         });
@@ -194,7 +195,7 @@ auto operator*(const view::transposed_view<compressed2D<V, P>>& At,
     const auto& data    = A.ref_data();
     for (size_type r = 0; r < A.num_rows(); ++r) {
         for (size_type k = starts[r]; k < starts[r + 1]; ++k) {
-            y(indices[k]) += static_cast<result_t>(data[k]) * static_cast<result_t>(x(r));
+            y(indices[k]) = detail::generic_fma<result_t>(y(indices[k]), data[k], x(r));
         }
     }
     return y;

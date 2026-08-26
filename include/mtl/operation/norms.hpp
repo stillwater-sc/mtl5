@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <limits>
 #include <mtl/concepts/vector.hpp>
+#include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
@@ -28,9 +29,11 @@ template <Vector V>
 auto one_norm(const V& v) {
     using mag_t = magnitude_t<typename V::value_type>;
     auto acc = math::zero<mag_t>();
+    // Wrapping accumulate, and a wrapping abs (#461): for an integral element
+    // type `acc += abs(v(i))` is UB twice over -- at the sum, and at abs() of the
+    // type's minimum, which has no positive counterpart.
     for (typename V::size_type i = 0; i < v.size(); ++i) {
-        using std::abs;
-        acc += abs(v(i));
+        acc = detail::generic_add<mag_t>(acc, detail::generic_abs(v(i)));
     }
     return acc;
 }
@@ -69,8 +72,7 @@ auto two_norm(const V& v) {
         Accumulator acc{};
         AT::clear(acc);
         for (typename V::size_type i = 0; i < v.size(); ++i) {
-            using std::abs;
-            mag_t a = abs(v(i));
+            mag_t a = detail::generic_abs(v(i));
             AT::add_product(acc, a, a);               // acc += a*a in Accumulator
         }
         using std::sqrt;
@@ -108,9 +110,8 @@ auto two_norm(const V& v) {
     } else {
         auto acc = math::zero<mag_t>();
         for (typename V::size_type i = 0; i < v.size(); ++i) {
-            using std::abs;
-            auto a = abs(v(i));
-            acc += a * a;
+            auto a = detail::generic_abs(v(i));
+            acc = detail::generic_fma<mag_t>(acc, a, a);
         }
         using std::sqrt;
         return sqrt(acc);
@@ -124,8 +125,11 @@ auto infinity_norm(const V& v) {
     using mag_t = magnitude_t<typename V::value_type>;
     auto result = math::zero<mag_t>();
     for (typename V::size_type i = 0; i < v.size(); ++i) {
-        using std::abs;
-        auto a = abs(v(i));
+        // Wrapping abs (#461): std::abs is UB at the minimum of a signed type.
+        // NOTE what that means for an integer infinity_norm -- the wrapped |min|
+        // is negative, so it never wins the max. An integer norm is DEFINED, and
+        // reduced mod 2^N, but it is only a norm when nothing overflowed.
+        auto a = detail::generic_abs(v(i));
         if (a > result) result = a;
     }
     return result;
@@ -153,8 +157,7 @@ auto frobenius_norm(const M& m) {
         AT::clear(acc);
         for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
             for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-                using std::abs;
-                mag_t a = abs(m(r, c));
+                mag_t a = detail::generic_abs(m(r, c));
                 AT::add_product(acc, a, a);
             }
         }
@@ -169,9 +172,8 @@ auto frobenius_norm(const M& m) {
         auto acc = math::zero<mag_t>();
         for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
             for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-                using std::abs;
-                auto a = abs(m(r, c));
-                acc += a * a;
+                auto a = detail::generic_abs(m(r, c));
+                acc = detail::generic_fma<mag_t>(acc, a, a);
             }
         }
         using std::sqrt;
@@ -187,8 +189,7 @@ auto one_norm(const M& m) {
     for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
         auto col_sum = math::zero<mag_t>();
         for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
-            using std::abs;
-            col_sum += abs(m(r, c));
+            col_sum = detail::generic_add<mag_t>(col_sum, detail::generic_abs(m(r, c)));
         }
         if (col_sum > result) result = col_sum;
     }
@@ -203,8 +204,7 @@ auto infinity_norm(const M& m) {
     for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
         auto row_sum = math::zero<mag_t>();
         for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-            using std::abs;
-            row_sum += abs(m(r, c));
+            row_sum = detail::generic_add<mag_t>(row_sum, detail::generic_abs(m(r, c)));
         }
         if (row_sum > result) result = row_sum;
     }

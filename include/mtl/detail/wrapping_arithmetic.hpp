@@ -21,9 +21,30 @@
 // `dot` that misses the SIMD fast path must still land on the documented answer
 // rather than on UB. Floating-point and custom number types fall through every
 // helper unchanged.
+#include <cmath>
 #include <type_traits>
 
 namespace mtl::detail {
+
+// The unsigned arithmetic below WRAPS ON PURPOSE. That is not undefined
+// behavior -- unsigned overflow is defined as reduction mod 2^N, and this header
+// exists to route signed arithmetic through it precisely for that guarantee.
+//
+// Clang's `-fsanitize=integer` nevertheless flags it, because that group bundles
+// `unsigned-integer-overflow`, a lint for *accidental* wrap-around rather than a
+// UB check. Left unexempted, the three helpers below trip it on their first
+// overflowing multiply, which makes the whole sanitizer unusable on this project
+// and hides the accidental wrap-around it would otherwise catch elsewhere. So the
+// deliberate wrapping is exempted by name and everything else stays checked.
+//
+// Clang-only: `-fsanitize=integer` is a clang feature, and naming an unknown
+// sanitizer in the attribute warns on GCC.
+#if defined(__clang__)
+#  define MTL5_WRAPS_ON_PURPOSE __attribute__((no_sanitize("unsigned-integer-overflow")))
+#else
+#  define MTL5_WRAPS_ON_PURPOSE
+#endif
+
 
 /// Integral types these helpers wrap.
 ///
@@ -50,6 +71,7 @@ template <typename T>
 using wrap_op_t = std::common_type_t<std::make_unsigned_t<T>, unsigned int>;
 
 template <typename T>
+MTL5_WRAPS_ON_PURPOSE
 constexpr T wrap_add(T a, T b) noexcept {
     if constexpr (is_wrapping_integer_v<T>) {
         using U = std::make_unsigned_t<T>;
@@ -62,6 +84,7 @@ constexpr T wrap_add(T a, T b) noexcept {
 }
 
 template <typename T>
+MTL5_WRAPS_ON_PURPOSE
 constexpr T wrap_sub(T a, T b) noexcept {
     if constexpr (is_wrapping_integer_v<T>) {
         using U = std::make_unsigned_t<T>;
@@ -74,6 +97,7 @@ constexpr T wrap_sub(T a, T b) noexcept {
 }
 
 template <typename T>
+MTL5_WRAPS_ON_PURPOSE
 constexpr T wrap_mul(T a, T b) noexcept {
     if constexpr (is_wrapping_integer_v<T>) {
         using U = std::make_unsigned_t<T>;
@@ -122,6 +146,71 @@ constexpr Result generic_fma(Result acc, const A& a, const B& b) {
         return wrap_add(acc, wrap_mul(static_cast<Result>(a), static_cast<Result>(b)));
     } else {
         return acc + a * b;
+    }
+}
+
+/// `acc + a` for the generic element-wise loops: wrapping when the result type
+/// is integral, the plain expression otherwise (#461).
+///
+/// `generic_fma` for the loops that accumulate a term they did not form by
+/// multiplying -- `one_norm`'s `acc += abs(v(i))`, the column and row sums in the
+/// matrix norms, and the scatter in the transposed sparse matvec, where the
+/// product was computed at a different point from the addition.
+///
+/// The same operand rule as `generic_fma`, for the same reason: `A` is tested
+/// with `std::is_integral_v`, which admits `bool`, because converting a bool to
+/// an integral `Result` is exact and excluding it would push the expression onto
+/// the plain branch and reinstate the UB.
+template <typename Result, typename A>
+constexpr Result generic_add(Result acc, const A& a) {
+    if constexpr (is_wrapping_integer_v<Result> && std::is_integral_v<A>) {
+        return wrap_add(acc, static_cast<Result>(a));
+    } else {
+        return acc + a;
+    }
+}
+
+/// |a|, wrapping, for the norm accumulations (#461).
+///
+/// `std::abs` IS UB at the minimum of a signed type -- there is no positive
+/// `-2^(N-1)` to return -- so `one_norm(dense_vector<int32_t>)` over full-range
+/// data is undefined before any accumulation happens. That is a separate defect
+/// from the `+=` this pass is fixing, and it is reached by exactly the test the
+/// fix requires: full-range operands include the minimum.
+///
+/// The wrapping answer is the minimum itself, since 2^(N-1) reduced mod 2^N is
+/// -2^(N-1). Expressed as `wrap_sub(0, a)` so the narrow types get the same
+/// promotion handling as everywhere else in this header -- writing the unsigned
+/// negation inline would reintroduce the int-promotion trap for int8/int16.
+///
+/// Non-integral types keep `using std::abs; abs(a)`, so the ADL-found `abs` of a
+/// custom number type is still what gets called.
+template <typename T>
+constexpr auto generic_abs(const T& a) {
+    if constexpr (is_wrapping_integer_v<T>) {
+        return a < T{0} ? wrap_sub(T{0}, a) : a;
+    } else {
+        using std::abs;
+        return abs(a);
+    }
+}
+
+/// `a * b` delivered in `Result`: wrapping when `Result` is integral, the plain
+/// expression otherwise (#461). The multiply-only counterpart, for `scale`'s
+/// `*it *= alpha`.
+///
+/// NOTE the difference from `generic_fma`, which deliberately does NOT convert on
+/// its non-integral branch: here the conversion is already part of the operation
+/// being replaced. `*it *= alpha` is `*it = static_cast<T>(*it * alpha)` by the
+/// definition of compound assignment, so returning `Result` preserves the
+/// existing rounding rather than adding one.
+template <typename Result, typename A, typename B>
+constexpr Result generic_mul(const A& a, const B& b) {
+    if constexpr (is_wrapping_integer_v<Result> &&
+                  std::is_integral_v<A> && std::is_integral_v<B>) {
+        return wrap_mul(static_cast<Result>(a), static_cast<Result>(b));
+    } else {
+        return a * b;
     }
 }
 

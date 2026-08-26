@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/concepts/collection.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
@@ -35,8 +36,12 @@ void scale(const S& alpha, C& c) {
         detail::thread_pool::instance().parallel_for(n, /*grain=*/std::size_t{65536},
             [&](std::size_t b, std::size_t e) { simd::scal<T>(a, cp + b, e - b); });
     } else {
+        // Wrapping when the element type is integral (#461). `*it *= alpha` is
+        // `*it = static_cast<T>(*it * alpha)` by definition, so `generic_mul`
+        // returning T preserves the rounding rather than adding one.
+        using T = typename C::value_type;
         for (auto it = c.begin(); it != c.end(); ++it) {
-            *it *= alpha;
+            *it = detail::generic_mul<T>(*it, alpha);
         }
     }
 }

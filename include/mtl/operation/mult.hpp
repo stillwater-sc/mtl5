@@ -116,11 +116,10 @@ void mult_sparse_crs_rows(const mat::compressed2D<V, P>& A, const VIn& x, VOut& 
     const auto& indices = A.ref_minor();
     const auto& data    = A.ref_data();
     if constexpr (std::is_void_v<Accumulator>) {
-        using Value = std::common_type_t<V, typename VIn::value_type>;
         for (std::size_t r = rb; r < re; ++r) {
             auto acc = math::zero<Result>();
             for (size_type k = starts[r]; k < starts[r + 1]; ++k)
-                acc += static_cast<Result>(static_cast<Value>(data[k]) * static_cast<Value>(x(indices[k])));
+                acc = generic_fma<Result>(acc, data[k], x(indices[k]));
             y(r) = acc;
         }
     } else {
@@ -166,11 +165,10 @@ void mult_sparse_crs(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y) {
     const auto& data    = A.ref_data();
     const std::size_t nrows = A.num_rows();
     if constexpr (std::is_void_v<Accumulator>) {
-        using Value = std::common_type_t<V, typename VIn::value_type>;
         for (std::size_t r = 0; r < nrows; ++r) {
             auto acc = math::zero<Result>();
             for (size_type k = starts[r]; k < starts[r + 1]; ++k)
-                acc += static_cast<Result>(static_cast<Value>(data[k]) * static_cast<Value>(x(indices[k])));
+                acc = generic_fma<Result>(acc, data[k], x(indices[k]));
             y(r) = acc;
         }
     } else {
@@ -392,10 +390,9 @@ void mult_sparse_crs_transposed(const mat::view::transposed_view<mat::compressed
     for (typename VOut::size_type i = 0; i < y.size(); ++i)
         y(i) = math::zero<Result>();
     if constexpr (std::is_void_v<Accumulator>) {
-        using Value = std::common_type_t<V, typename VIn::value_type>;
         for (std::size_t r = 0; r < nrows; ++r)
             for (size_type k = starts[r]; k < starts[r + 1]; ++k)
-                y(indices[k]) += static_cast<Result>(static_cast<Value>(data[k]) * static_cast<Value>(x(r)));
+                y(indices[k]) = generic_fma<Result>(y(indices[k]), data[k], x(r));
     } else {
         using Value = std::common_type_t<V, typename VIn::value_type>;
         using AT = math::accumulator_traits<Accumulator, Value>;

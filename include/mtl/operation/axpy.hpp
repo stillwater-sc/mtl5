@@ -9,6 +9,7 @@
 #include <type_traits>
 
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
@@ -42,8 +43,12 @@ void axpy(const S& alpha, const VX& x, VY& y) {
         detail::thread_pool::instance().parallel_for(n, /*grain=*/std::size_t{65536},
             [&](std::size_t b, std::size_t e) { simd::axpy<T>(a, xp + b, yp + b, e - b); });
     } else {
+        // Wrapping when the element type is integral, the plain expression
+        // otherwise (#461): a signed `y(i) += alpha * x(i)` is UB exactly where
+        // the SIMD path it completes wraps and defines the answer.
+        using T = typename VY::value_type;
         for (typename VY::size_type i = 0; i < y.size(); ++i) {
-            y(i) += alpha * x(i);
+            y(i) = detail::generic_fma<T>(y(i), alpha, x(i));
         }
     }
 }
