@@ -76,27 +76,43 @@ static_assert(!FieldVector<vec::dense_vector<std::int64_t>>);
 
 // Each trait below asks "is this solver callable with element type T?" -- the
 // call is never evaluated and the body never instantiated, so only the template
-// constraint decides. Written one per solver because their signatures differ in
-// arity (bicgstab_ell takes ell, idr_s takes s, gmres takes restart).
-#define MTL5_SOLVER_CALLABLE(NAME, TRAIT, ...)                                  \
+// constraint decides.
+//
+// TWO MACROS RATHER THAN ONE VARIADIC, because three of the solvers take a
+// trailing tuning argument (gmres a restart, idr_s an s, bicgstab_ell an ell)
+// and the obvious `__VA_OPT__` spelling does not compile on MSVC without
+// /Zc:preprocessor -- MSVC's default preprocessor is not conforming, and adding
+// a build flag to accommodate a test is the wrong way round. Nothing else in the
+// project uses __VA_OPT__, so this stays a portability rule the project already
+// follows rather than a new exception.
+#define MTL5_SOLVER_CALLABLE(NAME, TRAIT)                                       \
     template <typename T>                                                       \
     concept TRAIT = requires(mat::dense2D<T>& A, vec::dense_vector<T>& x,       \
                              const vec::dense_vector<T>& b,                     \
                              itl::pc::identity<mat::dense2D<T>>& M,             \
                              itl::basic_iteration<T>& it) {                     \
-        itl::NAME(A, x, b, M, it __VA_OPT__(,) __VA_ARGS__);                    \
+        itl::NAME(A, x, b, M, it);                                              \
     };
 
-MTL5_SOLVER_CALLABLE(cg,            CgOk)
-MTL5_SOLVER_CALLABLE(bicg,          BicgOk)
-MTL5_SOLVER_CALLABLE(bicgstab,      BicgstabOk)
-MTL5_SOLVER_CALLABLE(cgs,           CgsOk)
-MTL5_SOLVER_CALLABLE(minres,        MinresOk)
-MTL5_SOLVER_CALLABLE(qmr,           QmrOk)
-MTL5_SOLVER_CALLABLE(tfqmr,         TfqmrOk)
-MTL5_SOLVER_CALLABLE(gmres,         GmresOk,       30)
-MTL5_SOLVER_CALLABLE(idr_s,         IdrsOk,        4)
-MTL5_SOLVER_CALLABLE(bicgstab_ell,  BicgstabEllOk, 2)
+#define MTL5_SOLVER_CALLABLE_ARG(NAME, TRAIT, EXTRA)                            \
+    template <typename T>                                                       \
+    concept TRAIT = requires(mat::dense2D<T>& A, vec::dense_vector<T>& x,       \
+                             const vec::dense_vector<T>& b,                     \
+                             itl::pc::identity<mat::dense2D<T>>& M,             \
+                             itl::basic_iteration<T>& it) {                     \
+        itl::NAME(A, x, b, M, it, EXTRA);                                       \
+    };
+
+MTL5_SOLVER_CALLABLE(cg,       CgOk)
+MTL5_SOLVER_CALLABLE(bicg,     BicgOk)
+MTL5_SOLVER_CALLABLE(bicgstab, BicgstabOk)
+MTL5_SOLVER_CALLABLE(cgs,      CgsOk)
+MTL5_SOLVER_CALLABLE(minres,   MinresOk)
+MTL5_SOLVER_CALLABLE(qmr,      QmrOk)
+MTL5_SOLVER_CALLABLE(tfqmr,    TfqmrOk)
+MTL5_SOLVER_CALLABLE_ARG(gmres,        GmresOk,       30)
+MTL5_SOLVER_CALLABLE_ARG(idr_s,        IdrsOk,        4)
+MTL5_SOLVER_CALLABLE_ARG(bicgstab_ell, BicgstabEllOk, 2)
 
 #define MTL5_ASSERT_SOLVER_GATE(TRAIT)                                          \
     static_assert(TRAIT<double>,                    #TRAIT " must accept double");        \
