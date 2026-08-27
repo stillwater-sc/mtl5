@@ -14,7 +14,8 @@
 // information. A requires-expression answers the same question at compile time
 // for every solver in a single cheap TU: it runs overload resolution and checks
 // the constraint WITHOUT instantiating the body, so it costs almost nothing and
-// covers all ten. compile_fail/cg_integer_vector.cpp still exists alongside it,
+// covers all eleven constrained entry points -- the ten public solvers plus
+// gmres_inner. compile_fail/cg_integer_vector.cpp still exists alongside it,
 // for the one thing this file cannot check -- that the DIAGNOSTIC names the
 // reason rather than merely failing.
 //
@@ -113,8 +114,14 @@ MTL5_SOLVER_CALLABLE(tfqmr,    TfqmrOk)
 MTL5_SOLVER_CALLABLE_ARG(gmres,        GmresOk,       30)
 MTL5_SOLVER_CALLABLE_ARG(idr_s,        IdrsOk,        4)
 MTL5_SOLVER_CALLABLE_ARG(bicgstab_ell, BicgstabEllOk, 2)
+// gmres_inner is the eleventh constrained entry point. It is in itl::detail
+// rather than itl, but it is a real gate that can drift independently of the
+// gmres wrapper around it, so it is covered here too -- the macro qualifies with
+// `itl::`, so the detail:: prefix composes.
+MTL5_SOLVER_CALLABLE_ARG(detail::gmres_inner, GmresInnerOk, 30)
 
 #define MTL5_ASSERT_SOLVER_GATE(TRAIT)                                          \
+    static_assert(TRAIT<float>,                     #TRAIT " must accept float");         \
     static_assert(TRAIT<double>,                    #TRAIT " must accept double");        \
     static_assert(TRAIT<std::complex<double>>,      #TRAIT " must accept complex");       \
     static_assert(TRAIT<emul>,                      #TRAIT " must accept a custom Field");\
@@ -131,13 +138,15 @@ MTL5_ASSERT_SOLVER_GATE(TfqmrOk)
 MTL5_ASSERT_SOLVER_GATE(GmresOk)
 MTL5_ASSERT_SOLVER_GATE(IdrsOk)
 MTL5_ASSERT_SOLVER_GATE(BicgstabEllOk)
+MTL5_ASSERT_SOLVER_GATE(GmresInnerOk)
 
 } // namespace
 
 TEST_CASE("every Krylov solver requires a Field element type", "[itl][concepts][field]") {
     // The claim is entirely in the static_asserts above -- if this TU compiled,
-    // all ten solvers reject the integers and accept double, complex and a
-    // custom Field. This case exists so the check appears as a named ctest entry
-    // rather than only as a build that happened to succeed.
-    SUCCEED("all ten solvers gate on FieldVector");
+    // all eleven constrained entry points reject the integers and accept float,
+    // double, complex and a custom Field. This case exists so the check appears
+    // as a named ctest entry rather than only as a build that happened to
+    // succeed.
+    SUCCEED("all eleven constrained entry points gate on FieldVector");
 }
