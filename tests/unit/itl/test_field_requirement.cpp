@@ -79,9 +79,10 @@ static_assert(!FieldVector<vec::dense_vector<std::int64_t>>);
 // call is never evaluated and the body never instantiated, so only the template
 // constraint decides.
 //
-// TWO MACROS RATHER THAN ONE VARIADIC, because three of the solvers take a
-// trailing tuning argument (gmres a restart, idr_s an s, bicgstab_ell an ell)
-// and the obvious `__VA_OPT__` spelling does not compile on MSVC without
+// TWO MACROS RATHER THAN ONE VARIADIC, because four of the entry points take a
+// trailing tuning argument -- gmres a restart, idr_s an s, bicgstab_ell an ell,
+// and detail::gmres_inner a kmax -- while the rest take none, and the obvious
+// `__VA_OPT__` spelling does not compile on MSVC without
 // /Zc:preprocessor -- MSVC's default preprocessor is not conforming, and adding
 // a build flag to accommodate a test is the wrong way round. Nothing else in the
 // project uses __VA_OPT__, so this stays a portability rule the project already
