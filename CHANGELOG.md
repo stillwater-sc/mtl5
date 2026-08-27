@@ -3,7 +3,7 @@
 All notable changes to MTL5 are documented in this file.
 Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [Unreleased]
+## [5.12.0] - 2026-08-27
 
 The on-node parallelism release for emulated formats, and the completion of #450's
 integer exclusion through `itl/`. Two breaking changes, both narrow and both
