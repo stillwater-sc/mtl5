@@ -19,7 +19,7 @@ were broken; each answered a real question that was not the question being asked
 
 | What the signal said | What it was actually checking |
 |---|---|
-| CodeRabbit check: **pass**, on three merged PRs | That CodeRabbit *ran*. On #500 and #502 it rate-limited and posted a limit notice; **no review happened**, and the check is green either way |
+| CodeRabbit check: **pass** | That CodeRabbit *ran*. On #501 and #502 it rate-limited and posted a limit notice; **no review happened**, and the check is green either way. On #500 a review *did* land — and I merged 26 minutes later without reading it |
 | `static_assert(IlutOk<complex<double>>)` | That the type **name** is valid. Naming a specialization instantiates no member, and `ilut<complex<double>>::factorize` did not compile |
 | `lu_factor`'s `FieldMatrix` gate protects `block_diagonal` | The *member's* constraint. Naming `block_diagonal<dense2D<int>>` never instantiates it — the same hole let four wrapper smoothers through untouched |
 | Threaded SpMV gains **1.18×**, so threading barely helps | Memory bandwidth. With a multiply that costs what an emulated format costs, the same kernel gains **3.8×** |
@@ -114,11 +114,18 @@ to point at it.
 
 ## The parts that went wrong
 
-- **I merged three PRs believing CodeRabbit had reviewed them, and it had not.**
-  It rate-limited on #500 and #502 and posted a limit notice; the check reports
-  **pass** either way. I then told the user CodeRabbit "hasn't reviewed this one
-  either" about #504 — inferring from the pattern instead of looking, when it had
-  in fact posted a review with two valid findings. They caught it.
+- **I was wrong about which PRs CodeRabbit reviewed, in both directions, and only
+  found out by querying at wrapup.** #501 and #502 rate-limited and were merged
+  with **no review at all**; the check reports **pass** either way. #504 *was*
+  reviewed and I told the user it had not been — inferring from the pattern
+  instead of looking, when it carried two valid findings. They caught that one.
+  And #500, which I had recorded as rate-limited, produced a review after my
+  `@coderabbitai review` trigger: **one finding, posted 01:22:55Z, merged
+  01:49:29Z**. I read the "Review triggered" ack, concluded nothing would come of
+  it, and merged 26 minutes later without checking again. The finding — SC2086 on
+  an unquoted target expansion — is resolved in this PR, three days late.
+  Every one of these was a claim about a fact I could have queried in one
+  command, in a session whose entire subject is not doing that.
 - **I published a table of numbers that was wrong in both directions.** The
   per-solver division counts on #503 came from a `grep` that matched `//` comment
   lines and `#include <mtl/...>` paths, and *missed* real divisions, reporting
@@ -199,3 +206,14 @@ to point at it.
   check by printing the matching lines before quoting a count.
 - **Commit before experimenting on the working tree.** `git checkout --` does not
   distinguish your scaffolding from your work.
+- **An acknowledgement is not an outcome.** Reading "Review triggered" and
+  merging on the strength of it is the same error as reading a green check: both
+  say something *started*, neither says what it found. The check is cheap —
+  `gh api repos/{o}/{r}/pulls/{n}/comments` — and it is the check I skipped on the
+  one PR where it would have mattered.
+- **Write the log, then verify the log.** Two of the factual claims in this file
+  were wrong when first committed: a changelog line that collapsed four measured
+  timings into one number, and a count of unreviewed PRs that was wrong in both
+  directions. Review caught the first two; querying `gh` at wrapup caught the
+  third. A session log asserting what happened deserves the same scepticism as a
+  benchmark asserting what is fast.

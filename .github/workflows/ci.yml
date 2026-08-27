@@ -398,14 +398,21 @@ jobs:
       # is refused: `cmake --build --target` with no targets builds everything.
       - name: Build mt tests
         run: |
-          targets=$(ctest --test-dir build-tsan -R _mt -N | sed -n 's/^ *Test *#[0-9]*: //p')
-          if [ -z "$targets" ]; then
+          # An ARRAY, not a word-split string. The string form needed the
+          # expansion left unquoted to split into separate --target arguments,
+          # which also exposes it to PATHNAME expansion: a target name containing
+          # a glob character would be silently replaced by matching filenames, or
+          # by nothing. No target name contains one today, so this is hardening
+          # rather than a fix -- but the array form gets the splitting without
+          # the globbing, so there is no reason to take the risk (#500 review).
+          mapfile -t targets < <(
+            ctest --test-dir build-tsan -R _mt -N | sed -n 's/^ *Test *#[0-9]*: //p')
+          if [ "${#targets[@]}" -eq 0 ]; then
             echo "::error::no _mt tests discovered -- refusing to build the whole tree"
             exit 1
           fi
-          echo "discovered _mt targets:" $targets
-          # Unquoted on purpose: one word per target. Target names have no spaces.
-          cmake --build build-tsan --parallel 2 --target $targets
+          echo "discovered _mt targets:" "${targets[@]}"
+          cmake --build build-tsan --parallel 2 --target "${targets[@]}"
 
       - name: Run mt tests under TSan (MTL5_NUM_THREADS=4)
         run: ctest --test-dir build-tsan -R _mt --output-on-failure
