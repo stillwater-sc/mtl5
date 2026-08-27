@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- ILUT (Incomplete LU with Threshold) preconditioner for compressed2D
 // Saad's ILUT: allows fill-in up to p entries per row, drops entries below tau*||row||.
+#include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -15,7 +16,7 @@ namespace mtl::itl::pc {
 /// ILUT preconditioner for compressed2D sparse matrices.
 /// fill: max extra entries per row in L and U.
 /// threshold: drop tolerance relative to row 2-norm.
-template <typename Value, typename Parameters = mat::parameters<>>
+template <Field Value, typename Parameters = mat::parameters<>>
 class ilut {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;

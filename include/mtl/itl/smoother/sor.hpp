@@ -1,6 +1,8 @@
 #pragma once
 // MTL5 -- SOR (Successive Over-Relaxation) smoother
 // Relaxed Gauss-Seidel: x[i] = omega * GS_update + (1 - omega) * x[i]
+#include <mtl/concepts/scalar.hpp>   // Field (#505)
+#include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
 #include <cstddef>
 #include <type_traits>
@@ -37,7 +39,7 @@ namespace mtl::itl::smoother {
 /// omega_ and dia_inv_ are all read-only during a sweep). That is what lets
 /// pc::ssor hold one as a member and still expose a const solve() (#405),
 /// without reaching for `mutable`. Applies to jacobi and gauss_seidel too.
-template <typename Matrix, typename Accumulator = void>
+template <FieldMatrix Matrix, typename Accumulator = void>
 class sor {
     using value_type = typename Matrix::value_type;
     using size_type  = typename Matrix::size_type;
@@ -99,7 +101,7 @@ private:
 };
 
 /// Specialization for compressed2D: O(nnz) sweep.
-template <typename Value, typename Parameters, typename Accumulator>
+template <Field Value, typename Parameters, typename Accumulator>
 class sor<mat::compressed2D<Value, Parameters>, Accumulator> {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;

@@ -1,5 +1,6 @@
 #pragma once
 // MTL5 -- Diagonal (Jacobi) preconditioner: stores inv(diag(A))
+#include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
@@ -11,7 +12,7 @@ namespace mtl::itl::pc {
 
 /// Jacobi preconditioner -- stores the inverse diagonal of A.
 /// solve(x, b): x(i) = inv_diag(i) * b(i)
-template <typename Matrix>
+template <FieldMatrix Matrix>
 class diagonal {
     using value_type = typename Matrix::value_type;
     using size_type  = typename Matrix::size_type;

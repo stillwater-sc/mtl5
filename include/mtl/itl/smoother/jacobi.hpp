@@ -1,6 +1,8 @@
 #pragma once
 // MTL5 -- Jacobi smoother
 // Allocates x_new, computes all updates, then copies back (true Jacobi).
+#include <mtl/concepts/scalar.hpp>   // Field (#505)
+#include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
 #include <cstddef>
 #include <type_traits>
@@ -20,7 +22,7 @@ namespace mtl::itl::smoother {
 // downstream (MTL5 stays Universal-free).
 
 /// Jacobi smoother: compute x_new from old x, then swap.
-template <typename Matrix, typename Accumulator = void>
+template <FieldMatrix Matrix, typename Accumulator = void>
 class jacobi {
     using value_type = typename Matrix::value_type;
     using size_type  = typename Matrix::size_type;
@@ -67,7 +69,7 @@ private:
 };
 
 /// Specialization for compressed2D: O(nnz) sweep.
-template <typename Value, typename Parameters, typename Accumulator>
+template <Field Value, typename Parameters, typename Accumulator>
 class jacobi<mat::compressed2D<Value, Parameters>, Accumulator> {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;

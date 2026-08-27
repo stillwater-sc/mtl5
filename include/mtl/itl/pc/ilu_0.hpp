@@ -2,6 +2,7 @@
 // MTL5 -- ILU(0) incomplete LU factorization preconditioner for compressed2D
 // Preserves the sparsity pattern of A (no fill-in).
 // Constructor performs factorization; solve/adjoint_solve do L/U trisolves.
+#include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <cassert>
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
@@ -13,7 +14,7 @@ namespace mtl::itl::pc {
 
 /// ILU(0) preconditioner for compressed2D sparse matrices.
 /// Computes L and U factors with the same sparsity pattern as A.
-template <typename Value, typename Parameters = mat::parameters<>>
+template <Field Value, typename Parameters = mat::parameters<>>
 class ilu_0 {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;

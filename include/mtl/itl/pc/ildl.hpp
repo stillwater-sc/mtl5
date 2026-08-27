@@ -2,6 +2,7 @@
 // MTL5 -- ILDL (Incomplete LDL^T) preconditioner for compressed2D
 // For symmetric (possibly indefinite) matrices.
 // Preserves sparsity pattern of lower triangle.
+#include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <cassert>
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
@@ -13,7 +14,7 @@ namespace mtl::itl::pc {
 /// ILDL preconditioner: incomplete L*D*L^T factorization.
 /// D is diagonal (may have negative entries), L is unit lower triangular.
 /// A must be symmetric; only the sparsity pattern of the lower triangle is preserved.
-template <typename Value, typename Parameters = mat::parameters<>>
+template <Field Value, typename Parameters = mat::parameters<>>
 class ildl {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;

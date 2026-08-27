@@ -44,6 +44,7 @@
 // three lines over the smoother rather than a parallel copy of it. Keeping one
 // implementation is not only tidiness: the x = b bug fixed in #398 lived in the
 // duplicate, and could not have been written here.
+#include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
 #include <cstddef>
 #include <mtl/math/identity.hpp>
@@ -62,7 +63,7 @@ namespace mtl::itl::pc {
 /// The matrix-type specialization lives in the smoother -- `smoother::sor` has
 /// an O(nnz) `compressed2D` form -- so this template needs only one definition
 /// and picks up sparse handling automatically.
-template <typename Matrix, typename Accumulator = void>
+template <FieldMatrix Matrix, typename Accumulator = void>
 class ssor {
     using value_type = typename Matrix::value_type;
     using size_type  = typename Matrix::size_type;

@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- Block diagonal preconditioner
 // Partitions matrix into diagonal blocks, computes LU of each, applies block solves.
+#include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <algorithm>
 #include <cassert>
 #include <vector>
@@ -12,7 +13,7 @@
 namespace mtl::itl::pc {
 
 /// Block diagonal preconditioner: extracts diagonal blocks and uses dense LU.
-template <typename Matrix>
+template <FieldMatrix Matrix>
 class block_diagonal {
     using value_type = typename Matrix::value_type;
     using size_type  = typename Matrix::size_type;

@@ -2,6 +2,7 @@
 // MTL5 -- IC(0) incomplete Cholesky factorization preconditioner for compressed2D
 // Preserves the sparsity pattern of A (no fill-in). A must be SPD.
 // Constructor performs factorization; solve does L/L^T trisolves.
+#include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <cassert>
 #include <cmath>
 #include <vector>
@@ -13,7 +14,7 @@ namespace mtl::itl::pc {
 
 /// IC(0) preconditioner for SPD compressed2D sparse matrices.
 /// Computes L such that L*L^T approximates A with the same sparsity pattern.
-template <typename Value, typename Parameters = mat::parameters<>>
+template <Field Value, typename Parameters = mat::parameters<>>
 class ic_0 {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;
