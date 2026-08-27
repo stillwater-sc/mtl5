@@ -2,6 +2,7 @@
 // MTL5 -- IDR(s) solver (Induced Dimension Reduction)
 // Sonneveld & van Gijzen (2008). Modern Krylov solver for non-symmetric systems.
 // Parameter s controls shadow space dimension (default 4).
+#include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
 #include <random>
 #include <numbers>
@@ -21,6 +22,7 @@ namespace mtl::itl {
 template <Matrix LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter,
           typename Accumulator = void>
+    requires FieldVector<VecX>
 int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
           typename VecX::size_type s = 4) {
     using value_type = typename VecX::value_type;

@@ -3,6 +3,7 @@
 // Lanczos-based 3-term recurrence with Givens rotations.
 // Guarantees monotonically decreasing residual norm for symmetric A.
 // Reference: Paige & Saunders (1975), Saad Algorithm 6.13.
+#include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
@@ -23,6 +24,7 @@ namespace mtl::itl {
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter,
           typename Accumulator = void>
+    requires FieldVector<VecX>
 int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;

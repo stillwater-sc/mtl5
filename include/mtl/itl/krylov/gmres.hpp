@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- GMRES (Generalized Minimum Residual) solver with restart
 // Left-preconditioned, Modified Gram-Schmidt, Givens rotations for QR
+#include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
 #include <vector>
 #include <mtl/vec/dense_vector.hpp>
@@ -19,6 +20,7 @@ namespace detail {
 /// Returns 0 on convergence, 1 if kmax exhausted (restart needed).
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter, typename Accumulator = void>
+    requires FieldVector<VecX>
 int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
                 const PC& M, Iter& iter, int kmax) {
     using value_type = typename VecX::value_type;
@@ -129,6 +131,7 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
 /// restart: maximum Krylov subspace dimension before restart (default 30).
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter, typename Accumulator = void>
+    requires FieldVector<VecX>
 int gmres(const LinearOp& A, VecX& x, const VecB& b,
           const PC& M, Iter& iter, int restart = 30) {
     while (!iter.is_finished()) {

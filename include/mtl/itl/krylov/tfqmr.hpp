@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- TFQMR (Transpose-Free Quasi-Minimal Residual) solver
 // Does not require trans(A). Based on Freund (1993).
+#include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
@@ -19,6 +20,7 @@ namespace mtl::itl {
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter,
           typename Accumulator = void>
+    requires FieldVector<VecX>
 int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;

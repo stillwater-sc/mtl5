@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- BiCGSTAB(ell) solver: BiCGSTAB with higher-order stabilization
 // Ported from MTL4 (Jan Bos / Peter Gottschling). Uses single right PC.
+#include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cstddef>
 #include <vector>
 #include <mtl/vec/dense_vector.hpp>
@@ -23,6 +24,7 @@ namespace mtl::itl {
 /// Accumulator, matching the convention set by cg/bicgstab/gmres/idr_s/bicg.
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter, typename Accumulator = void>
+    requires FieldVector<VecX>
 int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
                  Iter& iter, std::size_t ell) {
     using value_type = typename VecX::value_type;

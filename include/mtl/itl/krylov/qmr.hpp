@@ -2,6 +2,7 @@
 // MTL5 -- QMR (Quasi-Minimal Residual) solver
 // Based on Barrett et al. "Templates for the Solution of Linear Systems" Algorithm 7.3.
 // Requires trans(A). M must provide solve() and adjoint_solve().
+#include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
@@ -14,6 +15,7 @@ namespace mtl::itl {
 /// QMR solver for non-symmetric systems A*x = b.
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter, typename Accumulator = void>
+    requires FieldVector<VecX>
 int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;

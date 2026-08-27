@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- CGS (Conjugate Gradient Squared) solver
 // Ported from MTL4. For non-symmetric systems.
+#include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
@@ -18,6 +19,7 @@ namespace mtl::itl {
 template <typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter,
           typename Accumulator = void>
+    requires FieldVector<VecX>
 int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;
