@@ -177,7 +177,7 @@ private:
 
 /// Backward SOR: one in-place relaxed sweep in descending row order.
 /// Same fixed point as the forward relaxed sweep on an SPD system.
-template <typename Matrix, typename Accumulator = void>
+template <FieldMatrix Matrix, typename Accumulator = void>
 class backward_sor {
     using value_type = typename Matrix::value_type;
 public:
@@ -196,7 +196,7 @@ private:
 /// (SPD-preserving), which is why Krylov methods use it as a preconditioner,
 /// hence a first-class primitive rather than a caller-side compose. omega and the
 /// optional Accumulator are carried through both sweeps.
-template <typename Matrix, typename Accumulator = void>
+template <FieldMatrix Matrix, typename Accumulator = void>
 class symmetric_sor {
     using value_type = typename Matrix::value_type;
 public:

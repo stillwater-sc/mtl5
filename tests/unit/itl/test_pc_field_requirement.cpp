@@ -17,11 +17,13 @@
 // pass a rejection-only test.
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <complex>
 #include <cstdint>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/scalar.hpp>
@@ -115,6 +117,22 @@ MTL5_ASSERT_PC_GATE(JacobiSparseOk)
 MTL5_ASSERT_PC_GATE(GaussSeidelSparseOk)
 MTL5_ASSERT_PC_GATE(SorSparseOk)
 
+// The four WRAPPER smoothers, which hold a gauss_seidel or sor member. A member
+// being constrained does not constrain the enclosing template: naming
+// backward_gauss_seidel<dense2D<int>> instantiates no member, so the inner gate
+// never fires and the integer slipped straight through. Exactly the hole that
+// block_diagonal has around lu_factor, and the reason each of these carries its
+// own constraint rather than inheriting one (#505 review).
+MTL5_PC_MATRIX_SHAPE(itl::smoother::backward_gauss_seidel,  BackwardGsOk)
+MTL5_PC_MATRIX_SHAPE(itl::smoother::symmetric_gauss_seidel, SymmetricGsOk)
+MTL5_PC_MATRIX_SHAPE(itl::smoother::backward_sor,           BackwardSorOk)
+MTL5_PC_MATRIX_SHAPE(itl::smoother::symmetric_sor,          SymmetricSorOk)
+
+MTL5_ASSERT_PC_GATE(BackwardGsOk)
+MTL5_ASSERT_PC_GATE(SymmetricGsOk)
+MTL5_ASSERT_PC_GATE(BackwardSorOk)
+MTL5_ASSERT_PC_GATE(SymmetricSorOk)
+
 } // namespace
 
 TEST_CASE("every preconditioner and smoother requires a Field element type",
@@ -147,4 +165,37 @@ TEST_CASE("the gated types still work on a real solve", "[itl][pc][smoother][fie
     I.solve(y, b);
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE(y(i) == b(i));
+}
+
+TEST_CASE("a complex element type gets past naming and actually factorizes",
+          "[itl][pc][field][complex]") {
+    // `TRAIT<std::complex<double>>` above only proves the TYPE NAME is valid --
+    // naming a specialization instantiates no member. ilut was the one type where
+    // that gap was real: its drop tolerance was stored as Value, so
+    // `abs(w[k]) < drop_tol` compared a double against a complex and factorize()
+    // did not compile, while the static_assert happily claimed complex support
+    // (#505 review). Nine of the ten were genuinely fine; this exercises the one
+    // that was not, through the member that used to fail.
+    using cx = std::complex<double>;
+    const std::size_t n = 6;
+    mat::compressed2D<cx> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<cx>> ins(A, 3);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << cx(4.0, 0.5);
+            if (i + 1 < n) { ins[i][i + 1] << cx(-1.0, 0.25); ins[i + 1][i] << cx(-1.0, -0.25); }
+        }
+    }
+    itl::pc::ilut<cx> M(A, 2, 1e-3);          // the threshold is REAL, not cx
+    vec::dense_vector<cx> x(n), b(n);
+    for (std::size_t i = 0; i < n; ++i) b(i) = cx(1.0, 0.0);
+    M.solve(x, b);
+
+    // A preconditioner is an approximate inverse, so assert it did something
+    // finite and non-trivial rather than a specific value.
+    for (std::size_t i = 0; i < n; ++i) {
+        REQUIRE(std::isfinite(x(i).real()));
+        REQUIRE(std::isfinite(x(i).imag()));
+    }
+    REQUIRE(std::abs(x(0)) > 0.0);
 }

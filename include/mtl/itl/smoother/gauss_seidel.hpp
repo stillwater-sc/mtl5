@@ -166,7 +166,7 @@ private:
 /// Backward Gauss-Seidel: one in-place sweep in descending row order.
 /// Same fixed point as the forward sweep; the sweep direction is what
 /// mp-iterative studies against low-precision error propagation.
-template <typename Matrix, typename Accumulator = void>
+template <FieldMatrix Matrix, typename Accumulator = void>
 class backward_gauss_seidel {
 public:
     explicit backward_gauss_seidel(const Matrix& A) : gs_(A) {}
@@ -183,7 +183,7 @@ private:
 /// symmetric (SPD-preserving), which is why Krylov methods use it as a
 /// preconditioner -- hence a first-class primitive rather than a caller-side
 /// compose. Carries the optional Accumulator through both sweeps.
-template <typename Matrix, typename Accumulator = void>
+template <FieldMatrix Matrix, typename Accumulator = void>
 class symmetric_gauss_seidel {
 public:
     explicit symmetric_gauss_seidel(const Matrix& A) : gs_(A) {}

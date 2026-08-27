@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- ILUT (Incomplete LU with Threshold) preconditioner for compressed2D
 // Saad's ILUT: allows fill-in up to p entries per row, drops entries below tau*||row||.
+#include <mtl/concepts/magnitude.hpp>   // magnitude_t (#505 review)
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <algorithm>
 #include <cassert>
@@ -20,10 +21,18 @@ template <Field Value, typename Parameters = mat::parameters<>>
 class ilut {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;
+    /// The REAL type the drop tolerance and row norms live in.
+    ///
+    /// A threshold is a magnitude, and magnitudes are ordered; complex numbers
+    /// are not. Storing them as `Value` made `abs(w[k]) < drop_tol` compare a
+    /// double against a complex<double>, so ilut<complex<double>> named a valid
+    /// type whose factorize() did not compile (#505 review). Identical to Value
+    /// for every real element type, so nothing changes there.
+    using magnitude_type = magnitude_t<Value>;
     using size_type   = typename matrix_type::size_type;
 public:
     explicit ilut(const matrix_type& A, size_type fill = 10,
-                  value_type threshold = value_type(1e-4))
+                  magnitude_type threshold = magnitude_type(1e-4))
         : n_(A.num_rows()), fill_(fill), threshold_(threshold)
     {
         assert(A.num_rows() == A.num_cols());
@@ -75,12 +84,15 @@ private:
             nz_cols.clear();
 
             // Compute row 2-norm for drop tolerance
-            value_type row_norm = math::zero<value_type>();
+            // sum of |a|^2, not sum of a^2: they agree for real elements and
+            // only the former is the 2-norm for complex ones.
+            magnitude_type row_norm = math::zero<magnitude_type>();
             for (size_type k = a_starts[i]; k < a_starts[i + 1]; ++k) {
-                row_norm += a_data[k] * a_data[k];
+                const magnitude_type m = abs(a_data[k]);
+                row_norm += m * m;
             }
             row_norm = sqrt(row_norm);
-            value_type drop_tol = threshold_ * row_norm;
+            const magnitude_type drop_tol = threshold_ * row_norm;
 
             // Copy row i of A into work vector
             for (size_type k = a_starts[i]; k < a_starts[i + 1]; ++k) {
@@ -155,8 +167,16 @@ private:
                                       return abs(a.second) > abs(b.second);
                                   });
                 l_entries.resize(max_l);
-                // Re-sort by column index for correct forward substitution
-                std::sort(l_entries.begin(), l_entries.end());
+                // Re-sort by column index for correct forward substitution.
+                // BY .first EXPLICITLY, not lexicographically on the pair: the
+                // default compares .second when .first ties, which needs the
+                // element type to be ordered. Column indices are unique within a
+                // row so it never tied at runtime, but the comparison still had
+                // to COMPILE -- and complex is not ordered, so ilut<complex> was
+                // rejected here (#505 review). Comparing the key is also what
+                // the comment above always said this does.
+                std::sort(l_entries.begin(), l_entries.end(),
+                          [](const entry& a, const entry& b) { return a.first < b.first; });
             }
 
             // Truncate U: keep at most (orig_u + fill_) largest entries (diagonal always kept)
@@ -179,7 +199,8 @@ private:
                     u_entries.resize(max_u - 1);
                 }
                 u_entries.push_back(diag_entry);
-                std::sort(u_entries.begin(), u_entries.end());
+                std::sort(u_entries.begin(), u_entries.end(),
+                          [](const entry& a, const entry& b) { return a.first < b.first; });
             }
 
             l_rows[i] = std::move(l_entries);
@@ -222,7 +243,7 @@ private:
 
     size_type n_;
     size_type fill_;
-    value_type threshold_;
+    magnitude_type threshold_;
     std::vector<size_type> l_starts_, l_indices_;
     std::vector<value_type> l_data_;
     std::vector<size_type> u_starts_, u_indices_;
