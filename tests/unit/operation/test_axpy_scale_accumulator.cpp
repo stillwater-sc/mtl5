@@ -108,23 +108,26 @@ TEST_CASE("axpy: the accumulator precision is what the policy selects",
         float acc = static_cast<float>(y0[i]);
         acc += static_cast<float>(alpha) * static_cast<float>(x(i));
         REQUIRE(y_narrow(i) == static_cast<double>(acc));
-        // The default is FUSED -- simd::axpy's body is fma(alpha, x, y) -- so
-        // the expectation is std::fma, not `y + alpha*x`. Writing the latter is
-        // what this test did first, and it failed on the double path for exactly
-        // that reason.
-        REQUIRE(y(i)        == std::fma(alpha, x(i), y0[i]));
-        REQUIRE(y(i)        != y_narrow(i));   // the policy is observable
+        // NO ORACLE FOR THE DEFAULT. Its rounding is dispatch-dependent -- BLAS,
+        // fused SIMD body, unfused SIMD tail, or the generic loop -- so any exact
+        // expectation for it is a claim about the build. This test asserted
+        // std::fma here and the Highway and LAPACK CI lanes disproved it. What is
+        // asserted instead is that the float accumulator is observably different,
+        // which holds under every dispatch because the precision differs.
+        REQUIRE(y(i)        != y_narrow(i));
     }
 }
 
 TEST_CASE("axpy: config 2 reproduces std::fma exactly",
           "[operation][axpy][accumulator]") {
-    // fma_accumulator<float> must give the fused result: one rounding per
-    // element. Note this AGREES with the default on this type -- `simd::axpy`
-    // already fuses in its vector body, so config 2 is not buying a rounding
-    // back here. It buys it on the generic paths. The assertion is against
-    // std::fma directly, so it says what the policy computes rather than that it
-    // differs from something.
+    // fma_accumulator<float> must give the fused result on EVERY dispatch: that
+    // is what asking for the policy buys. Asserted against std::fma directly.
+    //
+    // Deliberately NOT compared against the default. The default may be BLAS, a
+    // fused SIMD body, an unfused SIMD tail or the generic loop, and those do not
+    // agree with one another -- so "config 2 matches the default" is a statement
+    // about the build, not about the policy. This file made that claim and CI
+    // falsified it on the Highway and LAPACK lanes.
     const std::size_t n = 8;
     vec::dense_vector<float> x(n), y(n), y_fma(n);
     const float alpha = 1.0f / 3.0f;
@@ -140,13 +143,6 @@ TEST_CASE("axpy: config 2 reproduces std::fma exactly",
 
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE(y_fma(i) == std::fma(alpha, x(i), y0[i]));
-
-    // ... and the default agrees, which is the point of the note above.
-    vec::dense_vector<float> y_def(n);
-    for (std::size_t i = 0; i < n; ++i) y_def(i) = y0[i];
-    axpy(alpha, x, y_def);
-    for (std::size_t i = 0; i < n; ++i)
-        REQUIRE(y_def(i) == y_fma(i));
 }
 
 TEST_CASE("axpy drives assign, not clear -- it is seeded with y(i)",
@@ -239,5 +235,51 @@ TEST_CASE("scaled forwards the accumulator policy", "[operation][scale][accumula
     for (std::size_t i = 0; i < n; ++i) {
         REQUIRE(out(i) == 10.0);
         REQUIRE(c(i)   == 4.0);                               // input untouched
+    }
+}
+
+TEST_CASE("the accumulator sees the scalar at its own precision, not the element's",
+          "[operation][axpy][scale][accumulator]") {
+    // Both routines first cast alpha to the ELEMENT type before add_product,
+    // which rounded a wider scalar away before the accumulator could use it --
+    // exactly defeating the narrow-elements/wider-scalar case the headers name.
+    // Caught in review of #511. The operand type now includes S.
+    //
+    // alpha = 1/3 as a double is not representable in float, so rounding it to
+    // the element type first is visible in the result.
+    const std::size_t n = 4;
+    const double alpha = 1.0 / 3.0;
+    REQUIRE(static_cast<double>(static_cast<float>(alpha)) != alpha);   // premise
+
+    SECTION("axpy") {
+        vec::dense_vector<float> x(n), y(n);
+        std::vector<float> y0(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            x(i) = 1.0f / static_cast<float>(i + 3);
+            y(i) = 1.0f / static_cast<float>(i + 5);
+            y0[i] = y(i);
+        }
+        axpy<double>(alpha, x, y);
+        for (std::size_t i = 0; i < n; ++i) {
+            const double want = static_cast<double>(y0[i]) +
+                                alpha * static_cast<double>(x(i));   // UNROUNDED alpha
+            const double stale = static_cast<double>(y0[i]) +
+                                 static_cast<double>(static_cast<float>(alpha)) *
+                                 static_cast<double>(x(i));          // the old behaviour
+            REQUIRE(y(i) == static_cast<float>(want));
+            if (static_cast<float>(want) != static_cast<float>(stale))
+                REQUIRE(y(i) != static_cast<float>(stale));
+        }
+    }
+
+    SECTION("scale") {
+        vec::dense_vector<float> c(n);
+        std::vector<float> c0(n);
+        for (std::size_t i = 0; i < n; ++i) { c(i) = 1.0f / static_cast<float>(i + 3); c0[i] = c(i); }
+        scale<double>(alpha, c);
+        for (std::size_t i = 0; i < n; ++i) {
+            const double want = static_cast<double>(c0[i]) * alpha;
+            REQUIRE(c(i) == static_cast<float>(want));
+        }
     }
 }

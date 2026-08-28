@@ -49,7 +49,11 @@ template <typename Accumulator = void, Scalar S, MutableCollection C>
 void scale(const S& alpha, C& c) {
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         using Result = typename C::value_type;
-        using Value  = typename C::value_type;
+        // `S` is part of the operand type -- see axpy for why. Scaling a
+        // bfloat16 vector by a float is the case named above, and casting alpha
+        // to the element type first would have thrown the float away, making
+        // that paragraph false. Caught in review of #511.
+        using Value  = std::common_type_t<S, typename C::value_type>;
         using AT = math::accumulator_traits<Accumulator, Value>;
         const Value a = static_cast<Value>(alpha);
         for (auto it = c.begin(); it != c.end(); ++it) {
