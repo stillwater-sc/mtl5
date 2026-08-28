@@ -288,8 +288,35 @@ This triggers the release workflow (`.github/workflows/release.yml`) which:
 The CMake build system extracts the version from the git tag automatically (`git describe --tags`). When building outside a git repo or without a tag, it falls back to `MTL5_FALLBACK_VERSION` in `CMakeLists.txt`.
 
 **Version bumping checklist:**
-1. Update `MTL5_FALLBACK_VERSION` in `CMakeLists.txt` to the new version
-2. Update `CHANGELOG.md` with the release date and changes
-3. Commit, push, create and merge the PR
-4. Tag the merge commit: `git tag v<major>.<minor>.<patch>`
-5. Push the tag: `git push --tags`
+1. **List what the release actually contains**: `git log <prev-tag>..main --oneline`.
+   Write the CHANGELOG from that range, not from memory of what you worked on.
+   The tag boundary and the narrative boundary are different lines — work that
+   lands *after* a CHANGELOG entry is written still ships in the next tag, even
+   when an earlier entry already discussed that programme thematically. In 5.12.0
+   the hand-written entry covered 7 of 28 PRs for exactly this reason, and the
+   gap surfaced only because the auto-generated release notes take the range
+   correctly (`git describe --tags --abbrev=0 HEAD^`) and listed PRs the CHANGELOG
+   did not.
+2. Update `MTL5_FALLBACK_VERSION` in `CMakeLists.txt` to the new version
+3. Update `CHANGELOG.md` with the release date and the changes from step 1
+4. Commit, push, create and merge the PR
+5. Tag the merge commit: `git tag v<major>.<minor>.<patch>`
+6. Push the tag: `git push --tags`
+
+Before tagging, reconcile the range against the new CHANGELOG section by hand —
+the tag is the point after which the release notes are awkward to correct:
+
+```bash
+git log <prev-tag>..main --pretty='%s' | grep -E '\(#[0-9]+\)$'
+```
+
+**Do not automate this as "is `#N` mentioned in the section".** Entries cite the
+ISSUE they resolve, not the PR that resolved it, so a PR-number grep reports a
+false positive for every correctly written entry — tried on 5.12.0, it flagged all
+seven of the release's own PRs while passing the twenty-one that were genuinely
+missing. What the list is for is checking that each *programme* in the range has a
+home in the section; the mapping from commit to entry is a judgement, not a match.
+
+Note that `release.yml`'s version check only **warns** when `MTL5_FALLBACK_VERSION`
+disagrees with the tag — it does not fail the release — so step 2 is not enforced
+by CI.
