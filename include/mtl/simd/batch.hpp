@@ -672,4 +672,43 @@ constexpr std::size_t vectorizable_length(std::size_t n, std::size_t w) noexcept
 template <typename T>
 inline constexpr std::size_t width = batch<T>::size;
 
+/// The SCALAR equivalent of `fma(batch,batch,batch)` -- what one lane of it does.
+///
+/// A kernel's vector body and its scalar tail must agree, or an element's
+/// rounding depends on its INDEX: the first W*floor(n/W) elements are computed
+/// one way and the last n mod W another (#512).
+///
+/// "Call std::fma in the tail" does NOT achieve that, and would have made the
+/// disagreement worse on some targets. Under Highway `fma` is `hn::MulAdd`,
+/// which is a hardware FMA only when the target has one -- `_mm256_fmadd_ps` on
+/// AVX2, but `mul * x + add` on SSE4 and wherever HWY_DISABLE_BMI2_FMA is set.
+/// An unconditionally fused tail against a decomposed body is the same defect
+/// mirrored. Measured before writing this: on a 128-bit Highway target every
+/// element of an axpy came out UNFUSED, body included.
+///
+/// So this mirrors the branch the batch primitive actually took. It is deliberately
+/// adjacent to that primitive: the two must move together, and a reader changing
+/// one has to see the other.
+///
+/// Integer lanes need no branch -- there is nothing to fuse, and the wrapping
+/// multiply-add is exact mod 2^N, which is what both backends already produce.
+template <typename T>
+constexpr T scalar_fma(T a, T b, T c) {
+    if constexpr (std::is_integral_v<T>) {
+        return mtl::detail::wrap_add(mtl::detail::wrap_mul(a, b), c);
+    } else {
+#if MTL5_SIMD_USE_HIGHWAY
+#  if HWY_NATIVE_FMA && !defined(HWY_DISABLE_BMI2_FMA)
+        using std::fma;
+        return fma(a, b, c);          // MulAdd is _mm*_fmadd_*: fused
+#  else
+        return c + a * b;             // MulAdd decomposed: match it
+#  endif
+#else
+        using std::fma;
+        return fma(a, b, c);          // the scalar backend's fma IS std::fma
+#endif
+    }
+}
+
 } // namespace mtl::simd

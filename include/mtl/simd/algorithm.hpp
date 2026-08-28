@@ -80,8 +80,8 @@ T reduce_dot(const T* a, const T* b, std::size_t n) {
     for (; i + W <= n; i += W)
         a0 = fma(B::load_unaligned(a + i), B::load_unaligned(b + i), a0);
     T s = reduce_add((a0 + a1) + (a2 + a3));
-    for (; i < n; ++i)                       // scalar tail
-        s = mtl::detail::wrap_add(s, mtl::detail::wrap_mul(a[i], b[i]));
+    for (; i < n; ++i)                       // scalar tail, fused as the body is
+        s = scalar_fma(a[i], b[i], s);
     return s;
 }
 
@@ -112,7 +112,8 @@ Wide reduce_dot_widen(const Narrow* a, const Narrow* b, std::size_t n) {
     for (; i + W <= n; i += W)
         a0 = fma(B::load_widen(a + i), B::load_widen(b + i), a0);
     Wide s = reduce_add((a0 + a1) + (a2 + a3));
-    for (; i < n; ++i) s += static_cast<Wide>(a[i]) * static_cast<Wide>(b[i]);  // tail
+    for (; i < n; ++i)                       // tail, fused as the body is
+        s = scalar_fma(static_cast<Wide>(a[i]), static_cast<Wide>(b[i]), s);
     return s;
 }
 
@@ -250,7 +251,7 @@ T reduce_sum_squares(const T* a, std::size_t n) {
     }
     for (; i + W <= n; i += W) { B v = B::load_unaligned(a + i); a0 = fma(v, v, a0); }
     T s = reduce_add((a0 + a1) + (a2 + a3));
-    for (; i < n; ++i) s = mtl::detail::wrap_add(s, mtl::detail::wrap_mul(a[i], a[i]));
+    for (; i < n; ++i) s = scalar_fma(a[i], a[i], s);   // fused as the body is
     return s;
 }
 
@@ -266,7 +267,7 @@ void axpy(T alpha, const T* x, T* y, std::size_t n) {
         B r = fma(va, B::load_unaligned(x + i), B::load_unaligned(y + i));
         r.store_unaligned(y + i);
     }
-    for (; i < n; ++i) y[i] = mtl::detail::wrap_add(y[i], mtl::detail::wrap_mul(alpha, x[i]));
+    for (; i < n; ++i) y[i] = scalar_fma(alpha, x[i], y[i]);   // fused as the body is
 }
 
 /// scal: x[i] *= alpha.
