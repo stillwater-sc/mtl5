@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include <mtl/concepts/scalar.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/concepts/collection.hpp>
 #include <mtl/detail/thread_pool.hpp>
@@ -17,8 +18,49 @@
 namespace mtl {
 
 /// In-place scale: c[i] *= alpha
-template <Scalar S, MutableCollection C>
+///
+/// Mixed precision: pass an explicit `Accumulator` to form each product in a
+/// precision distinct from the element type; the result is rounded out to the
+/// element type on store (#261, Part C). Default `Accumulator = void` keeps
+/// today's BLAS / SIMD / generic dispatch byte for byte.
+///
+/// WHAT THIS BUYS, STATED PRECISELY, because it is less than `axpy`'s and it
+/// would be easy to imply otherwise. A scale sums nothing: each element is a
+/// SINGLE product, seeded from zero. So the configurations do not separate the
+/// way they do in a reduction --
+///
+///   * config 2 buys NOTHING here. `fma(m, v, 0)` is `m * v` rounded once, and
+///     so is a plain multiply. There is no product rounding to fuse away.
+///   * config 3 buys NOTHING here either, for the same reason: an IEEE multiply
+///     is ALREADY correctly rounded, so a quire has no rounding to remove.
+///
+/// What a non-default accumulator does buy is WIDENING: the product is formed in
+/// `Acc` and rounded once to the element type, where the default forms it in the
+/// element type. Scaling a bfloat16 vector by a float with `Acc = float` is the
+/// case that matters, and it is a real difference -- but it is a precision
+/// difference, not an exactness one.
+///
+/// It is threaded anyway because Part C's goal is that every BLAS routine be
+/// specializable by the same policy, and a caller writing `scale<Acc>` alongside
+/// `axpy<Acc>` and `dot<Acc>` should not have to know which of them the policy
+/// can actually help. The honest answer to "what does a quire do for scale" is
+/// "nothing", and it belongs in the code rather than in the reader's surprise.
+template <typename Accumulator = void, Scalar S, MutableCollection C>
 void scale(const S& alpha, C& c) {
+    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
+        using Result = typename C::value_type;
+        using Value  = typename C::value_type;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        const Value a = static_cast<Value>(alpha);
+        for (auto it = c.begin(); it != c.end(); ++it) {
+            Accumulator acc{};
+            AT::clear(acc);                              // zero seed: a bare product
+            AT::add_product(acc, static_cast<Value>(*it), a);
+            *it = AT::template value<Result>(acc);
+        }
+        return;
+    }
+
     // Native SIMD / BLAS path for contiguous real float/double vectors;
     // generic iterator loop for everything else (matrices, strided, complex).
     if constexpr (interface::BlasDenseVector<C>) {
@@ -46,11 +88,12 @@ void scale(const S& alpha, C& c) {
     }
 }
 
-/// Returns a scaled copy of a vector
-template <Scalar S, Collection C>
+/// Returns a scaled copy of a vector. Forwards the accumulator policy, so
+/// `scaled<Acc>` and `scale<Acc>` agree.
+template <typename Accumulator = void, Scalar S, Collection C>
 auto scaled(const S& alpha, const C& c) {
     auto result = c;  // copy
-    scale(alpha, result);
+    scale<Accumulator>(alpha, result);
     return result;
 }
 
