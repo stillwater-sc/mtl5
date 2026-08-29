@@ -12,6 +12,7 @@
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -20,12 +21,39 @@
 namespace mtl {
 
 /// Symmetric matrix-vector product: y = alpha*A*x + beta*y, A assumed symmetric.
-template <Scalar S, Matrix M, Vector VX, Vector VY>
+///
+/// Mixed precision: pass an explicit `Accumulator` to form each row's A*x
+/// reduction in a precision distinct from the operand type (#261, Part C); the
+/// result is rounded out to y's element type before the alpha/beta combine.
+/// Default `Accumulator = void` keeps the BLAS / generic dispatch byte for byte.
+///
+/// Gated on `interface::accumulator_allows_blas_v`, exactly as `gemv` (via
+/// `mult`) and `dot` are: a custom accumulator cannot be honored by external
+/// BLAS, whose symv accumulates in a hardware-fixed precision.
+///
+/// The accumulator sums only the row's A(i,j)*x(j) products, seeded with
+/// `clear` -- the alpha/beta combine happens once, outside the reduction, same
+/// as gemv's generic row loop and unlike axpy's `assign`-seeded one-term sum.
+template <typename Accumulator = void, Scalar S, Matrix M, Vector VX, Vector VY>
 void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
     using value_type = typename VY::value_type;
     using size_type  = typename M::size_type;
     const size_type n = A.num_rows();
     assert(A.num_cols() == n && x.size() == n && y.size() == n);
+
+    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
+        using Value = std::common_type_t<S, typename M::value_type, typename VX::value_type>;
+        using AT = math::accumulator_traits<Accumulator, Value>;
+        for (size_type i = 0; i < n; ++i) {
+            Accumulator acc{};
+            AT::clear(acc);
+            for (size_type j = 0; j < n; ++j)
+                AT::add_product(acc, static_cast<Value>(A(i, j)), static_cast<Value>(x(j)));
+            const value_type reduced = AT::template value<value_type>(acc);
+            y(i) = alpha * reduced + beta * y(i);
+        }
+        return;
+    }
 
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::BlasDenseMatrix<M> && interface::BlasDenseVector<VX> &&
