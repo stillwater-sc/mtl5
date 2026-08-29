@@ -97,8 +97,15 @@ TEST_CASE("scalar_fma mirrors the batch fma, lane for lane", "[simd][fma][tail]"
         // on a target where MulAdd is native: 1/3 * 1/3 + 1/3 is the case the
         // #512 investigation used.
         const float a = kThird, b = kThird, c = kThird;
-        const float fused   = std::fma(a, b, c);
-        const float unfused = static_cast<float>(c + static_cast<float>(a * b));
+        const float fused = std::fma(a, b, c);
+        // `volatile` is the contraction barrier, and it is load-bearing. Written
+        // as `c + static_cast<float>(a * b)` the compiler is free to contract the
+        // whole expression into an FMA -- a same-type cast is not a barrier, and
+        // GCC defaults to -ffp-contract=fast -- which would make `unfused` equal
+        // `fused` and silently void the premise below. Storing the product forces
+        // the intermediate rounding. Raised in review of #513.
+        volatile float prod = a * b;
+        const float unfused = c + prod;
         REQUIRE(fused != unfused);                       // premise of the check
         const float got = simd::scalar_fma(a, b, c);
         REQUIRE((got == fused || got == unfused));       // one or the other...

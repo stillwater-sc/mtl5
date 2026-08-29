@@ -678,37 +678,28 @@ inline constexpr std::size_t width = batch<T>::size;
 /// rounding depends on its INDEX: the first W*floor(n/W) elements are computed
 /// one way and the last n mod W another (#512).
 ///
-/// "Call std::fma in the tail" does NOT achieve that, and would have made the
-/// disagreement worse on some targets. Under Highway `fma` is `hn::MulAdd`,
-/// which is a hardware FMA only when the target has one -- `_mm256_fmadd_ps` on
-/// AVX2, but `mul * x + add` on SSE4 and wherever HWY_DISABLE_BMI2_FMA is set.
-/// An unconditionally fused tail against a decomposed body is the same defect
-/// mirrored. Measured before writing this: on a 128-bit Highway target every
-/// element of an axpy came out UNFUSED, body included.
+/// IT IS THE PRIMITIVE ITSELF, not a reimplementation of it. Broadcasting to a
+/// batch, applying the same `fma`, and taking a lane back is exact -- every lane
+/// holds the identical value, so `reduce_max` recovers it -- and it CANNOT drift
+/// from the body, because it is the body's operation.
 ///
-/// So this mirrors the branch the batch primitive actually took. It is deliberately
-/// adjacent to that primitive: the two must move together, and a reader changing
-/// one has to see the other.
+/// The first version of this did try to mirror the branch, guarded on
+/// `HWY_NATIVE_FMA`, on the reasoning that Highway's `MulAdd` is a hardware FMA
+/// only where the target has one. CI falsified it: on the clang Highway lane the
+/// batch `fma` fused while the guard read the macro as absent, so the mirror
+/// took the decomposed branch and disagreed with the very operation it was
+/// mirroring. A predicate that has to stay in sync with a third-party header's
+/// per-target macros is the wrong mechanism when the operation itself is one
+/// call away.
 ///
-/// Integer lanes need no branch -- there is nothing to fuse, and the wrapping
-/// multiply-add is exact mod 2^N, which is what both backends already produce.
+/// The tail runs at most W-1 times per kernel, so the broadcast and horizontal
+/// reduce are not worth avoiding for a correctness property.
+///
+/// Integer lanes need no special case: `fma` on an integer batch is the wrapping
+/// multiply-add, exact mod 2^N on both backends, which is the #451/#460 contract.
 template <typename T>
-constexpr T scalar_fma(T a, T b, T c) {
-    if constexpr (std::is_integral_v<T>) {
-        return mtl::detail::wrap_add(mtl::detail::wrap_mul(a, b), c);
-    } else {
-#if MTL5_SIMD_USE_HIGHWAY
-#  if HWY_NATIVE_FMA && !defined(HWY_DISABLE_BMI2_FMA)
-        using std::fma;
-        return fma(a, b, c);          // MulAdd is _mm*_fmadd_*: fused
-#  else
-        return c + a * b;             // MulAdd decomposed: match it
-#  endif
-#else
-        using std::fma;
-        return fma(a, b, c);          // the scalar backend's fma IS std::fma
-#endif
-    }
+inline T scalar_fma(T a, T b, T c) {
+    return reduce_max(fma(batch<T>(a), batch<T>(b), batch<T>(c)));
 }
 
 } // namespace mtl::simd
