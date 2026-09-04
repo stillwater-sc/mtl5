@@ -7,6 +7,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/itl/eigen/eigen_common.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl {
 
@@ -26,9 +27,10 @@ struct eigenpair {
 ///
 /// `A` is any LinearOperator (A * v yields a vector); `v0` is the starting
 /// vector (need not be normalized). O(1) vectors of storage; one matvec/iter.
-template <typename LinearOp, typename T>
+template <typename LinearOp, typename T, typename Accumulator = T>
 eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
                              int max_iter = 1000, T tol = T(1e-10)) {
+    using AT = mtl::math::accumulator_traits<Accumulator, T>;
     using std::abs;
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = v0.size();
@@ -48,15 +50,16 @@ eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
         vec::dense_vector<T> w = ev_matvec(A, v0);
 
         // Rayleigh quotient (v is unit norm): lambda = v^T A v.
-        lambda = mtl::dot(v0, w);
+        lambda = mtl::dot<Accumulator, T>(v0, w);
 
         // Ritz residual r = A v - lambda v.
-        T res = T(0);
+        Accumulator res_acc{};
+        AT::clear(res_acc);
         for (size_type i = 0; i < n; ++i) {
             T ri = w(i) - lambda * v0(i);
-            res += ri * ri;
+            AT::add_product(res_acc, ri, ri);
         }
-        res = std::sqrt(res);
+        T res = std::sqrt(AT::template value<T>(res_acc));
 
         // Normalize w to become the next iterate.
         T nw = mtl::two_norm(w);
