@@ -44,6 +44,34 @@ TEST_CASE("BiCG on non-symmetric 3x3 dense system", "[itl][bicg]") {
     }
 }
 
+TEST_CASE("BiCG with explicit float->double Accumulator", "[itl][bicg][accumulator]") {
+    // Accumulator leads the template list, so it is selectable without
+    // restating the five deduced types. Nonsymmetric, so the trans(A) path
+    // is exercised too.
+    const std::size_t n = 20;
+    mat::compressed2D<float> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<float>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 4.0f;
+            if (i > 0)     ins[i][i-1] << -1.5f;
+            if (i < n - 1) ins[i][i+1] << -0.5f;
+        }
+    }
+    vec::dense_vector<float> b(n, 1.0f);
+    vec::dense_vector<float> x(n, 0.0f);
+
+    itl::pc::identity<mat::compressed2D<float>> pc(A);
+    itl::basic_iteration<float> iter(b, 500, 1e-5f);
+
+    int err = itl::bicg<double>(A, x, b, pc, iter);
+    REQUIRE(err == 0);
+
+    auto Ax = A * x;
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE_THAT(Ax(i), Catch::Matchers::WithinAbs(b(i), 1e-3));
+}
+
 TEST_CASE("BiCG on sparse tridiagonal system", "[itl][bicg][sparse]") {
     const std::size_t n = 10;
     mat::compressed2D<double> A(n, n);
