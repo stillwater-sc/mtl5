@@ -19,9 +19,9 @@ namespace mtl::itl {
 /// behavior is unchanged.
 ///
 /// Returns the iteration object (convertible to int error code).
-template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter,
-          typename Accumulator = void>
+template <typename Accumulator = void,
+          typename LinearOp, typename VecX, typename VecB,
+          typename PC, typename Iter>
     requires FieldVector<VecX>
 int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
