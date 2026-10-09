@@ -23,13 +23,14 @@
 #include <mtl/functor/scalar/real.hpp>
 #include <mtl/functor/scalar/imag.hpp>
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl {
 
 /// Compute Householder vector v and scalar tau for a column vector x, such
 /// that H = I - tau*v*v^H satisfies H*x = beta*e_1. v(0) is always 1
 /// (implicit). Returns {v, tau}. For complex x, beta is real by construction.
-template <typename T>
+template <typename T, typename Accumulator = void>
 std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     using std::sqrt;
     using std::abs;
@@ -73,11 +74,16 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     // sigma = sum |x(i)/scale|^2 for i >= 1, in the scaled variables.
     // |z|^2, NOT z^2: the squared modulus is what a norm needs, and for real T
     // the two coincide, which is why the unconjugated form survived this long.
-    mag_t sigma = mag_t(0);
+    using AccT = std::conditional_t<std::is_void_v<Accumulator>, mag_t, Accumulator>;
+    using SigmaAT = math::accumulator_traits<AccT, mag_t>;
+    AccT sigma_acc;
+    SigmaAT::clear(sigma_acc);
     for (size_type i = 1; i < n; ++i) {
         const T xs = x(i) / scale;
-        sigma += functor::scalar::real<T>::apply(T(xs * conj_t::apply(xs)));
+        const mag_t term = functor::scalar::real<T>::apply(T(xs * conj_t::apply(xs)));
+        SigmaAT::add_product(sigma_acc, term, mag_t(1));
     }
+    mag_t sigma = SigmaAT::template value<mag_t>(sigma_acc);
 
     // x is already along e_1. For a real T that IS the identity reflection.
     // For a complex T it is not, unless x(0) happens to be real: this function
@@ -166,7 +172,7 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
 /// Apply Householder reflection H = I - beta*v*v^H on the LEFT (A := H*A)
 /// to columns col..ncols-1
 /// of matrix A, rows row..nrows-1. Modifies A in-place.
-template <Matrix M, typename T>
+template <Matrix M, typename T, typename Accumulator = void>
 void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
                             typename M::size_type row, typename M::size_type col) {
     using size_type = typename M::size_type;
@@ -185,30 +191,44 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
     // reflector entry had overflowed.
     if (beta == math::zero<T>()) return;
     const size_type ncols = n - col;
-    const std::size_t grain = std::max<std::size_t>(
-        std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
-    detail::thread_pool::instance().parallel_for(
-        static_cast<std::size_t>(ncols), grain,
-        [&](std::size_t b, std::size_t e) {
-            for (std::size_t t = b; t < e; ++t) {
-                const size_type j = col + static_cast<size_type>(t);
-                // w = v^H * A(:,j).  conj on v, not on A: for a real T this
-                // is the identity and the arithmetic is unchanged.
-                T w = math::zero<T>();
-                for (size_type i = 0; i < vlen; ++i)
-                    w += functor::scalar::conj<T>::apply(v(i)) * A(row + i, j);
-                // A(:,j) -= beta * v * w
-                for (size_type i = 0; i < vlen; ++i)
-                    A(row + i, j) -= beta * v(i) * w;
-            }
-        });
+    if constexpr (std::is_void_v<Accumulator>) {
+        const std::size_t grain = std::max<std::size_t>(
+            std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
+        detail::thread_pool::instance().parallel_for(
+            static_cast<std::size_t>(ncols), grain,
+            [&](std::size_t b, std::size_t e) {
+                for (std::size_t t = b; t < e; ++t) {
+                    const size_type j = col + static_cast<size_type>(t);
+                    // w = v^H * A(:,j).  conj on v, not on A: for a real T this
+                    // is the identity and the arithmetic is unchanged.
+                    T w = math::zero<T>();
+                    for (size_type i = 0; i < vlen; ++i)
+                        w += functor::scalar::conj<T>::apply(v(i)) * A(row + i, j);
+                    // A(:,j) -= beta * v * w
+                    for (size_type i = 0; i < vlen; ++i)
+                        A(row + i, j) -= beta * v(i) * w;
+                }
+            });
+    } else {
+        using AT = math::accumulator_traits<Accumulator, T>;
+        for (size_type t = 0; t < ncols; ++t) {
+            const size_type j = col + t;
+            Accumulator w_acc;
+            AT::clear(w_acc);
+            for (size_type i = 0; i < vlen; ++i)
+                AT::add_product(w_acc, functor::scalar::conj<T>::apply(v(i)), A(row + i, j));
+            T w = AT::template value<T>(w_acc);
+            for (size_type i = 0; i < vlen; ++i)
+                A(row + i, j) -= beta * v(i) * w;
+        }
+    }
 }
 
 /// Apply Householder reflection on the right: A := A * (I - beta*v*v^H).
 /// NOTE this is A*H, not A*H^H -- for complex tau those differ, and a caller
 /// wanting the inverse/adjoint must pass conj(beta) itself.
 /// Modifies columns col..col+vlen-1 of rows row..nrows-1.
-template <Matrix M, typename T>
+template <Matrix M, typename T, typename Accumulator = void>
 void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
                              typename M::size_type row, typename M::size_type col) {
     using size_type = typename M::size_type;
@@ -225,24 +245,38 @@ void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
     // Identity reflection -- see the note in apply_householder_left.
     if (beta == math::zero<T>()) return;
     const size_type nrows = m - row;
-    const std::size_t grain = std::max<std::size_t>(
-        std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
-    detail::thread_pool::instance().parallel_for(
-        static_cast<std::size_t>(nrows), grain,
-        [&](std::size_t b, std::size_t e) {
-            for (std::size_t t = b; t < e; ++t) {
-                const size_type i = row + static_cast<size_type>(t);
-                // w = A(i,:) * v
-                T w = math::zero<T>();
-                for (size_type j = 0; j < vlen; ++j)
-                    w += A(i, col + j) * v(j);
-                // A(i,:) -= beta * w * v^H.  A*H = A - beta*(A*v)*v^H, so the
-                // conjugate lands on the OUTER v here, mirroring the inner one
-                // in apply_householder_left. Identity for a real T.
-                for (size_type j = 0; j < vlen; ++j)
-                    A(i, col + j) -= beta * w * functor::scalar::conj<T>::apply(v(j));
-            }
-        });
+    if constexpr (std::is_void_v<Accumulator>) {
+        const std::size_t grain = std::max<std::size_t>(
+            std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
+        detail::thread_pool::instance().parallel_for(
+            static_cast<std::size_t>(nrows), grain,
+            [&](std::size_t b, std::size_t e) {
+                for (std::size_t t = b; t < e; ++t) {
+                    const size_type i = row + static_cast<size_type>(t);
+                    // w = A(i,:) * v
+                    T w = math::zero<T>();
+                    for (size_type j = 0; j < vlen; ++j)
+                        w += A(i, col + j) * v(j);
+                    // A(i,:) -= beta * w * v^H.  A*H = A - beta*(A*v)*v^H, so the
+                    // conjugate lands on the OUTER v here, mirroring the inner one
+                    // in apply_householder_left. Identity for a real T.
+                    for (size_type j = 0; j < vlen; ++j)
+                        A(i, col + j) -= beta * w * functor::scalar::conj<T>::apply(v(j));
+                }
+            });
+    } else {
+        using AT = math::accumulator_traits<Accumulator, T>;
+        for (size_type t = 0; t < nrows; ++t) {
+            const size_type i = row + t;
+            Accumulator w_acc;
+            AT::clear(w_acc);
+            for (size_type j = 0; j < vlen; ++j)
+                AT::add_product(w_acc, A(i, col + j), v(j));
+            T w = AT::template value<T>(w_acc);
+            for (size_type j = 0; j < vlen; ++j)
+                A(i, col + j) -= beta * w * functor::scalar::conj<T>::apply(v(j));
+        }
+    }
 }
 
 } // namespace mtl
