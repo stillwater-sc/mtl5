@@ -38,6 +38,7 @@
 #include <mtl/sparse/analysis/postorder.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
 #include <mtl/sparse/factorization/level_schedule.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::sparse::factorization {
 
@@ -227,12 +228,13 @@ cholesky_symbolic sparse_cholesky_symbolic(
 ///
 /// \throws std::runtime_error if the matrix is not positive definite
 ///         (diagonal entry becomes non-positive during factorization)
-template <typename Value, typename Parameters>
+template <typename Value, typename Parameters, typename Accumulator = Value>
 cholesky_numeric<Value> sparse_cholesky_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const cholesky_symbolic& sym)
 {
     using size_type = std::size_t;
+    using AT = mtl::math::accumulator_traits<Accumulator, Value>;  // numeric workspace policy
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -241,11 +243,9 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
             + ") do not match symbolic analysis (n=" + std::to_string(n) + ")");
     }
 
-    // Apply symmetric permutation and convert to CSC
     auto PA = util::symmetric_permute(A, sym.perm);
     auto C = util::crs_to_csc(PA);
 
-    // Allocate L in CSC format using predicted column counts
     util::csc_matrix<Value> L;
     L.nrows = n;
     L.ncols = n;
@@ -258,44 +258,20 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
     L.row_ind.resize(nnz_L);
     L.values.resize(nnz_L);
 
-    // Working arrays
-    std::vector<Value> x(n, Value{0});    // dense workspace for column assembly
-    std::vector<size_type> nz(n, 0);      // next free slot in each column of L
+    std::vector<Accumulator> x(n);            // dense numeric workspace (accumulator policy)
+    for (size_type i = 0; i < n; ++i) AT::clear(x[i]);
+    std::vector<size_type> nz(n, 0);           // next free slot in each column of L
 
-    // Up-looking Cholesky: process columns in order 0..n-1
     for (size_type j = 0; j < n; ++j) {
-        // Scatter column j of C into dense workspace x
-        // Only the lower triangular part (rows >= j)
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
-            if (i >= j) {
-                x[i] = C.values[p];
-            }
+            if (i >= j) AT::assign(x[i], C.values[p]);
         }
 
-        // Also scatter upper triangle entries as lower triangle
-        // (for symmetric matrix, A(i,j) with i < j means L column j
-        //  gets contribution at position j from column i)
-        // The diagonal is handled by the i >= j case above.
-
-        // Walk up the elimination tree from j, subtracting contributions
-        // from ancestor columns. For each column k that is an ancestor of j
-        // in the etree where L(j,k) != 0:
-        //   x(k:n) -= L(j,k) * L(k:n, k)
-        size_type k = j;
-        // Use the etree: walk from j's children upward.
-        // Actually, up-looking processes: for each k where L(j,k) != 0,
-        // i.e., for each column k < j that has a nonzero in row j.
-        // We find these by walking the etree from the nonzero rows of C(:,j)
-        // that are < j, up to j.
-
-        // Collect the set of columns k < j that affect column j
-        // by walking the etree from each row index i < j in column j of C
         std::vector<size_type> affecting_cols;
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
             if (i >= j) continue;
-            // Walk from i up the etree to j
             size_type node = i;
             while (node != analysis::no_parent && node < j) {
                 affecting_cols.push_back(node);
@@ -303,15 +279,12 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
             }
         }
 
-        // Remove duplicates and sort
         std::sort(affecting_cols.begin(), affecting_cols.end());
         affecting_cols.erase(
             std::unique(affecting_cols.begin(), affecting_cols.end()),
             affecting_cols.end());
 
-        // For each affecting column k, subtract L(j,k) * L(:,k) from x
         for (size_type col_k : affecting_cols) {
-            // Find L(j, col_k): search column col_k of L for row j
             Value ljk = Value{0};
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
@@ -324,26 +297,21 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
 
             if (ljk == Value{0}) continue;
 
-            // Subtract ljk * L(j:n, col_k) from x(j:n)
             for (size_type p = col_start; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
-                if (i >= j) {
-                    x[i] -= ljk * L.values[p];
-                }
+                if (i >= j) AT::add_product(x[i], -ljk, L.values[p]);
             }
         }
 
-        // Compute L(j,j) = sqrt(x[j])
-        Value diag = x[j];
+        Value diag = AT::value(x[j]);          // round once, on consume
         if (diag <= Value{0}) {
             throw std::runtime_error(
                 "sparse_cholesky_numeric: matrix is not positive definite "
                 "(non-positive diagonal at column " + std::to_string(j) + ")");
         }
-        using std::sqrt;  // ADL: also find sqrt() for custom number types
+        using std::sqrt;
         Value ljj = sqrt(diag);
 
-        // Guarded write into column j of L
         size_type col_capacity = sym.col_counts[j];
         auto push_entry = [&](size_type row, Value val) {
             if (nz[j] >= col_capacity) {
@@ -357,52 +325,46 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
             ++nz[j];
         };
 
-        // Store diagonal
         push_entry(j, ljj);
 
-        // Store off-diagonal entries L(i,j) = x[i] / L(j,j) for i > j
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
-            if (i > j && x[i] != Value{0}) {
-                push_entry(i, x[i] / ljj);
+            if (i > j) {
+                Value xi = AT::value(x[i]);
+                if (xi != Value{0}) push_entry(i, xi / ljj);
             }
         }
 
-        // Also store fill-in entries: rows where x[i] != 0 but not in C(:,j)
         for (size_type col_k : affecting_cols) {
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
             for (size_type p = col_start; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
-                if (i > j && x[i] != Value{0}) {
-                    bool already = false;
-                    for (size_type q = L.col_ptr[j]; q < L.col_ptr[j] + nz[j]; ++q) {
-                        if (L.row_ind[q] == i) { already = true; break; }
-                    }
-                    if (!already) {
-                        push_entry(i, x[i] / ljj);
+                if (i > j) {
+                    Value xi = AT::value(x[i]);
+                    if (xi != Value{0}) {
+                        bool already = false;
+                        for (size_type q = L.col_ptr[j]; q < L.col_ptr[j] + nz[j]; ++q) {
+                            if (L.row_ind[q] == i) { already = true; break; }
+                        }
+                        if (!already) push_entry(i, xi / ljj);
                     }
                 }
             }
         }
 
-        // Clear workspace for rows we touched
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p)
-            x[C.row_ind[p]] = Value{0};
+            AT::clear(x[C.row_ind[p]]);
         for (size_type col_k : affecting_cols) {
             size_type col_start = L.col_ptr[col_k];
             size_type col_end = L.col_ptr[col_k] + nz[col_k];
             for (size_type p = col_start; p < col_end; ++p)
-                x[L.row_ind[p]] = Value{0};
+                AT::clear(x[L.row_ind[p]]);
         }
-        x[j] = Value{0};
+        AT::clear(x[j]);
 
-        // Sort row indices within this column for consistent ordering
         size_type col_begin = L.col_ptr[j];
         size_type col_actual_end = L.col_ptr[j] + nz[j];
-
-        // Pair-sort row_ind and values together
-        // Simple insertion sort (columns are typically small)
         for (size_type a = col_begin + 1; a < col_actual_end; ++a) {
             size_type key_idx = L.row_ind[a];
             Value key_val = L.values[a];
@@ -417,13 +379,11 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
         }
     }
 
-    // Trim L to actual nnz (may be less than predicted if column_counts overestimated)
     size_type actual_nnz = 0;
     for (size_type j = 0; j < n; ++j)
         actual_nnz += nz[j];
 
     if (actual_nnz < nnz_L) {
-        // Compact: shift entries to remove gaps
         util::csc_matrix<Value> L_compact;
         L_compact.nrows = n;
         L_compact.ncols = n;
@@ -446,9 +406,6 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
 
     cholesky_numeric<Value> result;
     result.symbolic = sym;
-    // Installs L and builds its coupled forward-solve schedule atomically, so the
-    // schedule is bound to this factorization (no separately-mutable state, no
-    // run-time staleness key).
     result.set_factor(std::move(L));
     return result;
 }
