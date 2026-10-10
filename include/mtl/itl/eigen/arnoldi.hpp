@@ -3,6 +3,14 @@
 // linear operator. Matrix-free (only needs A * x). Builds an orthonormal Krylov
 // basis and an upper Hessenberg projection, whose eigenpairs (via the dense
 // general eigen) give the Ritz pairs. Full reorthogonalization for robustness.
+//
+// Mixed precision: pass an explicit `Accumulator` to form the two reduction
+// sites that dominate loss of orthogonality in long Krylov runs -- the
+// Hessenberg entry h(i,j) = q_i^T w (a dot product, accumulated via
+// add_product/value<T>) and the residual norm h(j+1,j) = ||w|| (a norm, same
+// shape as lanczos's beta_j) -- in a precision distinct from the operand type
+// (#261, Part C). Default `Accumulator = T` matches lanczos/power_iteration's
+// convention and preserves byte-identical behavior for existing callers.
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -14,6 +22,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/eigenvalue.hpp>
 #include <mtl/itl/eigen/eigen_common.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl {
 
@@ -25,12 +34,13 @@ namespace mtl::itl {
 ///
 /// Returns k complex Ritz values (ordered per `which`) and their complex Ritz
 /// vectors (columns). A is any LinearOperator.
-template <typename LinearOp, typename T>
+template <typename LinearOp, typename T, typename Accumulator = T>
 ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
                                     std::size_t k,
                                     eigen_which which = eigen_which::largest_magnitude,
                                     std::size_t subspace = 0, T tol = T(1e-8)) {
     using std::abs;
+    using AT = mtl::math::accumulator_traits<Accumulator, T>;
     using complex_type = std::complex<T>;
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = v0.size();
@@ -66,14 +76,19 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
         // Modified Gram-Schmidt with a second pass for numerical stability.
         for (int pass = 0; pass < 2; ++pass)
             for (size_type c = 0; c <= j; ++c) {
-                T s = T(0);
-                for (size_type i = 0; i < n; ++i) s += V(i, c) * w(i);
+                Accumulator acc_s{};
+                AT::clear(acc_s);
+                for (size_type i = 0; i < n; ++i) AT::add_product(acc_s, V(i, c), w(i));
+                T s = AT::template value<T>(acc_s);
                 H(c, j) += s;
                 for (size_type i = 0; i < n; ++i) w(i) -= s * V(i, c);
             }
 
         built = j + 1;
-        T hn = mtl::two_norm(w);
+        Accumulator acc_h{};
+        AT::clear(acc_h);
+        for (size_type i = 0; i < n; ++i) AT::add_product(acc_h, w(i), w(i));
+        T hn = std::sqrt(AT::template value<T>(acc_h));
         h_next = hn;
         if (hn <= breakdown) break;         // invariant subspace found
         if (j + 1 < m) { H(j + 1, j) = hn; for (size_type i = 0; i < n; ++i) q(i) = w(i) / hn; }
