@@ -231,8 +231,8 @@ TEST_CASE("Supernodal LDL^T: accumulator precision drives factor accuracy",
     for (std::size_t i = 0; i < n; ++i) b(static_cast<int>(i)) = 1.0 + 0.1 * static_cast<double>(i);
 
     auto sym = factorization::supernodal_ldlt_symbolic(A, ordering::amd{});
-    auto fac_f = factorization::supernodal_ldlt_numeric<double, decltype(A)::param_type, float>(A, sym);
-    auto fac_d = factorization::supernodal_ldlt_numeric<double, decltype(A)::param_type, double>(A, sym);
+    auto fac_f = factorization::supernodal_ldlt_numeric<float>(A, sym);
+    auto fac_d = factorization::supernodal_ldlt_numeric<double>(A, sym);
 
     vec::dense_vector<double> xf(n, 0.0), xd(n, 0.0);
     fac_f.solve(xf, b);

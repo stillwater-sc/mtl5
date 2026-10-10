@@ -94,7 +94,7 @@ TEST_CASE("sparse_lu accumulator workspace is O(n) (#342)", "[sparse][accumulato
 
         counting_acc::reset();
         {
-            auto num = fact::sparse_lu_numeric<double, mtl::mat::parameters<>, counting_acc>(
+            auto num = fact::sparse_lu_numeric<counting_acc>(
                 A, fact::sparse_lu_symbolic(A, ord::colamd{}));
             (void)num;
         }
@@ -119,7 +119,7 @@ TEST_CASE("supernodal_ldlt accumulator workspace stays linear in n (#342)",
 
         counting_acc::reset();
         {
-            auto num = fact::supernodal_ldlt_numeric<double, mtl::mat::parameters<>, counting_acc>(
+            auto num = fact::supernodal_ldlt_numeric<counting_acc>(
                 A, fact::supernodal_ldlt_symbolic(A, ord::amd{}));
             (void)num;
         }

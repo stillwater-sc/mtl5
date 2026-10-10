@@ -36,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -258,7 +259,7 @@ struct accumulator_traits : mtl::math::accumulator_traits<Acc, Value> {};
 /// \throws std::runtime_error if a zero pivot is encountered and perturbation is
 ///                  off, or the whole pivot column is numerically zero (truly
 ///                  singular: nothing to perturb).
-template <typename Value, typename Parameters, typename Accumulator = Value>
+template <typename Accumulator = void, typename Value, typename Parameters>
     requires OrderedField<Value>
 lu_numeric<Value> sparse_lu_numeric(
     const mat::compressed2D<Value, Parameters>& A,
@@ -266,9 +267,11 @@ lu_numeric<Value> sparse_lu_numeric(
     Value threshold = Value{1},
     Value pivot_perturb = Value{0})
 {
+    // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using size_type = std::size_t;
     using std::abs;  // ADL: also find abs() for custom number types (e.g. posit/cfloat)
-    using AT = accumulator_traits<Accumulator, Value>;  // numeric workspace policy
+    using AT = accumulator_traits<Acc, Value>;  // numeric workspace policy
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -305,7 +308,7 @@ lu_numeric<Value> sparse_lu_numeric(
     // 64-bit.
     using idx32 = std::int32_t;
     std::vector<idx32>          pinv(n, -1);
-    std::vector<Accumulator>    x(n);             // dense numeric workspace (accumulator policy)
+    std::vector<Acc>    x(n);             // dense numeric workspace (accumulator policy)
     std::vector<idx32>          xi(n);            // DFS stack + reach output
     std::vector<std::ptrdiff_t> pstack(n);        // DFS resume-pointer stack (Li positions)
     std::vector<char>           marked(n, 0);     // reach marks

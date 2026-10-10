@@ -97,7 +97,7 @@ TEST_CASE("accumulator policy: wide accumulator reduces residual vs default",
     double res_default = residual_inf(A, xf, b);
 
     // Extended (double) accumulation via the custom trait.
-    auto num_w = sparse::factorization::sparse_lu_numeric<float, mat::parameters<>, wide_acc>(A, sym);
+    auto num_w = sparse::factorization::sparse_lu_numeric<wide_acc>(A, sym);
     vec::dense_vector<float> xw(n, 0.0f);
     num_w.solve(xw, b);
     double res_wide = residual_inf(A, xw, b);

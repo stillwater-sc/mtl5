@@ -20,8 +20,9 @@
 // Accumulator policy: customize mtl::math::accumulator_traits<Acc, Value> to pick
 // the accumulation precision (a wider IEEE type, a Kahan/compensated sum, or a
 // quire). The panel is touched ONLY through add_product / value / clear, so an
-// add-only super-accumulator works. The default Acc == Value is byte-identical to
-// a plain Value-precision factorization.
+// add-only super-accumulator works. Accumulator leads the template list
+// (supernodal_ldlt_numeric<Acc>(A, sym)); the default void accumulates in Value,
+// byte-identical to a plain Value-precision factorization.
 //
 // References: Davis, "Direct Methods for Sparse Linear Systems", SIAM 2006;
 //             Ng & Peyton, "Block sparse Cholesky algorithms ...", SIAM 1993.
@@ -32,6 +33,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 #include <mtl/concepts/scalar.hpp>          // OrderedField
 #include <mtl/math/accumulator_traits.hpp>
@@ -209,13 +211,15 @@ supernodal_symbolic supernodal_ldlt_symbolic(
 /// rounded to `Value` exactly once per entry on store.
 ///
 /// \throws std::runtime_error on a zero pivot (D(j) == 0).
-template <typename Value, typename Parameters, typename Accumulator = Value>
+template <typename Accumulator = void, typename Value, typename Parameters>
     requires OrderedField<Value>
 supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const supernodal_symbolic& sym)
 {
-    using AT = mtl::math::accumulator_traits<Accumulator, Value>;
+    // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
+    using AT = mtl::math::accumulator_traits<Acc, Value>;
     const std::size_t n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -267,7 +271,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
 
     constexpr std::size_t NPOS = std::numeric_limits<std::size_t>::max();
     std::vector<std::size_t> rel(n, NPOS);   // global row -> local panel row
-    std::vector<Accumulator> P;              // dense panel (column-major), in Accumulator
+    std::vector<Acc> P;              // dense panel (column-major), in Accumulator
 
     for (std::size_t J = 0; J < nsuper; ++J) {
         const std::size_t f = sn_first[J];
@@ -310,7 +314,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
                 for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
                     const std::size_t tr = rel[rowsK[ui]];
                     assert(tr != NPOS && "update row must lie in the target panel");
-                    Accumulator* dst = &P[tc * m + tr];
+                    Acc* dst = &P[tc * m + tr];
                     for (std::size_t kk = 0; kk < wK; ++kk) {
                         // coefficient D(k)*L(row_b,k) formed in Value; product with
                         // L(row_u,k) accumulated in Accumulator (negated -> subtract).
@@ -349,7 +353,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
             //   P(r,cc) -= L(r,c) * dcc * L(cc,c)   for r >= cc.
             for (std::size_t cc = c + 1; cc < w; ++cc) {
                 const Value coef = dcc * Lcol[cc];          // dcc * L(cc,c), in Value
-                Accumulator* col = &P[cc * m];
+                Acc* col = &P[cc * m];
                 for (std::size_t r = cc; r < m; ++r)
                     AT::add_product(col[r], Lcol[r], -coef);
             }
@@ -430,8 +434,7 @@ refine_result supernodal_ldlt_solve_refined(
                                       starts.data(), idx.data(), dat.data());
 
     auto sym = supernodal_ldlt_symbolic(Af, ordering);
-    auto fac = supernodal_ldlt_numeric<FactorValue, typename decltype(Af)::param_type,
-                                       Accumulator>(Af, sym);
+    auto fac = supernodal_ldlt_numeric<Accumulator>(Af, sym);
     for (std::size_t i = 0; i < static_cast<std::size_t>(x.size()); ++i)
         x(static_cast<int>(i)) = Residual{0};
     return iterative_refine(A, fac, b, x, opt);

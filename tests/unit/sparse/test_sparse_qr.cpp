@@ -275,7 +275,7 @@ static auto qr_numeric_with_accumulator(
     const mat::compressed2D<Value, Parameters>& A,
     const factorization::qr_symbolic& sym)
 {
-    return factorization::sparse_qr_numeric<Value, Parameters, Accumulator>(A, sym);
+    return factorization::sparse_qr_numeric<Accumulator>(A, sym);
 }
 
 TEST_CASE("Sparse QR numeric with custom accumulator type", "[sparse][qr][accumulator]") {
