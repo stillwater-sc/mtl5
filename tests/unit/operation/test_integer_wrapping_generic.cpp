@@ -59,11 +59,27 @@ constexpr i32 as_i32(u32 v) { return static_cast<i32>(v); }
 #else
 #  define MTL5_TEST_WRAPS_ON_PURPOSE
 #endif
+
+} // namespace
+
+// The reference helpers live in mtl::test, not the global namespace: C2y adds
+// uabs/ulabs/ullabs to <stdlib.h> (exposed by glibc 2.43 under g++'s default
+// _GNU_SOURCE), and this file's former global `uabs` made every unqualified
+// call ambiguous.
+namespace mtl::test {
+
 MTL5_TEST_WRAPS_ON_PURPOSE inline u32 uadd(u32 a, u32 b) { return a + b; }
 MTL5_TEST_WRAPS_ON_PURPOSE inline u32 umul(u32 a, u32 b) { return a * b; }
 MTL5_TEST_WRAPS_ON_PURPOSE inline u32 uneg(u32 a) { return 0u - a; }
-/// |e| reduced mod 2^32 -- the closed form of what generic_abs must produce.
-inline u32 uabs(i32 e) { return e < 0 ? uneg(static_cast<u32>(e)) : static_cast<u32>(e); }
+/// |e| as u32 -- exact, since |INT_MIN| = 2^31 fits -- the closed form of what
+/// generic_abs must produce once reinterpreted as i32.
+inline u32 abs_as_u32(i32 e) { return e < 0 ? uneg(static_cast<u32>(e)) : static_cast<u32>(e); }
+
+} // namespace mtl::test
+
+using namespace mtl::test;
+
+namespace {
 
 /// Values that overflow an int32 accumulator quickly and include both ends of
 /// the range, so `abs()` of the minimum is exercised too.
@@ -244,7 +260,7 @@ TEST_CASE("vector norms accumulate mod 2^32 and survive abs(INT_MIN)",
 
     u32 ref1 = 0;
     for (std::size_t i = 0; i < n; ++i) {
-        ref1 = uadd(ref1, uabs(v(i)));
+        ref1 = uadd(ref1, abs_as_u32(v(i)));
     }
     REQUIRE(one_norm(v) == as_i32(ref1));
 
@@ -252,7 +268,7 @@ TEST_CASE("vector norms accumulate mod 2^32 and survive abs(INT_MIN)",
     // is the part this issue governs, rather than the sqrt of it.
     u32 ref2 = 0;
     for (std::size_t i = 0; i < n; ++i) {
-        const u32 a = uabs(v(i));
+        const u32 a = abs_as_u32(v(i));
         ref2 = uadd(ref2, umul(a, a));
     }
     using std::sqrt;
@@ -266,7 +282,7 @@ TEST_CASE("vector norms accumulate mod 2^32 and survive abs(INT_MIN)",
     i32 best = 0;
     for (std::size_t i = 0; i < n; ++i) {
         const i32 e = v(i);
-        const i32 a = as_i32(uabs(e));
+        const i32 a = as_i32(abs_as_u32(e));
         if (a > best) best = a;
     }
     REQUIRE(best == imax);                      // NOT imin, despite imin being present
@@ -284,7 +300,7 @@ TEST_CASE("matrix norms accumulate mod 2^32", "[operation][norms][integer][wrapp
     for (std::size_t c = 0; c < n; ++c) {
         u32 s = 0;
         for (std::size_t r = 0; r < n; ++r) {
-            s = uadd(s, uabs(m(r, c)));
+            s = uadd(s, abs_as_u32(m(r, c)));
         }
         if (as_i32(s) > best_col) best_col = as_i32(s);
     }
@@ -294,7 +310,7 @@ TEST_CASE("matrix norms accumulate mod 2^32", "[operation][norms][integer][wrapp
     for (std::size_t r = 0; r < n; ++r) {
         u32 s = 0;
         for (std::size_t c = 0; c < n; ++c) {
-            s = uadd(s, uabs(m(r, c)));
+            s = uadd(s, abs_as_u32(m(r, c)));
         }
         if (as_i32(s) > best_row) best_row = as_i32(s);
     }
