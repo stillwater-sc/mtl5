@@ -3,6 +3,7 @@
 // Matrix-free: only needs A * x (the LinearOperator concept), so it applies to
 // dense2D, compressed2D, and user-supplied matrix-free operators alike.
 #include <cmath>
+#include <type_traits>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
@@ -27,10 +28,12 @@ struct eigenpair {
 ///
 /// `A` is any LinearOperator (A * v yields a vector); `v0` is the starting
 /// vector (need not be normalized). O(1) vectors of storage; one matvec/iter.
-template <typename LinearOp, typename T, typename Accumulator = T>
+template <typename Accumulator = void, typename LinearOp, typename T>
 eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
-                             int max_iter = 1000, T tol = T(1e-10)) {
-    using AT = mtl::math::accumulator_traits<Accumulator, T>;
+                             int max_iter = 1000, std::type_identity_t<T> tol = T(1e-10)) {
+    // void (the default) accumulates in T, as the former `Accumulator = T` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, T, Accumulator>;
+    using AT  = mtl::math::accumulator_traits<Acc, T>;
     using std::abs;
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = v0.size();
@@ -50,10 +53,10 @@ eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
         vec::dense_vector<T> w = ev_matvec(A, v0);
 
         // Rayleigh quotient (v is unit norm): lambda = v^T A v.
-        lambda = mtl::dot<Accumulator, T>(v0, w);
+        lambda = mtl::dot<Acc, T>(v0, w);
 
         // Ritz residual r = A v - lambda v.
-        Accumulator res_acc{};
+        Acc res_acc{};
         AT::clear(res_acc);
         for (size_type i = 0; i < n; ++i) {
             T ri = w(i) - lambda * v0(i);
