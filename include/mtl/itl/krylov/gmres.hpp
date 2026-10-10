@@ -18,8 +18,9 @@ namespace detail {
 
 /// Single GMRES cycle (inner iteration) -- up to kmax Arnoldi steps.
 /// Returns 0 on convergence, 1 if kmax exhausted (restart needed).
-template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter, typename Accumulator = void>
+template <typename Accumulator = void,
+          typename LinearOp, typename VecX, typename VecB,
+          typename PC, typename Iter>
     requires FieldVector<VecX>
 int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
                 const PC& M, Iter& iter, int kmax) {
@@ -129,13 +130,14 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
 /// GMRES with restart.
 /// Solves A*x = b with left preconditioner M.
 /// restart: maximum Krylov subspace dimension before restart (default 30).
-template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter, typename Accumulator = void>
+template <typename Accumulator = void,
+          typename LinearOp, typename VecX, typename VecB,
+          typename PC, typename Iter>
     requires FieldVector<VecX>
 int gmres(const LinearOp& A, VecX& x, const VecB& b,
           const PC& M, Iter& iter, int restart = 30) {
     while (!iter.is_finished()) {
-        detail::gmres_inner<LinearOp, VecX, VecB, PC, Iter, Accumulator>(A, x, b, M, iter, restart);
+        detail::gmres_inner<Accumulator>(A, x, b, M, iter, restart);
     }
     return iter;
 }

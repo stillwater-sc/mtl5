@@ -13,8 +13,9 @@
 namespace mtl::itl {
 
 /// QMR solver for non-symmetric systems A*x = b.
-template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter, typename Accumulator = void>
+template <typename Accumulator = void,
+          typename LinearOp, typename VecX, typename VecB,
+          typename PC, typename Iter>
     requires FieldVector<VecX>
 int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;

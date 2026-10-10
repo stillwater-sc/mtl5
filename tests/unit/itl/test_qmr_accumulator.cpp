@@ -32,9 +32,7 @@ TEST_CASE("QMR default (unspecified Accumulator) behavior is unchanged",
     vec::dense_vector<double> x2(3, 0.0);
     itl::pc::identity<mat::dense2D<double>> pc2(A);
     itl::basic_iteration<double> iter2(b, 200, 1e-10);
-    int err2 = itl::qmr<mat::dense2D<double>, vec::dense_vector<double>, vec::dense_vector<double>,
-             itl::pc::identity<mat::dense2D<double>>, itl::basic_iteration<double>, void>
-             (A, x2, b, pc2, iter2);
+    int err2 = itl::qmr<void>(A, x2, b, pc2, iter2);
 
     REQUIRE(err1 == 0);
     REQUIRE(err2 == 0);
@@ -71,10 +69,7 @@ TEST_CASE("QMR nonsymmetric sparse system with explicit float->double Accumulato
     itl::pc::identity<mat::compressed2D<float>> pc(A);
     itl::basic_iteration<float> iter(b, 500, 1e-5f);
 
-    int err = itl::qmr<mat::compressed2D<float>, vec::dense_vector<float>,
-                        vec::dense_vector<float>, itl::pc::identity<mat::compressed2D<float>>,
-                        itl::basic_iteration<float>, double>
-                        (A, x, b, pc, iter);
+    int err = itl::qmr<double>(A, x, b, pc, iter);
     REQUIRE(err == 0);
 
     auto Ax = A * x;

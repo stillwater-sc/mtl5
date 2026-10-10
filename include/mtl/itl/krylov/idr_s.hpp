@@ -19,9 +19,9 @@ namespace mtl::itl {
 
 /// IDR(s) solver for non-symmetric systems A*x = b.
 /// s = shadow space dimension (larger s -> faster convergence, more memory).
-template <Matrix LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter,
-          typename Accumulator = void>
+template <typename Accumulator = void,
+          Matrix LinearOp, typename VecX, typename VecB,
+          typename PC, typename Iter>
     requires FieldVector<VecX>
 int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
           typename VecX::size_type s = 4) {

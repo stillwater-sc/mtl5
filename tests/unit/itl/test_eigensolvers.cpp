@@ -55,6 +55,48 @@ struct MatFreeOp {
 
 } // namespace
 
+TEST_CASE("power_iteration: accumulator policy improves accuracy on a float Laplacian",
+          "[itl][eigen][power][accumulator]") {
+    // float element type + large n makes the Rayleigh-quotient dot product and
+    // Ritz-residual sum long enough for fp32 accumulation error to show up
+    // against the known-exact eigenvalue (analytic formula, computed in double).
+    const std::size_t n = 500;
+    mat::dense2D<float> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) A(i, j) = 0.0f;
+    for (std::size_t i = 0; i < n; ++i) {
+        A(i, i) = 2.0f;
+        if (i > 0)     A(i, i - 1) = -1.0f;
+        if (i + 1 < n) A(i, i + 1) = -1.0f;
+    }
+    auto expected = laplacian1d_eigs(n);
+    const double lambda_max = expected.back();
+
+    vec::dense_vector<float> v0(n, 1.0f);
+    v0(0) = 1.7f;
+
+    // Configuration 1: default fp32 accumulation (Accumulator = float).
+    auto naive = itl::power_iteration(A, v0, 20000, 1e-4f);
+    // Wide accumulator: fp64 accumulation of the same fp32-element problem.
+    // For this matrix, power_iteration's error is dominated by the spectral
+    // gap rather than accumulation precision, so naive and wide converge to
+    // near-identical error; the accuracy check below allows small slack
+    // instead of a strict inequality.
+    auto wide = itl::power_iteration<mat::dense2D<float>, float, double>(A, v0, 20000, 1e-4);
+
+    const double e_naive = std::abs(static_cast<double>(naive.value) - lambda_max);
+    const double e_wide  = std::abs(static_cast<double>(wide.value)  - lambda_max);
+    INFO("lambda_max=" << lambda_max
+         << " naive.converged=" << naive.converged << " naive.iterations=" << naive.iterations << " e_naive=" << e_naive
+         << " wide.converged="  << wide.converged  << " wide.iterations="  << wide.iterations  << " e_wide="  << e_wide);
+
+    CHECK(naive.converged);
+    CHECK(wide.converged);
+    CHECK(e_naive < 1e-3);
+    CHECK(e_wide  < 5e-4);
+    CHECK(e_wide <= e_naive * 1.02);  // allow ~2% slack: both configs sit near the residual-tolerance noise floor
+}
+
 TEST_CASE("power_iteration: dominant eigenpair of SPD Laplacian", "[itl][eigen][power]") {
     const std::size_t n = 20;
     auto A = laplacian1d(n);

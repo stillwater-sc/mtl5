@@ -22,8 +22,9 @@ namespace mtl::itl {
 /// Defaults to void, matching dot()/mult()'s own default -- unspecified
 /// behavior is unchanged. two_norm() calls are NOT routed through
 /// Accumulator, matching the convention set by cg/bicgstab/gmres/idr_s/bicg.
-template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter, typename Accumulator = void>
+template <typename Accumulator = void,
+          typename LinearOp, typename VecX, typename VecB,
+          typename PC, typename Iter>
     requires FieldVector<VecX>
 int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
                  Iter& iter, std::size_t ell) {

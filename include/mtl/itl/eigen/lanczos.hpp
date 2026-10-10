@@ -4,6 +4,15 @@
 // basis and a symmetric tridiagonal projection, whose eigenpairs (via the dense
 // eigen_symmetric) give the Ritz pairs. Full reorthogonalization keeps the basis
 // orthogonal for a robust reference implementation.
+//
+// Mixed precision: pass an explicit `Accumulator` to form the two reduction
+// sites that dominate loss of orthogonality in long Krylov runs -- the
+// diagonal entry alpha_j = q^T (A q) (a dot product, routed via
+// dot<Accumulator, T>) and the off-diagonal beta_j = ||w|| (a norm, accumulated
+// via add_product/value<T>, same shape as power_iteration's Ritz residual) --
+// in a precision distinct from the operand type (#261, Part C). Default
+// `Accumulator = T` matches power_iteration's convention and preserves
+// byte-identical behavior for existing callers.
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -14,6 +23,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
 #include <mtl/itl/eigen/eigen_common.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl {
 
@@ -26,10 +36,11 @@ namespace mtl::itl {
 /// Returns k Ritz values (ordered per `which`) and their Ritz vectors (columns).
 /// A is any LinearOperator; it MUST be symmetric for the tridiagonal projection
 /// to be meaningful.
-template <typename LinearOp, typename T>
+template <typename LinearOp, typename T, typename Accumulator = T>
 ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
                       eigen_which which = eigen_which::largest_algebraic,
                       std::size_t subspace = 0, T tol = T(1e-8)) {
+    using AT = mtl::math::accumulator_traits<Accumulator, T>;
     using std::abs;
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = v0.size();
@@ -63,7 +74,7 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
         if (j > 0)
             for (size_type i = 0; i < n; ++i) w(i) -= beta[j] * q_prev(i);
 
-        T a = mtl::dot(q, w);
+        T a = mtl::dot<Accumulator, T>(q, w);
         alpha[j] = a;
         for (size_type i = 0; i < n; ++i) w(i) -= a * q(i);
 
@@ -76,7 +87,10 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
             }
 
         built = j + 1;
-        T bn = mtl::two_norm(w);
+        Accumulator acc{};
+        AT::clear(acc);
+        for (size_type i = 0; i < n; ++i) AT::add_product(acc, w(i), w(i));
+        T bn = std::sqrt(AT::template value<T>(acc));
         beta_next = bn;
         if (bn <= breakdown) break;         // invariant subspace found
         if (j + 1 < m) beta[j + 1] = bn;

@@ -275,3 +275,45 @@ TEST_CASE("Sparse Cholesky solve rejects a missing factor", "[sparse][cholesky][
     for (int i = 0; i < 3; ++i) b(i) = 1.0;
     REQUIRE_THROWS_AS(num.solve(x, b), std::logic_error);
 }
+
+// Explicitly instantiate sparse_cholesky_numeric with a non-default Accumulator
+// (long double, standing in for a wider/quire-like accumulator) to exercise the
+// accumulator_traits plumbing added for #261 Part C, not just the Value-default
+// path the other tests cover. Value and Parameters are deduced from A; only
+// Accumulator is given explicitly.
+template <typename Accumulator, typename Value, typename Parameters>
+static auto cholesky_numeric_with_accumulator(
+    const mat::compressed2D<Value, Parameters>& A,
+    const factorization::cholesky_symbolic& sym)
+{
+    return factorization::sparse_cholesky_numeric<Value, Parameters, Accumulator>(A, sym);
+}
+
+TEST_CASE("Sparse Cholesky numeric with custom accumulator type", "[sparse][cholesky][accumulator]") {
+    auto A = make_spd_tridiag(6);
+    auto sym = factorization::sparse_cholesky_symbolic(A);
+
+    // Config-1-equivalent (default Value accumulator) as the baseline.
+    auto num_default = factorization::sparse_cholesky_numeric(A, sym);
+
+    // Custom accumulator path (long double workspace, Value=double results).
+    auto num_wide = cholesky_numeric_with_accumulator<long double>(A, sym);
+
+    REQUIRE(num_wide.factor().nrows == 6);
+    REQUIRE(num_wide.factor().ncols == 6);
+
+    vec::dense_vector<double> b(6, 1.0);
+
+    vec::dense_vector<double> x_default(6, 0.0);
+    num_default.solve(x_default, b);
+    REQUIRE(relative_residual(A, x_default, b) < 1e-12);
+
+    vec::dense_vector<double> x_wide(6, 0.0);
+    num_wide.solve(x_wide, b);
+    REQUIRE(relative_residual(A, x_wide, b) < 1e-12);
+
+    // Both accumulator configs should agree closely on this well-conditioned system.
+    for (std::size_t i = 0; i < 6; ++i)
+        REQUIRE_THAT(x_wide(i), Catch::Matchers::WithinAbs(x_default(i), 1e-10));
+}
+

@@ -18,9 +18,9 @@ namespace mtl::itl {
 /// the two matrix-vector products (see math/accumulator_traits.hpp, #158).
 /// Defaults to void, matching dot()/mult()\'s own default -- unspecified
 /// behavior is unchanged.
-template <typename LinearOp, typename VecX, typename VecB,
-          typename PC, typename Iter,
-          typename Accumulator = void>
+template <typename Accumulator = void,
+          typename LinearOp, typename VecX, typename VecB,
+          typename PC, typename Iter>
     requires FieldVector<VecX>
 int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
