@@ -302,3 +302,44 @@ TEST_CASE("Sparse LDL^T solve rejects a missing factor", "[sparse][ldlt][edge]")
     for (int i = 0; i < 3; ++i) b(i) = 1.0;
     REQUIRE_THROWS_AS(num.solve(x, b), std::logic_error);
 }
+
+// Explicitly instantiate sparse_ldlt_numeric with a non-default Accumulator
+// (long double, standing in for a wider/quire-like accumulator) to exercise the
+// accumulator_traits plumbing added for #261 Part C, not just the Value-default
+// path the other tests cover.
+template <typename Accumulator, typename Value, typename Parameters>
+static auto ldlt_numeric_with_accumulator(
+    const mat::compressed2D<Value, Parameters>& A,
+    const factorization::ldlt_symbolic& sym)
+{
+    return factorization::sparse_ldlt_numeric<Value, Parameters, Accumulator>(A, sym);
+}
+
+TEST_CASE("Sparse LDL^T numeric with custom accumulator type", "[sparse][ldlt][accumulator]") {
+    auto A = make_spd_tridiag(6);
+    auto sym = factorization::sparse_ldlt_symbolic(A);
+
+    // Config-1-equivalent (default Value accumulator) as the baseline.
+    auto num_default = factorization::sparse_ldlt_numeric(A, sym);
+
+    // Custom accumulator path (long double workspace, Value=double results).
+    auto num_wide = ldlt_numeric_with_accumulator<long double>(A, sym);
+
+    REQUIRE(num_wide.factorL().nrows == 6);
+    REQUIRE(num_wide.factorL().ncols == 6);
+    REQUIRE(num_wide.diagonal().size() == 6);
+
+    vec::dense_vector<double> b(6, 1.0);
+
+    vec::dense_vector<double> x_default(6, 0.0);
+    num_default.solve(x_default, b);
+    REQUIRE(relative_residual(A, x_default, b) < 1e-12);
+
+    vec::dense_vector<double> x_wide(6, 0.0);
+    num_wide.solve(x_wide, b);
+    REQUIRE(relative_residual(A, x_wide, b) < 1e-12);
+
+    // Both accumulator configs should agree closely on this well-conditioned system.
+    for (std::size_t i = 0; i < 6; ++i)
+        REQUIRE_THAT(x_wide(i), Catch::Matchers::WithinAbs(x_default(i), 1e-10));
+}

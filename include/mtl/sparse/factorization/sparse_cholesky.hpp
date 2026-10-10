@@ -234,7 +234,7 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
     const cholesky_symbolic& sym)
 {
     using size_type = std::size_t;
-    using AT = mtl::math::accumulator_traits<Accumulator, Value>;  // numeric workspace policy
+    using AT = mtl::math::accumulator_traits<Accumulator, Value>;  // numeric workspace policy (sparse_lu.hpp already declares the same alias in this namespace, so use the canonical trait directly here to avoid a duplicate-definition collision when both headers are included together)
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
