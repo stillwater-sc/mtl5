@@ -29,6 +29,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::sparse::factorization {
 
@@ -182,13 +183,14 @@ qr_symbolic sparse_qr_symbolic(
 ///     v = x;  v[0] -= alpha
 ///     beta = 2 / (v^T * v)
 ///   Then H = I - beta * v * v^T satisfies H*x = alpha * e_1.
-template <typename Value, typename Parameters>
+template <typename Value, typename Parameters, typename Accumulator = Value>
 qr_numeric<Value> sparse_qr_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const qr_symbolic& sym)
 {
     using size_type = std::size_t;
     using std::sqrt;  // ADL: also find sqrt() for custom number types
+    using AT = mtl::math::accumulator_traits<Accumulator, Value>;
     size_type m = sym.nrows;
     size_type nc = sym.ncols;
     if (A.num_rows() != m || A.num_cols() != nc) {
@@ -222,9 +224,11 @@ qr_numeric<Value> sparse_qr_numeric(
         for (size_type j = 0; j < k; ++j) {
             if (betas[j] == Value{0}) continue;
 
-            Value dot = Value{0};
+            Accumulator dot_acc;
+            AT::clear(dot_acc);
             for (size_type idx = 0; idx < V_idx[j].size(); ++idx)
-                dot += V_vals[j][idx] * w[V_idx[j][idx]];
+                AT::add_product(dot_acc, V_vals[j][idx], w[V_idx[j][idx]]);
+            Value dot = AT::value(dot_acc);
 
             if (dot == Value{0}) continue;
 
@@ -243,9 +247,11 @@ qr_numeric<Value> sparse_qr_numeric(
 
         // Compute Householder for w[k:m-1]
         // sigma = sum(w[i]^2 for i = k+1..m-1)
-        Value sigma = Value{0};
+        Accumulator sigma_acc;
+        AT::clear(sigma_acc);
         for (size_type i = k + 1; i < m; ++i)
-            sigma += w[i] * w[i];
+            AT::add_product(sigma_acc, w[i], w[i]);
+        Value sigma = AT::value(sigma_acc);
 
         Value x0 = w[k];
 

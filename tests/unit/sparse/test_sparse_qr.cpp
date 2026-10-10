@@ -264,3 +264,56 @@ TEST_CASE("Sparse QR solve: 10x10 system", "[sparse][qr]") {
     double rr = relative_residual(A, x, b);
     REQUIRE(rr < 1e-12);
 }
+
+// Explicitly instantiate sparse_qr_numeric with a non-default Accumulator
+// (long double, standing in for a wider/quire-like accumulator) to exercise the
+// accumulator_traits plumbing added for #261 Part C, not just the Value-default
+// path the other tests cover. Value and Parameters are deduced from A; only
+// Accumulator is given explicitly.
+template <typename Accumulator, typename Value, typename Parameters>
+static auto qr_numeric_with_accumulator(
+    const mat::compressed2D<Value, Parameters>& A,
+    const factorization::qr_symbolic& sym)
+{
+    return factorization::sparse_qr_numeric<Value, Parameters, Accumulator>(A, sym);
+}
+
+TEST_CASE("Sparse QR numeric with custom accumulator type", "[sparse][qr][accumulator]") {
+    std::size_t n = 5;
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 4.0;
+            if (i + 1 < n) {
+                ins[i][i + 1] << -1.0;
+                ins[i + 1][i] << -1.0;
+            }
+        }
+    }
+
+    auto sym = factorization::sparse_qr_symbolic(A);
+
+    // Config-1-equivalent (default Value accumulator) as the baseline.
+    auto num_default = factorization::sparse_qr_numeric(A, sym);
+
+    // Custom accumulator path (long double workspace, Value=double results).
+    auto num_wide = qr_numeric_with_accumulator<long double>(A, sym);
+
+    REQUIRE(num_wide.num_rows() == 5);
+    REQUIRE(num_wide.num_cols() == 5);
+
+    vec::dense_vector<double> b = {1.0, 0.0, -1.0, 2.0, 0.5};
+
+    vec::dense_vector<double> x_default(n, 0.0);
+    num_default.solve(x_default, b);
+    REQUIRE(relative_residual(A, x_default, b) < 1e-12);
+
+    vec::dense_vector<double> x_wide(n, 0.0);
+    num_wide.solve(x_wide, b);
+    REQUIRE(relative_residual(A, x_wide, b) < 1e-12);
+
+    // Both accumulator configs should agree closely on this well-conditioned system.
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE_THAT(x_wide(i), Catch::Matchers::WithinAbs(x_default(i), 1e-10));
+}
