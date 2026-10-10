@@ -3,6 +3,8 @@
 #include <type_traits>
 #include <cassert>
 #include <mtl/concepts/vector.hpp>
+#include <mtl/concepts/collection.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/detail/expr_storage.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -47,9 +49,12 @@ auto operator-(V&& v) {
 }
 
 // -- Scalar-vector multiply (lazy) --------------------------------------
+// A scalar operand is any Scalar that is not a Collection (#538): posits, LNS,
+// std::complex and the other custom number types, not just is_arithmetic.
+// !Collection<S> must come FIRST: see the matching note in mat/operators.hpp.
 
 template <typename S, typename V>
-    requires (std::is_arithmetic_v<S> && Vector<std::remove_cvref_t<V>>)
+    requires ((!Collection<S> && Scalar<S>) && Vector<std::remove_cvref_t<V>>)
 auto operator*(const S& alpha, V&& v) {
     using SV = detail::expr_store_t<V>;
     return expr::vec_scal_op_expr<S, SV, functor::scalar::times>(
@@ -57,7 +62,7 @@ auto operator*(const S& alpha, V&& v) {
 }
 
 template <typename V, typename S>
-    requires (Vector<std::remove_cvref_t<V>> && std::is_arithmetic_v<S>)
+    requires (Vector<std::remove_cvref_t<V>> && (!Collection<S> && Scalar<S>))
 auto operator*(V&& v, const S& alpha) {
     using SV = detail::expr_store_t<V>;
     return expr::vec_scal_op_expr<S, SV, functor::scalar::times>(
@@ -65,7 +70,7 @@ auto operator*(V&& v, const S& alpha) {
 }
 
 template <typename V, typename S>
-    requires (Vector<std::remove_cvref_t<V>> && std::is_arithmetic_v<S>)
+    requires (Vector<std::remove_cvref_t<V>> && (!Collection<S> && Scalar<S>))
 auto operator/(V&& v, const S& alpha) {
     using SV = detail::expr_store_t<V>;
     return expr::vec_rscal_op_expr<SV, S, functor::scalar::divide>(

@@ -9,6 +9,8 @@
 #include <mtl/interface/dispatch_traits.hpp>   // interface::row_grain
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
+#include <mtl/concepts/collection.hpp>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/detail/expr_storage.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -59,9 +61,15 @@ auto operator-(M&& m) {
 }
 
 // -- Scalar-matrix multiply (lazy) --------------------------------------
+// A scalar operand is any Scalar that is not a Collection (#538): posits, LNS,
+// std::complex and the other custom number types, not just is_arithmetic.
+// !Collection<S> must come FIRST. Checking Scalar<dense2D<T>> needs `a * b`,
+// which considers these very operators with S = dense2D<T> and re-enters the
+// check ("satisfaction depends on itself"). Conjunctions short-circuit left to
+// right, so a container is rejected before Scalar<S> is ever evaluated.
 
 template <typename S, typename M>
-    requires (std::is_arithmetic_v<S> && Matrix<std::remove_cvref_t<M>>)
+    requires ((!Collection<S> && Scalar<S>) && Matrix<std::remove_cvref_t<M>>)
 auto operator*(const S& alpha, M&& m) {
     using SM = detail::expr_store_t<M>;
     return expr::mat_scal_op_expr<S, SM, functor::scalar::times>(
@@ -69,7 +77,7 @@ auto operator*(const S& alpha, M&& m) {
 }
 
 template <typename M, typename S>
-    requires (Matrix<std::remove_cvref_t<M>> && std::is_arithmetic_v<S>)
+    requires (Matrix<std::remove_cvref_t<M>> && (!Collection<S> && Scalar<S>))
 auto operator*(M&& m, const S& alpha) {
     using SM = detail::expr_store_t<M>;
     return expr::mat_scal_op_expr<S, SM, functor::scalar::times>(
@@ -77,7 +85,7 @@ auto operator*(M&& m, const S& alpha) {
 }
 
 template <typename M, typename S>
-    requires (Matrix<std::remove_cvref_t<M>> && std::is_arithmetic_v<S>)
+    requires (Matrix<std::remove_cvref_t<M>> && (!Collection<S> && Scalar<S>))
 auto operator/(M&& m, const S& alpha) {
     using SM = detail::expr_store_t<M>;
     return expr::mat_rscal_op_expr<SM, S, functor::scalar::divide>(
