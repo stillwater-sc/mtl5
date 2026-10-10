@@ -3,6 +3,12 @@
 All notable changes to MTL5 are documented in this file.
 Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Documentation and maintenance
+
+- **Session log for 2026-10-09 – 2026-10-10**: `docs/sessions/2026-10-10-every-test-overrode-the-default.md`. Covers the leading-`Accumulator` convention (#539, #540, #542), the 5.13.0 and 5.13.1 releases, and the downstream bumps in mp-iterative, mp-spice and mtl5-python. Its through-line is the 5.13.0 regression: every test accumulator overrode `clear()`, the one function that was broken, so the suite never ran the default it fell back to. It also records an open follow-up: the restored Lanczos accumulator test (#540), and the Arnoldi test it was rewritten from, can't tell a `float` accumulator from a `double` one, since both only need to reach a 1e-4 floor. CodeRabbit noted this on #540.
+
 ## [5.13.1] - 2026-10-10
 
 A patch for one regression in 5.13.0. **If you use Universal's `lns` types, or any arithmetic type whose value-initialized state is not zero, upgrade.**
