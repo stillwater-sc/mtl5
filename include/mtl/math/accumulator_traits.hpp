@@ -70,6 +70,7 @@
 // tests/unit/sparse/test_accumulator_workspace.cpp pins the scaling above, so a
 // change that made a workspace superlinear fails rather than silently shipping.
 
+#include <mtl/math/identity.hpp>
 #include <cmath>        // std::fma
 #include <type_traits>
 
@@ -82,7 +83,14 @@ namespace mtl::math {
 template <typename Acc, typename Value>
 struct accumulator_traits {
     /// Reset the accumulator to zero.
-    static void clear(Acc& a) { a = Acc{}; }
+    ///
+    /// `math::zero<Acc>()`, i.e. `Acc{0}`, NOT a value-initialized `Acc{}`. The two
+    /// agree for the built-in types but not in general: a logarithmic number
+    /// system encodes 2^0 in its all-zero bit pattern, so Universal's `lns{}` is
+    /// 1.0. With `Acc{}` here, every sum of products over an `lns` accumulator
+    /// started at 1 -- which, once householder() routed its default-path sum of
+    /// squares through this function (#537), broke QR/LQ for lns outright.
+    static void clear(Acc& a) { a = math::zero<Acc>(); }
 
     /// Set the accumulator to a single value.
     static void assign(Acc& a, const Value& v) { a = v; }
@@ -120,7 +128,7 @@ struct accumulator_traits {
 /// operation simply does not satisfy the call and is not a valid `T`.
 template <typename T = double>
 struct fma_accumulator {
-    T sum{};
+    T sum = math::zero<T>();   // not T{}: see accumulator_traits::clear
 };
 
 /// Accumulator policy for the FMA reduction (configuration 2).
@@ -136,7 +144,7 @@ template <typename T, typename Value>
 struct accumulator_traits<fma_accumulator<T>, Value> {
     using Acc = fma_accumulator<T>;
 
-    static void clear(Acc& a) { a.sum = T{}; }
+    static void clear(Acc& a) { a.sum = math::zero<T>(); }
 
     static void assign(Acc& a, const Value& v) { a.sum = static_cast<T>(v); }
 
