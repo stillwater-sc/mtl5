@@ -2,6 +2,8 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/compressed2D.hpp>
+#include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/operators.hpp>
 #include <mtl/itl/eigen/eigensolvers.hpp>
@@ -52,6 +54,37 @@ struct MatFreeOp {
         return y;
     }
 };
+
+} // namespace
+
+namespace {
+
+// A Rayleigh quotient that fp32 accumulation gets entirely wrong and fp64 gets
+// exactly right, so an accumulator test can assert which policy ran rather than
+// only that both converged.
+//
+//   A = diag(2^20, 2^-5, ..., 2^-5, -2^20),  n = 1024,  v0 = ones
+//
+// v0 normalizes to q = 1/32 exactly, so every product q_i * (A q)_i = d_i / 1024
+// is exact and the ONLY rounding is in the sum. In float the running sum sits at
+// 2^10 after the first term; each 2^-15 term is below half an ulp of 2^10 (2^-14)
+// and is rounded away, and the final -2^10 leaves exactly 0. In double all 1022
+// small terms survive: 1022 * 2^-15, which is exact in float too.
+constexpr std::size_t kCancelN = 1024;
+
+mat::compressed2D<float> cancelling_diagonal() {
+    mat::compressed2D<float> A(kCancelN, kCancelN);
+    {
+        mat::inserter<mat::compressed2D<float>> ins(A);
+        ins[0][0] << std::ldexp(1.0f, 20);
+        for (std::size_t i = 1; i + 1 < kCancelN; ++i) ins[i][i] << std::ldexp(1.0f, -5);
+        ins[kCancelN - 1][kCancelN - 1] << -std::ldexp(1.0f, 20);
+    }
+    return A;
+}
+
+// q^T A q for the fixture above, computed exactly: (n - 2) * 2^-5 / n.
+constexpr double kCancelRayleigh = (kCancelN - 2) * 0.03125 / kCancelN;
 
 } // namespace
 
@@ -251,7 +284,7 @@ TEST_CASE("arnoldi: recovers a complex-conjugate pair", "[itl][eigen][arnoldi]")
     REQUIRE(has(cplx(5, 0)));
 }
 
-TEST_CASE("lanczos: accumulator policy improves accuracy on a float Laplacian",
+TEST_CASE("lanczos: both accumulator policies converge on a float Laplacian",
           "[itl][eigen][lanczos][accumulator]") {
     // float element type + moderate n makes the alpha dot product and beta
     // norm long enough for fp32 accumulation error to show up against the
@@ -282,12 +315,32 @@ TEST_CASE("lanczos: accumulator policy improves accuracy on a float Laplacian",
     // convergence rather than accumulation precision, so naive and wide land
     // near the same residual-tolerance noise floor -- same situation as
     // power_iteration's accuracy test. Check both sit near that floor rather
-    // than asserting a strict ordering.
+    // than asserting a strict ordering. This therefore cannot tell the two
+    // policies apart; the cancelling-Rayleigh-quotient test below does.
     CHECK(e_naive < 1e-4);
     CHECK(e_wide  < 1e-4);
 }
 
-TEST_CASE("arnoldi: accumulator policy improves accuracy on a float nonsymmetric operator",
+TEST_CASE("lanczos: the accumulator policy decides a cancelling Rayleigh quotient",
+          "[itl][eigen][lanczos][accumulator]") {
+    // subspace = 1 makes the single Ritz value exactly alpha_0 = q^T (A q): one
+    // call to dot<Acc, T>, with nothing after it that could mask the policy. The
+    // fixture makes that reduction catastrophic in fp32 (see cancelling_diagonal),
+    // so a lanczos<double> that silently accumulated in float would return 0.
+    const auto A = cancelling_diagonal();
+    const vec::dense_vector<float> v0(kCancelN, 1.0f);
+
+    auto naive = itl::lanczos(A, v0, 1, itl::eigen_which::largest_algebraic, 1);
+    auto wide  = itl::lanczos<double>(A, v0, 1, itl::eigen_which::largest_algebraic, 1);
+
+    const double r_naive = static_cast<double>(naive.values(0));
+    const double r_wide  = static_cast<double>(wide.values(0));
+    INFO("exact=" << kCancelRayleigh << " naive=" << r_naive << " wide=" << r_wide);
+    CHECK(r_naive == 0.0);                 // every small term rounded away in fp32
+    CHECK(r_wide == kCancelRayleigh);      // exact: the fp64 sum, then one rounding
+}
+
+TEST_CASE("arnoldi: both accumulator policies converge on a float nonsymmetric operator",
           "[itl][eigen][arnoldi][accumulator]") {
     // float element type + moderate n makes the Hessenberg dot products and
     // residual norm long enough for fp32 accumulation error to show up
@@ -323,4 +376,27 @@ TEST_CASE("arnoldi: accumulator policy improves accuracy on a float nonsymmetric
     // residual-tolerance noise floor rather than showing a strict ordering.
     CHECK(e_naive < 1e-4);
     CHECK(e_wide  < 1e-4);
+}
+
+TEST_CASE("arnoldi: the accumulator policy decides a cancelling Rayleigh quotient",
+          "[itl][eigen][arnoldi][accumulator]") {
+    // subspace = 1 makes the single Ritz value H(0,0), the sum of the two
+    // Gram-Schmidt passes' q^T w, both accumulated in Acc. Same fixture as the
+    // lanczos case: in fp32 both passes round every small term away.
+    //
+    // The fp64 result is not exact, and not because of the accumulator: after
+    // pass 0, w -= s0 * q is applied in float, and the two +-2^20/32 entries of w
+    // cannot absorb s0/32, so pass 1 measures a residual of 2*s0/n instead of 0.
+    // H(0,0) = s0 * (1 + 2/n), i.e. 0.2% high at n = 1024. The bound is 1%.
+    const auto A = cancelling_diagonal();
+    const vec::dense_vector<float> v0(kCancelN, 1.0f);
+
+    auto naive = itl::arnoldi(A, v0, 1, itl::eigen_which::largest_algebraic, 1);
+    auto wide  = itl::arnoldi<double>(A, v0, 1, itl::eigen_which::largest_algebraic, 1);
+
+    const double r_naive = naive.values(0).real();
+    const double r_wide  = wide.values(0).real();
+    INFO("exact=" << kCancelRayleigh << " naive=" << r_naive << " wide=" << r_wide);
+    CHECK(r_naive == 0.0);
+    CHECK(std::abs(r_wide - kCancelRayleigh) < 1e-2 * kCancelRayleigh);
 }
