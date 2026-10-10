@@ -3,6 +3,41 @@
 All notable changes to MTL5 are documented in this file.
 Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [5.13.0] - 2026-10-10
+
+One programme: **the accumulator policy reaches the rest of BLAS and the solvers** (#261 Part C). `accumulator_traits<Acc, Value>` lets a caller choose how a sum of products is rounded: wider IEEE, FMA, or a quire through the peer repos. Until this release that choice was available on `dot`, `mult`, `norms`, the Krylov solvers and four sparse factorizations. It now covers every BLAS L1/L2/L3 routine, the sparse Cholesky/LDLᵀ/QR factorizations, Householder reflectors, and the three iterative eigensolvers. The release then settles **one calling convention for all of them**: `Accumulator` is the first template parameter, so `op<Acc>(args...)` selects it and everything else is deduced.
+
+Breaking changes, all in explicit template arguments; calls that deduce everything are unaffected. **Read the first entry before upgrading** — it is the one place an old call still compiles but means something different.
+
+### Breaking
+
+- **`axpy`, `scale`, `ger`, `symv`, `trmm`, `trsm`, `symm`, `syrk`, `syr2k`: the first explicit template argument is now the accumulator, not the scalar type** (#511, #515, #522–#526). Each gained a leading `Accumulator = void` in front of `Scalar S`. A 5.12 call that fixed the scalar type explicitly, e.g. `axpy<float>(0.1, x, y)` meaning "convert alpha to `float`", **still compiles** and now means "accumulate in `float`, alpha stays `double`". Results can differ with no diagnostic. To keep the old meaning, convert the argument instead: `axpy(float(0.1), x, y)`. Explicit lists on `trmv`, `trsv`, `lower_trisolve` and `upper_trisolve`, whose first parameter was the matrix type, fail to compile rather than change meaning.
+- **Krylov solvers take a leading `Accumulator`** (#539). `cg`, `bicg`, `bicgstab`, `bicgstab_ell`, `cgs`, `gmres`, `minres`, `qmr`, `tfqmr` and `idr_s` had it *last*, after five deduced types, so it could only be set by restating all of them: `itl::cg<M, VX, VB, PC, Iter, Acc>(...)` is now `itl::cg<Acc>(...)`. Old full lists fail to compile. Downstream: mp-iterative updated in its #44.
+- **Sparse numeric factorizations take a leading `Accumulator`, defaulting to `void`** (#542). `sparse_lu_numeric`, `native_klu_factor`, `supernodal_lu_numeric` and `supernodal_ldlt_numeric` had `Accumulator = Value` last, so a caller had to spell out the matrix's internal parameter type: `supernodal_lu_numeric<double, decltype(A)::param_type, float>(A, sym)` is now `supernodal_lu_numeric<float>(A, sym)`. A leading default cannot name `Value`, so the default is `void`, resolved to `Value` inside; default calls are byte-identical. Old full lists fail to compile. A single explicit `<Value>` still compiles and behaves as before. Downstream: mp-spice updated in its #18; **mtl5-python's five call sites in `mtl5_sparse_direct.cpp` need the same change when its pin moves past v5.11.0**.
+- **`power_iteration`, `lanczos`, `arnoldi`: explicit `<LinearOp, T>` no longer compiles** (#540). These gained an accumulator in this release (#518, #528, #529), placed leading with a `void` default that means "accumulate in `T`". A 5.12 call that named the operator and value types explicitly now fails to compile; drop the arguments, both are deducible.
+- **`sparse_cholesky_numeric`, `sparse_ldlt_numeric`, `sparse_qr_numeric`: explicit `<Value, Parameters>` no longer compiles** (#530, #531, #534, #542). The same shape as the entry above for the sparse factorizations that gained an accumulator in this release. A single explicit `<Value>` still works.
+
+### Added
+
+- **Accumulator policy for the BLAS L1 remainder: `axpy` and `scale`** (#511). `axpy` is a one-term sum of products seeded with `y(i)` rather than zero, so it is the **first caller of the contract's `assign`**. A test asserts the operation counts directly (axpy drives `assign` and never `clear`; scale the reverse), which turns #261 Part A's "audit the call sites" from a reading into a check. `scale` sums nothing; what a non-default accumulator buys it is widening, and the entry says so. The accumulator sees the scalar at its own precision: a wider alpha is no longer rounded to the element type before `add_product`.
+- **Accumulator policy for BLAS L2: `ger`, `symv`, `trmv`, `trsv`** (#515, #516). `gemv` was already covered through `mult`. `trsv` delegates its reduction to `lower_trisolve`/`upper_trisolve`, so both trisolve headers carry the accumulator too. `trsv`'s BLAS dispatch is now gated on `accumulator_allows_blas_v`, which it previously was not.
+- **Accumulator policy for BLAS L3: `trmm`, `trsm`, `symm`, `syrk`, `syr2k`** (#522–#526, sub-issue #521). In each, the reduction is accumulated and rounded out once; `alpha`/`beta` and the triangular division are applied afterwards, outside the accumulator. The upper-triangle mirror in `syrk`/`syr2k` is a plain copy, not a re-sum.
+- **Accumulator policy for `sparse_cholesky`, `sparse_ldlt` and `sparse_qr`** (#530, #531, #534). This completes the sparse direct line alongside `sparse_lu`, `native_klu`, `supernodal_lu` and `supernodal_ldlt`. In `sparse_ldlt` the per-term square is still rounded in `Value` before reaching the accumulator, a limit documented at the call site.
+- **Accumulator policy for Householder reflector construction and application** (#537). `householder`'s sum of squares and the per-column/per-row dot products in `apply_householder_left/right`. The default path keeps the threaded fast path untouched; a non-default accumulator runs a serial loop, since the threaded combiner does not reason about a caller's accumulator type. **Not yet reachable from `qr`/`lq`/`svd`**: `qr` calls `apply_householder_left` without forwarding an accumulator. Tracked in #261.
+- **Accumulator policy for the iterative eigensolvers: `power_iteration`, `lanczos`, `arnoldi`** (#518, #528, #529, sub-issue #527). These route the Rayleigh quotient, Lanczos's α/β and Arnoldi's Hessenberg entries and residual norm through the accumulator. On the well-conditioned test problems the error is dominated by Krylov convergence, not accumulation, so the accuracy tests assert both configurations reach the tolerance floor rather than a strict ordering.
+- **The eigensolvers' `tol` is non-deduced** (#540). It is now `std::type_identity_t<T>`, so `power_iteration(A, v_float, 1000, 1e-6)` compiles. `T` comes from the vector alone; before, a `double` literal tolerance conflicted with a `float` vector in deduction.
+
+### Fixed
+
+- **SIMD scalar tails round the way the vector body does** (#513, resolves #512). `reduce_dot`, `reduce_dot_widen`, `reduce_sum_squares` and `axpy` used `fma()` in the vector body and a plain multiply-add in the scalar tail, so an element's rounding depended on its index. For `axpy`, where every element is an independent output, the first `W·⌊n/W⌋` entries were computed differently from the rest. The tail now applies the body's own batch primitive to a broadcast and reads one lane back. Mirroring Highway's `MulAdd` branch instead failed on clang + Highway, and a decomposed `c + a*b` could be re-contracted under `-ffp-contract=fast`.
+- **The Lanczos accumulator test is back** (#540). #529 rewrote it in place into the Arnoldi test instead of adding one alongside it, which left `lanczos`'s accumulator path untested; the suite's case count did not move because the whole file is one ctest entry.
+- **`test_integer_wrapping_generic` builds on glibc 2.43** (#541). glibc now declares C2y's `uabs` in `<stdlib.h>`, which made the test's own `uabs` ambiguous on GCC and Clang. It is renamed `abs_as_u32` and the reference helpers moved into `mtl::test`.
+
+### Documentation and maintenance
+
+- **The release checklist starts from the commit range, not from memory** (#510), after the 5.12.0 CHANGELOG covered 7 of 28 PRs. The 5.12.0 entry was completed in #509.
+- CI action bumps: `softprops/action-gh-release` 3.0.3 (#520), `actions/deploy-pages` 5.0.1 (#519).
+
 ## [5.12.0] - 2026-08-27
 
 Two programmes. **On-node parallelism for emulated formats** — the threaded
