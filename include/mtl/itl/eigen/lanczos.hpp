@@ -8,13 +8,15 @@
 // Mixed precision: pass an explicit `Accumulator` to form the two reduction
 // sites that dominate loss of orthogonality in long Krylov runs -- the
 // diagonal entry alpha_j = q^T (A q) (a dot product, routed via
-// dot<Accumulator, T>) and the off-diagonal beta_j = ||w|| (a norm, accumulated
+// dot<Acc, T>) and the off-diagonal beta_j = ||w|| (a norm, accumulated
 // via add_product/value<T>, same shape as power_iteration's Ritz residual) --
-// in a precision distinct from the operand type (#261, Part C). Default
-// `Accumulator = T` matches power_iteration's convention and preserves
-// byte-identical behavior for existing callers.
+// in a precision distinct from the operand type (#261, Part C). Accumulator
+// leads the template list, so `lanczos<double>(A, v0, k)` selects it; the
+// default `void` accumulates in T, byte-identical to the former
+// `Accumulator = T`.
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <limits>
 #include <vector>
 #include <mtl/vec/dense_vector.hpp>
@@ -36,11 +38,13 @@ namespace mtl::itl {
 /// Returns k Ritz values (ordered per `which`) and their Ritz vectors (columns).
 /// A is any LinearOperator; it MUST be symmetric for the tridiagonal projection
 /// to be meaningful.
-template <typename LinearOp, typename T, typename Accumulator = T>
+template <typename Accumulator = void, typename LinearOp, typename T>
 ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
                       eigen_which which = eigen_which::largest_algebraic,
-                      std::size_t subspace = 0, T tol = T(1e-8)) {
-    using AT = mtl::math::accumulator_traits<Accumulator, T>;
+                      std::size_t subspace = 0, std::type_identity_t<T> tol = T(1e-8)) {
+    // void (the default) accumulates in T, as the former `Accumulator = T` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, T, Accumulator>;
+    using AT  = mtl::math::accumulator_traits<Acc, T>;
     using std::abs;
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = v0.size();
@@ -74,7 +78,7 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
         if (j > 0)
             for (size_type i = 0; i < n; ++i) w(i) -= beta[j] * q_prev(i);
 
-        T a = mtl::dot<Accumulator, T>(q, w);
+        T a = mtl::dot<Acc, T>(q, w);
         alpha[j] = a;
         for (size_type i = 0; i < n; ++i) w(i) -= a * q(i);
 
@@ -87,7 +91,7 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
             }
 
         built = j + 1;
-        Accumulator acc{};
+        Acc acc{};
         AT::clear(acc);
         for (size_type i = 0; i < n; ++i) AT::add_product(acc, w(i), w(i));
         T bn = std::sqrt(AT::template value<T>(acc));
