@@ -88,7 +88,7 @@ constexpr double kCancelRayleigh = (kCancelN - 2) * 0.03125 / kCancelN;
 
 } // namespace
 
-TEST_CASE("power_iteration: accumulator policy improves accuracy on a float Laplacian",
+TEST_CASE("power_iteration: both accumulator policies converge on a float Laplacian",
           "[itl][eigen][power][accumulator]") {
     // float element type + large n makes the Rayleigh-quotient dot product and
     // Ritz-residual sum long enough for fp32 accumulation error to show up
@@ -128,6 +128,28 @@ TEST_CASE("power_iteration: accumulator policy improves accuracy on a float Lapl
     CHECK(e_naive < 1e-3);
     CHECK(e_wide  < 5e-4);
     CHECK(e_wide <= e_naive * 1.02);  // allow ~2% slack: both configs sit near the residual-tolerance noise floor
+    // With 2% slack this cannot tell the two policies apart; the
+    // cancelling-Rayleigh-quotient test below does.
+}
+
+TEST_CASE("power_iteration: the accumulator policy decides a cancelling Rayleigh quotient",
+          "[itl][eigen][power][accumulator]") {
+    // max_iter = 1 makes the returned value the first Rayleigh quotient
+    // q^T (A q) with q = v0 / ||v0||: one call to dot<Acc, T>. The fixture makes
+    // that reduction catastrophic in fp32 (see cancelling_diagonal). Its two
+    // +-2^20 eigenvalues mean power iteration would not converge here, which is
+    // why this asks for one iteration and does not check `converged`.
+    const auto A = cancelling_diagonal();
+    const vec::dense_vector<float> v0(kCancelN, 1.0f);
+
+    auto naive = itl::power_iteration(A, v0, 1);
+    auto wide  = itl::power_iteration<double>(A, v0, 1);
+
+    const double r_naive = static_cast<double>(naive.value);
+    const double r_wide  = static_cast<double>(wide.value);
+    INFO("exact=" << kCancelRayleigh << " naive=" << r_naive << " wide=" << r_wide);
+    CHECK(r_naive == 0.0);                 // every small term rounded away in fp32
+    CHECK(r_wide == kCancelRayleigh);      // exact: the fp64 sum, then one rounding
 }
 
 TEST_CASE("power_iteration: dominant eigenpair of SPD Laplacian", "[itl][eigen][power]") {
