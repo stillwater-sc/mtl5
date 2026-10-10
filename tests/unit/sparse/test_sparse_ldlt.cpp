@@ -312,7 +312,7 @@ static auto ldlt_numeric_with_accumulator(
     const mat::compressed2D<Value, Parameters>& A,
     const factorization::ldlt_symbolic& sym)
 {
-    return factorization::sparse_ldlt_numeric<Value, Parameters, Accumulator>(A, sym);
+    return factorization::sparse_ldlt_numeric<Accumulator>(A, sym);
 }
 
 TEST_CASE("Sparse LDL^T numeric with custom accumulator type", "[sparse][ldlt][accumulator]") {

@@ -30,6 +30,7 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include <type_traits>
 
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/mat/compressed2D.hpp>
@@ -120,10 +121,11 @@ struct klu_numeric {
 /// Factor A using native KLU: BTF, then a left-looking LU of each diagonal
 /// block with threshold partial pivoting.
 ///
-/// The optional `Accumulator` type selects the per-block numeric accumulator
-/// policy (see sparse_lu's accumulator_traits): defaulting to `Value` gives
-/// ordinary arithmetic, while a caller can inject an exact/extended-precision
-/// accumulator (e.g. a super-accumulator) for the inner products of every block.
+/// The optional leading `Accumulator` selects the per-block numeric accumulator
+/// policy (see sparse_lu's accumulator_traits): the default `void` accumulates
+/// in `Value` (ordinary arithmetic), while `native_klu_factor<Acc>(A)` injects
+/// an exact/extended-precision accumulator (e.g. a super-accumulator) for the
+/// inner products of every block.
 ///
 /// The optional `pivot_perturb` (default 0 = off) enables opt-in zero-pivot
 /// perturbation in each block's LU (see sparse_lu_numeric): a pivot that
@@ -137,7 +139,7 @@ struct klu_numeric {
 ///                               matching) or a diagonal block is numerically
 ///                               singular and perturbation is off (or the block's
 ///                               pivot column is numerically zero).
-template <typename Value, typename Parameters, typename Accumulator = Value>
+template <typename Accumulator = void, typename Value, typename Parameters>
     requires OrderedField<Value>
 klu_numeric<Value> native_klu_factor(
     const mat::compressed2D<Value, Parameters>& A,
@@ -145,6 +147,8 @@ klu_numeric<Value> native_klu_factor(
     bool scale = true,
     Value pivot_perturb = Value{0})
 {
+    // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using std::abs;  // ADL for custom number types
     if (A.num_rows() != A.num_cols()) {
         throw std::invalid_argument("native_klu_factor: matrix must be square");
@@ -254,11 +258,8 @@ klu_numeric<Value> native_klu_factor(
         // fill explodes; the symmetrized ordering keeps fill near-minimal (#133).
         lu_symbolic sym = (m > 4) ? sparse_lu_symbolic(block, ordering::amd{})
                                   : sparse_lu_symbolic(block);
-        // Forward the block matrix's own parameter type so the caller-selected
-        // Accumulator policy can be specified explicitly (it is not deducible).
-        using block_params = typename decltype(block)::param_type;
         result.block_numeric.push_back(
-            sparse_lu_numeric<Value, block_params, Accumulator>(block, sym, threshold, pivot_perturb));
+            sparse_lu_numeric<Acc>(block, sym, threshold, pivot_perturb));
         result.num_perturbed += result.block_numeric.back().num_perturbed;
     }
 

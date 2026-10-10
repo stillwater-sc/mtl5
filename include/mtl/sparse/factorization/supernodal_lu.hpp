@@ -33,6 +33,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -217,7 +218,7 @@ struct lu_snode {
 ///                  byte-identical to before (hard throw). Mirrors sparse_lu.
 /// \throws std::runtime_error on a singular (zero) pivot when perturbation is off,
 ///                  or when the whole pivot column is numerically zero.
-template <typename Value, typename Parameters, typename Accumulator = Value>
+template <typename Accumulator = void, typename Value, typename Parameters>
     requires OrderedField<Value>
 supernodal_lu_factor<Value> supernodal_lu_numeric(
     const mat::compressed2D<Value, Parameters>& A,
@@ -227,9 +228,11 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     bool scale = false,
     Value pivot_perturb = Value{0})
 {
+    // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using size_type = std::size_t;
     using std::abs;
-    using AT = accumulator_traits<Accumulator, Value>;
+    using AT = accumulator_traits<Acc, Value>;
     const size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n)
         throw std::invalid_argument("supernodal_lu_numeric: dimensions do not match symbolic analysis");
@@ -264,7 +267,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
 
     using idx32 = std::int32_t;
     std::vector<idx32>          pinv(n, -1);
-    std::vector<Accumulator>    x(n);
+    std::vector<Acc>    x(n);
     std::vector<idx32>          xi(n);
     std::vector<std::ptrdiff_t> pstack(n);
     std::vector<char>           marked(n, 0);
@@ -287,7 +290,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
 
     std::vector<idx32> contrib_super;              // closed supernodes hitting column k (dedup)
     std::vector<char>  super_seen;                 // marker per closed supernode
-    std::vector<Accumulator> segacc;               // supernode segment, accumulator precision
+    std::vector<Acc> segacc;               // supernode segment, accumulator precision
     std::vector<Value>       segval;               // pivots rounded to Value (multipliers)
 
     // Close the open supernode [open_sf, sl): build its dense block from the CSC
@@ -384,7 +387,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
             for (size_type c = 0; c < w; ++c) x[S.rows[c]] = segacc[c];   // write back (still Acc)
             // GEMV: off-diagonal rows (the dominant work, accumulated in Accumulator).
             for (size_type r = w; r < m; ++r) {
-                Accumulator& dst = x[S.rows[r]];
+                Acc& dst = x[S.rows[r]];
                 for (size_type c = 0; c < w; ++c)
                     AT::add_product(dst, -S.block[c * m + r], segval[c]);
             }
@@ -720,7 +723,7 @@ refine_result supernodal_lu_solve_refined(
                                                   starts.data(), idx.data(), dat.data());
 
     auto sym = supernodal_lu_symbolic_analyze(Af, ordering);
-    auto fac = supernodal_lu_numeric<FactorValue, Parameters, Accumulator>(Af, sym);
+    auto fac = supernodal_lu_numeric<Accumulator>(Af, sym);
     for (std::size_t i = 0; i < static_cast<std::size_t>(x.size()); ++i)
         x(static_cast<int>(i)) = Residual{0};
     return iterative_refine(A, fac, b, x, opt);

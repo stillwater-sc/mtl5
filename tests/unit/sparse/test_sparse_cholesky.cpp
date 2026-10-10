@@ -286,7 +286,7 @@ static auto cholesky_numeric_with_accumulator(
     const mat::compressed2D<Value, Parameters>& A,
     const factorization::cholesky_symbolic& sym)
 {
-    return factorization::sparse_cholesky_numeric<Value, Parameters, Accumulator>(A, sym);
+    return factorization::sparse_cholesky_numeric<Accumulator>(A, sym);
 }
 
 TEST_CASE("Sparse Cholesky numeric with custom accumulator type", "[sparse][cholesky][accumulator]") {

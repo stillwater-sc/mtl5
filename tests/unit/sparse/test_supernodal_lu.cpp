@@ -288,8 +288,8 @@ TEST_CASE("Supernodal LU accumulator precision drives accuracy",
 
     auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
     // Storage double (accurate solve) so the residual reflects FACTOR quality.
-    auto fac_f = factorization::supernodal_lu_numeric<double, decltype(A)::param_type, float>(A, sym);
-    auto fac_d = factorization::supernodal_lu_numeric<double, decltype(A)::param_type, double>(A, sym);
+    auto fac_f = factorization::supernodal_lu_numeric<float>(A, sym);
+    auto fac_d = factorization::supernodal_lu_numeric<double>(A, sym);
     vec::dense_vector<double> xf(n, 0.0), xd(n, 0.0);
     fac_f.solve(xf, b); fac_d.solve(xd, b);
     double res_f = rel_residual(A, xf, b), res_d = rel_residual(A, xd, b);

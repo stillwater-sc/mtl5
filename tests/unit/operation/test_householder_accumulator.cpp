@@ -33,11 +33,11 @@ TEST_CASE("householder default behavior is unchanged", "[operation][householder]
 TEST_CASE("householder accumulator type is honored", "[operation][householder][accumulator]") {
     vec::dense_vector<float> x = {3.0f, 4.0f, 0.0f};
     // fp32 elements, fp64 accumulate for the sigma reduction.
-    auto [v, beta] = householder<float, double>(x);
+    auto [v, beta] = householder<double>(x);
     static_assert(std::is_same_v<decltype(beta), float>);
     mat::dense2D<float> A(3, 1);
     A(0, 0) = x(0); A(1, 0) = x(1); A(2, 0) = x(2);
-    apply_householder_left<mat::dense2D<float>, float, double>(A, v, beta, 0, 0);
+    apply_householder_left<double>(A, v, beta, 0, 0);
     REQUIRE_THAT(std::abs(A(0, 0)), WithinRel(5.0f, 1e-5f));
     REQUIRE_THAT(A(1, 0), WithinAbs(0.0f, 1e-5f));
     REQUIRE_THAT(A(2, 0), WithinAbs(0.0f, 1e-5f));
@@ -69,8 +69,8 @@ TEST_CASE("apply_householder_left fp64 accumulator beats fp32 accumulation on a 
         ref += static_cast<double>(v(static_cast<int>(i))) * col[i];
 
     const float beta = 1.0f;  // arbitrary nonzero scale; only w's accuracy matters here
-    apply_householder_left<mat::dense2D<float>, float>(A_naive, v, beta, 0, 0);          // fp32 accumulate
-    apply_householder_left<mat::dense2D<float>, float, double>(A_wide, v, beta, 0, 0);   // fp64 accumulate
+    apply_householder_left(A_naive, v, beta, 0, 0);          // fp32 accumulate
+    apply_householder_left<double>(A_wide, v, beta, 0, 0);   // fp64 accumulate
 
     // A(:,0) -= beta * v * w, so w = (A_before(0,0) - A_after(0,0)) / (beta * v(0))
     double w_naive = (static_cast<double>(1.0f) - static_cast<double>(A_naive(0, 0))) / (static_cast<double>(beta) * static_cast<double>(v(0)));

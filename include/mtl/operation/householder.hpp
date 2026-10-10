@@ -30,7 +30,7 @@ namespace mtl {
 /// Compute Householder vector v and scalar tau for a column vector x, such
 /// that H = I - tau*v*v^H satisfies H*x = beta*e_1. v(0) is always 1
 /// (implicit). Returns {v, tau}. For complex x, beta is real by construction.
-template <typename T, typename Accumulator = void>
+template <typename Accumulator = void, typename T>
 std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     using std::sqrt;
     using std::abs;
@@ -172,7 +172,7 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
 /// Apply Householder reflection H = I - beta*v*v^H on the LEFT (A := H*A)
 /// to columns col..ncols-1
 /// of matrix A, rows row..nrows-1. Modifies A in-place.
-template <Matrix M, typename T, typename Accumulator = void>
+template <typename Accumulator = void, Matrix M, typename T>
 void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
                             typename M::size_type row, typename M::size_type col) {
     using size_type = typename M::size_type;
@@ -228,7 +228,7 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
 /// NOTE this is A*H, not A*H^H -- for complex tau those differ, and a caller
 /// wanting the inverse/adjoint must pass conj(beta) itself.
 /// Modifies columns col..col+vlen-1 of rows row..nrows-1.
-template <Matrix M, typename T, typename Accumulator = void>
+template <typename Accumulator = void, Matrix M, typename T>
 void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
                              typename M::size_type row, typename M::size_type col) {
     using size_type = typename M::size_type;

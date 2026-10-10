@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -228,13 +229,15 @@ cholesky_symbolic sparse_cholesky_symbolic(
 ///
 /// \throws std::runtime_error if the matrix is not positive definite
 ///         (diagonal entry becomes non-positive during factorization)
-template <typename Value, typename Parameters, typename Accumulator = Value>
+template <typename Accumulator = void, typename Value, typename Parameters>
 cholesky_numeric<Value> sparse_cholesky_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const cholesky_symbolic& sym)
 {
+    // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using size_type = std::size_t;
-    using AT = mtl::math::accumulator_traits<Accumulator, Value>;  // numeric workspace policy (sparse_lu.hpp already declares the same alias in this namespace, so use the canonical trait directly here to avoid a duplicate-definition collision when both headers are included together)
+    using AT = mtl::math::accumulator_traits<Acc, Value>;  // numeric workspace policy (sparse_lu.hpp already declares the same alias in this namespace, so use the canonical trait directly here to avoid a duplicate-definition collision when both headers are included together)
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -258,7 +261,7 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
     L.row_ind.resize(nnz_L);
     L.values.resize(nnz_L);
 
-    std::vector<Accumulator> x(n);            // dense numeric workspace (accumulator policy)
+    std::vector<Acc> x(n);            // dense numeric workspace (accumulator policy)
     for (size_type i = 0; i < n; ++i) AT::clear(x[i]);
     std::vector<size_type> nz(n, 0);           // next free slot in each column of L
 

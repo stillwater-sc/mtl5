@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -183,14 +184,16 @@ qr_symbolic sparse_qr_symbolic(
 ///     v = x;  v[0] -= alpha
 ///     beta = 2 / (v^T * v)
 ///   Then H = I - beta * v * v^T satisfies H*x = alpha * e_1.
-template <typename Value, typename Parameters, typename Accumulator = Value>
+template <typename Accumulator = void, typename Value, typename Parameters>
 qr_numeric<Value> sparse_qr_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const qr_symbolic& sym)
 {
+    // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using size_type = std::size_t;
     using std::sqrt;  // ADL: also find sqrt() for custom number types
-    using AT = mtl::math::accumulator_traits<Accumulator, Value>;
+    using AT = mtl::math::accumulator_traits<Acc, Value>;
     size_type m = sym.nrows;
     size_type nc = sym.ncols;
     if (A.num_rows() != m || A.num_cols() != nc) {
@@ -224,7 +227,7 @@ qr_numeric<Value> sparse_qr_numeric(
         for (size_type j = 0; j < k; ++j) {
             if (betas[j] == Value{0}) continue;
 
-            Accumulator dot_acc;
+            Acc dot_acc;
             AT::clear(dot_acc);
             for (size_type idx = 0; idx < V_idx[j].size(); ++idx)
                 AT::add_product(dot_acc, V_vals[j][idx], w[V_idx[j][idx]]);
@@ -247,7 +250,7 @@ qr_numeric<Value> sparse_qr_numeric(
 
         // Compute Householder for w[k:m-1]
         // sigma = sum(w[i]^2 for i = k+1..m-1)
-        Accumulator sigma_acc;
+        Acc sigma_acc;
         AT::clear(sigma_acc);
         for (size_type i = k + 1; i < m; ++i)
             AT::add_product(sigma_acc, w[i], w[i]);

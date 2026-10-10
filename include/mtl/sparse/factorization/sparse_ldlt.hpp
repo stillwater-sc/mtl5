@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <type_traits>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -175,13 +176,15 @@ ldlt_symbolic sparse_ldlt_symbolic(
 ///             diagonal stored) and D
 ///
 /// \throws std::runtime_error if a zero pivot is encountered (D(j) == 0)
-template <typename Value, typename Parameters, typename Accumulator = Value>
+template <typename Accumulator = void, typename Value, typename Parameters>
 ldlt_numeric<Value> sparse_ldlt_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const ldlt_symbolic& sym)
 {
+    // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
+    using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using size_type = std::size_t;
-    using AT = mtl::math::accumulator_traits<Accumulator, Value>;  // numeric workspace policy
+    using AT = mtl::math::accumulator_traits<Acc, Value>;  // numeric workspace policy
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -209,7 +212,7 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
 
     std::vector<Value> D(n, Value{0});
 
-    std::vector<Accumulator> x(n);           // dense numeric workspace (accumulator policy)
+    std::vector<Acc> x(n);           // dense numeric workspace (accumulator policy)
     for (size_type i = 0; i < n; ++i) AT::clear(x[i]);
     std::vector<size_type> nz(n, 0);
 

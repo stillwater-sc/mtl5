@@ -345,7 +345,7 @@ TEST_CASE("native KLU threads a custom accumulator policy through the blocks",
     auto fac_default = native_klu_factor(A);                                  // Accumulator = float
     fac_default.solve(xd, b);
 
-    auto fac_wide = native_klu_factor<float, mat::parameters<>, wide_acc>(A); // double accumulation
+    auto fac_wide = native_klu_factor<wide_acc>(A); // double accumulation
     fac_wide.solve(xw, b);
 
     // Residual ||A x - b||_inf in double for each.

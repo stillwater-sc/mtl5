@@ -276,7 +276,7 @@ Use a low-precision direct factorization as a preconditioner for a high-precisio
 
 ```cpp
 // Low-precision incomplete Cholesky as preconditioner
-auto L_low = sparse_cholesky_numeric<posit<16,1>>(A_low, sym);
+auto L_low = sparse_cholesky_numeric(A_low, sym);  // A_low: compressed2D<posit<16,1>>
 
 // High-precision CG with low-precision preconditioner
 itl::cg(A_high, x, b, direct_preconditioner(L_low), iter);

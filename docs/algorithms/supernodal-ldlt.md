@@ -42,11 +42,12 @@ the generic iterative-refinement loop are reused unchanged.
 
 ## Mixed precision
 
-`supernodal_ldlt_numeric` takes a third template argument, the accumulator type:
+`supernodal_ldlt_numeric` takes the accumulator type as its first template
+argument (the value and parameter types are deduced from `A`):
 
 ```cpp
-// Factor stored in float, every accumulation carried in double:
-auto fac = supernodal_ldlt_numeric<float, decltype(A)::param_type, double>(A, sym);
+// A is compressed2D<float>: factor stored in float, every accumulation in double:
+auto fac = supernodal_ldlt_numeric<double>(A, sym);
 ```
 
 The panel is touched **only** through `accumulator_traits`' `add_product` /
