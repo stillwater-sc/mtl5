@@ -3,6 +3,14 @@
 All notable changes to MTL5 are documented in this file.
 Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [5.13.1] - 2026-10-10
+
+A patch for one regression in 5.13.0. **If you use Universal's `lns` types, or any arithmetic type whose value-initialized state is not zero, upgrade.**
+
+### Fixed
+
+- **`accumulator_traits::clear()` sets zero, not a value-initialized `Acc`** (#544). `clear()` reset with `a = Acc{}`, assuming value-initialization is zero. That holds for every built-in type but not in general. A logarithmic number system encodes 2⁰ in its all-zero bit pattern, so Universal's **`lns{}` is 1.0**, and every sum of products over an `lns` accumulator started at 1. 5.13.0 made this reachable without opting in: #537 routed `householder()`'s sum of squares through `clear()` on the **default** path, where 5.12.0 had started it at `mag_t(0)`. As a result **QR and LQ over `lns` were wrong outright** (Q orthogonality error 1.5, QR residual 0.53 for lns16 and lns32), and with them everything built on Householder reflectors. mtl5-python's suite caught it on the v5.13.0 bump. `clear()` now assigns `math::zero<Acc>()`. `fma_accumulator` had the same flaw in its `clear()` and in its member default `T sum{}`, and both are fixed. An audit found every other accumulator declaration and workspace is cleared or assigned before it is read. The suite had missed this because every test accumulator specialized `accumulator_traits`, so none exercised the primary template. The new regression test uses a mock type whose value-initialization is 1.
+
 ## [5.13.0] - 2026-10-10
 
 One programme: **the accumulator policy reaches the rest of BLAS and the solvers** (#261 Part C). `accumulator_traits<Acc, Value>` lets a caller choose how a sum of products is rounded: wider IEEE, FMA, or a quire through the peer repos. Until this release that choice was available on `dot`, `mult`, `norms`, the Krylov solvers and four sparse factorizations. It now covers every BLAS L1/L2/L3 routine, the sparse Cholesky/LDLᵀ/QR factorizations, Householder reflectors, and the three iterative eigensolvers. The release then settles **one calling convention for all of them**: `Accumulator` is the first template parameter, so `op<Acc>(args...)` selects it and everything else is deduced.
