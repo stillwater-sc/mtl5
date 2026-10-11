@@ -8,6 +8,7 @@ MTL5 provides several CMake options to control the build and enable optional fea
 |---|---|---|
 | `MTL5_BUILD_TESTS` | ON | Build the Catch2 test suite |
 | `MTL5_BUILD_EXAMPLES` | ON | Build example programs |
+| `MTL5_BUILD_REGRESSION_TESTS` | OFF | Also build the large-scale solver regression tests in `tests/regression/` (slow; see [Regression tests](#regression-tests)) |
 
 ## External Library Bindings
 
@@ -109,3 +110,124 @@ ctest --test-dir build -R test_concepts
 # Run with verbose output
 ctest --test-dir build --output-on-failure
 ```
+
+## Regression tests
+
+The unit tests (`tests/unit/`) check each operation on small inputs, in seconds.
+The regression tests (`tests/regression/`) check the solvers on problems large
+enough to expose what small ones hide: error growth with n, ill-conditioning,
+fill-in, and iteration counts. Every test case runs at several sizes, from 100
+to 50,000 unknowns, and asserts a residual or backward-error bound that scales
+with n.
+
+They are off by default. `MTL5_BUILD_REGRESSION_TESTS=ON` builds them, and the
+`ci-regression` preset turns it on together with a Release build:
+
+```bash
+cmake --preset ci-regression
+cmake --build build-ci-regression --parallel
+ctest --test-dir build-ci-regression -L regression --output-on-failure
+```
+
+Each regression test carries the CTest label `regression`, so one build directory
+serves both tiers:
+
+```bash
+ctest --test-dir build-ci-regression -L regression    # regression tests only
+ctest --test-dir build-ci-regression -LE regression   # unit tests only
+ctest --test-dir build-ci-regression                  # both
+```
+
+A test that fails prints its residual, its bound, and the problem size, so the
+failing configuration is visible without rerunning it.
+
+### What they cover
+
+There are 14 test programs, one per solver. Sizes in **n** are unknowns; **k × k**
+is a 2-D grid, so n = k².
+
+**Dense factorizations** (`dense/`). Each solves Ax = b and asserts the backward
+error ‖Ax − b‖ / (‖A‖_F ‖x‖) against a bound that scales with n: n·ε for the
+well-conditioned matrices, rising to 1000·n·ε for Moler, 10⁶·n·ε for
+Vandermonde, 10⁸·n·ε for Pascal and 10¹⁰·n·ε for Hilbert.
+
+| Test | Matrices | n |
+|---|---|---|
+| `test_lu` | Frank, Moler, Lehmer; Pascal and Hilbert (ill-conditioned) | 50 to 1000 |
+| `test_cholesky` | random SPD (κ = 100), Lehmer, Moler, Minij | 100 to 1000 |
+| `test_ldlt` | random SPD (κ = 100), Lehmer, Moler, Minij | 100 to 1000 |
+| `test_ldlt_bk` | Bunch–Kaufman: random SPD, Lehmer, Moler, an indefinite tridiagonal | 100 to 1000 |
+| `test_qr` | Frank, Kahan, Vandermonde, and a QR solve. Checks ‖QR − A‖/‖A‖ and ‖QᵀQ − I‖ | 100 to 1000 |
+| `test_eigenvalue` | Symmetric eigenvalues of a random symmetric and a Wilkinson matrix. Checks that the eigenvalues sum to tr(A) | 100 to 501 |
+
+There is no SVD regression test. The native SVD's accuracy at these sizes
+doesn't yet meet a bound worth asserting (see the note in `test_eigenvalue.cpp`).
+
+**Sparse direct solvers** (`sparse/`). Each asserts the relative residual
+‖Ax − b‖ / ‖b‖ against n·ε, or n²·ε for the 1-D problems.
+
+| Test | Problems | Size |
+|---|---|---|
+| `test_sparse_lu` | 1-D convection–diffusion (unsymmetric), 2-D Laplacian, 2-D Poisson | n up to 10,000; k up to 100 |
+| `test_sparse_cholesky` | 1-D Laplacian, 2-D Laplacian and Poisson with AMD ordering | n up to 50,000; k up to 100 |
+| `test_sparse_ldlt` | the same problems as Cholesky | n up to 50,000; k up to 100 |
+| `test_sparse_qr` | 1-D and 2-D Laplacian, and a tall-skinny least-squares problem (two stacked 1-D Laplacians, 2n × n) | n up to 5000; k up to 50 |
+| `test_klu_scaling` | native KLU on 2-D Poisson at 64², 128², 256² | see below |
+
+`test_klu_scaling` is a timing test, not an accuracy test. Each refinement
+quadruples n. An O(n²) factorization would take about 16 times as long per step,
+an O(n^1.5) one about 8 times, and native KLU measures 5 to 7 times. The test
+fails if any step's time ratio exceeds 13, between the two hypotheses, so it
+catches an asymptotic regression rather than a slow machine. It takes the best
+of 3 runs at each size.
+
+**Iterative solvers** (`itl/`). Each asserts a relative residual below 1e−8.
+
+| Test | Problems and preconditioners | Size |
+|---|---|---|
+| `test_cg` | 2-D Laplacian with identity and Jacobi; 2-D Poisson with IC(0); 1-D Laplacian with Jacobi | k up to 100; n = 1000 |
+| `test_bicgstab` | 2-D Laplacian with identity and Jacobi; 1-D convection–diffusion with ILU(0) | k up to 70; n up to 20,000 |
+| `test_gmres` | 2-D Laplacian with identity and Jacobi; 1-D convection–diffusion with ILU(0) | k up to 158; n up to 50,000 |
+
+### Time limits
+
+Each regression test has a 300 s limit. `test_cg`, `test_bicgstab` and
+`test_gmres` have 600 s, set in `tests/regression/CMakeLists.txt`. GMRES needs
+it: it took 486 s on a Xeon E5-2420 v2, so 300 s made the tier unrunnable on
+older machines. The whole tier takes about 7 minutes on a GitHub runner, and
+longer locally on slower hardware. Build in Release, since a Debug build is many
+times slower.
+
+### In CI
+
+CI runs the tests in two tiers, both in `.github/workflows/ci.yml`:
+
+| Tier | Job | Runs on | What it runs |
+|---|---|---|---|
+| 1 | `build` | every PR, draft or not; every push to `main`; release tags | the unit tests on 8 platforms: Linux GCC and Clang on x64 and ARM64, macOS (two Apple Clang versions), Windows MSVC and Clang-CL |
+| 1 | `lapack`, `threaded`, `fp-contract`, `tsan`, `highway`, `benchmarks` | the same events, alongside `build` | unit tests in special configurations: with LAPACK, multithreaded, `-march=x86-64-v3`, ThreadSanitizer, Highway SIMD, and a benchmark build |
+| 2 | `regression` | **non-draft PRs only**, once `build` has passed | the regression tests, on Linux x64 with GCC 13 |
+
+The `regression` job:
+
+1. configures with `cmake --preset ci-regression` and GCC 13, with a compiler
+   cache (sccache) except on pull requests from forks, so a fork can't write to
+   the shared cache;
+2. builds with `--parallel 2`;
+3. runs `ctest -L regression --output-on-failure --timeout 600`. The per-test
+   limits above take precedence over `--timeout`.
+
+Some consequences of when it runs:
+
+- **Tier 2 waits for `build` only**, not for the other Tier 1 jobs, so it can
+  start while those are still running.
+- **A draft PR never runs Tier 2.** The job shows as skipped. Marking the PR
+  ready (`gh pr ready <n>`) starts a new run that includes it.
+- **Pushes to `main` and release tags run Tier 1 only.** Code reaches `main`
+  through a PR that has already passed Tier 2.
+- **A docs-only change runs neither tier.** `ci.yml` ignores commits that touch
+  only `docs/`, `docs-site/`, Markdown, images, `LICENSE`, `.coderabbit.yaml` or
+  `.nojekyll`.
+- **A new commit on a PR cancels the PR's run in progress**, Tier 2 included, so a
+  cancelled `regression` job on an older commit is expected.
+
