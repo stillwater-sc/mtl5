@@ -379,4 +379,47 @@ void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
     }
 }
 
+/// Apply a textbook reflector H = I - (2/vtv)*v*v^T on the RIGHT (A := A*H) to
+/// rows row..nrows-1, columns col..col+v.size()-1 (#559). Real T only, so
+/// H = H^T and there is no conjugate to place. Each row i is updated as a
+/// hand-written loop does it:
+///
+///   s = sum_j A(i, col+j)*v(j)      from zero, ascending j
+///   f = (2*s) / vtv
+///   A(i, col+j) -= f*v(j)
+///
+/// Does nothing when !(vtv > 0), i.e. for a skipped (zero or NaN) row. Rows are
+/// independent, so they are split across the thread pool and the result
+/// doesn't depend on the thread count.
+template <Matrix M, typename T>
+void apply_householder_right(M& A, const vec::dense_vector<T>& v, T vtv,
+                             typename M::size_type row, typename M::size_type col,
+                             tag::textbook_reflector) {
+    static_assert(!is_complex_v<T>,
+        "apply_householder_right(..., tag::textbook_reflector): the textbook form is "
+        "defined for real element types only.");
+    using size_type = typename M::size_type;
+    const size_type m = A.num_rows();
+    const size_type vlen = v.size();
+
+    if (row >= m) return;
+    if (!(vtv > math::zero<T>())) return;
+    const size_type nrows = m - row;
+    const std::size_t grain = std::max<std::size_t>(
+        std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
+    detail::thread_pool::instance().parallel_for(
+        static_cast<std::size_t>(nrows), grain,
+        [&](std::size_t b, std::size_t e) {
+            for (std::size_t t = b; t < e; ++t) {
+                const size_type i = row + static_cast<size_type>(t);
+                T s = math::zero<T>();
+                for (size_type j = 0; j < vlen; ++j)
+                    s += A(i, col + j) * v(j);
+                const T f = (T(2) * s) / vtv;
+                for (size_type j = 0; j < vlen; ++j)
+                    A(i, col + j) -= f * v(j);
+            }
+        });
+}
+
 } // namespace mtl

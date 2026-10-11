@@ -2,7 +2,9 @@
 //
 //   householder(x, tag::textbook_reflector{})                 -> {v, vtv, alpha}
 //   apply_householder_left(A, v, vtv, row, col, tag::textbook_reflector{})
+//   apply_householder_right(A, v, vtv, row, col, tag::textbook_reflector{})
 //   qr_factor(A, tau, tag::textbook_reflector{})
+//   lq_factor(A, tau, tag::textbook_reflector{})
 //
 // The tagged paths exist so a caller whose results are pinned to a hand-written
 // textbook QR can move to MTL5 without changing a bit, so the tests compare BITS
@@ -29,6 +31,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/householder.hpp>
 #include <mtl/operation/qr.hpp>
+#include <mtl/operation/lq.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/tag/reflector_form.hpp>
 
@@ -112,6 +115,33 @@ void ref_apply_left(mat::dense2D<T>& A, const std::vector<T>& v, T vtv,
     }
 }
 
+template <typename T>
+void ref_apply_right(mat::dense2D<T>& A, const std::vector<T>& v, T vtv,
+                     std::size_t row, std::size_t col) {
+    if (!(vtv > T(0))) return;
+    for (std::size_t i = row; i < A.num_rows(); ++i) {
+        T s = T(0);
+        for (std::size_t j = 0; j < v.size(); ++j) s += A(i, col + j) * v[j];
+        const T f = (T(2) * s) / vtv;
+        for (std::size_t j = 0; j < v.size(); ++j) A(i, col + j) -= f * v[j];
+    }
+}
+
+/// Textbook LQ, L only: L in the lower triangle, exact zeros above.
+template <typename T>
+void ref_lq_l(mat::dense2D<T>& A) {
+    const std::size_t m = A.num_rows(), n = A.num_cols();
+    for (std::size_t k = 0; k < std::min(m, n); ++k) {
+        std::vector<T> x(n - k);
+        for (std::size_t j = k; j < n; ++j) x[j - k] = A(k, j);
+        auto r = ref_householder(x);
+        if (r.skip) continue;
+        ref_apply_right(A, r.v, r.vtv, k + 1, k);
+        A(k, k) = r.alpha;
+        for (std::size_t j = k + 1; j < n; ++j) A(k, j) = T(0);
+    }
+}
+
 /// Textbook QR, R only: R in the upper triangle, exact zeros below.
 template <typename T>
 void ref_qr_r(mat::dense2D<T>& A) {
@@ -154,6 +184,24 @@ std::size_t all_mismatches(const mat::dense2D<T>& A, const mat::dense2D<T>& B) {
         for (std::size_t j = 0; j < A.num_cols(); ++j)
             bad += !same_bits(A(i, j), B(i, j));
     return bad;
+}
+
+template <typename T>
+std::size_t lower_mismatches(const mat::dense2D<T>& A, const mat::dense2D<T>& B) {
+    std::size_t bad = 0;
+    for (std::size_t i = 0; i < A.num_rows(); ++i)
+        for (std::size_t j = 0; j <= i && j < A.num_cols(); ++j)
+            bad += !same_bits(A(i, j), B(i, j));
+    return bad;
+}
+
+template <typename T>
+void check_lq(std::size_t m, std::size_t n, std::uint64_t seed) {
+    auto A = random_matrix<T>(m, n, seed), L = A;
+    vec::dense_vector<T> tau;
+    REQUIRE(lq_factor(A, tau, tag::textbook_reflector{}) == 0);
+    ref_lq_l(L);
+    REQUIRE(lower_mismatches(A, L) == 0);
 }
 
 template <typename T>
@@ -344,4 +392,96 @@ TEST_CASE("the textbook and default reflectors differ",
     REQUIRE(qr_factor(A, ta) == 0);
     REQUIRE(qr_factor(B, tb, tag::textbook_reflector{}) == 0);
     REQUIRE(upper_mismatches(A, B) > 0);
+}
+
+TEST_CASE("textbook apply_householder_right equals the reference update bit for bit",
+          "[operation][householder][textbook][559]") {
+    auto run = [](auto tag_value, std::size_t m, std::size_t n, std::size_t row,
+                  std::size_t col, std::uint64_t seed) {
+        using T = decltype(tag_value);
+        auto A = random_matrix<T>(m, n, seed), B = A;
+        std::vector<T> x(n - col);
+        for (std::size_t j = col; j < n; ++j) x[j - col] = A(row, j);
+        auto r = ref_householder(x);
+        vec::dense_vector<T> v(r.v.size());
+        for (std::size_t j = 0; j < r.v.size(); ++j) v(j) = r.v[j];
+        apply_householder_right(A, v, r.vtv, row, col, tag::textbook_reflector{});
+        ref_apply_right(B, r.v, r.vtv, row, col);
+        REQUIRE(all_mismatches(A, B) == 0);
+    };
+    run(double{}, 6, 9, 0, 0, 11);
+    run(double{}, 6, 9, 2, 3, 12);
+    run(float{}, 11, 17, 1, 4, 13);
+    run(emul{}, 11, 17, 5, 2, 14);
+    // Enough rows that the update splits across the pool.
+    run(double{}, 2000, 300, 0, 0, 15);
+
+    // A skipped reflector leaves A untouched.
+    auto A = random_matrix<double>(4, 3, 16), B = A;
+    vec::dense_vector<double> z{0.0, 0.0, 0.0};
+    auto h = householder(z, tag::textbook_reflector{});
+    apply_householder_right(A, h.v, h.vtv, 0, 0, tag::textbook_reflector{});
+    REQUIRE(all_mismatches(A, B) == 0);
+}
+
+TEST_CASE("lq_factor with the textbook reflector produces the reference L bit for bit",
+          "[operation][lq][textbook][559]") {
+    for (auto [m, n] : {std::pair<std::size_t, std::size_t>{1, 1}, {2, 2}, {3, 5},
+                        {15, 15}, {15, 33}, {81, 81}}) {
+        INFO("m = " << m << ", n = " << n);
+        check_lq<double>(m, n, 659 + m * 100 + n);
+        check_lq<float>(m, n, 660 + m * 100 + n);
+        check_lq<emul>(m, n, 661 + m * 100 + n);
+    }
+    check_lq<double>(200, 256, 6591);
+
+    // The transpose of the QR case: exact, so the expected values are known.
+    mat::dense2D<double> A{{0.0, 0.0, 0.0},
+                           {1.0, 2.0, 0.0},
+                           {1.0, 3.0, 4.0}};
+    auto L = A;
+    vec::dense_vector<double> tau;
+    REQUIRE(lq_factor(A, tau, tag::textbook_reflector{}) == 0);
+    ref_lq_l(L);
+    REQUIRE(lower_mismatches(A, L) == 0);
+    REQUIRE(tau(0) == 0.0);
+    REQUIRE(A(1, 0) == 1.0);
+    REQUIRE(tau(1) == 2.0);
+    REQUIRE(A(1, 1) == -2.0);
+    REQUIRE(A(2, 1) == -3.0);
+    REQUIRE(tau(2) == 2.0);
+    REQUIRE(A(2, 2) == -4.0);
+}
+
+TEST_CASE("lq_factor's textbook result works with lq_extract_Q",
+          "[operation][lq][textbook][559]") {
+    const std::size_t m = 7, n = 12;
+    auto A0 = random_matrix<double>(m, n, 6592), A = A0;
+    vec::dense_vector<double> tau;
+    REQUIRE(lq_factor(A, tau, tag::textbook_reflector{}) == 0);
+    auto Q = lq_extract_Q(A, tau);
+    auto L = lq_extract_L(A);
+
+    double err = 0.0, orth = 0.0;
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            double s = 0.0;
+            for (std::size_t k = 0; k < n; ++k) s += L(i, k) * Q(k, j);
+            err = std::max(err, std::abs(s - A0(i, j)));
+        }
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            double s = 0.0;
+            for (std::size_t k = 0; k < n; ++k) s += Q(i, k) * Q(j, k);
+            orth = std::max(orth, std::abs(s - (i == j ? 1.0 : 0.0)));
+        }
+    REQUIRE(err < 1e-13);
+    REQUIRE(orth < 1e-13);
+
+    // Otherwise the tag would be selecting the same arithmetic.
+    auto B = random_matrix<emul>(15, 33, 6594), C = B;
+    vec::dense_vector<emul> tb, tc;
+    REQUIRE(lq_factor(B, tb) == 0);
+    REQUIRE(lq_factor(C, tc, tag::textbook_reflector{}) == 0);
+    REQUIRE(lower_mismatches(B, C) > 0);
 }

@@ -1,9 +1,10 @@
 #pragma once
 // MTL5 -- Householder reflector form tags (#559)
 //
-// householder(), apply_householder_left() and qr_factor() build and apply the
-// LAPACK form of the reflector by default: x scaled by max|x|, v(0) == 1,
-// tau = 2*v0^2/(sigma + v0^2), and R's diagonal non-negative. The textbook form
+// householder(), apply_householder_left/right(), qr_factor() and lq_factor()
+// build and apply the LAPACK form of the reflector by default: x scaled by
+// max|x|, v(0) == 1, tau = 2*v0^2/(sigma + v0^2), and R's diagonal
+// non-negative. The textbook form
 // (Golub & Van Loan, sec. 5.1) is just as valid and rounds differently:
 //
 //   norm  = sqrt(sum x_i^2)              unscaled, ascending i

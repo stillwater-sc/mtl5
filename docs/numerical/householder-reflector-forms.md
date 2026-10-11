@@ -1,10 +1,11 @@
 # Householder reflector forms
 
-`householder`, `apply_householder_left` and `qr_factor` can build and apply a
-Householder reflector in either of two forms. Both produce a valid QR
-factorization, and they produce different bits, and for some inputs different
-signs. The default is unchanged. The second form is opt-in, for callers that
-need to reproduce a hand-written textbook QR exactly.
+`householder`, `apply_householder_left`, `apply_householder_right`,
+`qr_factor` and `lq_factor` can build and apply a Householder reflector in
+either of two forms. Both produce a valid factorization, and they produce
+different bits, and for some inputs different signs. The default is unchanged.
+The second form is opt-in, for callers that need to reproduce a hand-written
+textbook QR or LQ exactly.
 
 ```cpp
 #include <mtl/operation/qr.hpp>
@@ -66,6 +67,10 @@ namespace mtl::tag { struct textbook_reflector {}; }   // <mtl/tag/reflector_for
 | `apply_householder_left(A, v, vtv, row, col, tag::textbook_reflector{})` | textbook | — |
 | `qr_factor(A, tau)` | default | `geqrf` when `MTL5_HAS_LAPACK` and A is a `float`/`double` dense matrix |
 | `qr_factor(A, tau, tag::textbook_reflector{})` | textbook | **never** |
+| `apply_householder_right(A, v, τ, row, col)` | default | — |
+| `apply_householder_right(A, v, vtv, row, col, tag::textbook_reflector{})` | textbook | — |
+| `lq_factor(A, tau)` | default | — |
+| `lq_factor(A, tau, tag::textbook_reflector{})` | textbook | — |
 
 The tagged `householder` returns a `textbook_reflection<T>`, which supports
 structured bindings:
@@ -78,7 +83,8 @@ auto [v, vtv, alpha] = mtl::householder(x, mtl::tag::textbook_reflector{});
 
 A column is skipped when `!(norm > 0)`: it is zero, or it contains a NaN. The
 tagged `householder` then returns `vtv = 0`, and the tagged
-`apply_householder_left` does nothing when `!(vtv > 0)`, which also covers a vᵀv
+`apply_householder_left` and `apply_householder_right` do nothing when
+`!(vtv > 0)`, which also covers a vᵀv
 that underflows. These are the tests a hand-written loop uses, so NaN handling
 matches too: a NaN column is left as it is, not propagated through a reflector.
 
@@ -104,6 +110,30 @@ reflectors with the tagged `apply_householder_left` as the original code does.
 A skipped column gets τ = 0 and keeps its entries, like the default's identity
 reflection.
 
+### The tagged right update and `lq_factor`
+
+`apply_householder_right(A, v, vtv, row, col, tag)` is the row mirror of the
+left update. It computes A := A·H for rows `row` onward and columns
+`col .. col+v.size()−1`. Each row i is updated as
+
+```text
+s = Σ_j A(i, col+j)·v(j)      from zero, ascending j
+f = (2·s)/vᵀv
+A(i, col+j) -= f·v(j)
+```
+
+For a real reflector H = Hᵀ, so there is no conjugate to place, unlike the
+default's complex path.
+
+`lq_factor(A, tau, tag)` is the row mirror of the tagged `qr_factor`. For each row
+k it computes the textbook reflector of `A(k, k:n−1)`, skips the row if the
+reflector says so, applies it on the right to rows k+1 onward, and writes
+L(k,k) = α. So L, on and below the diagonal, is bit-identical to a hand-written
+textbook LQ. Above the diagonal and in `tau` the reflector is stored in the
+packed form, as in QR, so `lq_extract_Q` works on the result unchanged, with Q
+matching the textbook Q to rounding. `lq_factor` has no LAPACK path in either
+form.
+
 ### Limits
 
 - **Real element types only.** The textbook form has no single complex
@@ -112,8 +142,8 @@ reflection.
   in `double` entries above about 1e154 overflow and entries below about 1e−154
   underflow. The default's scaling avoids both. That's the cost of reproducing
   the loop.
-- **Left reflections only.** `apply_householder_right`, `lq_factor`, the
-  Hessenberg reduction and the eigensolvers use the default form only.
+- **QR and LQ only.** The Hessenberg reduction, the eigensolvers and the SVD use
+  the default form only.
 - **No accumulator.** The point of the tag is a fixed order of operations, so the
   tagged overloads don't take an `Accumulator`.
 
@@ -221,14 +251,21 @@ against serial reference loops written as above:
 - the tagged `apply_householder_left` equals the reference update with row and
   column offsets, on all three types, for a 40 × 85 `[H_f | H_x | r]` shape, and
   for a 300 × 2000 matrix that splits across a pool of 4 threads;
+- the tagged `apply_householder_right` equals the reference update with row and
+  column offsets, on all three types, and for a 2000 × 300 matrix that splits
+  across the pool;
 - the tagged `qr_factor`'s R equals the reference R for shapes from 1 × 1 to
-  81 × 81, plus 256 × 200, on all three types;
-- the matrix above gives exactly the R and τ shown;
+  81 × 81, plus 256 × 200, on all three types, and the tagged `lq_factor`'s L
+  equals the reference L for the transposed shapes, plus 200 × 256;
+- the matrix above gives exactly the R and τ shown, and its transpose gives the
+  transposed L under `lq_factor`;
 - `qr_extract_Q` and `qr_solve` work on the tagged result: Q·R reproduces A and Q
-  is orthogonal to 1e−13, and a square system solves to 1e−11;
-- the default and the textbook form produce different R for the same matrix.
+  is orthogonal to 1e−13, and a square system solves to 1e−11. `lq_extract_Q`
+  works on the tagged LQ the same way: L·Q reproduces A to 1e−13;
+- the default and the textbook form produce different R, and different L, for
+  the same matrix.
 
-The target is compiled with `-ffp-contract=off`. As a teeth check, three
+The target is compiled with `-ffp-contract=off`. As a teeth check, five
 patched copies of the headers each fail the tests that should notice:
 
 | mutation | fails |
@@ -236,6 +273,8 @@ patched copies of the headers each fail the tests that should notice:
 | the update sums s in descending i | the `apply_householder_left` and `qr_factor` comparisons |
 | the norm sums x² in descending i | the `householder` and `qr_factor` comparisons |
 | `qr_factor` keeps the column's own diagonal instead of writing α | the `qr_factor` comparison, the exact 3 × 3 case, and Q·R = A |
+| the right update sums s in descending j | the `apply_householder_right` and `lq_factor` comparisons |
+| `lq_factor` keeps the row's own diagonal instead of writing α | the `lq_factor` comparison, and L·Q = A |
 
 (`2·(s/vᵀv)` in place of `(2·s)/vᵀv` is *not* a useful mutation: multiplying by
 2 is exact, so the two round identically.)
