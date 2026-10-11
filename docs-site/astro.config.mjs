@@ -57,6 +57,15 @@ export default defineConfig({
           autogenerate: { directory: 'algorithms' },
         },
         {
+          // Where an implementation choice (summation order, contraction)
+          // decides the bits, and how a caller controls it (#556).
+          label: 'Numerical Considerations',
+          items: [
+            { slug: 'numerical' },
+            { slug: 'numerical/summation-order-in-cholesky' },
+          ],
+        },
+        {
           label: 'Benchmarking',
           autogenerate: { directory: 'benchmarks' },
         },

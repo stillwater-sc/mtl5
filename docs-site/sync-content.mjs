@@ -66,6 +66,8 @@ const FILE_MAP = {
   'algorithms/on-node-threading.md':            'algorithms/on-node-threading.md',
   'algorithms/mixed-precision-kernels.md':      'algorithms/mixed-precision-kernels.md',
   'algorithms/measuring-solver-accuracy.md':    'algorithms/measuring-solver-accuracy.md',
+  'numerical/index.md':                         'numerical/index.md',
+  'numerical/summation-order-in-cholesky.md':   'numerical/summation-order-in-cholesky.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
   'algorithms/supernodal-ldlt.md':              'algorithms/supernodal-ldlt.md',
 
