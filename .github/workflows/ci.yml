@@ -1,11 +1,51 @@
 name: CI
 
+# Which events run CI, and which do not.
+#
+# PUSH runs only for `main` and release tags. A push to a branch that has an open
+# PR also fires `pull_request`, so `push: branches: ['**']` built every PR commit
+# twice: 20 jobs per event, on 8 platforms. The PR run is the one that tests the
+# merge result, and the one Tier 2 gates on. To get CI on a branch with no PR,
+# open it as a draft (Tier 1 runs on drafts) or run
+# `gh workflow run ci.yml --ref <branch>`.
+#
+# PATHS: a change that touches only documentation runs no CI at all. Nothing
+# under docs/ or docs-site/, and no Markdown file, is read by the build or the
+# tests; docs.yml builds the site for those changes. The list is repeated
+# under both events below; keep the two copies the same. If a PR mixes docs with
+# anything else, the whole workflow runs: `paths-ignore` skips a run only when
+# EVERY changed file matches. Path filters are not evaluated for tag pushes, so
+# a release tag always runs the full matrix.
+#
+# Nothing in branch protection requires a CI check by name, so a docs-only PR
+# that skips CI is still mergeable. If a required check is ever added, a skipped
+# workflow leaves it "expected" forever. That would need a gate job that always
+# runs, instead of `paths-ignore`.
 on:
   push:
-    branches: [ '**' ]
+    branches: [ main ]
     tags: [ 'v[0-9]*' ]
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-site/**'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
+      - 'LICENSE'
+      - '.coderabbit.yaml'
+      - '.nojekyll'
+  workflow_dispatch:
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-site/**'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
+      - 'LICENSE'
+      - '.coderabbit.yaml'
+      - '.nojekyll'
     # `ready_for_review` matters: the Tier 2 regression job gates on
     # `pull_request.draft == false`, so a PR opened as a draft only ever has
     # runs in which that job skipped. Without this trigger, promoting the draft
@@ -16,6 +56,14 @@ on:
     # The other three are the defaults, and must be listed explicitly: naming
     # `types` REPLACES the default set rather than extending it.
     types: [ opened, synchronize, reopened, ready_for_review ]
+
+# A new commit on a PR supersedes the run for the previous one: cancel it rather
+# than finish a 20-job matrix nobody will read. Pushes to main and tags are keyed
+# by commit SHA, so each one gets its own run and none is ever cancelled; main's
+# runs also warm the sccache that every PR run reads.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # -- ASCII guard: source files must contain only ASCII bytes ---------
@@ -67,7 +115,8 @@ jobs:
         run: benchmarks/check_sidecars.sh
 
   # -- Tier 1: Fast unit tests on all platforms (~2 min) ---------------
-  # Runs on every push and every PR (draft or ready).
+  # Runs on every PR (draft or ready) and every push to main, unless the change
+  # is documentation only (see `on:` above).
   build:
     strategy:
       fail-fast: false
@@ -248,7 +297,7 @@ jobs:
   # actually run multithreaded -- the default job runs them serial. The
   # deterministic kernels are bit-identical across thread counts, so pass/fail
   # must match serial; a divergence is a real race/chunking bug this lane
-  # surfaces. Runs on every push and PR (incl. drafts), like the build job. (#299)
+  # surfaces. Runs on every PR (incl. drafts) and push to main, like the build job. (#299)
   threaded:
     name: Linux x64 threaded (${{ matrix.cxx }})
     runs-on: ubuntu-24.04
