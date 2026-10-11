@@ -116,9 +116,13 @@ TEST_CASE("generic GEMM: the i-k-j kernel is bit-identical to the i-j-k dot prod
             mat::dense2D<double> C(s[0], s[2]);
             detail::mult_generic(A, B, C);
             REQUIRE(same_bits(C, ijk(A, B)));
+#if !defined(MTL5_HAS_BLAS) && !defined(MTL5_NATIVE_FAST_GEMM)
+            // The dispatcher reaches this kernel only when neither BLAS nor the
+            // native blocked GEMM claims dense2D<double>; those sum in their own order.
             mat::dense2D<double> D(s[0], s[2]);
-            mult(A, B, D);  // the dispatcher: the same kernel without BLAS / fast GEMM
+            mult(A, B, D);
             REQUIRE(same_bits(D, C));
+#endif
         }
         {
             const auto A = random<float>(s[0], s[1], g), B = random<float>(s[1], s[2], g);

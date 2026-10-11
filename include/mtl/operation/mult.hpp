@@ -715,10 +715,14 @@ void mult(const MA& A, const MB& B, MC& C) {
     } else {
 
 #ifdef MTL5_HAS_BLAS
+    // Two nested conditions, not one conjunction: `&&` in a constant expression
+    // still instantiates every operand it names, and is_row_major_v<M> needs
+    // M::orientation, which compressed2D and transposed_view do not have. The
+    // inner condition is only instantiated once the operands are known dense.
     if constexpr (interface::BlasDenseMatrix<MA> &&
                   interface::BlasDenseMatrix<MB> &&
-                  interface::BlasDenseMatrix<MC> &&
-                  interface::is_row_major_v<MA> == interface::is_row_major_v<MC> &&
+                  interface::BlasDenseMatrix<MC>) {
+    if constexpr (interface::is_row_major_v<MA> == interface::is_row_major_v<MC> &&
                   interface::is_row_major_v<MB> == interface::is_row_major_v<MC>) {
         using T = typename MC::value_type;
         int m = static_cast<int>(A.num_rows());
@@ -739,6 +743,7 @@ void mult(const MA& A, const MB& B, MC& C) {
                                   beta, C.data(), m);
         }
         return;
+    }
     }
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM
