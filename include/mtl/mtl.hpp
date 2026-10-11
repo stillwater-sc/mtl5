@@ -34,6 +34,7 @@
 #include <mtl/tag/shape.hpp>
 #include <mtl/tag/traversal.hpp>
 #include <mtl/tag/storage.hpp>
+#include <mtl/tag/summation_order.hpp>
 
 // Traits
 #include <mtl/traits/category.hpp>

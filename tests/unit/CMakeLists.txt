@@ -67,11 +67,16 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # sees the same terms in the same order. Under -march=x86-64-v3 or on AArch64 the
 # i-k-j loop contracts every term to an FMA while the i-j-k reference contracts
 # only some, so the bits differ even though the order does not.
+#
+# op_test_cholesky_ordering compares cholesky_factor's term-by-term ordering
+# (#556) with a reference loop written the same way, bit for bit. That claim is
+# about the order of operations too, and needs the same flag.
 if(NOT MSVC)
     foreach(mt_target sparse_test_supernodal_ldlt_mt
                       sparse_test_supernodal_lu_mt
                       sparse_test_trisolve_level_schedule_mt
-                      op_test_mult_ikj)
+                      op_test_mult_ikj
+                      op_test_cholesky_ordering)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
         endif()

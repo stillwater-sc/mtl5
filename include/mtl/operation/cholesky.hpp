@@ -36,6 +36,7 @@
 #include <mtl/detail/structure_tol.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/tag/summation_order.hpp>
 #ifdef MTL5_HAS_LAPACK
 #include <mtl/interface/lapack.hpp>
 #endif
@@ -47,24 +48,32 @@ namespace mtl {
 /// collide with the k+1 not-positive-definite codes.
 inline constexpr int CHOLESKY_NOT_HERMITIAN = -2;
 
-/// Cholesky factorization: A = L * L^T, for a REAL symmetric positive definite A.
-/// The lower triangle of A is overwritten with L. Upper triangle is untouched.
-/// Returns 0 on success, k+1 if A(k,k) <= 0 (not SPD).
+namespace detail {
+
+/// The generic (non-LAPACK) A = L*L^T loop, in either summation order (#556).
 ///
-/// Complex element types are rejected at compile time; use cholesky_h_factor.
-template <FieldMatrix M>
-int cholesky_factor(M& A) {
+///   tag::subtract_sum            L(i,j) = (A(i,j) - sum_k L(i,k) L(j,k)) / L(j,j)
+///   tag::subtract_term_by_term   s = A(i,j); s = s - L(i,k) L(j,k), k = 0..j-1;
+///                                L(i,j) = s / L(j,j)
+///
+/// and the same two forms for the pivot. The products and the order of k are
+/// the same in both; only where the matrix entry enters the sum differs, so the
+/// two round differently and neither is more accurate across the board
+/// (docs/numerical/summation-order-in-cholesky.md).
+template <typename Ordering, typename M>
+int cholesky_factor_generic(M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
     using std::sqrt;
-    const size_type n = A.num_rows();
-    assert(A.num_cols() == n);
+    constexpr bool term_by_term = std::is_same_v<Ordering, tag::subtract_term_by_term>;
+    static_assert(term_by_term || std::is_same_v<Ordering, tag::subtract_sum>,
+                  "cholesky_factor: Ordering must be tag::subtract_sum or tag::subtract_term_by_term");
 
     // This routine computes A = L*L^T and tests the diagonal for positive
     // definiteness. Neither half survives a complex element type:
     //
-    //   - the test `diag <= 0` is an ORDERING, and complex is not ordered. It
-    //     used to fail here with an opaque "no match for operator<=" (#353).
+    //   - the pivot test is an ORDERING, and complex is not ordered. It used to
+    //     fail here with an opaque "no match for operator<=" (#353).
     //   - even with the comparison repaired, the unconjugated inner product
     //     `sum += A(j,k) * A(j,k)` computes L*L^T, which is not the
     //     factorization a Hermitian matrix has.
@@ -78,8 +87,82 @@ int cholesky_factor(M& A) {
         "HERMITIAN positive definite matrix use cholesky_h_factor / cholesky_h_solve, "
         "which compute A = L*L^H (#353).");
 
+    const size_type n = A.num_rows();
+    for (size_type j = 0; j < n; ++j) {
+        // Pivot: A(j,j) - sum(L(j,k)^2 for k < j), in the requested order.
+        const value_type diag = [&] {
+            if constexpr (term_by_term) {
+                value_type d = A(j, j);
+                for (size_type k = 0; k < j; ++k)
+                    d = d - A(j, k) * A(j, k);
+                return d;
+            } else {
+                auto sum = math::zero<value_type>();
+                for (size_type k = 0; k < j; ++k)
+                    sum += A(j, k) * A(j, k);
+                return value_type(A(j, j) - sum);
+            }
+        }();
+        // !(diag > 0) rather than diag <= 0: a NaN pivot fails every comparison,
+        // so `diag <= 0` let it through and returned 0 with NaNs in L. This is
+        // the test cholesky_h_factor already uses (#556).
+        if (!(diag > math::zero<value_type>()))
+            return static_cast<int>(j + 1);
+        A(j, j) = sqrt(diag);
+
+        // Compute L(i,j) for i > j -- parallelize over rows i (each A(i,j) is
+        // written by exactly one chunk and reads only already-finalized columns
+        // k < j and the shared column j, so contiguous chunking is bit-identical
+        // to the serial path, in either order). No-op team at MTL5_NUM_THREADS=1.
+        const size_type rows = n - j - 1;
+        if (rows > 0) {
+            const std::size_t inner = static_cast<std::size_t>(j == 0 ? 1 : j);
+            const std::size_t grain =
+                std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / inner);
+            detail::thread_pool::instance().parallel_for(
+                static_cast<std::size_t>(rows), grain,
+                [&](std::size_t b, std::size_t e) {
+                    for (std::size_t t = b; t < e; ++t) {
+                        const size_type i = j + 1 + static_cast<size_type>(t);
+                        if constexpr (term_by_term) {
+                            value_type s = A(i, j);
+                            for (size_type k = 0; k < j; ++k)
+                                s = s - A(i, k) * A(j, k);
+                            A(i, j) = s / A(j, j);
+                        } else {
+                            auto s = math::zero<value_type>();
+                            for (size_type k = 0; k < j; ++k)
+                                s += A(i, k) * A(j, k);
+                            A(i, j) = (A(i, j) - s) / A(j, j);
+                        }
+                    }
+                });
+        }
+    }
+    return 0;
+}
+
+} // namespace detail
+
+/// Cholesky factorization: A = L * L^T, for a REAL symmetric positive definite A.
+/// The lower triangle of A is overwritten with L. Upper triangle is untouched.
+/// Returns 0 on success, k+1 if the k-th pivot is not positive (not SPD), which
+/// includes a NaN pivot.
+///
+/// Each entry is formed as `a - (sum of products)`: the products are summed from
+/// zero and subtracted once (tag::subtract_sum). Dispatches to LAPACK potrf when
+/// MTL5_HAS_LAPACK is defined and the matrix qualifies.
+///
+/// Complex element types are rejected at compile time; use cholesky_h_factor.
+template <FieldMatrix M>
+int cholesky_factor(M& A) {
+    assert(A.num_cols() == A.num_rows());
+
 #ifdef MTL5_HAS_LAPACK
     if constexpr (interface::BlasDenseMatrix<M>) {
+        using value_type = typename M::value_type;
+        using size_type  = typename M::size_type;
+        const size_type n = A.num_rows();
         // potrf('L') factors the lower triangle in place into L (A = L*L^T). A
         // column-major dense2D is a valid column-major buffer; a row-major one is
         // factored via a column-major scratch built through the (i,j) accessor
@@ -109,39 +192,29 @@ int cholesky_factor(M& A) {
     }
 #endif
 
-    for (size_type j = 0; j < n; ++j) {
-        // Compute L(j,j) = sqrt(A(j,j) - sum(L(j,k)^2 for k < j))
-        auto sum = math::zero<value_type>();
-        for (size_type k = 0; k < j; ++k)
-            sum += A(j, k) * A(j, k);
-        auto diag = A(j, j) - sum;
-        if (diag <= math::zero<value_type>())
-            return static_cast<int>(j + 1);
-        A(j, j) = sqrt(diag);
+    return detail::cholesky_factor_generic<tag::subtract_sum>(A);
+}
 
-        // Compute L(i,j) for i > j -- parallelize over rows i (each A(i,j) is
-        // written by exactly one chunk and reads only already-finalized columns
-        // k < j and the shared column j, so contiguous chunking is bit-identical
-        // to the serial path). No-op team at MTL5_NUM_THREADS=1.
-        const size_type rows = n - j - 1;
-        if (rows > 0) {
-            const std::size_t inner = static_cast<std::size_t>(j == 0 ? 1 : j);
-            const std::size_t grain =
-                std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / inner);
-            detail::thread_pool::instance().parallel_for(
-                static_cast<std::size_t>(rows), grain,
-                [&](std::size_t b, std::size_t e) {
-                    for (std::size_t t = b; t < e; ++t) {
-                        const size_type i = j + 1 + static_cast<size_type>(t);
-                        auto s = math::zero<value_type>();
-                        for (size_type k = 0; k < j; ++k)
-                            s += A(i, k) * A(j, k);
-                        A(i, j) = (A(i, j) - s) / A(j, j);
-                    }
-                });
-        }
-    }
-    return 0;
+/// cholesky_factor(A), with the default summation order named explicitly.
+template <FieldMatrix M>
+int cholesky_factor(M& A, tag::subtract_sum) {
+    return cholesky_factor(A);
+}
+
+/// Cholesky factorization A = L * L^T with each entry formed TERM BY TERM: start
+/// from the matrix entry and subtract each product in turn (#556),
+///
+///   s = A(i,j);  s = s - L(i,k) * L(j,k)  for k = 0 .. j-1;  L(i,j) = s / L(j,j)
+///
+/// which is the form many hand-written factorizations use. It rounds differently
+/// from the default, so a caller whose results are pinned to that form can
+/// reproduce them bit for bit (under the same FP contraction setting). This
+/// overload never dispatches to LAPACK, whose summation order is its own.
+/// Same return codes as cholesky_factor(A).
+template <FieldMatrix M>
+int cholesky_factor(M& A, tag::subtract_term_by_term) {
+    assert(A.num_cols() == A.num_rows());
+    return detail::cholesky_factor_generic<tag::subtract_term_by_term>(A);
 }
 
 /// Solve A*x = b using precomputed Cholesky factor L (stored in lower triangle of A).
