@@ -12,6 +12,14 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 ### Added
 
 - **`mult(compressed2D A, dense2D B, dense2D C)`: a sparse × dense matrix product** (#550). It previously fell to the generic kernel, which reads `A(r,k)` by binary search for every (r, c, k). It now walks A's stored entries row by row (`detail::mult_sparse_crs_dense_par`, threaded over row bands like the sparse matvec): `C.row(r) = Σ v · B.row(k)` over A's entries in ascending k. That is the dense product's summation order with A's zero terms left out, so it equals the dense result bit for bit whenever those terms are exact zeros. The test checks this, and checks agreement with the column-by-column sparse matvec. B and C must be row-major dense; other layouts are unchanged.
+## [5.13.2] - 2026-10-11
+
+A patch release: the scalar operators work with the custom number types MTL5 is built for, and the eigensolvers' accumulator tests can now tell the two policies apart.
+
+### Fixed
+
+- **`scalar * matrix`, `matrix * scalar`, `matrix / scalar` and their vector forms accept any non-container `Scalar`** (#548, resolves #538). The six operators were gated on `std::is_arithmetic_v<S>`, which rejected posits, `cfloat`, LNS, fixed-point and `std::complex`, even though all of them satisfy `mtl::Scalar` and `mtl::Field`. It turned up in a Kalman filter over posits: `K = P H^T / S` did not compile. The gate is now `!Collection<S> && Scalar<S>`. The `!Collection` check comes first and short-circuits, because evaluating `Scalar<S>` for a matrix or vector operand would recurse into these same operators. `matrix * matrix`, `matrix * vector` and built-in scalars resolve as before, and a new test checks that.
+- **The eigensolver accumulator tests can tell the policies apart** (#547). This resolves the follow-up recorded in the 2026-10-10 session log below. In the earlier `power_iteration`, `lanczos` and `arnoldi` tests, a `float` accumulator and a `double` one both reached the 1e-4 tolerance floor, so a solver that ignored the accumulator would still pass. Each solver now has a test on a 1024×1024 diagonal (`2^20`, 1022 × `2^-5`, `-2^20`) whose Rayleigh quotient cancels. A `float` accumulator gets exactly 0, a `double` accumulator gets the exact value, and the test fails if the accumulator is ignored. Arnoldi's second Gram–Schmidt pass leaves its result 0.2% high, so it is checked to within 1%. The original tests are kept, renamed to say what they check: that both policies converge.
 
 ### Documentation and maintenance
 
