@@ -98,6 +98,7 @@ export default defineConfig({
             { slug: 'performance/blocking-and-scheduling-assessment' },
             { slug: 'performance/hardware-expansion-plan' },
             { slug: 'performance/cache-blocking-ab-study' },
+            { slug: 'performance/ikj-gemm-and-crs-dense' },
             { slug: 'performance/multicore-scaling-investigation' },
             { slug: 'performance/issue-297-threading-benchmark-plan' },
             { slug: 'performance/issue-297-threading-results' },

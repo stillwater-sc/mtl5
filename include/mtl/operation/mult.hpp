@@ -31,6 +31,16 @@ namespace mtl {
 
 namespace detail {
 
+/// Row-major storage with contiguous rows: `data()` and a row-major
+/// orientation. False (not an error) for views without an orientation.
+template <typename M>
+inline constexpr bool row_major_contiguous_v = [] {
+    if constexpr (interface::ContiguousMatrixData<M> && requires { typename M::orientation; })
+        return interface::is_row_major_v<M>;
+    else
+        return false;
+}();
+
 /// Generic mat*vec over the OUTPUT ROW RANGE [rb, re): the loop body of
 /// `mult_generic` below, split out so a threaded caller can hand one contiguous
 /// band of rows to each worker (#446).
@@ -219,6 +229,58 @@ void mult_sparse_crs_par(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y
     mult_sparse_crs<Accumulator>(A, x, y);
 }
 
+/// Sparse (CRS) x dense mat*mat over the OUTPUT ROW RANGE [rb, re) of C (#550):
+/// C.row(r) = sum over A's stored entries (k, v) of row r, in ascending k, of
+/// v * B.row(k). Each C(r, c) is zero + v_k0*B(k0,c) + v_k1*B(k1,c) + ... -- the
+/// dense product's order with A's unstored (zero) terms left out, so it equals
+/// the dense result whenever those terms are exact zeros. B and C row-major
+/// dense; C must not alias B.
+template <typename V, typename P, typename MB, typename MC>
+void mult_sparse_crs_dense_rows(const mat::compressed2D<V, P>& A, const MB& B, MC& C,
+                                std::size_t rb, std::size_t re) {
+    using Result = typename MC::value_type;
+    using size_type = typename MC::size_type;
+    const size_type ncols = C.num_cols();
+    if (ncols == 0)
+        return;
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    for (std::size_t r = rb; r < re; ++r) {
+        Result* crow = &C(static_cast<size_type>(r), 0);
+        for (size_type c = 0; c < ncols; ++c)
+            crow[c] = math::zero<Result>();
+        for (auto k = starts[r]; k < starts[r + 1]; ++k) {
+            const auto v = data[k];
+            const auto* brow = &B(static_cast<typename MB::size_type>(indices[k]), 0);
+            for (size_type c = 0; c < ncols; ++c)
+                crow[c] = generic_fma<Result>(crow[c], v, brow[c]);
+        }
+    }
+}
+
+/// `mult_sparse_crs_dense_rows` over all rows, threaded over row bands like
+/// `mult_sparse_crs_par` (each output row is one band's, so the result does not
+/// depend on the thread count).
+template <typename V, typename P, typename MB, typename MC>
+void mult_sparse_crs_dense_par(const mat::compressed2D<V, P>& A, const MB& B, MC& C) {
+    const std::size_t nrows = static_cast<std::size_t>(A.num_rows());
+    if constexpr (interface::ThreadableDenseMatrix<MB> && interface::ThreadableDenseMatrix<MC>) {
+        const std::size_t nnz   = A.ref_data().size();
+        const std::size_t avg   = nrows ? std::max(std::size_t{1}, nnz / nrows) : std::size_t{1};
+        const std::size_t grain = interface::row_grain<V>(avg * static_cast<std::size_t>(C.num_cols()));
+        thread_pool& pool = thread_pool::instance();
+        if (pool.size() > 1 && nrows >= grain * 2) {
+            pool.parallel_for(nrows, grain,
+                [&](std::size_t b, std::size_t e) {
+                    mult_sparse_crs_dense_rows(A, B, C, b, e);
+                });
+            return;
+        }
+    }
+    mult_sparse_crs_dense_rows(A, B, C, std::size_t{0}, nrows);
+}
+
 /// Generic mat*mat over the OUTPUT ROW RANGE [rb, re) of C -- the mat*mat
 /// counterpart of `mult_generic_rows` above, with the same bit-identity argument:
 /// C(r, c) is written by whichever band owns row r, out of an inner k loop that
@@ -235,7 +297,28 @@ void mult_generic_rows(const MA& A, const MB& B, MC& C,
     using size_type = typename MC::size_type;
     const size_type ncols = C.num_cols();
     const typename MA::size_type kdim = A.num_cols();
-    if constexpr (std::is_void_v<Accumulator>) {
+    if constexpr (std::is_void_v<Accumulator> && row_major_contiguous_v<MB> && row_major_contiguous_v<MC>) {
+        // Row-major B and C: the i-k-j form (#549). C's row is the accumulator
+        // and each k adds a * B.row(k) to it -- an independent, contiguous inner
+        // loop the compiler vectorizes, where the dot-product form below walks B
+        // down a column. Every C(r, c) is still built as zero, then
+        // + A(r,0)*B(0,c), + A(r,1)*B(1,c), ... in ascending k with the same
+        // generic_fma, so the result is bit-identical to the i-j-k loop.
+        if (ncols == 0)
+            return;
+        for (std::size_t rr = rb; rr < re; ++rr) {
+            const size_type r = static_cast<size_type>(rr);
+            Result* crow = &C(r, 0);
+            for (size_type c = 0; c < ncols; ++c)
+                crow[c] = math::zero<Result>();
+            for (typename MA::size_type k = 0; k < kdim; ++k) {
+                const auto a = A(r, k);
+                const auto* brow = &B(static_cast<typename MB::size_type>(k), 0);
+                for (size_type c = 0; c < ncols; ++c)
+                    crow[c] = generic_fma<Result>(crow[c], a, brow[c]);
+            }
+        }
+    } else if constexpr (std::is_void_v<Accumulator>) {
         for (std::size_t rr = rb; rr < re; ++rr) {
             const size_type r = static_cast<size_type>(rr);
             for (size_type c = 0; c < ncols; ++c) {
@@ -527,6 +610,14 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
 
+    // Sparse (CRS) x row-major dense (#550): walk A's stored entries instead of
+    // reading A(r, k) by binary search for every (r, c, k).
+    if constexpr (std::is_void_v<Accumulator> && interface::is_compressed2D_v<MA> &&
+                  detail::row_major_contiguous_v<MB> && detail::row_major_contiguous_v<MC>) {
+        detail::mult_sparse_crs_dense_par(A, B, C);
+        return;
+    }
+
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
 #ifdef MTL5_NATIVE_FAST_GEMM
         // SIMD widening fast path (#176): float operands accumulated in fp64
@@ -624,10 +715,14 @@ void mult(const MA& A, const MB& B, MC& C) {
     } else {
 
 #ifdef MTL5_HAS_BLAS
+    // Two nested conditions, not one conjunction: `&&` in a constant expression
+    // still instantiates every operand it names, and is_row_major_v<M> needs
+    // M::orientation, which compressed2D and transposed_view do not have. The
+    // inner condition is only instantiated once the operands are known dense.
     if constexpr (interface::BlasDenseMatrix<MA> &&
                   interface::BlasDenseMatrix<MB> &&
-                  interface::BlasDenseMatrix<MC> &&
-                  interface::is_row_major_v<MA> == interface::is_row_major_v<MC> &&
+                  interface::BlasDenseMatrix<MC>) {
+    if constexpr (interface::is_row_major_v<MA> == interface::is_row_major_v<MC> &&
                   interface::is_row_major_v<MB> == interface::is_row_major_v<MC>) {
         using T = typename MC::value_type;
         int m = static_cast<int>(A.num_rows());
@@ -648,6 +743,7 @@ void mult(const MA& A, const MB& B, MC& C) {
                                   beta, C.data(), m);
         }
         return;
+    }
     }
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM

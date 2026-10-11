@@ -61,10 +61,17 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # The invariants that hold under ANY flags -- determinism across repeated
 # threaded runs, and agreement with the serial solve to a measured bound -- are
 # asserted inside the tests themselves and are not affected by this.
+#
+# op_test_mult_ikj makes the same kind of claim for the i-k-j GEMM and the CRS x
+# dense product (#549, #550): bit-identical to the i-j-k loop because each C(r,c)
+# sees the same terms in the same order. Under -march=x86-64-v3 or on AArch64 the
+# i-k-j loop contracts every term to an FMA while the i-j-k reference contracts
+# only some, so the bits differ even though the order does not.
 if(NOT MSVC)
     foreach(mt_target sparse_test_supernodal_ldlt_mt
                       sparse_test_supernodal_lu_mt
-                      sparse_test_trisolve_level_schedule_mt)
+                      sparse_test_trisolve_level_schedule_mt
+                      op_test_mult_ikj)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
         endif()

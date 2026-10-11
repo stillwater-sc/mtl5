@@ -119,6 +119,18 @@ target_compile_definitions(bench_blocking_sweep PRIVATE MTL5_ENABLE_BLOCKING_OVE
 set_target_properties(bench_blocking_sweep PROPERTIES FOLDER "Benchmarks")
 add_dependencies(bench_blocking_sweep mtl5_build_info)
 
+# The i-k-j generic GEMM (#549) and the CRS x dense product (#550): one source
+# built against the headers before and after, compared by
+# docs/performance/ikj-gemm-and-crs-dense.md. fig_mult_ikj draws that page's
+# non-zero structure and access-pattern figures.
+add_executable(bench_mult_ikj bench_mult_ikj.cpp)
+target_link_libraries(bench_mult_ikj PRIVATE MTL5::mtl5)
+set_target_properties(bench_mult_ikj PROPERTIES FOLDER "Benchmarks")
+
+add_executable(fig_mult_ikj fig_mult_ikj.cpp)
+target_link_libraries(fig_mult_ikj PRIVATE MTL5::mtl5)
+set_target_properties(fig_mult_ikj PROPERTIES FOLDER "Benchmarks")
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)
