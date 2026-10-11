@@ -63,6 +63,7 @@ export default defineConfig({
           items: [
             { slug: 'numerical' },
             { slug: 'numerical/summation-order-in-cholesky' },
+            { slug: 'numerical/householder-reflector-forms' },
           ],
         },
         {

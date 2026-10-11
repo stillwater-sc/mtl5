@@ -24,6 +24,7 @@
 #include <mtl/functor/scalar/imag.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/tag/reflector_form.hpp>
 
 namespace mtl {
 
@@ -169,6 +170,63 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     }
 }
 
+/// A textbook Householder reflector (#559): H = I - (2/vtv)*v*v^T with v NOT
+/// normalized, and H*x = alpha*e_1. Supports structured bindings:
+/// `auto [v, vtv, alpha] = householder(x, tag::textbook_reflector{});`
+template <typename T>
+struct textbook_reflection {
+    vec::dense_vector<T> v;
+    T vtv;     ///< v^T v; not positive (zero, or NaN) means "skip this column"
+    T alpha;   ///< H*x = alpha*e_1, alpha = -sign(x(0))*||x||
+};
+
+/// Textbook (Golub & Van Loan sec. 5.1) Householder reflector for x, real T
+/// only. Unlike the default, x is not scaled, v(0) is not normalized to 1, and
+/// alpha takes the opposite sign of x(0), so R's diagonal is -sign(x0)*||x||:
+///
+///   norm  = sqrt(sum x_i^2)              from zero, ascending i
+///   alpha = x_0 >= 0 ? -norm : norm
+///   v     = x;  v_0 = x_0 - alpha
+///   vtv   = sum v_i^2                    from zero, ascending i
+///
+/// When !(norm > 0) -- x is zero, or contains NaN -- the column is to be
+/// skipped: vtv is returned as 0 and v = x. apply_householder_left skips on
+/// !(vtv > 0) as well, which also covers a vtv that underflows.
+///
+/// Squares are formed unscaled, as a hand-written loop forms them: entries
+/// beyond ~1e154 (double) overflow and entries below ~1e-154 underflow, where
+/// the default's scaling would not. That is the price of reproducing the loop.
+template <typename T>
+textbook_reflection<T> householder(const vec::dense_vector<T>& x, tag::textbook_reflector) {
+    static_assert(!is_complex_v<T>,
+        "householder(x, tag::textbook_reflector): the textbook form is defined for "
+        "real element types only. Use householder(x) for complex vectors.");
+    using std::sqrt;
+    using size_type = typename vec::dense_vector<T>::size_type;
+    const size_type n = x.size();
+
+    textbook_reflection<T> h{vec::dense_vector<T>(n), math::zero<T>(), math::zero<T>()};
+    for (size_type i = 0; i < n; ++i)
+        h.v(i) = x(i);
+    if (n == 0) return h;
+
+    T sum = math::zero<T>();
+    for (size_type i = 0; i < n; ++i)
+        sum += x(i) * x(i);
+    const T norm = sqrt(sum);
+    if (!(norm > math::zero<T>()))
+        return h;   // zero or NaN column: vtv == 0 marks it skipped
+
+    h.alpha = (x(0) >= math::zero<T>()) ? T(-norm) : norm;
+    h.v(0) = x(0) - h.alpha;
+
+    T vtv = math::zero<T>();
+    for (size_type i = 0; i < n; ++i)
+        vtv += h.v(i) * h.v(i);
+    h.vtv = vtv;
+    return h;
+}
+
 /// Apply Householder reflection H = I - beta*v*v^H on the LEFT (A := H*A)
 /// to columns col..ncols-1
 /// of matrix A, rows row..nrows-1. Modifies A in-place.
@@ -224,6 +282,48 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
     }
 }
 
+/// Apply a textbook reflector H = I - (2/vtv)*v*v^T on the LEFT (A := H*A) to
+/// columns col..ncols-1, rows row..row+v.size()-1 (#559). Real T only. Each
+/// column j is updated as a hand-written loop does it:
+///
+///   s = sum_i v(i)*A(row+i, j)      from zero, ascending i
+///   f = (2*s) / vtv
+///   A(row+i, j) -= f*v(i)
+///
+/// Does nothing when !(vtv > 0), i.e. for a skipped (zero or NaN) column.
+/// Columns are independent, so they are split across the thread pool and the
+/// result doesn't depend on the thread count.
+template <Matrix M, typename T>
+void apply_householder_left(M& A, const vec::dense_vector<T>& v, T vtv,
+                            typename M::size_type row, typename M::size_type col,
+                            tag::textbook_reflector) {
+    static_assert(!is_complex_v<T>,
+        "apply_householder_left(..., tag::textbook_reflector): the textbook form is "
+        "defined for real element types only.");
+    using size_type = typename M::size_type;
+    const size_type n = A.num_cols();
+    const size_type vlen = v.size();
+
+    if (col >= n) return;
+    if (!(vtv > math::zero<T>())) return;
+    const size_type ncols = n - col;
+    const std::size_t grain = std::max<std::size_t>(
+        std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
+    detail::thread_pool::instance().parallel_for(
+        static_cast<std::size_t>(ncols), grain,
+        [&](std::size_t b, std::size_t e) {
+            for (std::size_t t = b; t < e; ++t) {
+                const size_type j = col + static_cast<size_type>(t);
+                T s = math::zero<T>();
+                for (size_type i = 0; i < vlen; ++i)
+                    s += v(i) * A(row + i, j);
+                const T f = (T(2) * s) / vtv;
+                for (size_type i = 0; i < vlen; ++i)
+                    A(row + i, j) -= f * v(i);
+            }
+        });
+}
+
 /// Apply Householder reflection on the right: A := A * (I - beta*v*v^H).
 /// NOTE this is A*H, not A*H^H -- for complex tau those differ, and a caller
 /// wanting the inverse/adjoint must pass conj(beta) itself.
@@ -277,6 +377,49 @@ void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
                 A(i, col + j) -= beta * w * functor::scalar::conj<T>::apply(v(j));
         }
     }
+}
+
+/// Apply a textbook reflector H = I - (2/vtv)*v*v^T on the RIGHT (A := A*H) to
+/// rows row..nrows-1, columns col..col+v.size()-1 (#559). Real T only, so
+/// H = H^T and there is no conjugate to place. Each row i is updated as a
+/// hand-written loop does it:
+///
+///   s = sum_j A(i, col+j)*v(j)      from zero, ascending j
+///   f = (2*s) / vtv
+///   A(i, col+j) -= f*v(j)
+///
+/// Does nothing when !(vtv > 0), i.e. for a skipped (zero or NaN) row. Rows are
+/// independent, so they are split across the thread pool and the result
+/// doesn't depend on the thread count.
+template <Matrix M, typename T>
+void apply_householder_right(M& A, const vec::dense_vector<T>& v, T vtv,
+                             typename M::size_type row, typename M::size_type col,
+                             tag::textbook_reflector) {
+    static_assert(!is_complex_v<T>,
+        "apply_householder_right(..., tag::textbook_reflector): the textbook form is "
+        "defined for real element types only.");
+    using size_type = typename M::size_type;
+    const size_type m = A.num_rows();
+    const size_type vlen = v.size();
+
+    if (row >= m) return;
+    if (!(vtv > math::zero<T>())) return;
+    const size_type nrows = m - row;
+    const std::size_t grain = std::max<std::size_t>(
+        std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
+    detail::thread_pool::instance().parallel_for(
+        static_cast<std::size_t>(nrows), grain,
+        [&](std::size_t b, std::size_t e) {
+            for (std::size_t t = b; t < e; ++t) {
+                const size_type i = row + static_cast<size_type>(t);
+                T s = math::zero<T>();
+                for (size_type j = 0; j < vlen; ++j)
+                    s += A(i, col + j) * v(j);
+                const T f = (T(2) * s) / vtv;
+                for (size_type j = 0; j < vlen; ++j)
+                    A(i, col + j) -= f * v(j);
+            }
+        });
 }
 
 } // namespace mtl

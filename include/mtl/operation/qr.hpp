@@ -11,6 +11,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/householder.hpp>
+#include <mtl/tag/reflector_form.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
@@ -95,6 +96,61 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     return 0;
 }
 
+/// QR factorization with the textbook Householder reflector (#559). Real
+/// element types only; never dispatches to LAPACK, whose reflector is the
+/// default form. For each column k (k < min(m, n)):
+///
+///   auto [v, vtv, alpha] = householder(A(k:m-1, k), tag::textbook_reflector{});
+///   if !(vtv > 0): skip the column (tau(k) = 0, column k untouched)
+///   apply_householder_left(A, v, vtv, k, k+1, tag::textbook_reflector{});
+///   R(k,k) = alpha
+///
+/// so R on and above the diagonal is bit-identical to a hand-written textbook
+/// QR, including R's diagonal sign, -sign(x_k)*||x||. Below the diagonal and in
+/// tau the same reflector is stored in MTL5's packed form, v/v(0) with
+/// tau(k) = 2*v(0)^2/vtv, so qr_extract_Q and qr_solve work on the result
+/// unchanged. Their Q agrees with the textbook Q to rounding, not to the bit:
+/// the packed form is a rescaling of v. Returns 0.
+template <FieldMatrix M>
+int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau, tag::textbook_reflector) {
+    using value_type = typename M::value_type;
+    using size_type  = typename M::size_type;
+    static_assert(!is_complex_v<value_type>,
+        "qr_factor(A, tau, tag::textbook_reflector): the textbook form is defined "
+        "for real element types only. Use qr_factor(A, tau) for complex matrices.");
+    const size_type m = A.num_rows();
+    const size_type n = A.num_cols();
+    const size_type k = std::min(m, n);
+    tau.change_dim(k);
+
+    for (size_type j = 0; j < k; ++j) {
+        const size_type len = m - j;
+        vec::dense_vector<value_type> col(len);
+        for (size_type i = 0; i < len; ++i)
+            col(i) = A(j + i, j);
+
+        auto [v, vtv, alpha] = householder(col, tag::textbook_reflector{});
+        if (!(vtv > math::zero<value_type>())) {
+            // Skipped (zero or NaN column): the identity reflection. Column j
+            // keeps its entries, as with the default's tau == 0.
+            tau(j) = math::zero<value_type>();
+            continue;
+        }
+
+        // Columns j+1.. get the reflector. Column j's result is known exactly
+        // (alpha*e_1), and is what a hand-written QR stores after applying it.
+        apply_householder_left(A, v, vtv, j, j + 1, tag::textbook_reflector{});
+        A(j, j) = alpha;
+
+        // Packed storage: v(0) = x_0 - alpha has |v(0)| = |x_0| + ||x|| > 0.
+        const value_type v0 = v(0);
+        for (size_type i = 1; i < len; ++i)
+            A(j + i, j) = v(i) / v0;
+        tau(j) = value_type(2) * v0 * v0 / vtv;
+    }
+    return 0;
+}
+
 /// Extract explicit Q (m x m) from QR factorization stored in A and tau.
 /// Q = H_0^H * H_1^H * ... * H_{k-1}^H where H_j = I - tau(j) * v_j * v_j^H.
 /// (For real element types conj is the identity and this is the familiar
@@ -169,6 +225,13 @@ void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
         y(i) = b(i);
 
     for (size_type j = 0; j < k; ++j) {
+        // tau == 0 is the identity reflection, and the column below the
+        // diagonal is then not a reflector: a skipped column keeps its own
+        // entries there. Applying it anyway would compute y -= 0*v*dot, which
+        // is NaN as soon as one of those entries is. apply_householder_left
+        // returns early on the same test, so qr_extract_Q already skips it.
+        if (tau(j) == math::zero<value_type>())
+            continue;
         size_type len = m - j;
         vec::dense_vector<value_type> v(len);
         v(0) = math::one<value_type>();

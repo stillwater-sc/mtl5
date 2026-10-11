@@ -8,6 +8,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/householder.hpp>
+#include <mtl/tag/reflector_form.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
 
@@ -53,6 +54,58 @@ int lq_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
         // Store Householder vector above diagonal (v(0) is implicit 1)
         for (size_type j = 1; j < len; ++j)
             A(i, i + j) = v(j);
+    }
+    return 0;
+}
+
+/// LQ factorization with the textbook Householder reflector (#559): the row
+/// mirror of qr_factor(A, tau, tag::textbook_reflector{}). Real element types
+/// only. For each row k (k < min(m, n)):
+///
+///   auto [v, vtv, alpha] = householder(A(k, k:n-1), tag::textbook_reflector{});
+///   if !(vtv > 0): skip the row (tau(k) = 0, row k untouched)
+///   apply_householder_right(A, v, vtv, k+1, k, tag::textbook_reflector{});
+///   L(k,k) = alpha
+///
+/// so L on and below the diagonal is bit-identical to a hand-written textbook
+/// LQ, including L's diagonal sign, -sign(x_k)*||x||. Above the diagonal and in
+/// tau the same reflector is stored in MTL5's packed form, v/v(0) with
+/// tau(k) = 2*v(0)^2/vtv, so lq_extract_Q works on the result unchanged; its Q
+/// agrees with the textbook Q to rounding, not to the bit. Returns 0.
+template <FieldMatrix M>
+int lq_factor(M& A, vec::dense_vector<typename M::value_type>& tau, tag::textbook_reflector) {
+    using value_type = typename M::value_type;
+    using size_type  = typename M::size_type;
+    static_assert(!is_complex_v<value_type>,
+        "lq_factor(A, tau, tag::textbook_reflector): the textbook form is defined "
+        "for real element types only. Use lq_factor(A, tau) for complex matrices.");
+    const size_type m = A.num_rows();
+    const size_type n = A.num_cols();
+    const size_type k = std::min(m, n);
+    tau.change_dim(k);
+
+    for (size_type i = 0; i < k; ++i) {
+        const size_type len = n - i;
+        vec::dense_vector<value_type> row(len);
+        for (size_type j = 0; j < len; ++j)
+            row(j) = A(i, i + j);
+
+        auto [v, vtv, alpha] = householder(row, tag::textbook_reflector{});
+        if (!(vtv > math::zero<value_type>())) {
+            // Skipped (zero or NaN row): the identity reflection.
+            tau(i) = math::zero<value_type>();
+            continue;
+        }
+
+        // Rows i+1.. get the reflector; row i's result is alpha*e_1^T exactly.
+        apply_householder_right(A, v, vtv, i + 1, i, tag::textbook_reflector{});
+        A(i, i) = alpha;
+
+        // Packed storage: |v(0)| = |x_0| + ||x|| > 0.
+        const value_type v0 = v(0);
+        for (size_type j = 1; j < len; ++j)
+            A(i, i + j) = v(j) / v0;
+        tau(i) = value_type(2) * v0 * v0 / vtv;
     }
     return 0;
 }
