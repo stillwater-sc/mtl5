@@ -5,6 +5,14 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Performance
+
+- **The generic dense GEMM runs as an i-k-j loop when B and C are row-major** (#549). `detail::mult_generic_rows` was an i-j-k dot product. Its inner loop walks B down a column, and its single accumulator is a sequential reduction the compiler cannot vectorize, so it ran 1.5–2.6× slower than an i-k-j loop. Those numbers are from 15–81-wide shapes in branes-ai/cortex's filter covariance algebra. The kernel now keeps C's row as the accumulator and adds `A(r,k) * B.row(k)` for each k. That inner loop is contiguous and independent, so it vectorizes. Each `C(r,c)` is still built as zero plus the products in ascending k with the same `generic_fma`, so **results are bit-identical** for every scalar type. `test_mult_ikj` compares bits against the old loop, including -0 and infinities. Other layouts and the custom-`Accumulator` path keep the dot-product loop. Measured at `-O3`, gcc 15, no `-march`: P·P (81×81) 142 → 75 µs; P·Hᵀ (81×81·81×15) 30 → 18 µs; K·H (81×15·15×81) 25 → 14 µs.
+
+### Added
+
+- **`mult(compressed2D A, dense2D B, dense2D C)`: a sparse × dense matrix product** (#550). It previously fell to the generic kernel, which reads `A(r,k)` by binary search for every (r, c, k). It now walks A's stored entries row by row (`detail::mult_sparse_crs_dense_par`, threaded over row bands like the sparse matvec): `C.row(r) = Σ v · B.row(k)` over A's entries in ascending k. That is the dense product's summation order with A's zero terms left out, so it equals the dense result bit for bit whenever those terms are exact zeros. The test checks this, and checks agreement with the column-by-column sparse matvec. B and C must be row-major dense; other layouts are unchanged.
+
 ### Documentation and maintenance
 
 - **Session log for 2026-10-09 – 2026-10-10**: `docs/sessions/2026-10-10-every-test-overrode-the-default.md`. Covers the leading-`Accumulator` convention (#539, #540, #542), the 5.13.0 and 5.13.1 releases, and the downstream bumps in mp-iterative, mp-spice and mtl5-python. Its through-line is the 5.13.0 regression: every test accumulator overrode `clear()`, the one function that was broken, so the suite never ran the default it fell back to. It also records an open follow-up: the restored Lanczos accumulator test (#540), and the Arnoldi test it was rewritten from, can't tell a `float` accumulator from a `double` one, since both only need to reach a 1e-4 floor. CodeRabbit noted this on #540.
