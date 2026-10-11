@@ -212,7 +212,8 @@ auto eigenvalue_symmetric(const M& A,
         for (size_type i = 0; i < n; ++i)
             result(i) = W[i];
         return result;
-    } else if constexpr (interface::BlasHermitianMatrix<M>) {
+    } else if constexpr (interface::BlasHermitianMatrix<M> &&
+                         interface::accumulator_allows_blas_v<Accumulator>) {
         using value_type = typename M::value_type;         // std::complex<T>
         using size_type  = typename M::size_type;
         using real_t     = magnitude_t<value_type>;

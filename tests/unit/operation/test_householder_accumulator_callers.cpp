@@ -14,6 +14,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <random>
@@ -38,6 +39,14 @@ struct counting_acc {
     static inline std::size_t products = 0;
 };
 
+/// The complex counterpart. A complex T's reflector uses one accumulator type
+/// for two value types: the real sum of squares |x_i|^2 and the complex
+/// v^H*A(:,j), so this one holds a complex sum and rounds out either.
+struct counting_cacc {
+    std::complex<double> v{};
+    static inline std::size_t products = 0;
+};
+
 } // namespace
 
 namespace mtl::math {
@@ -50,6 +59,20 @@ struct accumulator_traits<::counting_acc, Value> {
     static void add_product(::counting_acc& a, const Value& m, const Value& x) {
         a.v += static_cast<double>(m) * static_cast<double>(x);
         ++::counting_acc::products;
+    }
+};
+template <typename Value>
+struct accumulator_traits<::counting_cacc, Value> {
+    static void clear(::counting_cacc& a) { a.v = 0.0; }
+    static void assign(::counting_cacc& a, const Value& x) { a.v = std::complex<double>(x); }
+    template <typename Result = Value>
+    static Result value(const ::counting_cacc& a) {
+        if constexpr (std::is_same_v<Result, std::complex<double>>) return a.v;
+        else return static_cast<Result>(a.v.real());
+    }
+    static void add_product(::counting_cacc& a, const Value& m, const Value& x) {
+        a.v += std::complex<double>(m) * std::complex<double>(x);
+        ++::counting_cacc::products;
     }
 };
 } // namespace mtl::math
@@ -230,6 +253,31 @@ TEST_CASE("the eigensolvers forward the accumulator and skip LAPACK",
     auto d1 = eigenvalue_symmetric_generic(S);
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE(std::abs(e1(i) - d1(i)) < 1e-12);
+}
+
+TEST_CASE("eigenvalue_symmetric forwards the accumulator for a complex Hermitian matrix",
+          "[operation][eigenvalue][accumulator][complex][536]") {
+    // The Hermitian path has its own LAPACK branch (heev), separate from the
+    // real one (syev). Both must be skipped for a non-void accumulator. Would
+    // be 0 if this dispatched to heev in a LAPACK build.
+    const std::size_t n = 8;
+    std::mt19937_64 g(5368);
+    std::uniform_real_distribution<double> u(-1.0, 1.0);
+    mat::dense2D<std::complex<double>> H(n, n);
+    for (std::size_t i = 0; i < n; ++i) {
+        H(i, i) = u(g);
+        for (std::size_t j = 0; j < i; ++j) {
+            H(i, j) = std::complex<double>(u(g), u(g));
+            H(j, i) = std::conj(H(i, j));
+        }
+    }
+    counting_cacc::products = 0;
+    auto e = eigenvalue_symmetric<counting_cacc>(H);
+    REQUIRE(counting_cacc::products == hessenberg_products(n));
+
+    auto d = eigenvalue_symmetric_generic(H);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE(std::abs(e(i) - d(i)) < 1e-12);
 }
 
 TEST_CASE("a double accumulator lowers the backward error of a float QR",
