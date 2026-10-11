@@ -5,6 +5,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.13.2] - 2026-10-11
+
+A patch release: the scalar operators work with the custom number types MTL5 is built for, and the eigensolvers' accumulator tests can now tell the two policies apart.
+
+### Fixed
+
+- **`scalar * matrix`, `matrix * scalar`, `matrix / scalar` and their vector forms accept any non-container `Scalar`** (#548, resolves #538). The six operators were gated on `std::is_arithmetic_v<S>`, which rejected posits, `cfloat`, LNS, fixed-point and `std::complex`, even though all of them satisfy `mtl::Scalar` and `mtl::Field`. It turned up in a Kalman filter over posits: `K = P H^T / S` did not compile. The gate is now `!Collection<S> && Scalar<S>`. The `!Collection` check comes first and short-circuits, because evaluating `Scalar<S>` for a matrix or vector operand would recurse into these same operators. `matrix * matrix`, `matrix * vector` and built-in scalars resolve as before, and a new test checks that.
+- **The eigensolver accumulator tests can tell the policies apart** (#547). This resolves the follow-up recorded in the 2026-10-10 session log below. In the earlier `power_iteration`, `lanczos` and `arnoldi` tests, a `float` accumulator and a `double` one both reached the 1e-4 tolerance floor, so a solver that ignored the accumulator would still pass. Each solver now has a test on a 1024×1024 diagonal (`2^20`, 1022 × `2^-5`, `-2^20`) whose Rayleigh quotient cancels. A `float` accumulator gets exactly 0, a `double` accumulator gets the exact value, and the test fails if the accumulator is ignored. Arnoldi's second Gram–Schmidt pass leaves its result 0.2% high, so it is checked to within 1%. The original tests are kept, renamed to say what they check: that both policies converge.
+
 ### Documentation and maintenance
 
 - **Session log for 2026-10-09 – 2026-10-10**: `docs/sessions/2026-10-10-every-test-overrode-the-default.md`. Covers the leading-`Accumulator` convention (#539, #540, #542), the 5.13.0 and 5.13.1 releases, and the downstream bumps in mp-iterative, mp-spice and mtl5-python. Its through-line is the 5.13.0 regression: every test accumulator overrode `clear()`, the one function that was broken, so the suite never ran the default it fell back to. It also records an open follow-up: the restored Lanczos accumulator test (#540), and the Arnoldi test it was rewritten from, can't tell a `float` accumulator from a `double` one, since both only need to reach a 1e-4 floor. CodeRabbit noted this on #540.
