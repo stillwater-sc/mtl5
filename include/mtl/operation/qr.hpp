@@ -225,6 +225,13 @@ void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
         y(i) = b(i);
 
     for (size_type j = 0; j < k; ++j) {
+        // tau == 0 is the identity reflection, and the column below the
+        // diagonal is then not a reflector: a skipped column keeps its own
+        // entries there. Applying it anyway would compute y -= 0*v*dot, which
+        // is NaN as soon as one of those entries is. apply_householder_left
+        // returns early on the same test, so qr_extract_Q already skips it.
+        if (tau(j) == math::zero<value_type>())
+            continue;
         size_type len = m - j;
         vec::dense_vector<value_type> v(len);
         v(0) = math::one<value_type>();

@@ -262,6 +262,10 @@ against serial reference loops written as above:
 - `qr_extract_Q` and `qr_solve` work on the tagged result: Q·R reproduces A and Q
   is orthogonal to 1e−13, and a square system solves to 1e−11. `lq_extract_Q`
   works on the tagged LQ the same way: L·Q reproduces A to 1e−13;
+- `qr_solve` skips a column that the tagged `qr_factor` skipped for a NaN below
+  the diagonal, and returns a finite solution of the system that was factored.
+  Before #560's review fix, `qr_solve` applied the τ = 0 reflector anyway and
+  0·NaN made the whole solution NaN;
 - the default and the textbook form produce different R, and different L, for
   the same matrix.
 

@@ -383,6 +383,39 @@ TEST_CASE("qr_factor's textbook result works with qr_extract_Q and qr_solve",
         REQUIRE(std::abs(x(i) - x_true(i)) < 1e-11);
 }
 
+TEST_CASE("qr_solve skips a column the textbook qr_factor skipped",
+          "[operation][qr][textbook][nan][559]") {
+    // Column 0 has a NaN below the diagonal, so it is skipped: tau(0) == 0 and
+    // the NaN stays in the packed storage. The identity reflection must not
+    // read it, or y -= 0*v*dot turns the whole right-hand side into NaN.
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    mat::dense2D<double> A{{2.0, 1.0, 0.0},
+                           {0.0, 3.0, 1.0},
+                           {nan, 1.0, 4.0}};
+    vec::dense_vector<double> tau, b{1.0, 2.0, 3.0}, x(3);
+    REQUIRE(qr_factor(A, tau, tag::textbook_reflector{}) == 0);
+    REQUIRE(tau(0) == 0.0);
+    REQUIRE(std::isnan(A(2, 0)));
+    qr_solve(A, tau, x, b);
+    for (std::size_t i = 0; i < 3; ++i) {
+        INFO("i = " << i);
+        REQUIRE(std::isfinite(x(i)));
+    }
+    // ... and x solves the system that was factored: column 0 as stored
+    // above the NaN, i.e. R x = Q^T b with Q built from the other reflectors.
+    auto Q = qr_extract_Q(A, tau);
+    auto R = qr_extract_R(A);
+    for (std::size_t i = 0; i < 3; ++i) {
+        double qx = 0.0;
+        for (std::size_t k = 0; k < 3; ++k) {
+            double rx = 0.0;
+            for (std::size_t j = 0; j < 3; ++j) rx += R(k, j) * x(j);
+            qx += Q(i, k) * rx;
+        }
+        REQUIRE(std::abs(qx - b(i)) < 1e-13);
+    }
+}
+
 TEST_CASE("the textbook and default reflectors differ",
           "[operation][qr][textbook][559]") {
     // Otherwise the tag would be selecting the same arithmetic. emul keeps the
