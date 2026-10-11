@@ -5,6 +5,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.15.0] - 2026-10-11
+
+The QR counterpart of 5.14.0's Cholesky opt-in: an opt-in textbook Householder reflector, so a port pinned to a hand-written textbook QR or LQ can reproduce it bit for bit. Reviewing it turned up a `qr_solve` fix that applies to the default QR too. No breaking changes. The default reflector, `qr_factor` and `lq_factor` compute exactly what they did in 5.14.0.
+
 ### Added
 
 - **`qr_factor(A, tau, tag::textbook_reflector{})` and `lq_factor(A, tau, tag::textbook_reflector{})`, and the same tag on `householder`, `apply_householder_left` and `apply_householder_right`: an opt-in textbook Householder reflector for bit-reproducible ports** (#559). The default reflector is LAPACK's form: x scaled by max|x|, v(0) = 1, τ = 2v₀²/(σ + v₀²), and R's diagonal non-negative. Many hand-written QRs use the textbook (Golub & Van Loan) form instead: unscaled ‖x‖, α = −sign(x₀)·‖x‖, unnormalized v with v(0) = x₀ − α, and a per-column update `f = (2·s)/vᵀv; A(i,j) -= f·v(i)`. The two round differently and, when x₀ > 0, reflect onto opposite signs. branes-ai/cortex's filter port saw 10 of 117 stage outputs move, its null-space projection change at O(1), and 1 of 16,265 update decisions flip on EuRoC V2_03. `householder(x, tag)` returns `{v, vtv, alpha}`. `apply_householder_left(A, v, vtv, row, col, tag)` applies it, threaded over columns, and `apply_householder_right(A, v, vtv, row, col, tag)` applies it on the right, threaded over rows, so neither result depends on the thread count. Zero and NaN columns are skipped with a hand-written loop's own tests, `!(norm > 0)` and `!(vᵀv > 0)`. The tagged `qr_factor` never dispatches to LAPACK. Its R, on and above the diagonal, is bit-identical to a textbook QR, signs included. Below the diagonal and in `tau` it stores the same reflector in MTL5's packed form (v/v(0), τ = 2v(0)²/vᵀv), so `qr_extract_Q` and `qr_solve` work unchanged, with Q matching the textbook Q to rounding. The tagged `lq_factor` is its row mirror: L, on and below the diagonal, is bit-identical to a textbook LQ, and `lq_extract_Q` works unchanged. The default overloads are unchanged. Real element types only. The tag lives in `<mtl/tag/reflector_form.hpp>`. `test_householder_textbook` checks each tagged path against reference textbook loops with `==` on `double`, `float` and a class-typed scalar, including skipped zero and NaN columns and 300 × 2000 and 2000 × 300 updates split across 4 threads; it is built with `-ffp-contract=off`. `docs/numerical/householder-reflector-forms.md` covers the why, what and how.
@@ -12,6 +16,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 ### Fixed
 
 - **`qr_solve` skips a reflector with τ = 0** (#559). τ = 0 is the identity reflection, and the column below the diagonal then holds the column's own entries, not a reflector. `qr_solve` applied it anyway as `y -= 0·v·(vᵀy)`, which is NaN as soon as one of those entries is NaN, so a skipped NaN column turned the whole solution into NaN. Both the default and the textbook `qr_factor` leave τ = 0 for such a column. `qr_extract_Q` already skipped it, since `apply_householder_left` returns early on a zero τ. Finite inputs are unaffected, except that a zero in y can no longer change sign through `y − 0`. Found by CodeRabbit on #560.
+
+### Documentation and maintenance
+
+- **The regression test tier is documented in Getting Started → Build Options** (#561). It covers `MTL5_BUILD_REGRESSION_TESTS`, how to run the tier with the `ci-regression` preset and the `regression` CTest label, and what each of the 14 programs in `tests/regression/` checks, with problem sizes and pass thresholds. It also gives the per-test time limits, and when CI runs the tier: non-draft PRs only, after the 8-platform `build` job.
 
 ## [5.14.0] - 2026-10-11
 
