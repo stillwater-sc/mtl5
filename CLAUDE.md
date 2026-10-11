@@ -197,8 +197,14 @@ The `main` branch is protected:
 
 | Tier | Trigger | What runs | Time |
 |------|---------|-----------|------|
-| **Tier 1** | Every push, every PR (draft or ready) | Unit tests on 8 platforms (Linux GCC/Clang x64+ARM64, macOS, Windows MSVC/Clang-CL) | ~2 min |
+| **Tier 1** | Every PR (draft or ready), every push to `main`, release tags | Unit tests on 8 platforms (Linux GCC/Clang x64+ARM64, macOS, Windows MSVC/Clang-CL) | ~2 min |
 | **Tier 2** | Non-draft PRs only (after Tier 1 passes) | Regression tests on Linux GCC — dense, sparse, iterative solvers at 100–50K DOF | ~10 min |
+
+Which changes run CI:
+- **Docs-only changes run no CI.** A commit that touches only `docs/`, `docs-site/`, Markdown, images, `LICENSE`, `.coderabbit.yaml` or `.nojekyll` skips `ci.yml` entirely; `docs.yml` builds the site for those. If a PR mixes docs with anything else, the full workflow runs.
+- **Feature branches are tested through their PR, not on push.** Pushing to a branch without a PR runs nothing. Open it as a draft PR to get Tier 1, or run `gh workflow run ci.yml --ref <branch>`.
+- **A new commit on a PR cancels that PR's in-progress run.**
+- **A docs-only PR is still mergeable.** No check is required by name, so a skipped workflow doesn't block it. Adding a required status check would change that; see the comment at the top of `ci.yml`.
 
 To run regression tests locally:
 ```bash
