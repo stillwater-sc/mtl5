@@ -16,8 +16,10 @@ namespace mtl {
 
 /// LQ factorization: A (m x n, n >= m) is overwritten with L on+below diagonal
 /// and Householder vectors above diagonal. tau(k) stores beta for row k.
-/// Returns 0 on success.
-template <FieldMatrix M>
+/// Returns 0 on success. `Accumulator` (leading, default void) is forwarded to
+/// householder() and apply_householder_right() (#536); void is today's
+/// arithmetic.
+template <typename Accumulator = void, FieldMatrix M>
 int lq_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -45,11 +47,11 @@ int lq_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
             row(j) = functor::scalar::conj<value_type>::apply(A(i, i + j));
 
         // Compute Householder reflection
-        auto [v, beta] = householder(row);
+        auto [v, beta] = householder<Accumulator>(row);
         tau(i) = beta;
 
         // Apply reflection on the right to A(i:m-1, i:n-1) as A := A * H^H.
-        apply_householder_right(A, v, functor::scalar::conj<value_type>::apply(beta), i, i);
+        apply_householder_right<Accumulator>(A, v, functor::scalar::conj<value_type>::apply(beta), i, i);
 
         // Store Householder vector above diagonal (v(0) is implicit 1)
         for (size_type j = 1; j < len; ++j)
@@ -111,7 +113,8 @@ int lq_factor(M& A, vec::dense_vector<typename M::value_type>& tau, tag::textboo
 }
 
 /// Extract explicit Q (n x n) from LQ factorization stored in A and tau.
-template <Matrix M>
+/// `Accumulator` is forwarded to each apply_householder_left (#536).
+template <typename Accumulator = void, Matrix M>
 auto lq_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -140,7 +143,7 @@ auto lq_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& t
         // taken on the factor side, so taking it again here would undo it. This
         // is the mirror image of qr_extract_Q, where the factor side applies H
         // and the extraction side applies H^H.
-        apply_householder_left(Q, v, tau(i), i, 0);
+        apply_householder_left<Accumulator>(Q, v, tau(i), i, 0);
     }
     return Q;
 }
