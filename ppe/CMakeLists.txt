@@ -3,7 +3,7 @@
 # Standalone from the MTL5 library: these kernels are written from scratch so
 # each optimization step is visible and attributable. Nothing here includes
 # <mtl/...>; the point is the progression, not the library.
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.22...4.2)
 project(ppe CXX)
 
 set(CMAKE_CXX_STANDARD 20)

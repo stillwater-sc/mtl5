@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.22...4.2)
 
 # ── Version from git tag ────────────────────────────────────────────────
 # If building from a git tag like v5.3.0, extract the version automatically.
