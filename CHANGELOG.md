@@ -5,6 +5,20 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Thin SVD: `svd(A, U, s, V)`**, with U m × k, s of length k and V n × k, where k = min(m, n). This is the thin U left out of #566. The full `svd(A, U, S, V)` completes U to an m × m basis, which is almost all of its 0.24 s at 400 × 9.
+  - **How:** for a tall A, the generic path reuses the V-only `svd`'s QR preconditioning. It runs one-sided Jacobi on R and forms U = Q [U_R; 0] by applying the n stored Householder reflectors, in O(mn²). For m ≤ n, U, s and V's columns match the first k of the full `svd` bit for bit. With LAPACK, `dense2D<float/double>` goes to `gesdd` in its thin mode, `'S'`, as the full `svd` uses `'A'`.
+  - **Speed:** in µs, thin against full `svd`: 13 against 459 at 64 × 9, 49 against 238,000 at 400 × 9, and 85 against 238,000 at 400 × 12. The `null-vector` benchmark suite gains a `svd_thin` arm, whose answer is checked like the others.
+  - **Refactor:** U's basis completion moved into `detail::complete_orthonormal`, shared by both overloads. The full `svd`'s arithmetic is unchanged.
+  - **Tests:** `test_svd_thin` checks:
+    - bit identity with the full `svd` for m ≤ n;
+    - agreement to rounding in `long double` on tall shapes up to 400 × 12, including columns graded across 10⁸, with U and V orthonormal, A reconstructed, and the sign of each (uᵢ, vᵢ) pair consistent;
+    - `double` against the full `svd` in either build;
+    - rank-deficient, zero and empty inputs.
+
+    Skipping the reflectors, applying them in the wrong order, or skipping the completion each fails it.
+
 ### Changed
 
 - **The one-sided Jacobi core behind `svd` is 1.3–3.6× faster, and its results change in the last bits.** It is shared by the generic `svd(A, U, S, V)`, the V-only `svd(A, s, V)` and `null_vector`. The LAPACK `gesdd` path is unaffected. Each column pair's inner products ‖b_p‖², ‖b_q‖² and b_p·b_q were formed from entries divided by the pair's largest magnitude, which costs a max pass and 2m divisions per pair, to keep the squares from overflowing or underflowing. They are now summed raw, and kept when ‖b_p‖² and ‖b_q‖² both lie in [√min/ε, √max/2] (about 2^-459 to 2^511 in `double`). Outside that window, which includes any inf or NaN, the sums are re-formed scaled as before. The window also keeps ‖b_p‖²·‖b_q‖² finite and normal, since the convergence test takes its square root. The sweeps also run on column-major copies of B and V, which on its own was about 10% faster with identical bits. A type without a `std::numeric_limits` specialization always takes the scaled path.
@@ -22,6 +36,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     At m = 400, QR dominates `null_vector` and the completion of U to m × m dominates the full `svd`.
   - **Accuracy:** on the same inputs the singular values agree with the old core to 1e-15 relative, the sweep counts are the same, and `null_vector`'s `float` accuracy table in `docs/algorithms/eigenvalues.md` is unchanged within noise.
   - **Tests:** a new case in `test_svd` scales a uniform matrix, and one with columns spread from 2^-560 to 2^-80, by 2^k for k from -560 to 520, across both bounds of the window. The singular values must scale by exactly 2^k and V must not move. Removing the lower bound, the upper bound or the scaled fallback each fails it; the upper bound is checked by this test alone.
+
+### Fixed
+
+- **`svd` throws when LAPACK's `gesdd` fails, instead of returning whatever its buffers held.** The LAPACK path of the full `svd(A, U, S, V)` ignored `gesdd`'s `info`, so a NaN in A, which LAPACK 3.10+ rejects with `info = -4`, or a divide-and-conquer that did not converge came back as an apparently valid U, S and V. The full and the new thin `svd` now check `info` after the workspace query and after the decomposition, and throw `std::runtime_error` on a nonzero value, as `eigenvalue` does for `geev`. The generic path is unchanged. A LAPACK-only case in `test_svd_thin` passes a NaN to both and requires the throw; it fails against the previous header. Found by CodeRabbit on #575.
 
 ## [5.16.0] - 2026-10-12
 

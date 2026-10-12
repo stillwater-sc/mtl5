@@ -760,9 +760,10 @@ inline void bench_eigen_small(reporter& rep, const std::string& label,
 
 /// Null vector of tall 2k x 9 and 2k x 12 systems (8-point, DLT PnP), k = 8..200
 /// (#566): null_vector(A) (QR + one-sided Jacobi on R, no U), the full svd(A),
-/// and eigen_symmetric / eigen_symmetric_jacobi on the normal matrix A^T A,
-/// whose formation is included in the time. The "size" column is m = 2k; the
-/// operation name carries N. Flops are a nominal m*N^2 for all four.
+/// the thin svd(A, U, s, V) (U m x N), and eigen_symmetric /
+/// eigen_symmetric_jacobi on the normal matrix A^T A, whose formation is
+/// included in the time. The "size" column is m = 2k; the operation name
+/// carries N. Flops are a nominal m*N^2 for all five.
 inline void bench_null_vector(reporter& rep, const std::string& label,
                               std::size_t warmup = 5, std::size_t iterations = 50) {
     for (std::size_t N : {9u, 12u}) {
@@ -784,13 +785,16 @@ inline void bench_null_vector(reporter& rep, const std::string& label,
             // Each arm stores its last answer outside the lambda, so the work is
             // observable, and every answer is checked below, outside the timing.
             mtl::vec::dense_vector<double> x_nv;
-            mtl::mat::dense2D<double> V_svd, V_qr, V_jac;
+            mtl::mat::dense2D<double> V_svd, V_thin, U_thin, V_qr, V_jac;
+            mtl::vec::dense_vector<double> s_thin;
             rep.add(measure([&]{ x_nv = mtl::null_vector(A); },
                             "null_vector" + tag, label, m, flops, warmup, iterations));
             // The full svd forms an m x m U: 0.25 s per call at m = 400, so
             // keep its repetitions low.
             rep.add(measure([&]{ V_svd = std::get<2>(mtl::svd(A)); },
                             "svd_full" + tag, label, m, flops, 1, m > 100 ? 3 : 10));
+            rep.add(measure([&]{ mtl::svd(A, U_thin, s_thin, V_thin); },
+                            "svd_thin" + tag, label, m, flops, warmup, iterations));
             rep.add(measure([&]{ V_qr = mtl::eigen_symmetric(normal()).eigenvectors; },
                             "eig_sym_AtA" + tag, label, m, flops, warmup, iterations));
             rep.add(measure([&]{ V_jac = mtl::eigen_symmetric_jacobi(normal()).eigenvectors; },
@@ -818,6 +822,7 @@ inline void bench_null_vector(reporter& rep, const std::string& label,
             const double ref = residual(x_nv);
             const std::pair<const char*, double> arms[] = {
                 {"svd_full", residual(column(V_svd, N - 1))},
+                {"svd_thin", residual(column(V_thin, N - 1))},
                 {"eig_sym_AtA", residual(column(V_qr, 0))},
                 {"jacobi_AtA", residual(column(V_jac, 0))},
             };
