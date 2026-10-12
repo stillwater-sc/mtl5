@@ -42,33 +42,74 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
     const value_type thresh = (tol > math::zero<value_type>()) ? tol : eps;
     const size_type max_sweeps = 60;
 
+    // Column-major working copies: every loop below runs down a column, which
+    // in B's row-major storage would stride by n.
+    std::vector<value_type> b(m * n), v(n * n);
+    for (size_type j = 0; j < n; ++j) {
+        for (size_type i = 0; i < m; ++i) b[j * m + i] = B(i, j);
+        for (size_type i = 0; i < n; ++i) v[j * n + i] = V(i, j);
+    }
+
+    // The inner products alpha = ||b_p||^2, betac = ||b_q||^2 and gamma =
+    // b_p . b_q are first summed raw, which is one pass and no divisions.
+    // They are kept when alpha and betac both land in [lo, hi]:
+    //  - an overflow anywhere in the sums makes alpha or betac inf (gamma is
+    //    bounded by sqrt(alpha * betac)), and inf or NaN fails the test;
+    //  - hi = sqrt(max)/2 keeps alpha * betac, under the sqrt below, finite;
+    //  - lo = sqrt(min)/eps keeps alpha * betac normal, and puts each column's
+    //    largest square above min/eps^2, so every entry within a factor eps
+    //    of the column's largest squares to a normal number.
+    // Otherwise they are re-formed in variables scaled by the pair's largest
+    // magnitude. Taken raw at the extremes they overflow to inf for entries
+    // around 1e200 and underflow to zero around 1e-200 -- which silently
+    // skipped every rotation, so the columns were never orthogonalized
+    // (measured: a matrix scaled by 1e-160 came back with |U^T U - I| = 0.87).
+    // One scale shared by both columns keeps zeta, and hence the rotation,
+    // unchanged. A type without numeric_limits always takes the scaled path.
+    constexpr bool raw_ok = std::numeric_limits<value_type>::is_specialized;
+    value_type lo = math::zero<value_type>(), hi = math::zero<value_type>();
+    if constexpr (raw_ok) {
+        lo = sqrt(std::numeric_limits<value_type>::min()) / eps;
+        hi = sqrt(std::numeric_limits<value_type>::max()) / value_type(2);
+    }
+
     for (size_type sweep = 0; sweep < max_sweeps; ++sweep) {
         bool rotated = false;
         for (size_type p = 0; p + 1 < n; ++p) {
+            value_type* bp_ = b.data() + p * m;
             for (size_type q = p + 1; q < n; ++q) {
-                // Form the inner products in COMMON-SCALED variables. Taken
-                // raw, alpha and betac overflow to inf for entries around
-                // 1e200 and underflow to zero around 1e-200 -- which silently
-                // skipped every rotation, so the columns were never
-                // orthogonalized (measured: a matrix scaled by 1e-160 came
-                // back with |U^T U - I| = 0.87). One scale shared by both
-                // columns keeps zeta, and hence the rotation, unchanged.
-                value_type cs = math::zero<value_type>();
-                for (size_type i = 0; i < m; ++i) {
-                    const value_type ap = abs(B(i, p)), aq = abs(B(i, q));
-                    if (ap > cs) cs = ap;
-                    if (aq > cs) cs = aq;
+                value_type* bq_ = b.data() + q * m;
+                value_type alpha = math::zero<value_type>();
+                value_type gamma = math::zero<value_type>();
+                value_type betac = math::zero<value_type>();
+                bool in_range = false;
+                if constexpr (raw_ok) {
+                    for (size_type i = 0; i < m; ++i) {
+                        const value_type bp = bp_[i], bq = bq_[i];
+                        alpha += bp * bp;
+                        betac += bq * bq;
+                        gamma += bp * bq;
+                    }
+                    in_range = alpha >= lo && alpha <= hi && betac >= lo && betac <= hi;
                 }
-                if (cs == math::zero<value_type>()) continue;   // both columns zero
+                if (!in_range) {
+                    value_type cs = math::zero<value_type>();
+                    for (size_type i = 0; i < m; ++i) {
+                        const value_type ap = abs(bp_[i]), aq = abs(bq_[i]);
+                        if (ap > cs) cs = ap;
+                        if (aq > cs) cs = aq;
+                    }
+                    if (cs == math::zero<value_type>()) continue;   // both columns zero
 
-                value_type alpha = math::zero<value_type>();   // ||B_p||^2, scaled
-                value_type gamma = math::zero<value_type>();   // B_p . B_q,  scaled
-                value_type betac = math::zero<value_type>();   // ||B_q||^2, scaled
-                for (size_type i = 0; i < m; ++i) {
-                    const value_type bp = B(i, p) / cs, bq = B(i, q) / cs;
-                    alpha += bp * bp;
-                    betac += bq * bq;
-                    gamma += bp * bq;
+                    alpha = math::zero<value_type>();
+                    gamma = math::zero<value_type>();
+                    betac = math::zero<value_type>();
+                    for (size_type i = 0; i < m; ++i) {
+                        const value_type bp = bp_[i] / cs, bq = bq_[i] / cs;
+                        alpha += bp * bp;
+                        betac += bq * bq;
+                        gamma += bp * bq;
+                    }
                 }
                 if (gamma == math::zero<value_type>()) continue;
                 const value_type scale = sqrt(alpha * betac);
@@ -88,14 +129,16 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
                 const value_type sn   = c * t;
 
                 for (size_type i = 0; i < m; ++i) {
-                    const value_type bp = B(i, p), bq = B(i, q);
-                    B(i, p) = c * bp - sn * bq;
-                    B(i, q) = sn * bp + c * bq;
+                    const value_type bp = bp_[i], bq = bq_[i];
+                    bp_[i] = c * bp - sn * bq;
+                    bq_[i] = sn * bp + c * bq;
                 }
+                value_type* vp_ = v.data() + p * n;
+                value_type* vq_ = v.data() + q * n;
                 for (size_type i = 0; i < n; ++i) {
-                    const value_type vp = V(i, p), vq = V(i, q);
-                    V(i, p) = c * vp - sn * vq;
-                    V(i, q) = sn * vp + c * vq;
+                    const value_type vp = vp_[i], vq = vq_[i];
+                    vp_[i] = c * vp - sn * vq;
+                    vq_[i] = sn * vp + c * vq;
                 }
                 rotated = true;
             }
@@ -107,16 +150,17 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
     std::vector<value_type> sigma(n);
     for (size_type j = 0; j < n; ++j) {
         // Scaled norm, for the same overflow/underflow reason as above.
+        const value_type* bj = b.data() + j * m;
         value_type cs = math::zero<value_type>();
         for (size_type i = 0; i < m; ++i) {
-            const value_type a = abs(B(i, j));
+            const value_type a = abs(bj[i]);
             if (a > cs) cs = a;
         }
         if (cs == math::zero<value_type>()) { sigma[j] = math::zero<value_type>(); continue; }
         value_type s2 = math::zero<value_type>();
         for (size_type i = 0; i < m; ++i) {
-            const value_type b = B(i, j) / cs;
-            s2 += b * b;
+            const value_type x = bj[i] / cs;
+            s2 += x * x;
         }
         sigma[j] = cs * sqrt(s2);
     }
@@ -127,18 +171,13 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
     std::sort(order.begin(), order.end(),
               [&sigma](size_type a, size_type b) { return sigma[a] > sigma[b]; });
 
-    mat::dense2D<value_type> Bs(m, n), Vs(n, n);
     sigma_s.assign(n, math::zero<value_type>());
     for (size_type j = 0; j < n; ++j) {
         const size_type src = order[j];
         sigma_s[j] = sigma[src];
-        for (size_type i = 0; i < m; ++i) Bs(i, j) = B(i, src);
-        for (size_type i = 0; i < n; ++i) Vs(i, j) = V(i, src);
+        for (size_type i = 0; i < m; ++i) B(i, j) = b[src * m + i];
+        for (size_type i = 0; i < n; ++i) V(i, j) = v[src * n + i];
     }
-    for (size_type i = 0; i < n; ++i)
-        for (size_type j = 0; j < n; ++j)
-            V(i, j) = Vs(i, j);
-    B = Bs;
 }
 
 } // namespace detail

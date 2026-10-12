@@ -17,6 +17,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <random>
 #include <vector>
 
 using namespace mtl;
@@ -368,6 +370,57 @@ TEST_CASE("SVD: extreme scaling does not overflow or underflow the rotations",
                 anorm = std::max(anorm, std::abs(A(i,j)));
             }
         REQUIRE(worst <= 1e-12 * (anorm > 0.0 ? anorm : 1.0));
+    }
+}
+
+TEST_CASE("SVD: raw and scaled Jacobi inner products agree across the range",
+          "[operation][svd][regression]") {
+    // The Jacobi core sums each pair's inner products raw and keeps them only
+    // when ||b_p||^2 and ||b_q||^2 both land in [sqrt(min)/eps, sqrt(max)/2]:
+    // about 2^-459 to 2^511 in double. Otherwise it re-forms them scaled by
+    // the pair's largest entry. Scaling A by 2^k is exact, so the singular
+    // values must scale by exactly 2^k up to rounding, and V must not move,
+    // on both sides of each bound. Too wide a window fails here: without the
+    // lower bound the squares at 2^-530 are subnormal, without the upper one
+    // ||b_p||^2 * ||b_q||^2 overflows at 2^400 and every rotation is skipped,
+    // and with no fallback the squares at 2^520 overflow. The V-only svd is
+    // used because it always runs the generic core, LAPACK build or not.
+    // Inputs come from mt19937_64 mapped by hand to [-1, 1).
+    std::mt19937_64 gen(5701);
+    auto u = [&gen] { return double(gen() >> 11) * 0x1.0p-53 * 2.0 - 1.0; };
+    const double eps = std::numeric_limits<double>::epsilon();
+
+    // A uniform 12 x 7, and one whose columns span 2^-560 .. 2^-80, so that most
+    // pairs mix a column inside the window with one outside it.
+    const std::size_t m = 12, n = 7;
+    mtl::mat::dense2D<double> A0(m, n), G0(m, n);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            A0(i, j) = u();
+            G0(i, j) = std::ldexp(u(), -560 + 80 * static_cast<int>(j));
+        }
+
+    for (const auto* base : {&A0, &G0}) {
+        mtl::vec::dense_vector<double> s0;
+        mtl::mat::dense2D<double> V0;
+        mtl::svd(*base, s0, V0);
+        for (int k : {-560, -530, -500, -300, -235, -225, 0, 250, 260, 400, 520}) {
+            if (base == &G0 && k < -460) continue;   // 2^(k-560) would be subnormal: not exact
+            mtl::mat::dense2D<double> A(m, n);
+            for (std::size_t i = 0; i < m; ++i)
+                for (std::size_t j = 0; j < n; ++j) A(i, j) = std::ldexp((*base)(i, j), k);
+            mtl::vec::dense_vector<double> s;
+            mtl::mat::dense2D<double> V;
+            mtl::svd(A, s, V);
+            INFO((base == &A0 ? "uniform" : "graded") << ", k = " << k);
+            for (std::size_t j = 0; j < n; ++j) {
+                const double sj = std::ldexp(s(j), -k);
+                REQUIRE(std::abs(sj - s0(j)) <= 100.0 * eps * s0(j));
+                double d = 0.0;
+                for (std::size_t i = 0; i < n; ++i) d += V(i, j) * V0(i, j);
+                REQUIRE(1.0 - std::abs(d) <= 100.0 * eps);
+            }
+        }
     }
 }
 

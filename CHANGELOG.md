@@ -5,6 +5,24 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The one-sided Jacobi core behind `svd` is 1.3–3.6× faster, and its results change in the last bits.** It is shared by the generic `svd(A, U, S, V)`, the V-only `svd(A, s, V)` and `null_vector`. The LAPACK `gesdd` path is unaffected. Each column pair's inner products ‖b_p‖², ‖b_q‖² and b_p·b_q were formed from entries divided by the pair's largest magnitude, which costs a max pass and 2m divisions per pair, to keep the squares from overflowing or underflowing. They are now summed raw, and kept when ‖b_p‖² and ‖b_q‖² both lie in [√min/ε, √max/2] (about 2^-459 to 2^511 in `double`). Outside that window, which includes any inf or NaN, the sums are re-formed scaled as before. The window also keeps ‖b_p‖²·‖b_q‖² finite and normal, since the convergence test takes its square root. The sweeps also run on column-major copies of B and V, which on its own was about 10% faster with identical bits. A type without a `std::numeric_limits` specialization always takes the scaled path.
+  - **Speed:** median µs from `bench_all --suite null-vector`, old core against new, run alternately.
+
+    | m × N | `null_vector` | full `svd` |
+    |---|---|---|
+    | 16 × 9 | 24 → 6.6 | 46 → 13 |
+    | 64 × 9 | 33 → 9.7 | 1,025 → 448 |
+    | 400 × 9 | 33 → 27 | 238,000 (unchanged) |
+    | 16 × 12 | 27 → 13 | 38 → 18 |
+    | 64 × 12 | 31 → 16 | 521 → 452 |
+    | 400 × 12 | 62 → 46 | 239,000 (unchanged) |
+
+    At m = 400, QR dominates `null_vector` and the completion of U to m × m dominates the full `svd`.
+  - **Accuracy:** on the same inputs the singular values agree with the old core to 1e-15 relative, the sweep counts are the same, and `null_vector`'s `float` accuracy table in `docs/algorithms/eigenvalues.md` is unchanged within noise.
+  - **Tests:** a new case in `test_svd` scales a uniform matrix, and one with columns spread from 2^-560 to 2^-80, by 2^k for k from -560 to 520, across both bounds of the window. The singular values must scale by exactly 2^k and V must not move. Removing the lower bound, the upper bound or the scaled fallback each fails it; the upper bound is checked by this test alone.
+
 ## [5.16.0] - 2026-10-12
 
 Small dense eigen and singular value problems, driven by null-space solves (8-point, DLT, plane fits): a Jacobi eigensolver that keeps small eigenvalues relatively accurate, a V-only SVD with QR preconditioning and `null_vector`, a tighter default tolerance and deflation test for `eigen_symmetric`, and the Householder accumulator forwarded through QR, LQ and the eigensolvers. One behavior change: `eigen_symmetric` and its relatives return different bits by default (see Changed). The full `svd` is bit-identical to 5.15.0.
