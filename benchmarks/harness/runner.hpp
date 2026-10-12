@@ -14,12 +14,15 @@
 #include <benchmarks/harness/reporter.hpp>
 #include <benchmarks/harness/generators.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include <mtl/simd/batch.hpp>
@@ -752,6 +755,84 @@ inline void bench_eigen_small(reporter& rep, const std::string& label,
                         "eig_sym_small_jacobi", label, n, flops, warmup, iterations));
         rep.add(measure([&]{ auto r = mtl::svd(A); (void)r; },
                         "svd_small", label, n, flops, warmup, iterations));
+    }
+}
+
+/// Null vector of tall 2k x 9 and 2k x 12 systems (8-point, DLT PnP), k = 8..200
+/// (#566): null_vector(A) (QR + one-sided Jacobi on R, no U), the full svd(A),
+/// and eigen_symmetric / eigen_symmetric_jacobi on the normal matrix A^T A,
+/// whose formation is included in the time. The "size" column is m = 2k; the
+/// operation name carries N. Flops are a nominal m*N^2 for all four.
+inline void bench_null_vector(reporter& rep, const std::string& label,
+                              std::size_t warmup = 5, std::size_t iterations = 50) {
+    for (std::size_t N : {9u, 12u}) {
+        for (std::size_t k : {8u, 32u, 200u}) {
+            const std::size_t m = 2 * k;
+            auto A = make_random_matrix<double>(m, N);
+            const double flops = static_cast<double>(m) * N * N;
+            auto normal = [&A, m, N] {
+                mtl::mat::dense2D<double> M(N, N);
+                for (std::size_t i = 0; i < N; ++i)
+                    for (std::size_t j = 0; j < N; ++j) {
+                        double s = 0.0;
+                        for (std::size_t r = 0; r < m; ++r) s += A(r, i) * A(r, j);
+                        M(i, j) = s;
+                    }
+                return M;
+            };
+            const std::string tag = "_N" + std::to_string(N);
+            // Each arm stores its last answer outside the lambda, so the work is
+            // observable, and every answer is checked below, outside the timing.
+            mtl::vec::dense_vector<double> x_nv;
+            mtl::mat::dense2D<double> V_svd, V_qr, V_jac;
+            rep.add(measure([&]{ x_nv = mtl::null_vector(A); },
+                            "null_vector" + tag, label, m, flops, warmup, iterations));
+            // The full svd forms an m x m U: 0.25 s per call at m = 400, so
+            // keep its repetitions low.
+            rep.add(measure([&]{ V_svd = std::get<2>(mtl::svd(A)); },
+                            "svd_full" + tag, label, m, flops, 1, m > 100 ? 3 : 10));
+            rep.add(measure([&]{ V_qr = mtl::eigen_symmetric(normal()).eigenvectors; },
+                            "eig_sym_AtA" + tag, label, m, flops, warmup, iterations));
+            rep.add(measure([&]{ V_jac = mtl::eigen_symmetric_jacobi(normal()).eigenvectors; },
+                            "jacobi_AtA" + tag, label, m, flops, warmup, iterations));
+
+            // ||A x|| for a candidate x. A is random and full rank, so the
+            // answer is the right singular vector of sigma_min, and ||A x|| is
+            // sigma_min to second order in x's error: every arm must match
+            // null_vector's to well within the A^T A methods' eps*kappa^2.
+            auto residual = [&](auto&& x) {
+                double xx = 0.0, ss = 0.0;
+                for (std::size_t j = 0; j < N; ++j) xx += x(j) * x(j);
+                for (std::size_t r = 0; r < m; ++r) {
+                    double t = 0.0;
+                    for (std::size_t j = 0; j < N; ++j) t += A(r, j) * x(j);
+                    ss += t * t;
+                }
+                return std::sqrt(ss / xx);
+            };
+            auto column = [N](const mtl::mat::dense2D<double>& V, std::size_t c) {
+                mtl::vec::dense_vector<double> v(N);
+                for (std::size_t j = 0; j < N; ++j) v(j) = V(j, c);
+                return v;
+            };
+            const double ref = residual(x_nv);
+            const std::pair<const char*, double> arms[] = {
+                {"svd_full", residual(column(V_svd, N - 1))},
+                {"eig_sym_AtA", residual(column(V_qr, 0))},
+                {"jacobi_AtA", residual(column(V_jac, 0))},
+            };
+            for (const auto& [arm, res] : arms) {
+                if (x_nv.size() != N || !(std::abs(res - ref) <= 1e-6 * ref)) {
+                    // Same convention as verify_gemm_int: fail, don't warn.
+                    std::fprintf(stderr,
+                                 "\nINTEGRITY FAILURE: %s%s at m=%zu -- ||A x|| = %.17g, "
+                                 "null_vector gives %.17g\n"
+                                 "An arm computes the wrong vector; no results written.\n",
+                                 arm, tag.c_str(), m, res, ref);
+                    std::exit(2);
+                }
+            }
+        }
     }
 }
 

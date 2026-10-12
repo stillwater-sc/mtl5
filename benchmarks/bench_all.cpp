@@ -173,6 +173,7 @@ static void print_usage() {
         "        dot, nrm2, axpy, scal, gemv, ger, symv, trmv, trsv,\n        gemm, trmm, trsm, symm, syrk, syr2k,\n"
         "        lu, qr, cholesky, eig,\n"
         "        eig-small (n = 3..16 eigen_symmetric vs eigen_symmetric_jacobi vs svd, #564; NOT in `all`),\n"
+        "        null-vector (2k x 9 / 2k x 12: null_vector vs svd vs eigensolvers on A^T A, #566; NOT in `all`),\n"
         "        int (=int-dot+int-gemv+int-gemm; NOT in `all` -- it would change existing baselines),\n"
         "        int-dot, int-gemv, int-gemm\n";
 }
@@ -347,6 +348,8 @@ int main(int argc, char* argv[]) {
         b::bench_eigenvalue(rep, label, lapack_sizes);
     } else if (suite == "eig-small") {
         b::bench_eigen_small(rep, label);
+    } else if (suite == "null-vector") {
+        b::bench_null_vector(rep, label);
     } else {
         std::cerr << "Unknown suite: " << suite << "\n\n";
         print_usage();
