@@ -44,6 +44,28 @@ bool tridiagonal_negligible(const Real& e, const Real& d0, const Real& d1, const
     return abs(e) <= tol * sqrt(abs(d0)) * sqrt(abs(d1));
 }
 
+/// Default tolerance of the symmetric eigensolvers: the machine epsilon of the
+/// eigenvalue type. A custom scalar without a std::numeric_limits specialization
+/// gets epsilon() == Real{}, i.e. zero, and a zero tolerance only deflates
+/// subdiagonal entries that are exactly zero -- the iteration can then run out
+/// of max_iter and return unconverged eigenvalues without saying so. For such a
+/// type the epsilon is measured instead: the spacing of the type's values at 1,
+/// found by halving until 1 + eps/2 rounds to 1. The halving is capped so an
+/// exact-arithmetic type cannot loop forever.
+template <typename Real>
+Real default_eigen_tolerance() {
+    if constexpr (std::numeric_limits<Real>::is_specialized) {
+        return std::numeric_limits<Real>::epsilon();
+    } else {
+        const Real one = math::one<Real>();
+        const Real two = one + one;
+        Real eps = one;
+        for (int i = 0; i < 1024 && one + eps / two > one; ++i)
+            eps = eps / two;
+        return eps;
+    }
+}
+
 } // namespace detail
 
 /// Generic (LAPACK-free) symmetric/Hermitian eigenvalue solver: tridiagonalize,
@@ -68,7 +90,7 @@ bool tridiagonal_negligible(const Real& e, const Real& d0, const Real& d1, const
 template <typename Accumulator = void, FieldMatrix M>
 auto eigenvalue_symmetric_generic(const M& A,
                                   magnitude_t<typename M::value_type> tol =
-                                      std::numeric_limits<magnitude_t<typename M::value_type>>::epsilon(),
+                                      detail::default_eigen_tolerance<magnitude_t<typename M::value_type>>(),
                                   typename M::size_type max_iter = 0) {
 
     using value_type = typename M::value_type;
@@ -84,6 +106,8 @@ auto eigenvalue_symmetric_generic(const M& A,
     if (n == 0) return vec::dense_vector<real_t>(0);
 
     if (max_iter == 0) max_iter = 30 * n;
+    // A non-positive tol would deflate only exact zeros; use the default, as svd does.
+    if (!(tol > math::zero<real_t>())) tol = detail::default_eigen_tolerance<real_t>();
 
     // Copy diagonal and subdiagonal from tridiagonalized matrix
     mat::dense2D<value_type> T(n, n);
@@ -202,7 +226,7 @@ auto eigenvalue_symmetric_generic(const M& A,
 template <typename Accumulator = void, FieldMatrix M>
 auto eigenvalue_symmetric(const M& A,
                           magnitude_t<typename M::value_type> tol =
-                              std::numeric_limits<magnitude_t<typename M::value_type>>::epsilon(),
+                              detail::default_eigen_tolerance<magnitude_t<typename M::value_type>>(),
                           typename M::size_type max_iter = 0) {
 #ifdef MTL5_HAS_LAPACK
     // No orientation guard: the branch builds an explicit column-major copy
@@ -301,7 +325,7 @@ auto eigenvalue_symmetric(const M& A,
 template <typename Accumulator = void, FieldMatrix M>
 auto eigen_symmetric(const M& A,
                      magnitude_t<typename M::value_type> tol =
-                         std::numeric_limits<magnitude_t<typename M::value_type>>::epsilon(),
+                         detail::default_eigen_tolerance<magnitude_t<typename M::value_type>>(),
                      typename M::size_type max_iter = 0) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -320,6 +344,8 @@ auto eigen_symmetric(const M& A,
     if (n == 0) return EigenResult{vec::dense_vector<real_t>(0), mat::dense2D<value_type>(0, 0)};
 
     if (max_iter == 0) max_iter = 30 * n;
+    // A non-positive tol would deflate only exact zeros; use the default, as svd does.
+    if (!(tol > math::zero<real_t>())) tol = detail::default_eigen_tolerance<real_t>();
 
     // Copy A into T for tridiagonalization
     mat::dense2D<value_type> T(n, n);
