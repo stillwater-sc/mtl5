@@ -6,6 +6,7 @@
 #include <complex>
 #include <algorithm>
 #include <cassert>
+#include <limits>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/scalar.hpp>
@@ -22,6 +23,28 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Deflation test of the implicit tridiagonal QR: is the subdiagonal entry e,
+/// between diagonal entries d0 and d1, negligible? This is LAPACK dsteqr's test,
+/// |e| <= tol * sqrt(|d0|) * sqrt(|d1|), i.e. e^2 <= tol^2 * |d0 * d1| with the
+/// product split so it cannot overflow or underflow.
+///
+/// The earlier test, |e| <= tol * (|d0| + |d1|), scaled with the LARGER of the
+/// two diagonal entries, so an entry coupling a small eigenvalue to a large one
+/// was dropped while still big enough to perturb the small eigenvalue (#565).
+/// The geometric mean scales with the small one. An exactly zero diagonal entry
+/// only deflates once e is exactly zero, which the cubically convergent
+/// Wilkinson-shifted iteration reaches in a few steps (as in dsteqr).
+template <typename Real>
+bool tridiagonal_negligible(const Real& e, const Real& d0, const Real& d1, const Real& tol) {
+    using std::abs;
+    using std::sqrt;
+    return abs(e) <= tol * sqrt(abs(d0)) * sqrt(abs(d1));
+}
+
+} // namespace detail
 
 /// Generic (LAPACK-free) symmetric/Hermitian eigenvalue solver: tridiagonalize,
 /// then run implicit QR with Wilkinson shifts on the tridiagonal form. Returns
@@ -44,7 +67,8 @@ namespace mtl {
 /// 2-term and 3-term expressions, not sums, and keeps plain arithmetic.
 template <typename Accumulator = void, FieldMatrix M>
 auto eigenvalue_symmetric_generic(const M& A,
-                                  magnitude_t<typename M::value_type> tol = 1e-10,
+                                  magnitude_t<typename M::value_type> tol =
+                                      std::numeric_limits<magnitude_t<typename M::value_type>>::epsilon(),
                                   typename M::size_type max_iter = 0) {
 
     using value_type = typename M::value_type;
@@ -95,7 +119,7 @@ auto eigenvalue_symmetric_generic(const M& A,
 
         // Find trailing block of zeros (converged eigenvalues)
         for (size_type i = n; i > 1; --i) {
-            if (abs(e(i - 2)) > tol * (abs(d(i - 2)) + abs(d(i - 1)))) break;
+            if (!detail::tridiagonal_negligible(e(i - 2), d(i - 2), d(i - 1), tol)) break;
             e(i - 2) = math::zero<real_t>();
             q++;
         }
@@ -105,7 +129,7 @@ auto eigenvalue_symmetric_generic(const M& A,
 
         // Find start of active block
         for (size_type i = end - 1; i > 0; --i) {
-            if (abs(e(i - 1)) <= tol * (abs(d(i - 1)) + abs(d(i)))) {
+            if (detail::tridiagonal_negligible(e(i - 1), d(i - 1), d(i), tol)) {
                 e(i - 1) = math::zero<real_t>();
                 p = i;
                 break;
@@ -177,7 +201,8 @@ auto eigenvalue_symmetric_generic(const M& A,
 /// path, since syev/heev form their sums their own way.
 template <typename Accumulator = void, FieldMatrix M>
 auto eigenvalue_symmetric(const M& A,
-                          magnitude_t<typename M::value_type> tol = 1e-10,
+                          magnitude_t<typename M::value_type> tol =
+                              std::numeric_limits<magnitude_t<typename M::value_type>>::epsilon(),
                           typename M::size_type max_iter = 0) {
 #ifdef MTL5_HAS_LAPACK
     // No orientation guard: the branch builds an explicit column-major copy
@@ -275,7 +300,8 @@ auto eigenvalue_symmetric(const M& A,
 /// accumulate Q (#536).
 template <typename Accumulator = void, FieldMatrix M>
 auto eigen_symmetric(const M& A,
-                     magnitude_t<typename M::value_type> tol = 1e-10,
+                     magnitude_t<typename M::value_type> tol =
+                         std::numeric_limits<magnitude_t<typename M::value_type>>::epsilon(),
                      typename M::size_type max_iter = 0) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -365,7 +391,7 @@ auto eigen_symmetric(const M& A,
 
         // Find trailing block of zeros (converged eigenvalues)
         for (size_type i = n; i > 1; --i) {
-            if (abs(e(i - 2)) > tol * (abs(d(i - 2)) + abs(d(i - 1)))) break;
+            if (!detail::tridiagonal_negligible(e(i - 2), d(i - 2), d(i - 1), tol)) break;
             e(i - 2) = math::zero<real_t>();
             q++;
         }
@@ -375,7 +401,7 @@ auto eigen_symmetric(const M& A,
 
         // Find start of active block
         for (size_type i = end - 1; i > 0; --i) {
-            if (abs(e(i - 1)) <= tol * (abs(d(i - 1)) + abs(d(i)))) {
+            if (detail::tridiagonal_negligible(e(i - 1), d(i - 1), d(i), tol)) {
                 e(i - 1) = math::zero<real_t>();
                 p = i;
                 break;
