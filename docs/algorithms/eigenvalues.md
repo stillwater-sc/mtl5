@@ -46,6 +46,20 @@ up to sign/phase conventions.
 All routines take an optional `tol` and `max_iter`; the pure-C++ paths also work
 with custom number types (posits, LNS, ...) since they do not depend on LAPACK.
 
+For the symmetric routines, `tol` defaults to the machine epsilon of the
+eigenvalue type (#565). A subdiagonal entry e between diagonal entries d₀ and d₁ is
+dropped once |e| ≤ tol·√|d₀|·√|d₁|, LAPACK `dsteqr`'s test, which scales with the
+smaller of the two eigenvalues it separates. A larger `tol` trades accuracy for
+fewer iterations. Passing `1e-10` gives the earlier default tolerance, though not
+the earlier results, since the deflation test also changed.
+
+Tridiagonal QR is accurate to about ε‖A‖ in every eigenvalue, so an eigenvalue much
+smaller than ‖A‖ carries a large relative error, and so does its eigenvector when
+the gap is small. A normal matrix AᵀA with badly scaled columns is the common case:
+measured on 9 × 9 and 12 × 12 null-vector problems with columns scaled across 10⁶,
+the eigenvector of the smallest eigenvalue is off by about 1e-6 rad, while with
+unscaled columns it is accurate to 1e-15.
+
 ## General eigenvalues and eigenvectors
 
 ```cpp
