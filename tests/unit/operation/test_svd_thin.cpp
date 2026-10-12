@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 #include <mtl/mat/dense2D.hpp>
@@ -206,3 +207,19 @@ TEST_CASE("thin svd: rank-deficient, zero and empty inputs", "[operation][svd]")
         REQUIRE(V.num_cols() == 0);
     }
 }
+
+#ifdef MTL5_HAS_LAPACK
+TEST_CASE("svd: a gesdd failure throws instead of returning garbage", "[operation][svd]") {
+    // gesdd rejects a NaN in A with info = -4 (LAPACK 3.10+). Both the full
+    // ('A') and the thin ('S') svd must report it rather than copy out
+    // whatever the output buffers hold.
+    mat::dense2D<double> A(4, 3);
+    for (std::size_t i = 0; i < 4; ++i)
+        for (std::size_t j = 0; j < 3; ++j) A(i, j) = double(i + j);
+    A(2, 1) = std::numeric_limits<double>::quiet_NaN();
+    mat::dense2D<double> U, S, V;
+    vec::dense_vector<double> s;
+    REQUIRE_THROWS_AS(svd(A, U, S, V), std::runtime_error);
+    REQUIRE_THROWS_AS(svd(A, U, s, V), std::runtime_error);
+}
+#endif

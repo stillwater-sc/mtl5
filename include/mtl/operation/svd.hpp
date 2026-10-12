@@ -7,6 +7,8 @@
 #include <cassert>
 #include <vector>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -309,18 +311,25 @@ void svd(const M& A,
 
         // Workspace query
         value_type work_opt;
-        interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
+        const int qinfo = interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
             A_copy.data(), static_cast<int>(m), S_vec.data(),
             U_data.data(), static_cast<int>(m),
             VT_data.data(), static_cast<int>(n),
             &work_opt, -1, iwork.data());
+        if (qinfo != 0)
+            throw std::runtime_error("mtl::svd: LAPACK gesdd workspace query failed (info = " + std::to_string(qinfo) + ")");
         int lwork = static_cast<int>(work_opt);
         std::vector<value_type> work(lwork);
-        interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
+        const int info = interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
             A_copy.data(), static_cast<int>(m), S_vec.data(),
             U_data.data(), static_cast<int>(m),
             VT_data.data(), static_cast<int>(n),
             work.data(), lwork, iwork.data());
+        // info < 0: a bad argument, including a NaN in A (LAPACK 3.10+);
+        // info > 0: the bidiagonal divide and conquer did not converge.
+        // Either way U, S and V hold no decomposition.
+        if (info != 0)
+            throw std::runtime_error("mtl::svd: LAPACK gesdd failed (info = " + std::to_string(info) + ")");
 
         // Copy results: U from column-major U_data
         for (size_type i = 0; i < m; ++i)
@@ -511,12 +520,17 @@ void svd(const M& A,
         const int mi = static_cast<int>(m), ni = static_cast<int>(n), ki = static_cast<int>(k);
 
         value_type work_opt;
-        interface::lapack::gesdd('S', mi, ni, A_copy.data(), mi, S_vec.data(),
+        const int qinfo = interface::lapack::gesdd('S', mi, ni, A_copy.data(), mi, S_vec.data(),
             U_data.data(), mi, VT_data.data(), ki, &work_opt, -1, iwork.data());
+        if (qinfo != 0)
+            throw std::runtime_error("mtl::svd: LAPACK gesdd workspace query failed (info = " + std::to_string(qinfo) + ")");
         int lwork = static_cast<int>(work_opt);
         std::vector<value_type> work(lwork);
-        interface::lapack::gesdd('S', mi, ni, A_copy.data(), mi, S_vec.data(),
+        const int info = interface::lapack::gesdd('S', mi, ni, A_copy.data(), mi, S_vec.data(),
             U_data.data(), mi, VT_data.data(), ki, work.data(), lwork, iwork.data());
+        // As in the full svd: U, s and V hold no decomposition on failure.
+        if (info != 0)
+            throw std::runtime_error("mtl::svd: LAPACK gesdd failed (info = " + std::to_string(info) + ")");
 
         for (size_type i = 0; i < m; ++i)
             for (size_type j = 0; j < k; ++j)

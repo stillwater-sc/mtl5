@@ -37,6 +37,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Accuracy:** on the same inputs the singular values agree with the old core to 1e-15 relative, the sweep counts are the same, and `null_vector`'s `float` accuracy table in `docs/algorithms/eigenvalues.md` is unchanged within noise.
   - **Tests:** a new case in `test_svd` scales a uniform matrix, and one with columns spread from 2^-560 to 2^-80, by 2^k for k from -560 to 520, across both bounds of the window. The singular values must scale by exactly 2^k and V must not move. Removing the lower bound, the upper bound or the scaled fallback each fails it; the upper bound is checked by this test alone.
 
+### Fixed
+
+- **`svd` throws when LAPACK's `gesdd` fails, instead of returning whatever its buffers held.** The LAPACK path of the full `svd(A, U, S, V)` ignored `gesdd`'s `info`, so a NaN in A, which LAPACK 3.10+ rejects with `info = -4`, or a divide-and-conquer that did not converge came back as an apparently valid U, S and V. The full and the new thin `svd` now check `info` after the workspace query and after the decomposition, and throw `std::runtime_error` on a nonzero value, as `eigenvalue` does for `geev`. The generic path is unchanged. A LAPACK-only case in `test_svd_thin` passes a NaN to both and requires the throw; it fails against the previous header. Found by CodeRabbit on #575.
+
 ## [5.16.0] - 2026-10-12
 
 Small dense eigen and singular value problems, driven by null-space solves (8-point, DLT, plane fits): a Jacobi eigensolver that keeps small eigenvalues relatively accurate, a V-only SVD with QR preconditioning and `null_vector`, a tighter default tolerance and deflation test for `eigen_symmetric`, and the Householder accumulator forwarded through QR, LQ and the eigensolvers. One behavior change: `eigen_symmetric` and its relatives return different bits by default (see Changed). The full `svd` is bit-identical to 5.15.0.
