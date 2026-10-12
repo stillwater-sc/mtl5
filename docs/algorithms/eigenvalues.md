@@ -35,6 +35,7 @@ Answer four questions:
 | `eigenvalue_symmetric(A)` | symmetric | eigenvalues, ascending | LAPACK `syev` if available, else C++ |
 | `eigenvalue_symmetric_generic(A)` | symmetric | eigenvalues, ascending | pure C++ |
 | `eigen_symmetric(A)` | symmetric | eigenvalues **and** eigenvectors | pure C++ |
+| `eigen_symmetric_jacobi(A)` | symmetric, real, small | eigenvalues **and** eigenvectors, with small eigenvalues relatively accurate | pure C++ |
 
 The LAPACK `geev` fast path for the general problem engages when built with
 `-DMTL5_WITH_LAPACK=ON` and the matrix is a **column-major** `dense2D<float/double>`
@@ -120,6 +121,67 @@ tridiagonalization + implicit-QR with Wilkinson shifts); `eigenvalue_symmetric`
 calls it when LAPACK is unavailable or the type does not qualify. Call it
 directly to exercise the pure-C++ algorithm regardless of build flags, or for
 custom number types.
+
+### Small matrices and small eigenvalues: Jacobi
+
+`eigen_symmetric_jacobi(A)` is a two-sided cyclic Jacobi solver (#564). It returns
+the same `{eigenvalues, eigenvectors}` as `eigen_symmetric`, eigenvalues ascending:
+
+```cpp
+#include <mtl/operation/eigenvalue_symmetric_jacobi.hpp>
+
+auto [eigs, V] = mtl::eigen_symmetric_jacobi(S);   // A = V * diag(eigs) * V^T
+```
+
+Tridiagonal QR is accurate to about ε‖A‖ in every eigenvalue. An eigenvalue much
+smaller than ‖A‖ therefore has a large relative error, and so does its eigenvector
+when the gap to the next eigenvalue is small. For a positive (semi)definite matrix,
+Jacobi computes small eigenvalues and their eigenvectors to high **relative**
+accuracy (Demmel & Veselić, 1992). The typical case is the null vector of a normal
+matrix AᵀA whose columns are badly scaled, as in the 8-point algorithm, DLT pose
+estimation, and plane or line fits. Measured on 200 random null-vector problems per
+size, with the columns scaled across 10⁶:
+
+| N | `eigen_symmetric` | `eigen_symmetric_jacobi` |
+|---|---|---|
+| 9 | 6.6e-7 rad | 4.9e-15 rad |
+| 12 | 1.9e-6 rad | 5.4e-15 rad |
+
+On graded positive definite matrices with eigenvalues spanning 8 to 24 decades,
+Jacobi's worst relative eigenvalue error was 6.6e-16. `eigen_symmetric`'s was
+between 2e-13 and 8e-11.
+
+How it works:
+
+- It sweeps the off-diagonal pairs row by row and rotates each one to zero with
+  the stable rotation θ = (a_qq − a_pp)/(2a_pq), t = sign(θ)/(|θ| + √(θ² + 1)).
+- It skips a pair once |a_pq| ≤ tol·√|a_pp|·√|a_qq|, and stops after a sweep that
+  rotates nothing. `tol` defaults to machine ε, and `max_sweeps` caps the sweeps
+  (default 60).
+- The per-pair test is what keeps the relative accuracy. A stop on
+  off-diagonal mass ≤ ε²‖A‖²_F can leave a tiny entry that couples two small
+  eigenvalues: diag(1, 1e-10, 2e-10) with a₁₂ = 1.5e-16 would come back
+  2.25e-12 relatively wrong.
+- No entry is ever squared, so matrices scaled from 1e+300 down to subnormal
+  values converge.
+- Random normal matrices of size 9 and 12 converge in under 20 sweeps.
+
+Jacobi costs more than tridiagonal QR. The `eig-small` suite of
+`benchmarks/bench_all` (`bench_all --suite eig-small`) measured the following
+medians in µs, from two runs of a Release build on a shared x86-64 machine, so the
+ranges are noisy:
+
+| n | `eigen_symmetric` | `eigen_symmetric_jacobi` | `svd` |
+|---|---|---|---|
+| 3 | 0.55 | 0.59 | 0.99 |
+| 6 | 1.1–1.8 | 1.7–3.3 | 6.3–6.5 |
+| 9 | 4.1–5.1 | 11–12 | 14–23 |
+| 16 | 7.7–8.0 | 29–31 | 69–82 |
+
+Use Jacobi for small matrices whose small eigenvalues or null vectors matter, and
+`eigen_symmetric` (or LAPACK) for larger matrices and when only absolute accuracy
+is needed. It takes real element types only, custom reals such as posits
+included; a complex Hermitian matrix is rejected at compile time.
 
 ## Iterative (matrix-free) eigensolvers
 

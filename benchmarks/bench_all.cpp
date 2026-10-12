@@ -172,6 +172,7 @@ static void print_usage() {
         "        ewise (element-wise vector/matrix expression sweeps, #297),\n"
         "        dot, nrm2, axpy, scal, gemv, ger, symv, trmv, trsv,\n        gemm, trmm, trsm, symm, syrk, syr2k,\n"
         "        lu, qr, cholesky, eig,\n"
+        "        eig-small (n = 3..16 eigen_symmetric vs eigen_symmetric_jacobi vs svd, #564; NOT in `all`),\n"
         "        int (=int-dot+int-gemv+int-gemm; NOT in `all` -- it would change existing baselines),\n"
         "        int-dot, int-gemv, int-gemm\n";
 }
@@ -344,6 +345,8 @@ int main(int argc, char* argv[]) {
         b::bench_cholesky(rep, label, lapack_sizes);
     } else if (suite == "eig") {
         b::bench_eigenvalue(rep, label, lapack_sizes);
+    } else if (suite == "eig-small") {
+        b::bench_eigen_small(rep, label);
     } else {
         std::cerr << "Unknown suite: " << suite << "\n\n";
         print_usage();
