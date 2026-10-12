@@ -219,11 +219,14 @@ Release build. The two AᵀA columns include the time to form AᵀA.
 
 | m × N | `null_vector(A)` | `svd(A)` | `eigen_symmetric(AᵀA)` | `eigen_symmetric_jacobi(AᵀA)` |
 |---|---|---|---|---|
-| 16 × 9 | 22 | 39 | 5.5 | 9.9 |
-| 64 × 9 | 24 | 500 | 4.9 | 8.7 |
-| 400 × 9 | 34 | 238,543 | 15 | 18 |
-| 16 × 12 | 27 | 38 | 6.3 | 14 |
-| 400 × 12 | 61 | 239,732 | 26 | 36 |
+| 16 × 9 | 6.6 | 13 | 3.5 | 6.6 |
+| 64 × 9 | 9.7 | 448 | 4.8 | 9.1 |
+| 400 × 9 | 27 | 238,590 | 15 | 18 |
+| 16 × 12 | 13 | 18 | 6.5 | 15 |
+| 400 × 12 | 46 | 238,824 | 27 | 36 |
+
+The full `svd`'s time at m = 400 is almost all spent completing U to a full
+m × m basis. At m = 400, `null_vector` spends most of its time in the QR.
 
 The AᵀA routes are faster, but forming AᵀA squares A's condition number. The
 null vector's error then grows with 1/gap² instead of 1/gap, where the gap is the
@@ -232,8 +235,8 @@ second-smallest singular value relative to the largest. Measured in `float` on
 
 | second-smallest σ | `null_vector(A)` | `eigen_symmetric_jacobi(AᵀA)` |
 |---|---|---|
-| 1e-1 | 2.6e-7 | 1.6e-6 |
-| 1e-2 | 1.2e-6 | 1.9e-4 |
+| 1e-1 | 2.4e-7 | 1.6e-6 |
+| 1e-2 | 1.3e-6 | 1.9e-4 |
 | 1e-3 | 1.3e-5 | 2.0e-2 |
 
 In `double` the same loss is ε·κ², so it rarely matters for these sizes, but it
