@@ -20,6 +20,129 @@
 
 namespace mtl {
 
+namespace detail {
+
+/// One-sided Jacobi core shared by every svd overload. On entry B (m x n) holds
+/// the matrix to decompose and V (n x n) the identity. It rotates B's columns
+/// until each pair is orthogonal to `tol` (machine epsilon if tol <= 0),
+/// accumulating the rotations into V, so that B_in * V = B_out. It then sorts
+/// the column norms -- the singular values -- in descending order into
+/// sigma_s (length n) and permutes the columns of B and V to match, so on
+/// return B's column j is sigma_s[j] times the j-th left singular vector.
+template <typename value_type>
+void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
+                      std::vector<value_type>& sigma_s, value_type tol) {
+    using size_type = typename mat::dense2D<value_type>::size_type;
+    using std::abs;
+    using std::sqrt;
+    const size_type m = B.num_rows();
+    const size_type n = B.num_cols();
+
+    const value_type eps = std::numeric_limits<value_type>::epsilon();
+    const value_type thresh = (tol > math::zero<value_type>()) ? tol : eps;
+    const size_type max_sweeps = 60;
+
+    for (size_type sweep = 0; sweep < max_sweeps; ++sweep) {
+        bool rotated = false;
+        for (size_type p = 0; p + 1 < n; ++p) {
+            for (size_type q = p + 1; q < n; ++q) {
+                // Form the inner products in COMMON-SCALED variables. Taken
+                // raw, alpha and betac overflow to inf for entries around
+                // 1e200 and underflow to zero around 1e-200 -- which silently
+                // skipped every rotation, so the columns were never
+                // orthogonalized (measured: a matrix scaled by 1e-160 came
+                // back with |U^T U - I| = 0.87). One scale shared by both
+                // columns keeps zeta, and hence the rotation, unchanged.
+                value_type cs = math::zero<value_type>();
+                for (size_type i = 0; i < m; ++i) {
+                    const value_type ap = abs(B(i, p)), aq = abs(B(i, q));
+                    if (ap > cs) cs = ap;
+                    if (aq > cs) cs = aq;
+                }
+                if (cs == math::zero<value_type>()) continue;   // both columns zero
+
+                value_type alpha = math::zero<value_type>();   // ||B_p||^2, scaled
+                value_type gamma = math::zero<value_type>();   // B_p . B_q,  scaled
+                value_type betac = math::zero<value_type>();   // ||B_q||^2, scaled
+                for (size_type i = 0; i < m; ++i) {
+                    const value_type bp = B(i, p) / cs, bq = B(i, q) / cs;
+                    alpha += bp * bp;
+                    betac += bq * bq;
+                    gamma += bp * bq;
+                }
+                if (gamma == math::zero<value_type>()) continue;
+                const value_type scale = sqrt(alpha * betac);
+                // Already orthogonal to working precision: nothing to do. This
+                // is the whole degenerate-case handling -- no reflector to
+                // build, so nothing can underflow or divide by zero.
+                if (scale == math::zero<value_type>() || abs(gamma) <= thresh * scale)
+                    continue;
+
+                // Rotation zeroing B_p . B_q. Root of smaller magnitude of
+                // t^2 + 2*zeta*t - 1 = 0, chosen in the numerically stable form.
+                const value_type zeta = (betac - alpha) / (value_type(2) * gamma);
+                const value_type sgn  = (zeta >= math::zero<value_type>())
+                                      ? math::one<value_type>() : -math::one<value_type>();
+                const value_type t    = sgn / (abs(zeta) + sqrt(math::one<value_type>() + zeta * zeta));
+                const value_type c    = math::one<value_type>() / sqrt(math::one<value_type>() + t * t);
+                const value_type sn   = c * t;
+
+                for (size_type i = 0; i < m; ++i) {
+                    const value_type bp = B(i, p), bq = B(i, q);
+                    B(i, p) = c * bp - sn * bq;
+                    B(i, q) = sn * bp + c * bq;
+                }
+                for (size_type i = 0; i < n; ++i) {
+                    const value_type vp = V(i, p), vq = V(i, q);
+                    V(i, p) = c * vp - sn * vq;
+                    V(i, q) = sn * vp + c * vq;
+                }
+                rotated = true;
+            }
+        }
+        if (!rotated) break;   // all pairs orthogonal: converged
+    }
+
+    // Singular values are the column norms of B; U's columns are B normalized.
+    std::vector<value_type> sigma(n);
+    for (size_type j = 0; j < n; ++j) {
+        // Scaled norm, for the same overflow/underflow reason as above.
+        value_type cs = math::zero<value_type>();
+        for (size_type i = 0; i < m; ++i) {
+            const value_type a = abs(B(i, j));
+            if (a > cs) cs = a;
+        }
+        if (cs == math::zero<value_type>()) { sigma[j] = math::zero<value_type>(); continue; }
+        value_type s2 = math::zero<value_type>();
+        for (size_type i = 0; i < m; ++i) {
+            const value_type b = B(i, j) / cs;
+            s2 += b * b;
+        }
+        sigma[j] = cs * sqrt(s2);
+    }
+
+    // Order descending, permuting V (and B, which becomes U) to match.
+    std::vector<size_type> order(n);
+    for (size_type j = 0; j < n; ++j) order[j] = j;
+    std::sort(order.begin(), order.end(),
+              [&sigma](size_type a, size_type b) { return sigma[a] > sigma[b]; });
+
+    mat::dense2D<value_type> Bs(m, n), Vs(n, n);
+    sigma_s.assign(n, math::zero<value_type>());
+    for (size_type j = 0; j < n; ++j) {
+        const size_type src = order[j];
+        sigma_s[j] = sigma[src];
+        for (size_type i = 0; i < m; ++i) Bs(i, j) = B(i, src);
+        for (size_type i = 0; i < n; ++i) Vs(i, j) = V(i, src);
+    }
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j)
+            V(i, j) = Vs(i, j);
+    B = Bs;
+}
+
+} // namespace detail
+
 /// SVD: decompose A (m x n) = U * S * V^T
 /// U is m x m orthogonal, S is m x n diagonal (stored as m x n matrix), V is n x n orthogonal.
 /// Singular values are non-negative and returned in descending order.
@@ -143,105 +266,9 @@ void svd(const M& A,
             B(i, j) = A(i, j);
 
     const value_type eps = std::numeric_limits<value_type>::epsilon();
-    const value_type thresh = (tol > math::zero<value_type>()) ? tol : eps;
-    const size_type max_sweeps = 60;
-
-    for (size_type sweep = 0; sweep < max_sweeps; ++sweep) {
-        bool rotated = false;
-        for (size_type p = 0; p + 1 < n; ++p) {
-            for (size_type q = p + 1; q < n; ++q) {
-                // Form the inner products in COMMON-SCALED variables. Taken
-                // raw, alpha and betac overflow to inf for entries around
-                // 1e200 and underflow to zero around 1e-200 -- which silently
-                // skipped every rotation, so the columns were never
-                // orthogonalized (measured: a matrix scaled by 1e-160 came
-                // back with |U^T U - I| = 0.87). One scale shared by both
-                // columns keeps zeta, and hence the rotation, unchanged.
-                value_type cs = math::zero<value_type>();
-                for (size_type i = 0; i < m; ++i) {
-                    const value_type ap = abs(B(i, p)), aq = abs(B(i, q));
-                    if (ap > cs) cs = ap;
-                    if (aq > cs) cs = aq;
-                }
-                if (cs == math::zero<value_type>()) continue;   // both columns zero
-
-                value_type alpha = math::zero<value_type>();   // ||B_p||^2, scaled
-                value_type gamma = math::zero<value_type>();   // B_p . B_q,  scaled
-                value_type betac = math::zero<value_type>();   // ||B_q||^2, scaled
-                for (size_type i = 0; i < m; ++i) {
-                    const value_type bp = B(i, p) / cs, bq = B(i, q) / cs;
-                    alpha += bp * bp;
-                    betac += bq * bq;
-                    gamma += bp * bq;
-                }
-                if (gamma == math::zero<value_type>()) continue;
-                const value_type scale = sqrt(alpha * betac);
-                // Already orthogonal to working precision: nothing to do. This
-                // is the whole degenerate-case handling -- no reflector to
-                // build, so nothing can underflow or divide by zero.
-                if (scale == math::zero<value_type>() || abs(gamma) <= thresh * scale)
-                    continue;
-
-                // Rotation zeroing B_p . B_q. Root of smaller magnitude of
-                // t^2 + 2*zeta*t - 1 = 0, chosen in the numerically stable form.
-                const value_type zeta = (betac - alpha) / (value_type(2) * gamma);
-                const value_type sgn  = (zeta >= math::zero<value_type>())
-                                      ? math::one<value_type>() : -math::one<value_type>();
-                const value_type t    = sgn / (abs(zeta) + sqrt(math::one<value_type>() + zeta * zeta));
-                const value_type c    = math::one<value_type>() / sqrt(math::one<value_type>() + t * t);
-                const value_type sn   = c * t;
-
-                for (size_type i = 0; i < m; ++i) {
-                    const value_type bp = B(i, p), bq = B(i, q);
-                    B(i, p) = c * bp - sn * bq;
-                    B(i, q) = sn * bp + c * bq;
-                }
-                for (size_type i = 0; i < n; ++i) {
-                    const value_type vp = V(i, p), vq = V(i, q);
-                    V(i, p) = c * vp - sn * vq;
-                    V(i, q) = sn * vp + c * vq;
-                }
-                rotated = true;
-            }
-        }
-        if (!rotated) break;   // all pairs orthogonal: converged
-    }
-
-    // Singular values are the column norms of B; U's columns are B normalized.
-    std::vector<value_type> sigma(n);
-    for (size_type j = 0; j < n; ++j) {
-        // Scaled norm, for the same overflow/underflow reason as above.
-        value_type cs = math::zero<value_type>();
-        for (size_type i = 0; i < m; ++i) {
-            const value_type a = abs(B(i, j));
-            if (a > cs) cs = a;
-        }
-        if (cs == math::zero<value_type>()) { sigma[j] = math::zero<value_type>(); continue; }
-        value_type s2 = math::zero<value_type>();
-        for (size_type i = 0; i < m; ++i) {
-            const value_type b = B(i, j) / cs;
-            s2 += b * b;
-        }
-        sigma[j] = cs * sqrt(s2);
-    }
-
-    // Order descending, permuting V (and B, which becomes U) to match.
-    std::vector<size_type> order(n);
-    for (size_type j = 0; j < n; ++j) order[j] = j;
-    std::sort(order.begin(), order.end(),
-              [&sigma](size_type a, size_type b) { return sigma[a] > sigma[b]; });
-
-    mat::dense2D<value_type> Bs(m, n), Vs(n, n);
-    std::vector<value_type> sigma_s(n);
-    for (size_type j = 0; j < n; ++j) {
-        const size_type src = order[j];
-        sigma_s[j] = sigma[src];
-        for (size_type i = 0; i < m; ++i) Bs(i, j) = B(i, src);
-        for (size_type i = 0; i < n; ++i) Vs(i, j) = V(i, src);
-    }
-    for (size_type i = 0; i < n; ++i)
-        for (size_type j = 0; j < n; ++j)
-            V(i, j) = Vs(i, j);
+    std::vector<value_type> sigma_s;
+    detail::one_sided_jacobi(B, V, sigma_s, tol);
+    const mat::dense2D<value_type>& Bs = B;
 
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < n; ++j)
@@ -321,6 +348,90 @@ void svd(const M& A,
             }
         }
     }
+}
+
+/// SVD without U: the singular values s (length min(m,n), descending) and the
+/// n x n right singular vectors V, so that A * V(:,j) = s(j) * u_j for some unit
+/// u_j that is never formed (#566). A null-space caller -- the 8-point (2n x 9)
+/// or DLT (2n x 12) problem -- needs only V's last column, and the full svd
+/// spends most of its time on the m x m U and on rotating m-long columns.
+///
+/// For a tall A (m > n) the matrix is first reduced by Householder QR, A = QR,
+/// and one-sided Jacobi runs on the n x n triangle R (Drmac & Veselic's
+/// preconditioner): R has A's singular values and right singular vectors, and
+/// the sweeps then cost O(n^3) instead of O(m n^2) each, after an O(m n^2) QR.
+/// Householder QR is column-wise backward stable, so a column scaling of A
+/// carries over to R and Jacobi's relative accuracy is kept. For m <= n the
+/// Jacobi runs on A itself and S and V are bit-identical to svd(A, U, S, V).
+///
+/// Always the generic C++ path: LAPACK's gesdd, the full svd's backend, has no
+/// V-only mode. `tol` is as for svd.
+template <FieldMatrix M>
+void svd(const M& A,
+         vec::dense_vector<typename M::value_type>& s,
+         mat::dense2D<typename M::value_type>& V,
+         typename M::value_type tol =
+             std::numeric_limits<typename M::value_type>::epsilon()) {
+    using value_type = typename M::value_type;
+    using size_type  = typename M::size_type;
+
+    const size_type m = A.num_rows();
+    const size_type n = A.num_cols();
+    const size_type mn = std::min(m, n);
+
+    V.change_dim(n, n);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j)
+            V(i, j) = (i == j) ? math::one<value_type>() : math::zero<value_type>();
+    s.change_dim(mn);
+    if (mn == 0) return;
+
+    mat::dense2D<value_type> B;
+    if (m > n) {
+        mat::dense2D<value_type> F(m, n);
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                F(i, j) = A(i, j);
+        vec::dense_vector<value_type> tau;
+        qr_factor(F, tau);
+        B.change_dim(n, n);
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < n; ++j)
+                B(i, j) = (i <= j) ? F(i, j) : math::zero<value_type>();
+    } else {
+        B.change_dim(m, n);
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                B(i, j) = A(i, j);
+    }
+
+    std::vector<value_type> sigma;
+    detail::one_sided_jacobi(B, V, sigma, tol);
+    for (size_type j = 0; j < mn; ++j)
+        s(j) = sigma[j];
+}
+
+/// A unit vector x minimizing ||A x||: the right singular vector of A's
+/// smallest singular value, i.e. the last column of V from the V-only svd
+/// (#566). For a wide A (m < n) the null space has dimension at least n - m
+/// and x is one vector in it. The sign is arbitrary. Returns an empty vector
+/// when A has no columns.
+template <FieldMatrix M>
+vec::dense_vector<typename M::value_type>
+null_vector(const M& A,
+            typename M::value_type tol =
+                std::numeric_limits<typename M::value_type>::epsilon()) {
+    using value_type = typename M::value_type;
+    using size_type  = typename M::size_type;
+    const size_type n = A.num_cols();
+    vec::dense_vector<value_type> x(n);
+    if (n == 0) return x;
+    vec::dense_vector<value_type> s;
+    mat::dense2D<value_type> V;
+    svd(A, s, V, tol);
+    for (size_type i = 0; i < n; ++i)
+        x(i) = V(i, n - 1);
+    return x;
 }
 
 /// Convenience overload returning a tuple of (U, S, V).

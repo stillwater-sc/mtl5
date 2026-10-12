@@ -755,6 +755,43 @@ inline void bench_eigen_small(reporter& rep, const std::string& label,
     }
 }
 
+/// Null vector of tall 2k x 9 and 2k x 12 systems (8-point, DLT PnP), k = 8..200
+/// (#566): null_vector(A) (QR + one-sided Jacobi on R, no U), the full svd(A),
+/// and eigen_symmetric / eigen_symmetric_jacobi on the normal matrix A^T A,
+/// whose formation is included in the time. The "size" column is m = 2k; the
+/// operation name carries N. Flops are a nominal m*N^2 for all four.
+inline void bench_null_vector(reporter& rep, const std::string& label,
+                              std::size_t warmup = 5, std::size_t iterations = 50) {
+    for (std::size_t N : {9u, 12u}) {
+        for (std::size_t k : {8u, 32u, 200u}) {
+            const std::size_t m = 2 * k;
+            auto A = make_random_matrix<double>(m, N);
+            const double flops = static_cast<double>(m) * N * N;
+            auto normal = [&A, m, N] {
+                mtl::mat::dense2D<double> M(N, N);
+                for (std::size_t i = 0; i < N; ++i)
+                    for (std::size_t j = 0; j < N; ++j) {
+                        double s = 0.0;
+                        for (std::size_t r = 0; r < m; ++r) s += A(r, i) * A(r, j);
+                        M(i, j) = s;
+                    }
+                return M;
+            };
+            const std::string tag = "_N" + std::to_string(N);
+            rep.add(measure([&]{ auto x = mtl::null_vector(A); (void)x; },
+                            "null_vector" + tag, label, m, flops, warmup, iterations));
+            // The full svd forms an m x m U: 0.25 s per call at m = 400, so
+            // keep its repetitions low.
+            rep.add(measure([&]{ auto r = mtl::svd(A); (void)r; },
+                            "svd_full" + tag, label, m, flops, 1, m > 100 ? 3 : 10));
+            rep.add(measure([&]{ auto r = mtl::eigen_symmetric(normal()); (void)r; },
+                            "eig_sym_AtA" + tag, label, m, flops, warmup, iterations));
+            rep.add(measure([&]{ auto r = mtl::eigen_symmetric_jacobi(normal()); (void)r; },
+                            "jacobi_AtA" + tag, label, m, flops, warmup, iterations));
+        }
+    }
+}
+
 // ── Convenience: run all suites ─────────────────────────────────────────────
 
 inline void run_all(reporter& rep, const std::string& label,

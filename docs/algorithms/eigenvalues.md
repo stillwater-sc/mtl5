@@ -183,6 +183,62 @@ Use Jacobi for small matrices whose small eigenvalues or null vectors matter, an
 is needed. It takes real element types only, custom reals such as posits
 included; a complex Hermitian matrix is rejected at compile time.
 
+### Null vectors: `null_vector` and the V-only `svd`
+
+A null-space problem needs only the right singular vector of A's smallest
+singular value, which is the last column of V. The full `svd(A, U, S, V)` also
+builds an m × m U. At m = 400 that makes it take about 0.24 s, almost all of it
+spent completing U to a full basis. Two calls skip U entirely (#566):
+
+```cpp
+#include <mtl/operation/svd.hpp>
+
+mtl::vec::dense_vector<double> s;     // singular values, descending, length min(m, n)
+mtl::mat::dense2D<double> V;          // n x n right singular vectors
+mtl::svd(A, s, V);                    // never forms U
+
+auto x = mtl::null_vector(A);         // unit x minimizing ||A x||: V's last column
+```
+
+- **Tall A (m > n):** A is first reduced by Householder QR, A = QR, and one-sided
+  Jacobi then runs on the n × n triangle R. R has the same singular values and
+  right singular vectors as A, so each sweep costs O(n³) instead of O(mn²).
+- **Accuracy:** Householder QR is backward stable column by column, so it keeps
+  Jacobi's relative accuracy when A's columns are badly scaled. Measured against
+  the full `svd` on 10 × 3 up to 400 × 12 matrices, with rows or columns scaled
+  across 10⁸, the singular values agree to 1.3e-15 relative and the columns of V
+  to the same.
+- **Square or wide A (m ≤ n):** Jacobi runs on A itself, and S and V match the
+  full `svd` bit for bit.
+- **Backend:** both calls always use the generic C++ path. LAPACK's `gesdd`, which
+  the full `svd` uses, has no V-only mode.
+
+A null vector of a tall 2k × 9 or 2k × 12 system can be found four ways. The
+`null-vector` suite of `benchmarks/bench_all` measured these medians in µs, in a
+Release build. The two AᵀA columns include the time to form AᵀA.
+
+| m × N | `null_vector(A)` | `svd(A)` | `eigen_symmetric(AᵀA)` | `eigen_symmetric_jacobi(AᵀA)` |
+|---|---|---|---|---|
+| 16 × 9 | 22 | 39 | 5.5 | 9.9 |
+| 64 × 9 | 24 | 500 | 4.9 | 8.7 |
+| 400 × 9 | 34 | 238,543 | 15 | 18 |
+| 16 × 12 | 27 | 38 | 6.3 | 14 |
+| 400 × 12 | 61 | 239,732 | 26 | 36 |
+
+The AᵀA routes are faster, but forming AᵀA squares A's condition number. The
+null vector's error then grows with 1/gap² instead of 1/gap, where the gap is the
+second-smallest singular value relative to the largest. Measured in `float` on
+36 × 9 matrices with an exact null vector (50 trials each), as the mean angle:
+
+| second-smallest σ | `null_vector(A)` | `eigen_symmetric_jacobi(AᵀA)` |
+|---|---|---|
+| 1e-1 | 2.6e-7 | 1.6e-6 |
+| 1e-2 | 1.2e-6 | 1.9e-4 |
+| 1e-3 | 1.3e-5 | 2.0e-2 |
+
+In `double` the same loss is ε·κ², so it rarely matters for these sizes, but it
+does in `float` or in a narrow custom type such as a posit.
+
 ## Iterative (matrix-free) eigensolvers
 
 For large matrices where a full dense factorization is infeasible, use the
