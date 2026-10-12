@@ -195,6 +195,7 @@
 #include <mtl/operation/lu_iterative_refine.hpp>
 #include <mtl/operation/hessenberg.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
+#include <mtl/operation/eigenvalue_symmetric_jacobi.hpp>
 #include <mtl/operation/eigenvalue.hpp>
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/spectral_properties.hpp>

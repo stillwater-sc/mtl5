@@ -142,7 +142,7 @@ to `native` or `blas`; `run_sweeps.sh` passes `native`/`openblas`/`mkl`).
 
 | Suite | Runs |
 |-------|------|
-| `all` | every suite below except `gemm-rect` / `ewise` |
+| `all` | every suite below except `gemm-rect` / `ewise` / `eig-small` / `int` |
 | `blas` | `l1` + `l2` + `l3` |
 | `l1` | `dot`, `nrm2`, `axpy`, `scal` |
 | `l2` | `gemv`, `ger`, `symv`, `trmv`, `trsv` |
@@ -150,6 +150,7 @@ to `native` or `blas`; `run_sweeps.sh` passes `native`/`openblas`/`mkl`).
 | `lapack` | `lu`, `qr`, `cholesky`, `eig` |
 | `gemm-rect` | rectangular GEMM shapes: the BLIS multi-loop 2D grid (#297) |
 | `ewise` | element-wise vector/matrix expression sweeps (#297) |
+| `eig-small` | n = 3…16: `eigen_symmetric` vs `eigen_symmetric_jacobi` vs `svd`, with eigen/singular vectors (#564) |
 | `int` | `int-dot` + `int-gemv` — the integer arms (#451 phase 4) |
 | `int-dot` | fp64/fp32 baselines vs int32, int16→int32, int8→int32, uint8×int8→int32 |
 | `int-gemv` | fp64/fp32 baselines vs int32 |
@@ -157,10 +158,10 @@ to `native` or `blas`; `run_sweeps.sh` passes `native`/`openblas`/`mkl`).
 Any individual op above is also a suite name of its own (`--suite trsm`). The
 authoritative list is always `bench_all --help`.
 
-`gemm-rect` and `ewise` carry their own built-in shape sets and ignore
+`gemm-rect`, `ewise` and `eig-small` carry their own built-in shape sets and ignore
 `--sizes` / `--sweep`.
 
-`int` is deliberately **not** part of `all`: adding arms to the default run
+`int` and `eig-small` are deliberately **not** part of `all`: adding arms to the default run
 would change every machine's committed CSV and break comparison with the
 existing baselines. Ask for it by name.
 

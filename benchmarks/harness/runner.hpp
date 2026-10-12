@@ -41,6 +41,8 @@
 #include <mtl/operation/qr.hpp>
 #include <mtl/operation/cholesky.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
+#include <mtl/operation/eigenvalue_symmetric_jacobi.hpp>
+#include <mtl/operation/svd.hpp>
 #include <mtl/vec/operators.hpp>   // element-wise vector expressions (a + b)
 #include <mtl/mat/operators.hpp>   // element-wise matrix expressions (A + B)
 
@@ -730,6 +732,26 @@ inline void bench_eigenvalue(reporter& rep, const std::string& label,
                     (void)e;
                  }, "eig_sym", label, n, flops, warmup, iterations);
         rep.add(t);
+    }
+}
+
+/// Small dense symmetric eigensolvers, n = 3..16 (#564): tridiagonal QR
+/// (eigen_symmetric), cyclic Jacobi (eigen_symmetric_jacobi), and svd, each
+/// computing eigen/singular vectors. These are the sizes of null-space problems
+/// (8-point, DLT, plane fits), where Jacobi's relative accuracy is worth its
+/// cost. The flop count is a nominal n^3 for all three, so the rate column
+/// compares them on time alone.
+inline void bench_eigen_small(reporter& rep, const std::string& label,
+                              std::size_t warmup = 20, std::size_t iterations = 200) {
+    for (std::size_t n : {3u, 4u, 6u, 9u, 12u, 16u}) {
+        auto A = make_spd_matrix<double>(n);
+        const double flops = static_cast<double>(n) * n * n;
+        rep.add(measure([&]{ auto r = mtl::eigen_symmetric(A); (void)r; },
+                        "eig_sym_small_qr", label, n, flops, warmup, iterations));
+        rep.add(measure([&]{ auto r = mtl::eigen_symmetric_jacobi(A); (void)r; },
+                        "eig_sym_small_jacobi", label, n, flops, warmup, iterations));
+        rep.add(measure([&]{ auto r = mtl::svd(A); (void)r; },
+                        "svd_small", label, n, flops, warmup, iterations));
     }
 }
 
