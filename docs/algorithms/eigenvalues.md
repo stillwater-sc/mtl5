@@ -242,6 +242,37 @@ second-smallest singular value relative to the largest. Measured in `float` on
 In `double` the same loss is ε·κ², so it rarely matters for these sizes, but it
 does in `float` or in a narrow custom type such as a posit.
 
+### Thin SVD: `svd(A, U, s, V)`
+
+When the left singular vectors are needed too, as in least squares, a
+pseudoinverse or PCA, a tall A rarely needs all m of them. The thin overload
+returns k = min(m, n) of each:
+
+```cpp
+mtl::mat::dense2D<double> U, V;       // U: m x k, V: n x k, orthonormal columns
+mtl::vec::dense_vector<double> s;     // k singular values, descending
+mtl::svd(A, U, s, V);                 // A = U * diag(s) * V^T
+```
+
+- **Tall A (m > n), generic path:** the same QR and Jacobi on R as the V-only
+  `svd`, then U = Q [U_R; 0], formed by applying the n stored Householder
+  reflectors to R's left singular vectors. That is O(mn²), with no m × m basis to
+  complete.
+- **Square or wide A (m ≤ n):** U, s and the k columns of V match the first k of
+  the full `svd` bit for bit.
+- **Zero singular values:** U's columns for them are completed to an orthonormal
+  set, as in the full `svd`.
+- **Backend:** with LAPACK, a `dense2D<float/double>` goes to `gesdd` in its thin
+  mode, as the full `svd` goes to `gesdd` in its full mode.
+
+Measured with the `null-vector` suite, in µs:
+
+| m × n | thin `svd` | full `svd` |
+|---|---|---|
+| 64 × 9 | 13 | 459 |
+| 400 × 9 | 49 | 238,000 |
+| 400 × 12 | 85 | 238,000 |
+
 ## Iterative (matrix-free) eigensolvers
 
 For large matrices where a full dense factorization is infeasible, use the

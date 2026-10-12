@@ -151,7 +151,7 @@ to `native` or `blas`; `run_sweeps.sh` passes `native`/`openblas`/`mkl`).
 | `gemm-rect` | rectangular GEMM shapes: the BLIS multi-loop 2D grid (#297) |
 | `ewise` | element-wise vector/matrix expression sweeps (#297) |
 | `eig-small` | n = 3…16: `eigen_symmetric` vs `eigen_symmetric_jacobi` vs `svd`, with eigen/singular vectors (#564) |
-| `null-vector` | 2k × 9 and 2k × 12, k = 8…200: `null_vector` vs full `svd` vs `eigen_symmetric` / `eigen_symmetric_jacobi` on AᵀA (#566) |
+| `null-vector` | 2k × 9 and 2k × 12, k = 8…200: `null_vector` vs full and thin `svd` vs `eigen_symmetric` / `eigen_symmetric_jacobi` on AᵀA (#566) |
 | `int` | `int-dot` + `int-gemv` — the integer arms (#451 phase 4) |
 | `int-dot` | fp64/fp32 baselines vs int32, int16→int32, int8→int32, uint8×int8→int32 |
 | `int-gemv` | fp64/fp32 baselines vs int32 |

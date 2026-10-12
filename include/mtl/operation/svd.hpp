@@ -11,6 +11,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/qr.hpp>
+#include <mtl/operation/householder.hpp>
 #include <mtl/operation/trans.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
@@ -180,6 +181,79 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
     }
 }
 
+/// Completes the columns [filled, ncol) of U (m x ncol, m >= ncol) to an orthonormal
+/// set, given that columns [0, filled) are already orthonormal. Used for the
+/// left singular vectors that one-sided Jacobi does not determine: those of
+/// zero singular values and, for the full U, the columns beyond rank n.
+template <typename value_type>
+void complete_orthonormal(mat::dense2D<value_type>& U, typename mat::dense2D<value_type>::size_type filled) {
+    using size_type = typename mat::dense2D<value_type>::size_type;
+    using std::sqrt;
+    const size_type m = U.num_rows();   // candidates: the m canonical vectors
+    const size_type ncol = U.num_cols();
+    // Complete the basis by PIVOTED Gram-Schmidt over the canonical vectors:
+    // at each step take the candidate with the largest remaining residual.
+    //
+    // A fixed acceptance bound does not work here. With d = m - filled
+    // directions still missing, the residuals of the m canonical vectors
+    // satisfy sum ||P_perp e_k||^2 = d, so the best of them is only guaranteed
+    // to reach sqrt(d/m) -- 0.25 for a single missing direction at m = 16.
+    // A `> 0.5` test therefore rejects EVERY candidate while the basis is
+    // still incomplete, leaving stale identity columns in U. Measured on
+    // A = I - v*v^T with v = ones/sqrt(m): |U^T U - I| was 0.87 at m = 4 and
+    // 0.97 at m = 16. Taking the maximum each step always makes progress,
+    // because that maximum is at least sqrt(d/m) > 0 whenever d > 0.
+    if (filled < ncol) {
+        // C holds the canonical vectors, kept orthogonal to the accepted
+        // columns so each step costs O(m^2) rather than a full re-projection.
+        mat::dense2D<value_type> C(m, m);
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < m; ++j)
+                C(i, j) = (i == j) ? math::one<value_type>() : math::zero<value_type>();
+
+        for (size_type j = 0; j < filled; ++j)
+            for (int pass = 0; pass < 2; ++pass)
+                for (size_type k = 0; k < m; ++k) {
+                    value_type d = math::zero<value_type>();
+                    for (size_type i = 0; i < m; ++i) d += U(i, j) * C(i, k);
+                    for (size_type i = 0; i < m; ++i) C(i, k) -= d * U(i, j);
+                }
+
+        while (filled < ncol) {
+            size_type best = 0;
+            value_type best_n2 = -math::one<value_type>();
+            for (size_type k = 0; k < m; ++k) {
+                value_type n2 = math::zero<value_type>();
+                for (size_type i = 0; i < m; ++i) n2 += C(i, k) * C(i, k);
+                if (n2 > best_n2) { best_n2 = n2; best = k; }
+            }
+            if (!(best_n2 > math::zero<value_type>())) break;   // numerically exhausted
+
+            const value_type wn = sqrt(best_n2);
+            for (size_type i = 0; i < m; ++i) U(i, filled) = C(i, best) / wn;
+            // Re-orthogonalize the accepted column against the earlier ones.
+            for (int pass = 0; pass < 2; ++pass)
+                for (size_type j = 0; j < filled; ++j) {
+                    value_type d = math::zero<value_type>();
+                    for (size_type i = 0; i < m; ++i) d += U(i, j) * U(i, filled);
+                    for (size_type i = 0; i < m; ++i) U(i, filled) -= d * U(i, j);
+                }
+            value_type rn = math::zero<value_type>();
+            for (size_type i = 0; i < m; ++i) rn += U(i, filled) * U(i, filled);
+            rn = sqrt(rn);
+            if (!(rn > math::zero<value_type>())) break;
+            for (size_type i = 0; i < m; ++i) U(i, filled) /= rn;
+            ++filled;
+
+            for (size_type k = 0; k < m; ++k) {
+                value_type d = math::zero<value_type>();
+                for (size_type i = 0; i < m; ++i) d += U(i, filled - 1) * C(i, k);
+                for (size_type i = 0; i < m; ++i) C(i, k) -= d * U(i, filled - 1);
+            }
+        }
+    }
+}
+
 } // namespace detail
 
 /// SVD: decompose A (m x n) = U * S * V^T
@@ -326,67 +400,7 @@ void svd(const M& A,
         for (size_type i = 0; i < m; ++i) U(i, filled) = Bs(i, j) / sigma_s[j];
         ++filled;
     }
-    // Complete the basis by PIVOTED Gram-Schmidt over the canonical vectors:
-    // at each step take the candidate with the largest remaining residual.
-    //
-    // A fixed acceptance bound does not work here. With d = m - filled
-    // directions still missing, the residuals of the m canonical vectors
-    // satisfy sum ||P_perp e_k||^2 = d, so the best of them is only guaranteed
-    // to reach sqrt(d/m) -- 0.25 for a single missing direction at m = 16.
-    // A `> 0.5` test therefore rejects EVERY candidate while the basis is
-    // still incomplete, leaving stale identity columns in U. Measured on
-    // A = I - v*v^T with v = ones/sqrt(m): |U^T U - I| was 0.87 at m = 4 and
-    // 0.97 at m = 16. Taking the maximum each step always makes progress,
-    // because that maximum is at least sqrt(d/m) > 0 whenever d > 0.
-    if (filled < m) {
-        // C holds the canonical vectors, kept orthogonal to the accepted
-        // columns so each step costs O(m^2) rather than a full re-projection.
-        mat::dense2D<value_type> C(m, m);
-        for (size_type i = 0; i < m; ++i)
-            for (size_type j = 0; j < m; ++j)
-                C(i, j) = (i == j) ? math::one<value_type>() : math::zero<value_type>();
-
-        for (size_type j = 0; j < filled; ++j)
-            for (int pass = 0; pass < 2; ++pass)
-                for (size_type k = 0; k < m; ++k) {
-                    value_type d = math::zero<value_type>();
-                    for (size_type i = 0; i < m; ++i) d += U(i, j) * C(i, k);
-                    for (size_type i = 0; i < m; ++i) C(i, k) -= d * U(i, j);
-                }
-
-        while (filled < m) {
-            size_type best = 0;
-            value_type best_n2 = -math::one<value_type>();
-            for (size_type k = 0; k < m; ++k) {
-                value_type n2 = math::zero<value_type>();
-                for (size_type i = 0; i < m; ++i) n2 += C(i, k) * C(i, k);
-                if (n2 > best_n2) { best_n2 = n2; best = k; }
-            }
-            if (!(best_n2 > math::zero<value_type>())) break;   // numerically exhausted
-
-            const value_type wn = sqrt(best_n2);
-            for (size_type i = 0; i < m; ++i) U(i, filled) = C(i, best) / wn;
-            // Re-orthogonalize the accepted column against the earlier ones.
-            for (int pass = 0; pass < 2; ++pass)
-                for (size_type j = 0; j < filled; ++j) {
-                    value_type d = math::zero<value_type>();
-                    for (size_type i = 0; i < m; ++i) d += U(i, j) * U(i, filled);
-                    for (size_type i = 0; i < m; ++i) U(i, filled) -= d * U(i, j);
-                }
-            value_type rn = math::zero<value_type>();
-            for (size_type i = 0; i < m; ++i) rn += U(i, filled) * U(i, filled);
-            rn = sqrt(rn);
-            if (!(rn > math::zero<value_type>())) break;
-            for (size_type i = 0; i < m; ++i) U(i, filled) /= rn;
-            ++filled;
-
-            for (size_type k = 0; k < m; ++k) {
-                value_type d = math::zero<value_type>();
-                for (size_type i = 0; i < m; ++i) d += U(i, filled - 1) * C(i, k);
-                for (size_type i = 0; i < m; ++i) C(i, k) -= d * U(i, filled - 1);
-            }
-        }
-    }
+    detail::complete_orthonormal(U, filled);
 }
 
 /// SVD without U: the singular values s (length min(m,n), descending) and the
@@ -448,6 +462,136 @@ void svd(const M& A,
     detail::one_sided_jacobi(B, V, sigma, tol);
     for (size_type j = 0; j < mn; ++j)
         s(j) = sigma[j];
+}
+
+/// Thin SVD: A (m x n) = U * diag(s) * V^T with k = min(m, n), U m x k and V
+/// n x k, both with orthonormal columns, and s (length k) descending. Unlike
+/// svd(A, U, S, V) it never forms the m x m U, whose completion to a full basis
+/// is most of the full svd's time for a tall A (0.24 s at 400 x 9).
+///
+/// With LAPACK, a float or double dense2D goes to gesdd in its thin mode
+/// ('S'), as the full svd goes to gesdd in its full mode. Otherwise:
+///  - m > n: A = QR by Householder QR, one-sided Jacobi on the n x n R as in
+///    svd(A, s, V), and U = Q [U_R; 0], formed by applying the n stored
+///    reflectors to the n x n U_R, so in O(m n^2).
+///  - m <= n: one-sided Jacobi on A. U, s and V's columns are bit-identical
+///    to the first m of svd(A, U, S, V).
+/// U's columns for zero singular values are completed to an orthonormal set
+/// as in the full svd. `tol` is as for svd.
+template <FieldMatrix M>
+void svd(const M& A,
+         mat::dense2D<typename M::value_type>& U,
+         vec::dense_vector<typename M::value_type>& s,
+         mat::dense2D<typename M::value_type>& V,
+         typename M::value_type tol =
+             std::numeric_limits<typename M::value_type>::epsilon()) {
+    using value_type = typename M::value_type;
+    using size_type  = typename M::size_type;
+
+    const size_type m = A.num_rows();
+    const size_type n = A.num_cols();
+    const size_type k = std::min(m, n);
+
+    U.change_dim(m, k);
+    s.change_dim(k);
+    V.change_dim(n, k);
+    if (k == 0) return;
+
+#ifdef MTL5_HAS_LAPACK
+    if constexpr (interface::BlasDenseMatrix<M>) {
+        std::vector<value_type> A_copy(m * n);
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                A_copy[j * m + i] = A(i, j);  // column-major copy
+
+        std::vector<value_type> S_vec(k);
+        std::vector<value_type> U_data(m * k);    // m x k, column-major
+        std::vector<value_type> VT_data(k * n);   // k x n, column-major
+        std::vector<int> iwork(8 * k);
+        const int mi = static_cast<int>(m), ni = static_cast<int>(n), ki = static_cast<int>(k);
+
+        value_type work_opt;
+        interface::lapack::gesdd('S', mi, ni, A_copy.data(), mi, S_vec.data(),
+            U_data.data(), mi, VT_data.data(), ki, &work_opt, -1, iwork.data());
+        int lwork = static_cast<int>(work_opt);
+        std::vector<value_type> work(lwork);
+        interface::lapack::gesdd('S', mi, ni, A_copy.data(), mi, S_vec.data(),
+            U_data.data(), mi, VT_data.data(), ki, work.data(), lwork, iwork.data());
+
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < k; ++j)
+                U(i, j) = U_data[j * m + i];
+        for (size_type j = 0; j < k; ++j)
+            s(j) = S_vec[j];
+        // V(i, j) = VT(j, i), VT column-major with leading dimension k.
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < k; ++j)
+                V(i, j) = VT_data[i * k + j];
+        return;
+    }
+#endif
+
+    const value_type eps = std::numeric_limits<value_type>::epsilon();
+    mat::dense2D<value_type> B, F, Vf(n, n);
+    vec::dense_vector<value_type> tau;
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j)
+            Vf(i, j) = (i == j) ? math::one<value_type>() : math::zero<value_type>();
+
+    if (m > n) {
+        F.change_dim(m, n);
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                F(i, j) = A(i, j);
+        qr_factor(F, tau);
+        B.change_dim(n, n);
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < n; ++j)
+                B(i, j) = (i <= j) ? F(i, j) : math::zero<value_type>();
+    } else {
+        B.change_dim(m, n);
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                B(i, j) = A(i, j);
+    }
+
+    std::vector<value_type> sigma;
+    detail::one_sided_jacobi(B, Vf, sigma, tol);
+    for (size_type j = 0; j < k; ++j)
+        s(j) = sigma[j];
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < k; ++j)
+            V(i, j) = Vf(i, j);
+
+    // Left singular vectors of B (r x k, r = B's rows): its normalized
+    // columns, with the full svd's threshold for a zero singular value, then
+    // completed to k orthonormal columns.
+    const size_type r = B.num_rows();
+    mat::dense2D<value_type> UB(r, k);
+    const value_type utol = sigma[0] * eps * value_type(m > n ? m : n);
+    size_type filled = 0;
+    for (size_type j = 0; j < n && filled < k; ++j) {
+        if (sigma[j] <= utol) continue;
+        for (size_type i = 0; i < r; ++i) UB(i, filled) = B(i, j) / sigma[j];
+        ++filled;
+    }
+    detail::complete_orthonormal(UB, filled);
+
+    if (m > n) {
+        // U = Q [UB; 0] = H_0 H_1 ... H_{n-1} [UB; 0], applied right to left.
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < k; ++j)
+                U(i, j) = (i < n) ? UB(i, j) : math::zero<value_type>();
+        for (size_type jj = 0; jj < n; ++jj) {
+            const size_type j = n - 1 - jj;
+            vec::dense_vector<value_type> v(m - j);
+            v(0) = math::one<value_type>();
+            for (size_type i = 1; i < m - j; ++i) v(i) = F(j + i, j);
+            apply_householder_left(U, v, tau(j), j, 0);
+        }
+    } else {
+        U = UB;
+    }
 }
 
 /// A unit vector x minimizing ||A x||: the right singular vector of A's
