@@ -15,8 +15,9 @@ namespace mtl {
 /// Reduce A to upper Hessenberg form in-place.
 /// On output, A contains H (upper Hessenberg) and the Householder vectors
 /// are stored in the strict lower triangle below the subdiagonal.
-/// tau stores the Householder scalars.
-template <Matrix M>
+/// tau stores the Householder scalars. `Accumulator` (leading, default void)
+/// is forwarded to householder() and apply_householder_left/right() (#536).
+template <typename Accumulator = void, Matrix M>
 void hessenberg_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -42,16 +43,16 @@ void hessenberg_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
         for (size_type i = 0; i < len; ++i)
             col(i) = A(j + 1 + i, j);
 
-        auto [v, beta] = householder(col);
+        auto [v, beta] = householder<Accumulator>(col);
         tau(j) = beta;
 
         // Apply from left: A(j+1:n-1, j:n-1) = H * A(j+1:n-1, j:n-1)
-        apply_householder_left(A, v, beta, j + 1, j);
+        apply_householder_left<Accumulator>(A, v, beta, j + 1, j);
 
         // Apply from right: A(0:n-1, j+1:n-1) = A(0:n-1, j+1:n-1) * H^H.
         // apply_householder_right computes A*(I - s*v*v^H); passing conj(beta)
         // makes s == conj(beta), i.e. A*H^H, completing the similarity.
-        apply_householder_right(A, v, functor::scalar::conj<value_type>::apply(beta), 0, j + 1);
+        apply_householder_right<Accumulator>(A, v, functor::scalar::conj<value_type>::apply(beta), 0, j + 1);
 
         // Store Householder vector below subdiagonal
         for (size_type i = 1; i < len; ++i)
@@ -74,7 +75,7 @@ auto hessenberg_extract_H(const M& A) {
 }
 
 /// Reduce A to upper Hessenberg form and return H directly.
-template <Matrix M>
+template <typename Accumulator = void, Matrix M>
 auto hessenberg(const M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -86,7 +87,7 @@ auto hessenberg(const M& A) {
             H(i, j) = A(i, j);
 
     vec::dense_vector<value_type> tau;
-    hessenberg_factor(H, tau);
+    hessenberg_factor<Accumulator>(H, tau);
     return hessenberg_extract_H(H);
 }
 
@@ -95,9 +96,9 @@ auto hessenberg(const M& A) {
 /// matrix. Hessenberg reduction of a symmetric matrix is tridiagonal; of a
 /// Hermitian matrix it is Hermitian tridiagonal (real diagonal, conjugate
 /// off-diagonals), so the subdiagonal entries may carry a phase.
-template <Matrix M>
+template <typename Accumulator = void, Matrix M>
 void tridiagonalize(M& A, vec::dense_vector<typename M::value_type>& tau) {
-    hessenberg_factor(A, tau);
+    hessenberg_factor<Accumulator>(A, tau);
 }
 
 } // namespace mtl

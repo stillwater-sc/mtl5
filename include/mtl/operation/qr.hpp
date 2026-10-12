@@ -5,6 +5,7 @@
 // Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <algorithm>
 #include <cassert>
+#include <type_traits>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
@@ -15,6 +16,7 @@
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
 #include <mtl/interface/lapack.hpp>
 #endif
@@ -24,7 +26,13 @@ namespace mtl {
 /// QR factorization: A (m x n, m >= n) is overwritten with R on+above diagonal
 /// and Householder vectors below diagonal. tau(k) stores beta for column k.
 /// Returns 0 on success.
-template <FieldMatrix M>
+///
+/// `Accumulator` (leading, default void) selects how each reflector's sums are
+/// rounded: the sum of squares in householder() and the per-column v^H*A(:,j)
+/// in apply_householder_left() (#536). void is today's arithmetic, including
+/// the LAPACK geqrf dispatch; any other accumulator runs the generic loop,
+/// since geqrf's sums are its own.
+template <typename Accumulator = void, FieldMatrix M>
 int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -34,7 +42,8 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     tau.change_dim(k);
 
 #ifdef MTL5_HAS_LAPACK
-    if constexpr (interface::BlasDenseMatrix<M>) {
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::accumulator_allows_blas_v<Accumulator>) {
         // A zero dimension makes lda == 0, which LAPACK rejects (XERBLA); an
         // empty factorization is trivial, so skip the call and fall through.
         if (m > 0 && n > 0) {
@@ -83,11 +92,11 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
             col(i) = A(j + i, j);
 
         // Compute Householder reflection
-        auto [v, beta] = householder(col);
+        auto [v, beta] = householder<Accumulator>(col);
         tau(j) = beta;
 
         // Apply reflection to A(j:m-1, j:n-1)
-        apply_householder_left(A, v, beta, j, j);
+        apply_householder_left<Accumulator>(A, v, beta, j, j);
 
         // Store Householder vector below diagonal (v(0) is implicit 1)
         for (size_type i = 1; i < len; ++i)
@@ -154,8 +163,9 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau, tag::textboo
 /// Extract explicit Q (m x m) from QR factorization stored in A and tau.
 /// Q = H_0^H * H_1^H * ... * H_{k-1}^H where H_j = I - tau(j) * v_j * v_j^H.
 /// (For real element types conj is the identity and this is the familiar
-/// Q = H_0 * H_1 * ... * H_{k-1}.)
-template <Matrix M>
+/// Q = H_0 * H_1 * ... * H_{k-1}.) `Accumulator` is forwarded to each
+/// apply_householder_left (#536).
+template <typename Accumulator = void, Matrix M>
 auto qr_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -187,7 +197,7 @@ auto qr_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& t
         // conj(tau)*v*v^H, NOT H. Passing tau here instead of conj(tau) would
         // silently return the wrong Q for complex input while remaining exactly
         // right for real input, where conj is the identity (#353).
-        apply_householder_left(Q, v, functor::scalar::conj<value_type>::apply(tau(j)), j, 0);
+        apply_householder_left<Accumulator>(Q, v, functor::scalar::conj<value_type>::apply(tau(j)), j, 0);
     }
     return Q;
 }
@@ -209,7 +219,11 @@ auto qr_extract_R(const M& A) {
 
 /// Solve A*x = b via QR factorization (least-squares for m > n).
 /// A must already be factored via qr_factor. x has size n, b has size m.
-template <FieldMatrix M, Vector VecX, Vector VecB>
+/// `Accumulator` (leading, default void) rounds the two sums this solve forms
+/// itself: each reflector's v^H*y when forming Q^H*b, and each row's
+/// sum of R(i,j)*x(j) in the back substitution (#536). The subtraction from
+/// y(i) and the division by R(i,i) happen after the sum is rounded out.
+template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
 void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
               VecX& x, const VecB& b) {
     using value_type = typename M::value_type;
@@ -242,8 +256,17 @@ void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
         // Here we want Q^H b = H_{k-1}...H_0 b, so the reflectors are applied
         // as H (not H^H) in forward order -- the mirror of qr_extract_Q above.
         value_type dot = math::zero<value_type>();
-        for (size_type i = 0; i < len; ++i)
-            dot += functor::scalar::conj<value_type>::apply(v(i)) * y(j + i);
+        if constexpr (std::is_void_v<Accumulator>) {
+            for (size_type i = 0; i < len; ++i)
+                dot += functor::scalar::conj<value_type>::apply(v(i)) * y(j + i);
+        } else {
+            using AT = math::accumulator_traits<Accumulator, value_type>;
+            Accumulator acc;
+            AT::clear(acc);
+            for (size_type i = 0; i < len; ++i)
+                AT::add_product(acc, functor::scalar::conj<value_type>::apply(v(i)), y(j + i));
+            dot = AT::template value<value_type>(acc);
+        }
         for (size_type i = 0; i < len; ++i)
             y(j + i) -= tau(j) * v(i) * dot;
     }
@@ -252,8 +275,17 @@ void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
     for (size_type ii = 0; ii < n; ++ii) {
         size_type i = n - 1 - ii;
         auto sum = math::zero<value_type>();
-        for (size_type j = i + 1; j < n; ++j)
-            sum += QR(i, j) * x(j);
+        if constexpr (std::is_void_v<Accumulator>) {
+            for (size_type j = i + 1; j < n; ++j)
+                sum += QR(i, j) * x(j);
+        } else {
+            using AT = math::accumulator_traits<Accumulator, value_type>;
+            Accumulator acc;
+            AT::clear(acc);
+            for (size_type j = i + 1; j < n; ++j)
+                AT::add_product(acc, value_type(QR(i, j)), value_type(x(j)));
+            sum = AT::template value<value_type>(acc);
+        }
         x(i) = (y(i) - sum) / QR(i, i);
     }
 }

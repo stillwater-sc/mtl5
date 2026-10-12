@@ -184,7 +184,13 @@ void eig_lu_solve(const std::vector<Complex>& M, const std::vector<std::size_t>&
 /// Dispatches to LAPACK geev when MTL5_HAS_LAPACK is defined and the type
 /// qualifies (dense2D<float/double>, either orientation); otherwise uses the
 /// in-house path above, which also serves custom number types (posits, LNS, ...).
-template <FieldMatrix M>
+///
+/// `Accumulator` (leading, default void) is forwarded to the Householder
+/// Hessenberg reduction (#536). A non-void accumulator always takes the
+/// in-house path, since geev forms its sums its own way. The Francis QR
+/// iteration keeps plain arithmetic: its updates are fixed 2- and 3-term
+/// expressions, not sums.
+template <typename Accumulator = void, FieldMatrix M>
 auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
                 typename M::size_type max_iter = 0) {
     using value_type = typename M::value_type;
@@ -204,14 +210,15 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     // the (i,j) accessor, so this is correct for any orientation of M -- no
     // !is_row_major_v guard (see #417). Custom number types fall through to the
     // in-house double-shift QR below.
-    if constexpr (interface::BlasDenseMatrix<M>) {
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::accumulator_allows_blas_v<Accumulator>) {
         detail::lapack_geev(A, eigs, static_cast<mat::dense2D<complex_type>*>(nullptr));
         return eigs;
     }
 #endif
 
     // Reduce to upper Hessenberg form.
-    mat::dense2D<value_type> H = hessenberg(A);
+    mat::dense2D<value_type> H = hessenberg<Accumulator>(A);
     if (n == 1) { eigs(0) = complex_type(H(0, 0)); return eigs; }
 
     // Francis implicit double-shift QR on the real Hessenberg form (EISPACK
@@ -391,7 +398,12 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 /// Dispatches to LAPACK geev (eigenvalues + right eigenvectors) when
 /// MTL5_HAS_LAPACK is defined and the type qualifies (dense2D<float/double>,
 /// either orientation); otherwise uses the in-house path above.
-template <FieldMatrix M>
+///
+/// `Accumulator` (leading, default void) is forwarded to eigenvalue(), i.e. to
+/// the Hessenberg reduction (#536), and a non-void accumulator skips geev. The
+/// eigenvectors' inverse iteration (eig_lu_factor / eig_lu_solve) keeps plain
+/// complex arithmetic.
+template <typename Accumulator = void, FieldMatrix M>
 auto eigen(const M& A, typename M::value_type tol = 1e-10,
            typename M::size_type max_iter = 0) {
     using value_type   = typename M::value_type;
@@ -416,7 +428,8 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     // float/double dense matrices (mirrors the eigenvalue dispatch). lapack_geev
     // copies through the (i,j) accessor, so any orientation of M is correct --
     // no !is_row_major_v guard (see #417).
-    if constexpr (interface::BlasDenseMatrix<M>) {
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::accumulator_allows_blas_v<Accumulator>) {
         vec::dense_vector<complex_type> eigs_l(n);
         mat::dense2D<complex_type> V_l(n, n);
         detail::lapack_geev(A, eigs_l, &V_l);
@@ -425,7 +438,7 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
 #endif
 
     // Eigenvalues via the general QR iteration.
-    vec::dense_vector<complex_type> eigs = eigenvalue(A, tol, max_iter);
+    vec::dense_vector<complex_type> eigs = eigenvalue<Accumulator>(A, tol, max_iter);
 
     mat::dense2D<complex_type> V(n, n);
     if (n == 1) {

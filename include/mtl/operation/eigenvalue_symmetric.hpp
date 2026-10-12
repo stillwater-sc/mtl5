@@ -38,7 +38,11 @@ namespace mtl {
 /// This is the C++ reference path. `eigenvalue_symmetric` dispatches to LAPACK
 /// when available and otherwise calls this; benchmarks and tests can call this
 /// directly to exercise the generic algorithm regardless of MTL5_HAS_LAPACK.
-template <FieldMatrix M>
+///
+/// `Accumulator` (leading, default void) is forwarded to the Householder
+/// tridiagonalization (#536). The implicit QR iteration that follows works on
+/// 2-term and 3-term expressions, not sums, and keeps plain arithmetic.
+template <typename Accumulator = void, FieldMatrix M>
 auto eigenvalue_symmetric_generic(const M& A,
                                   magnitude_t<typename M::value_type> tol = 1e-10,
                                   typename M::size_type max_iter = 0) {
@@ -64,7 +68,7 @@ auto eigenvalue_symmetric_generic(const M& A,
             T(i, j) = A(i, j);
 
     vec::dense_vector<value_type> tau;
-    tridiagonalize(T, tau);
+    tridiagonalize<Accumulator>(T, tau);
 
     // Extract the real diagonal (d) and real subdiagonal (e) of the tridiagonal.
     // The diagonal of a Hermitian tridiagonal is real; real() is the identity
@@ -167,7 +171,11 @@ auto eigenvalue_symmetric_generic(const M& A,
 /// Hermitian); otherwise uses the in-house eigenvalue_symmetric_generic. The
 /// LAPACK Hermitian path is what test_lapack_dispatch cross-checks the native
 /// complex reduction against.
-template <FieldMatrix M>
+///
+/// `Accumulator` (leading, default void) is forwarded to the generic path's
+/// tridiagonalization (#536). A non-void accumulator always takes the generic
+/// path, since syev/heev form their sums their own way.
+template <typename Accumulator = void, FieldMatrix M>
 auto eigenvalue_symmetric(const M& A,
                           magnitude_t<typename M::value_type> tol = 1e-10,
                           typename M::size_type max_iter = 0) {
@@ -176,7 +184,8 @@ auto eigenvalue_symmetric(const M& A,
     // through the (i,j) accessor below, so it is correct for a row-major OR a
     // column-major M. (dense2D defaults to row-major; gating on !is_row_major_v
     // would leave the default matrix type on the generic path -- see #417.)
-    if constexpr (interface::BlasDenseMatrix<M>) {
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::accumulator_allows_blas_v<Accumulator>) {
         using value_type = typename M::value_type;
         using size_type  = typename M::size_type;
         const size_type n = A.num_rows();
@@ -203,7 +212,8 @@ auto eigenvalue_symmetric(const M& A,
         for (size_type i = 0; i < n; ++i)
             result(i) = W[i];
         return result;
-    } else if constexpr (interface::BlasHermitianMatrix<M>) {
+    } else if constexpr (interface::BlasHermitianMatrix<M> &&
+                         interface::accumulator_allows_blas_v<Accumulator>) {
         using value_type = typename M::value_type;         // std::complex<T>
         using size_type  = typename M::size_type;
         using real_t     = magnitude_t<value_type>;
@@ -240,7 +250,7 @@ auto eigenvalue_symmetric(const M& A,
     }
 #endif
 
-    return eigenvalue_symmetric_generic(A, tol, max_iter);
+    return eigenvalue_symmetric_generic<Accumulator>(A, tol, max_iter);
 }
 
 /// Compute eigenvalues and eigenvectors of a symmetric or Hermitian matrix.
@@ -259,7 +269,11 @@ auto eigenvalue_symmetric(const M& A,
 /// folded into Q -- skip it and eigenvalues still look right while A*v != lambda*v.
 /// For a real value_type conj() is the identity, D is the identity, real_t is
 /// value_type, and the arithmetic is bit-identical to the earlier H*A*H code.
-template <FieldMatrix M>
+///
+/// `Accumulator` (leading, default void) is forwarded to every Householder
+/// call in the tridiagonalization, including the right-multiplications that
+/// accumulate Q (#536).
+template <typename Accumulator = void, FieldMatrix M>
 auto eigen_symmetric(const M& A,
                      magnitude_t<typename M::value_type> tol = 1e-10,
                      typename M::size_type max_iter = 0) {
@@ -303,17 +317,17 @@ auto eigen_symmetric(const M& A,
             for (size_type i = 0; i < len; ++i)
                 col(i) = T(j + 1 + i, j);
 
-            auto [v, beta] = householder(col);
+            auto [v, beta] = householder<Accumulator>(col);
 
             // T -> H*T*H^H: left factor H (I - beta*v*v^H), right factor H^H
             // (conj(beta)); conj is the identity for a real value_type.
-            apply_householder_left(T, v, beta, j + 1, j);
-            apply_householder_right(T, v, conj_t::apply(beta), 0, j + 1);
+            apply_householder_left<Accumulator>(T, v, beta, j + 1, j);
+            apply_householder_right<Accumulator>(T, v, conj_t::apply(beta), 0, j + 1);
 
             // Accumulate Q = H_0^H * H_1^H * ... so that A = Q*T*Q^H. Building it
             // by right-multiplication in forward order gives Q *= H_j^H, i.e.
             // conj(beta) again -- the qr_extract_Q / lq_extract_Q adjoint pattern.
-            apply_householder_right(Q, v, conj_t::apply(beta), 0, j + 1);
+            apply_householder_right<Accumulator>(Q, v, conj_t::apply(beta), 0, j + 1);
         }
     }
 
