@@ -5,6 +5,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.17.0] - 2026-10-15
+
+A thin SVD and a faster Jacobi core behind every `svd`, and the accumulator policy carried from the sparse direct factorizations into their solves, so a factorization with a wider or exact accumulator no longer ends in a plain rounded triangular solve. One behavior change: the generic `svd`, the V-only `svd` and `null_vector` return different last bits (see Changed); the LAPACK `gesdd` path is unaffected. The new `Accumulator` parameter on the sparse solves defaults to `void`, which returns exactly the bits 5.16.0 did.
+
 ### Added
 
 - **Thin SVD: `svd(A, U, s, V)`**, with U m × k, s of length k and V n × k, where k = min(m, n). This is the thin U left out of #566. The full `svd(A, U, S, V)` completes U to an m × m basis, which is almost all of its 0.24 s at 400 × 9.
