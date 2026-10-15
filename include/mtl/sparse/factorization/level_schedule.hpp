@@ -29,12 +29,28 @@
 // meant to be computed once and reused across many solves, so the build cost
 // amortizes. Threading is off by default (MTL5_NUM_THREADS=1): the solve then
 // runs the levels serially and is byte-identical to dense_lower_solve.
+//
+// Accumulator policy (#535). Every solve below is a row gather
+//     x[i] = (b[i] - sum_k T(i,k)*x[k]) / T(i,i)
+// and takes a leading `Accumulator` template parameter, spelled the same way as
+// the numeric factorizations (`level_scheduled_lower_solve<Acc>(L, s, x)`).
+// The default `void` runs the raw `Value` loop unchanged, so the default solve
+// stays bit-identical to the dense_* references. A non-void `Acc` forms the
+// whole row reduction -- b[i] included -- through
+// mtl::math::accumulator_traits<Acc, Value> (assign b[i], add_product the
+// negated terms) and rounds it out ONCE before the diagonal division, so an
+// exact accumulator delivers b[i] - sum as a single rounding. Each row owns its
+// accumulator (a register-sized local), so the parallel levels stay race-free
+// and no O(n) workspace is added. The gather order is unchanged, so a non-void
+// solve is as deterministic across thread counts as the default one.
 
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <type_traits>
 #include <vector>
 
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/detail/thread_pool.hpp>
 
@@ -134,7 +150,7 @@ lower_solve_schedule build_lower_solve_schedule(
 /// re-factorization is picked up), using the positions cached in the schedule.
 /// Bit-identical to dense_lower_solve; the rows of each level are solved in
 /// parallel on the thread pool (serial when MTL5_NUM_THREADS=1).
-template <typename Value, typename SizeType>
+template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
                                  const lower_solve_schedule& s,
                                  std::vector<Value>& x)
@@ -154,10 +170,19 @@ void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
                     const std::size_t i = s.order[lb + t];
-                    Value acc = x[i];   // b[i]
-                    for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
-                        acc -= L.values[s.val_pos[p]] * x[s.col_ind[p]];
-                    x[i] = acc / L.values[s.diag_pos[i]];
+                    if constexpr (std::is_void_v<Accumulator>) {
+                        Value acc = x[i];   // b[i]
+                        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                            acc -= L.values[s.val_pos[p]] * x[s.col_ind[p]];
+                        x[i] = acc / L.values[s.diag_pos[i]];
+                    } else {
+                        using AT = math::accumulator_traits<Accumulator, Value>;
+                        Accumulator acc{};
+                        AT::assign(acc, x[i]);   // b[i]
+                        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                            AT::add_product(acc, -L.values[s.val_pos[p]], x[s.col_ind[p]]);
+                        x[i] = AT::value(acc) / L.values[s.diag_pos[i]];
+                    }
                 }
             });
     }
@@ -235,7 +260,7 @@ lower_transpose_solve_schedule build_lower_transpose_solve_schedule(
 /// the solution on exit. Reads L's values at solve time. Bit-identical to
 /// dense_lower_transpose_solve; each level's columns are solved in parallel
 /// (serial when MTL5_NUM_THREADS=1).
-template <typename Value, typename SizeType>
+template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeType>& L,
                                            const lower_transpose_solve_schedule& s,
                                            std::vector<Value>& x)
@@ -257,10 +282,19 @@ void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeTyp
                     const std::size_t col = s.order[lb + t];
                     const SizeType diag = L.col_ptr[col];
                     if (diag >= L.col_ptr[col + 1]) continue;   // empty column: skip (as serial)
-                    Value acc = x[col];
-                    for (SizeType p = diag + 1; p < L.col_ptr[col + 1]; ++p)
-                        acc -= L.values[p] * x[static_cast<std::size_t>(L.row_ind[p])];
-                    x[col] = acc / L.values[diag];
+                    if constexpr (std::is_void_v<Accumulator>) {
+                        Value acc = x[col];
+                        for (SizeType p = diag + 1; p < L.col_ptr[col + 1]; ++p)
+                            acc -= L.values[p] * x[static_cast<std::size_t>(L.row_ind[p])];
+                        x[col] = acc / L.values[diag];
+                    } else {
+                        using AT = math::accumulator_traits<Accumulator, Value>;
+                        Accumulator acc{};
+                        AT::assign(acc, x[col]);
+                        for (SizeType p = diag + 1; p < L.col_ptr[col + 1]; ++p)
+                            AT::add_product(acc, -L.values[p], x[static_cast<std::size_t>(L.row_ind[p])]);
+                        x[col] = AT::value(acc) / L.values[diag];
+                    }
                 }
             });
     }
@@ -369,7 +403,7 @@ upper_solve_schedule build_upper_solve_schedule(
 /// entry and the solution on exit. Reads U's values at solve time. Bit-identical
 /// to dense_upper_solve; each level's rows are solved in parallel (serial when
 /// MTL5_NUM_THREADS=1).
-template <typename Value, typename SizeType>
+template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
                                  const upper_solve_schedule& s,
                                  std::vector<Value>& x)
@@ -390,10 +424,19 @@ void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
                 for (std::size_t t = cb; t < ce; ++t) {
                     const std::size_t i = s.order[lb + t];
                     if (U.col_ptr[i] >= U.col_ptr[i + 1]) continue;   // empty column: skip (as serial)
-                    Value acc = x[i];
-                    for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
-                        acc -= U.values[s.val_pos[p]] * x[s.col_ind[p]];
-                    x[i] = acc / U.values[s.diag_pos[i]];
+                    if constexpr (std::is_void_v<Accumulator>) {
+                        Value acc = x[i];
+                        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                            acc -= U.values[s.val_pos[p]] * x[s.col_ind[p]];
+                        x[i] = acc / U.values[s.diag_pos[i]];
+                    } else {
+                        using AT = math::accumulator_traits<Accumulator, Value>;
+                        Accumulator acc{};
+                        AT::assign(acc, x[i]);
+                        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                            AT::add_product(acc, -U.values[s.val_pos[p]], x[s.col_ind[p]]);
+                        x[i] = AT::value(acc) / U.values[s.diag_pos[i]];
+                    }
                 }
             });
     }
@@ -472,7 +515,7 @@ unit_lower_solve_schedule build_unit_lower_solve_schedule(
 
 /// Level-scheduled UNIT lower forward solve. Bit-identical to
 /// dense_unit_lower_solve (no diagonal division).
-template <typename Value, typename SizeType>
+template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_unit_lower_solve(const util::csc_matrix<Value, SizeType>& L,
                                       const unit_lower_solve_schedule& s,
                                       std::vector<Value>& x)
@@ -489,10 +532,19 @@ void level_scheduled_unit_lower_solve(const util::csc_matrix<Value, SizeType>& L
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
                     const std::size_t i = s.order[lb + t];
-                    Value acc = x[i];
-                    for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
-                        acc -= L.values[s.val_pos[p]] * x[s.col_ind[p]];
-                    x[i] = acc;   // unit diagonal: no division
+                    if constexpr (std::is_void_v<Accumulator>) {
+                        Value acc = x[i];
+                        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                            acc -= L.values[s.val_pos[p]] * x[s.col_ind[p]];
+                        x[i] = acc;   // unit diagonal: no division
+                    } else {
+                        using AT = math::accumulator_traits<Accumulator, Value>;
+                        Accumulator acc{};
+                        AT::assign(acc, x[i]);
+                        for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
+                            AT::add_product(acc, -L.values[s.val_pos[p]], x[s.col_ind[p]]);
+                        x[i] = AT::value(acc);   // unit diagonal: no division
+                    }
                 }
             });
     }
@@ -542,7 +594,7 @@ unit_lower_transpose_solve_schedule build_unit_lower_transpose_solve_schedule(
 
 /// Level-scheduled UNIT lower transpose solve. Bit-identical to
 /// dense_unit_lower_transpose_solve (no diagonal division).
-template <typename Value, typename SizeType>
+template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_unit_lower_transpose_solve(const util::csc_matrix<Value, SizeType>& L,
                                                 const unit_lower_transpose_solve_schedule& s,
                                                 std::vector<Value>& x)
@@ -559,11 +611,21 @@ void level_scheduled_unit_lower_transpose_solve(const util::csc_matrix<Value, Si
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
                     const std::size_t col = s.order[lb + t];
-                    Value acc = x[col];
-                    for (SizeType p = L.col_ptr[col]; p < L.col_ptr[col + 1]; ++p)
-                        if (static_cast<std::size_t>(L.row_ind[p]) > col)
-                            acc -= L.values[p] * x[static_cast<std::size_t>(L.row_ind[p])];
-                    x[col] = acc;   // unit diagonal: no division
+                    if constexpr (std::is_void_v<Accumulator>) {
+                        Value acc = x[col];
+                        for (SizeType p = L.col_ptr[col]; p < L.col_ptr[col + 1]; ++p)
+                            if (static_cast<std::size_t>(L.row_ind[p]) > col)
+                                acc -= L.values[p] * x[static_cast<std::size_t>(L.row_ind[p])];
+                        x[col] = acc;   // unit diagonal: no division
+                    } else {
+                        using AT = math::accumulator_traits<Accumulator, Value>;
+                        Accumulator acc{};
+                        AT::assign(acc, x[col]);
+                        for (SizeType p = L.col_ptr[col]; p < L.col_ptr[col + 1]; ++p)
+                            if (static_cast<std::size_t>(L.row_ind[p]) > col)
+                                AT::add_product(acc, -L.values[p], x[static_cast<std::size_t>(L.row_ind[p])]);
+                        x[col] = AT::value(acc);   // unit diagonal: no division
+                    }
                 }
             });
     }

@@ -59,9 +59,21 @@ struct qr_numeric {
     /// Solve min ||A*x - b||_2.
     /// A*Q = Q_h * R => A = Q_h * R * Q^T
     /// min ||Ax - b|| => R * Q^T * x = (Q_h^T * b)[0:n-1]
-    template <typename VecX, typename VecB>
+    ///
+    /// `Accumulator` (default `void`, leading as in sparse_qr_numeric) selects the
+    /// accumulator policy of the solve-time reductions (#535): the `v_k^T w` dot
+    /// of the Q_h^T b step and each row's `w[i] - sum_k R(i,k) y[k]` of the R
+    /// back-substitution. `void` is the raw Value path, byte for byte. A non-void
+    /// `Acc` holds one accumulator per row of R (O(ncols) workspace, see
+    /// math/accumulator_traits.hpp) so that each y[i] is rounded once, when its
+    /// column is reached, and the terms are added in the same order as the
+    /// default scatter.
+    template <typename Accumulator = void, typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
         using std::abs;  // ADL: also find abs() for custom number types
+        constexpr bool raw = std::is_void_v<Accumulator>;
+        using AT = mtl::math::accumulator_traits<
+            std::conditional_t<raw, Value, Accumulator>, Value>;
         std::size_t m = symbolic.nrows;
         std::size_t nc = symbolic.ncols;
         if (static_cast<std::size_t>(b.size()) != m) {
@@ -86,8 +98,16 @@ struct qr_numeric {
 
             // dot = v_k^T * w
             Value dot = Value{0};
-            for (std::size_t idx = 0; idx < V_idx[k].size(); ++idx)
-                dot += V[k][idx] * w[V_idx[k][idx]];
+            if constexpr (raw) {
+                for (std::size_t idx = 0; idx < V_idx[k].size(); ++idx)
+                    dot += V[k][idx] * w[V_idx[k][idx]];
+            } else {
+                Accumulator dot_acc{};
+                AT::clear(dot_acc);
+                for (std::size_t idx = 0; idx < V_idx[k].size(); ++idx)
+                    AT::add_product(dot_acc, V[k][idx], w[V_idx[k][idx]]);
+                dot = AT::value(dot_acc);
+            }
 
             // w -= beta_k * dot * v_k
             Value scale = beta[k] * dot;
@@ -98,8 +118,19 @@ struct qr_numeric {
         // Step 2: Solve R * y = w[0:n-1]
         std::vector<Value> y(w.begin(), w.begin() + nc);
 
+        // Accumulator path: ws[i] carries w[i] minus the R(i,col)*y[col] terms
+        // scattered so far; y[col] is rounded out of ws[col] when col is reached.
+        // (Unused, and empty, on the raw path.)
+        using ws_type = std::conditional_t<raw, Value, Accumulator>;
+        std::vector<ws_type> ws;
+        if constexpr (!raw) {
+            ws.resize(nc);
+            for (std::size_t i = 0; i < nc; ++i) AT::assign(ws[i], y[i]);
+        }
+
         for (std::size_t j = nc; j > 0; --j) {
             std::size_t col = j - 1;
+            if constexpr (!raw) y[col] = AT::value(ws[col]);   // round once, on consume
             // Diagonal is last entry in column
             std::size_t diag_pos = R.col_ptr[col + 1] - 1;
             if (R.col_ptr[col] > diag_pos) continue;
@@ -112,8 +143,13 @@ struct qr_numeric {
             }
 
             y[col] /= diag;
-            for (std::size_t p = R.col_ptr[col]; p < diag_pos; ++p)
-                y[R.row_ind[p]] -= R.values[p] * y[col];
+            if constexpr (raw) {
+                for (std::size_t p = R.col_ptr[col]; p < diag_pos; ++p)
+                    y[R.row_ind[p]] -= R.values[p] * y[col];
+            } else {
+                for (std::size_t p = R.col_ptr[col]; p < diag_pos; ++p)
+                    AT::add_product(ws[R.row_ind[p]], -R.values[p], y[col]);
+            }
         }
 
         // Step 3: x = Q * y => x[col_perm[i]] = y[i]
@@ -346,7 +382,9 @@ qr_numeric<Value> sparse_qr_numeric(
 }
 
 /// One-shot sparse QR solve with ordering.
-template <typename Value, typename Parameters, typename VecX, typename VecB,
+/// `Accumulator` (default `void`) is forwarded to both the numeric factorization
+/// and the solve, so one policy covers the whole solve path (#535).
+template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB,
           typename Ordering>
 void sparse_qr_solve(
     const mat::compressed2D<Value, Parameters>& A,
@@ -354,19 +392,21 @@ void sparse_qr_solve(
     const Ordering& ordering)
 {
     auto sym = sparse_qr_symbolic(A, ordering);
-    auto num = sparse_qr_numeric(A, sym);
-    num.solve(x, b);
+    auto num = sparse_qr_numeric<Accumulator>(A, sym);
+    num.template solve<Accumulator>(x, b);
 }
 
 /// One-shot sparse QR solve without ordering.
-template <typename Value, typename Parameters, typename VecX, typename VecB>
+/// `Accumulator` (default `void`) is forwarded to both the numeric factorization
+/// and the solve, so one policy covers the whole solve path (#535).
+template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB>
 void sparse_qr_solve(
     const mat::compressed2D<Value, Parameters>& A,
     VecX& x, const VecB& b)
 {
     auto sym = sparse_qr_symbolic(A);
-    auto num = sparse_qr_numeric(A, sym);
-    num.solve(x, b);
+    auto num = sparse_qr_numeric<Accumulator>(A, sym);
+    num.template solve<Accumulator>(x, b);
 }
 
 } // namespace mtl::sparse::factorization

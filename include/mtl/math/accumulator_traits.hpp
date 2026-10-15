@@ -47,8 +47,8 @@
 //
 // i.e. Theta(n), and up to ~2n for the supernodal dense panel, whose exact
 // multiplier tracks supernode structure and so is matrix-dependent.
-// supernodal_lu and the transposed SpMV in operation/mult.hpp have the same
-// shape.
+// supernodal_lu, the transposed SpMV in operation/mult.hpp and the R
+// back-substitution of qr_numeric::solve<Acc> (#535) have the same shape.
 //
 // That is free for configurations 1 and 2 -- both are the size of the value
 // type -- but a configuration-3 super-accumulator is sized to the value type's
