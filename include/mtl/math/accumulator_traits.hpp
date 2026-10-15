@@ -28,11 +28,24 @@
 //
 //   3. Super-accumulator (exact sum of products, single final round-out).
 //      A caller supplies a custom `Acc` (a compensated/Kahan accumulator, or a
-//      Universal `quire` exact dot product) by specializing
-//      `accumulator_traits<Acc, Value>`. MTL5 stays free of any external number
-//      library, so the quire super-accumulator itself lives in the peer repo
-//      that pairs MTL5 with Universal; this header only defines the contract it
-//      plugs into. `value<Result>` then rounds the exact accumulator out once.
+//      Universal `quire` exact dot product) in one of two ways:
+//
+//        a. PREFERRED -- the ADL hook. The accumulator's own namespace provides
+//           the free functions listed at `adl_accumulator` below, and the
+//           constrained specialization here forwards to them. Nobody includes
+//           anybody: MTL5 names the functions, the number library defines them
+//           next to its accumulator type, and an operation such as
+//           `dot<quire<...>, Result>(x, y)` finds them by argument-dependent
+//           lookup. One definition in the number library serves every
+//           downstream repository.
+//        b. Specializing `accumulator_traits<Acc, Value>` directly. This still
+//           works and still wins over the hook (a specialization naming the
+//           accumulator type is more specialized than the constrained one), so
+//           an existing bridge header keeps compiling until it is deleted.
+//
+//      MTL5 stays free of any external number library either way; this header
+//      only defines the contract. `value<Result>` then rounds the exact
+//      accumulator out once.
 //
 // Used by the sparse factorizations and the dense BLAS-level operations.
 //
@@ -72,6 +85,7 @@
 
 #include <mtl/math/identity.hpp>
 #include <cmath>        // std::fma
+#include <concepts>
 #include <type_traits>
 
 namespace mtl::math {
@@ -110,6 +124,68 @@ struct accumulator_traits {
     /// no-op cast and byte-identical when `Acc == Value`.
     static void add_product(Acc& a, const Value& m, const Value& v) {
         a += static_cast<Acc>(m) * static_cast<Acc>(v);
+    }
+
+    /// a += b : combine two partial accumulators of the same reduction, e.g. the
+    /// per-thread or per-process partials of a parallel dot product. For this
+    /// configuration it is an ordinary add, one rounding; for an exact
+    /// super-accumulator it is exact, which is what makes a parallel reduction
+    /// independent of how the terms were partitioned.
+    static void merge(Acc& a, const Acc& b) { a += b; }
+};
+
+/// Configuration 3 via the ADL hook: does `Acc`'s own namespace provide the
+/// super-accumulator functions for products of `Value`s?
+///
+/// The functions, found by argument-dependent lookup on `Acc`:
+///
+///   accumulator_clear(acc)                          acc = 0
+///   accumulator_assign(acc, v)                      acc = v, exactly
+///   accumulator_add_product(acc, m, v)              acc += m * v
+///   accumulator_value(acc, std::type_identity<R>{}) -> R, the single round-out
+///   accumulator_merge(acc, other)                   acc += other  (optional)
+///
+/// `accumulator_value` takes a `std::type_identity<Result>` tag rather than an
+/// explicit template argument so that the call is an ordinary ADL call on every
+/// compiler. `accumulator_merge` is optional: an accumulator without it still
+/// satisfies the hook, and only `merge()` is unavailable.
+///
+/// Constrain the functions on the accumulator type. They are also looked up in
+/// the namespaces associated with `Value`, so an unconstrained
+/// `template <class A> void accumulator_clear(A&)` in a number library would
+/// claim `accumulator_traits<double, its_number>` too.
+template <typename Acc, typename Value>
+concept adl_accumulator = requires(Acc& a, const Acc& ca, const Value& v) {
+    accumulator_clear(a);
+    accumulator_assign(a, v);
+    accumulator_add_product(a, v, v);
+    { accumulator_value(ca, std::type_identity<Value>{}) } -> std::convertible_to<Value>;
+};
+
+/// Accumulator policy for an accumulator that provides the ADL hook
+/// (configuration 3, see `adl_accumulator`). Each operation forwards to the
+/// accumulator's own free function, so the number library that defines the
+/// accumulator defines its policy once, without including MTL5.
+template <typename Acc, typename Value>
+    requires adl_accumulator<Acc, Value>
+struct accumulator_traits<Acc, Value> {
+    static void clear(Acc& a) { accumulator_clear(a); }
+
+    static void assign(Acc& a, const Value& v) { accumulator_assign(a, v); }
+
+    template <typename Result = Value>
+    static Result value(const Acc& a) {
+        return accumulator_value(a, std::type_identity<Result>{});
+    }
+
+    static void add_product(Acc& a, const Value& m, const Value& v) {
+        accumulator_add_product(a, m, v);
+    }
+
+    static void merge(Acc& a, const Acc& b)
+        requires requires(Acc& x, const Acc& y) { accumulator_merge(x, y); }
+    {
+        accumulator_merge(a, b);
     }
 };
 
@@ -155,6 +231,9 @@ struct accumulator_traits<fma_accumulator<T>, Value> {
         using std::fma;   // ADL: std::fma for built-ins, a custom fma for user types
         a.sum = fma(static_cast<T>(m), static_cast<T>(v), a.sum);
     }
+
+    /// Combine two partial sums: one ordinary add, rounded to `T`.
+    static void merge(Acc& a, const Acc& b) { a.sum += b.sum; }
 };
 
 /// The arithmetic type an accumulator should be rounded out to before a scalar
