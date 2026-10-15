@@ -95,7 +95,10 @@ struct ldlt_numeric {
 
     /// Solve A*x = b using the LDL^T factorization.
     /// A = P^T L D L^T P, so x = P^T L^{-T} D^{-1} L^{-1} P b
-    template <typename VecX, typename VecB>
+    /// `Accumulator` (default `void`, leading as in the numeric phase) selects
+    /// the accumulator policy of the triangular-solve row reductions (#535):
+    /// `void` is the raw Value loop; see level_schedule.hpp for the contract.
+    template <typename Accumulator = void, typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
         // A caller can set `symbolic` (n > 0) yet never install a factor; the
         // divide by D_ below would then index an empty vector. Reject that
@@ -120,7 +123,7 @@ struct ldlt_numeric {
         // Step 2: Forward solve: L * y = w (unit lower). Level-scheduled
         // (parallel, bit-identical to dense_unit_lower_solve); serial at
         // MTL5_NUM_THREADS=1.
-        level_scheduled_unit_lower_solve(L_, fwd_sched_, w);
+        level_scheduled_unit_lower_solve<Accumulator>(L_, fwd_sched_, w);
 
         // Step 3: Diagonal solve: D * z = y
         for (std::size_t i = 0; i < n; ++i)
@@ -128,7 +131,7 @@ struct ldlt_numeric {
 
         // Step 4: Back solve: L^T * u = z (unit upper). Level-scheduled
         // (parallel, bit-identical to dense_unit_lower_transpose_solve).
-        level_scheduled_unit_lower_transpose_solve(L_, bwd_sched_, w);
+        level_scheduled_unit_lower_transpose_solve<Accumulator>(L_, bwd_sched_, w);
 
         // Step 5: Apply inverse permutation: x = P^T * u
         for (std::size_t i = 0; i < n; ++i)
@@ -380,7 +383,9 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
 }
 
 /// One-shot sparse LDL^T solve: factor and solve A*x = b.
-template <typename Value, typename Parameters, typename VecX, typename VecB,
+/// `Accumulator` (default `void`) is forwarded to both the numeric factorization
+/// and the solve, so one policy covers the whole solve path (#535).
+template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB,
           typename Ordering>
 void sparse_ldlt_solve(
     const mat::compressed2D<Value, Parameters>& A,
@@ -388,19 +393,21 @@ void sparse_ldlt_solve(
     const Ordering& ordering)
 {
     auto sym = sparse_ldlt_symbolic(A, ordering);
-    auto num = sparse_ldlt_numeric(A, sym);
-    num.solve(x, b);
+    auto num = sparse_ldlt_numeric<Accumulator>(A, sym);
+    num.template solve<Accumulator>(x, b);
 }
 
 /// One-shot sparse LDL^T solve without ordering (natural ordering).
-template <typename Value, typename Parameters, typename VecX, typename VecB>
+/// `Accumulator` (default `void`) is forwarded to both the numeric factorization
+/// and the solve, so one policy covers the whole solve path (#535).
+template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB>
 void sparse_ldlt_solve(
     const mat::compressed2D<Value, Parameters>& A,
     VecX& x, const VecB& b)
 {
     auto sym = sparse_ldlt_symbolic(A);
-    auto num = sparse_ldlt_numeric(A, sym);
-    num.solve(x, b);
+    auto num = sparse_ldlt_numeric<Accumulator>(A, sym);
+    num.template solve<Accumulator>(x, b);
 }
 
 } // namespace mtl::sparse::factorization

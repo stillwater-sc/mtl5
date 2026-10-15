@@ -133,7 +133,10 @@ struct lu_numeric {
     /// 2. L * z = w (forward solve)
     /// 3. U * y = z (back solve)
     /// 4. x = Q * y
-    template <typename VecX, typename VecB>
+    /// `Accumulator` (default `void`, leading as in the numeric phase) selects
+    /// the accumulator policy of the triangular-solve row reductions (#535):
+    /// `void` is the raw Value loop; see level_schedule.hpp for the contract.
+    template <typename Accumulator = void, typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
         // A caller can set `symbolic` (n > 0) yet never install a factor; the
         // triangular solves below would then read empty factor arrays. Reject
@@ -157,11 +160,11 @@ struct lu_numeric {
 
         // Step 2: Forward solve: L * z = w. Level-scheduled (parallel,
         // bit-identical to dense_lower_solve); serial at MTL5_NUM_THREADS=1.
-        level_scheduled_lower_solve(L_, fwd_sched_, w);
+        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w);
 
         // Step 3: Back solve: U * y = z. Level-scheduled (parallel, bit-identical
         // to dense_upper_solve); serial at MTL5_NUM_THREADS=1.
-        level_scheduled_upper_solve(U_, up_sched_, w);
+        level_scheduled_upper_solve<Accumulator>(U_, up_sched_, w);
 
         // Step 4: Apply column permutation: x = Q * y
         // Q maps new col -> old col, so x[q[i]] = y[i]
@@ -663,7 +666,9 @@ lu_numeric<Value> sparse_lu_refactor(
 }
 
 /// One-shot sparse LU solve: factor and solve A*x = b.
-template <typename Value, typename Parameters, typename VecX, typename VecB,
+/// `Accumulator` (default `void`) is forwarded to both the numeric factorization
+/// and the solve, so one policy covers the whole solve path (#535).
+template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB,
           typename Ordering>
     requires OrderedField<Value>
 void sparse_lu_solve(
@@ -673,19 +678,21 @@ void sparse_lu_solve(
     Value threshold = Value{1})
 {
     auto sym = sparse_lu_symbolic(A, ordering);
-    auto num = sparse_lu_numeric(A, sym, threshold);
-    num.solve(x, b);
+    auto num = sparse_lu_numeric<Accumulator>(A, sym, threshold);
+    num.template solve<Accumulator>(x, b);
 }
 
 /// One-shot sparse LU solve without ordering (natural ordering).
-template <typename Value, typename Parameters, typename VecX, typename VecB>
+/// `Accumulator` (default `void`) is forwarded to both the numeric factorization
+/// and the solve, so one policy covers the whole solve path (#535).
+template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB>
 void sparse_lu_solve(
     const mat::compressed2D<Value, Parameters>& A,
     VecX& x, const VecB& b)
 {
     auto sym = sparse_lu_symbolic(A);
-    auto num = sparse_lu_numeric(A, sym);
-    num.solve(x, b);
+    auto num = sparse_lu_numeric<Accumulator>(A, sym);
+    num.template solve<Accumulator>(x, b);
 }
 
 } // namespace mtl::sparse::factorization

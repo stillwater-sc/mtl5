@@ -126,7 +126,10 @@ struct supernodal_lu_factor {
     }
 
     /// Solve A*x = b.  P*A*Q = L*U (identical to lu_numeric::solve).
-    template <typename VecX, typename VecB>
+    /// `Accumulator` (default `void`, leading as in the numeric phase) selects
+    /// the accumulator policy of the triangular-solve row reductions (#535):
+    /// `void` is the raw Value loop; see level_schedule.hpp for the contract.
+    template <typename Accumulator = void, typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
         // A caller can set `symbolic` (n > 0) yet never install factors; the
         // triangular solves below would then read empty factor arrays. Reject
@@ -152,8 +155,8 @@ struct supernodal_lu_factor {
         }
         // L z = P (R b), then U y = z. Level-scheduled (parallel, bit-identical to
         // dense_lower_solve / dense_upper_solve); serial at MTL5_NUM_THREADS=1.
-        level_scheduled_lower_solve(L_, fwd_sched_, w);
-        level_scheduled_upper_solve(U_, up_sched_, w);
+        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w);
+        level_scheduled_upper_solve<Accumulator>(U_, up_sched_, w);
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.col_perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
@@ -686,15 +689,17 @@ supernodal_lu_factor<Value> supernodal_lu_refactor(
 }
 
 /// One-shot supernodal LU solve with a fill-reducing column ordering.
-template <typename Value, typename Parameters, typename VecX, typename VecB, typename Ordering>
+/// `Accumulator` (default `void`) is forwarded to both the numeric factorization
+/// and the solve, so one policy covers the whole solve path (#535).
+template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB, typename Ordering>
     requires OrderedField<Value>
 void supernodal_lu_solve(const mat::compressed2D<Value, Parameters>& A,
                          VecX& x, const VecB& b, const Ordering& ordering,
                          Value threshold = Value{1})
 {
     auto sym = supernodal_lu_symbolic_analyze(A, ordering);
-    auto fac = supernodal_lu_numeric(A, sym, threshold);
-    fac.solve(x, b);
+    auto fac = supernodal_lu_numeric<Accumulator>(A, sym, threshold);
+    fac.template solve<Accumulator>(x, b);
 }
 
 /// Mixed-precision solve with iterative refinement: factor in `FactorValue`

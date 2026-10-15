@@ -74,13 +74,19 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 #
 # op_test_householder_textbook does the same for the textbook Householder
 # reflector and qr_factor (#559).
+#
+# sparse_test_solve_accumulator_policy asserts that the level-scheduled solves,
+# with the default and with an `Acc == Value` accumulator (#535), are bit-identical
+# to the dense_* scatter references -- the same order-of-operations claim as
+# trisolve_level_schedule_mt, broken the same way by contraction.
 if(NOT MSVC)
     foreach(mt_target sparse_test_supernodal_ldlt_mt
                       sparse_test_supernodal_lu_mt
                       sparse_test_trisolve_level_schedule_mt
                       op_test_mult_ikj
                       op_test_cholesky_ordering
-                      op_test_householder_textbook)
+                      op_test_householder_textbook
+                      sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
         endif()
