@@ -23,8 +23,8 @@ This document answers three questions:
   - a way to send it, which is a serialization customization point;
   - a way to combine two accumulators, a fifth operation on `accumulator_traits`.
 
-  Universal's specializations of both belong in a shared MTL5–Universal bridge, which today exists only as a header copied into five repos. Applications that need Universal (optimization, lattice reduction, mp-spice) sit on top of both.
-- **Two prerequisites are worth doing regardless**: consolidate the duplicated quire bridge, and add an accumulator merge operation to MTL5. Without the merge, MTL5 can't split even one accumulator-typed reduction, such as a dot product, across threads either.
+  Universal supplies its side of both contracts as free functions defined next to its own types. MTL5 finds them by argument-dependent lookup (ADL), so neither library includes the other. Today that side exists only as a bridge header copied into five repos; #581 adds the hook that lets it move into Universal. Applications that need Universal (optimization, lattice reduction, mp-spice) sit on top of both.
+- **Two prerequisites are worth doing regardless**: replace the duplicated quire bridge with hook functions in Universal, and add an accumulator merge operation to MTL5. Without the merge, MTL5 can't split even one accumulator-typed reduction, such as a dot product, across threads either. #581 adds both the hook and `merge` on the MTL5 side.
 
 ## 1. What each library is
 
@@ -109,7 +109,7 @@ This is where the two designs differ most, and it decides the value question.
 2. **Accumulation is a policy.** `accumulator_traits<Acc, Value>` lets a kernel store in one precision and accumulate in another. Configurations:
    - plain wider accumulation;
    - FMA;
-   - a super-accumulator, which the quire bridge in the peer repos provides.
+   - a super-accumulator such as Universal's quire. Today it plugs in through a bridge header copied into the peer repos. After #581 it plugs in through hook functions Universal defines itself.
 
    Since 5.17.0 this covers the sparse direct solve phase too.
 3. **The number types live in Universal**, and the coupling lives in peer repos.
@@ -159,15 +159,15 @@ flowchart TB
         DALG["SUMMA GEMM, dot/norms,<br/>Cholesky, LU, QR, TSQR"]
     end
 
-    subgraph BR["MTL5–Universal bridge (one repo, replaces 5 copies)"]
-        QB["accumulator_traits&lt;quire&gt;<br/>incl. merge"]
+    subgraph BR["Universal-side hooks (live in Universal, replace 5 bridge copies)"]
+        QB["accumulator_* functions for quire<br/>incl. accumulator_merge"]
         SER["serialization for Universal types<br/>(fixed-size: bytes; elastic: pack/unpack)"]
         LIM["numeric_limits / concept gaps"]
     end
 
     subgraph L1["MTL5 (Universal-free)"]
         DENSE["dense + sparse LA,<br/>single node, threaded"]
-        ACC["accumulator_traits contract<br/>clear / assign / add_product / value / merge"]
+        ACC["accumulator_traits contract<br/>clear / assign / add_product / value / merge<br/>+ ADL hook"]
         SERCP["serialization customization point<br/>(trivially copyable → bytes by default)"]
     end
 
@@ -179,7 +179,7 @@ flowchart TB
     L3 --> L2
     L3 --> BR
     L2 --> L1
-    BR --> L1
+    L1 -. "found by ADL,<br/>no include" .-> BR
     BR --> UNI
     L1 --> STD
 ```
@@ -199,17 +199,35 @@ None of these needs Universal or MPI, and every consumer benefits. MTL5 also gai
    - Plain and FMA configurations: `a += b`.
    - A quire: exact quire addition.
 
-   MTL5 needs this for itself. Today `thread_pool::parallel_reduce` combines per-thread partials with `+` on the value type, so no single accumulator-typed reduction (one dot product, one norm) can be split across threads. Kernels that parallelize do so by giving each output element its own accumulator, as GEMM does over rows. With a merge, an exactly accumulated reduction can run on several threads and give the same bits as on one.
-2. **An element serialization customization point.** It defaults to bytes for trivially copyable types, so MTL5 itself never needs to know about MPI. It is needed only once something moves values between address spaces.
+   #581 adds `merge` to the contract. Using it in the thread pool is still to do.
 
-**The bridge** is Universal's side of those contracts: quire `accumulator_traits` including `merge`, serializers for elastic types, and concept or `numeric_limits` fixes. It already exists, as `quire_accumulator.hpp` copied **byte-for-byte into mp-blas, mp-ir, mp-iterative and mp-numerics**, with a **diverged** variant in mp-spice. It should be one repository (or one Universal header) that the others depend on. That is worth doing now, independent of any distributed work.
+   MTL5 needs this for itself. Today `thread_pool::parallel_reduce` combines per-thread partials with `+` on the value type, so no single accumulator-typed reduction (one dot product, one norm) can be split across threads. Kernels that parallelize do so by giving each output element its own accumulator, as GEMM does over rows. With a merge, an exactly accumulated reduction can run on several threads and give the same bits as on one.
+2. **An element serialization customization point.** It defaults to bytes for trivially copyable types, so MTL5 itself never needs to know about MPI. It is needed only once something moves values between address spaces. It should use the same ADL pattern as the accumulator hook, so Universal can serialize its elastic types without including MTL5.
+
+**Universal's side of those contracts** covers three things:
+- the quire's accumulator operations, including merge;
+- serializers for elastic types;
+- concept and `numeric_limits` fixes.
+
+The accumulator part already exists as `quire_accumulator.hpp`. It is copied **byte-for-byte into mp-blas, mp-ir, mp-iterative and mp-numerics**, with a **diverged** variant in mp-spice. It specializes MTL5's trait, so it has to include MTL5, which is why it can't live in Universal as written.
+
+#581 removes that constraint. MTL5's `accumulator_traits` now forwards to hook functions found by argument-dependent lookup on the accumulator type:
+- `accumulator_clear`
+- `accumulator_assign`
+- `accumulator_add_product`
+- `accumulator_value`
+- `accumulator_merge`, optional
+
+Universal can define these once next to `quire`, generically over every type that has a quire, without including MTL5. MTL5 only names them. The pattern is the one `fma_accumulator` already relies on for a posit's own `fma`.
+
+An explicit specialization still wins over the hook. So the copies keep working until each repo deletes its own, and no separate bridge repository is needed. That is worth doing now, independent of any distributed work.
 
 **The distributed layer (layer 2) depends on MTL5 only**, not on Universal. That refines the "on top of MTL5/Universal" premise. The reason is the same one that keeps MTL5 Universal-free:
 - it stays testable and usable with `double` alone;
 - its correctness doesn't depend on a number-system library;
 - Universal's types reach it through the same two contracts every other type uses.
 
-An application that wants distributed posits depends on layer 2 and the bridge. The distributed layer itself doesn't.
+An application that wants distributed posits depends on layer 2 and Universal. The distributed layer itself doesn't.
 
 **Applications (layer 3)** that need Universal, such as optimization, lattice reduction and circuit simulation, live in peer repos on top of both. That is how mp-spice and the other mp-* repos already work.
 
@@ -229,8 +247,10 @@ If and when an experiment needs one, start much smaller than Elemental:
 
 | Priority | Action | Where |
 |---|---|---|
-| Now | Consolidate `quire_accumulator.hpp` into one bridge; reconcile mp-spice's diverged copy | New bridge repo, or a Universal header |
-| Now | Add `merge` to `accumulator_traits`; use it to let accumulator-typed reductions run on the thread pool | MTL5 |
+| Now | ADL hook and `merge` in `accumulator_traits` (#581) | MTL5 |
+| Now | Define the hook functions for `quire` | Universal |
+| Then | Delete `quire_accumulator.hpp` from the mp-* repos; reconcile mp-spice's diverged `quire_acc` wrapper first | mp-* repos |
+| Next | Use `merge` to let accumulator-typed reductions run on the thread pool | MTL5 |
 | As consumers need them | Column-pivoted QR; pivoted Cholesky; polar/sign; Sylvester/Lyapunov; generalized symmetric-definite EVD; bidiagonal SVD; nested dissection | MTL5 |
 | When an experiment needs scale or reproducibility | Minimal distributed layer as in §5, measured against the success criterion | New peer repo, MTL5-only dependency |
 | Not planned | Optimization, lattice reduction, control applications | Application peer repos, if ever |
@@ -239,5 +259,4 @@ If and when an experiment needs one, start much smaller than Elemental:
 ## Open questions
 
 - **Is bitwise reproducibility across process counts a goal for the mixed-precision research programme?** If yes, the distributed layer has a clear purpose and the success criterion above is the first milestone. If not, the case for distribution rests on problem size alone, and no consumer has hit that limit.
-- **Where should the bridge live:** a new `mtl5-universal` repo, or Universal itself? The first keeps both libraries independent. The second removes a repository, but gives Universal knowledge of MTL5's trait.
 - **Which consumer drives the dense variants?** Column-pivoted QR is the most broadly useful: rank-revealing, and the basis of ID and CUR. mp-spice and the null-space work may have more specific needs.
