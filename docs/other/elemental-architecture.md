@@ -2,7 +2,7 @@
 
 ## Background
 
-[Elemental](https://github.com/elemental/Elemental) is a C++11 library for distributed-memory dense and sparse-direct linear algebra, conic optimization, and lattice reduction, built on MPI. All public API lives in namespace `El` (version 0.88-dev, BSD 2-Clause).
+[Elemental](https://github.com/elemental/Elemental) is a C++11 library for distributed-memory dense and sparse-direct linear algebra, conic optimization, and lattice reduction, built on MPI. The C++ API lives in namespace `El` (version 0.88-dev, BSD 2-Clause).
 
 This document is a survey of its core architecture and algorithm inventory, based on a read of the source tree at commit `00c642074` (~277 `.cpp` files and ~137K lines in `src/`, ~430 headers in `include/`). It was compiled from the directory layout and public headers; the code was not built or benchmarked.
 
@@ -238,7 +238,7 @@ Bidiagonal, Hermitian tridiagonal (with an option to move to a square process gr
 | **Hermitian EVD** | Tridiagonalize, then solve the tridiagonal problem with `HERM_TRIDIAG_EIG_QR`, `_DC` (divide and conquer with secular-equation solvers, `SecularEVD`, `CubicSecular`), or `_MRRR` (PMRRR). Subset computations by index or value range. Spectral divide-and-conquer (SDC) alternative. |
 | **Generalized Hermitian-definite** | `HermitianGenDefEig` with pencil types `AXBX`, `ABX`, `BAX` |
 | **Skew-Hermitian / Hermitian SVD** | `SkewHermitianEig`, `HermitianSVD` |
-| **Nonsymmetric Schur** | Hessenberg QR: `HESSENBERG_SCHUR_SIMPLE` (single and double shift), `_MULTIBULGE` (small-bulge multishift, Braman–Byers–Mathias), `_AED` (aggressive early deflation, distributed sweeps). SDC and inverse-free SDC Schur. Real-to-complex Schur conversion. `TriangEig` for eigenvectors, `Eig` for full eigendecomposition. |
+| **Nonsymmetric Schur** | Hessenberg QR: `HESSENBERG_SCHUR_SIMPLE` (single and double shift), `_MULTIBULGE` (small-bulge multishift, Braman–Byers–Mathias), `_AED` (aggressive early deflation: the driver and its multibulge sweeps run on distributed matrices, but each deflation window is gathered to one process and solved sequentially there). SDC and inverse-free SDC Schur. Real-to-complex Schur conversion. `TriangEig` for eigenvectors, `Eig` for full eigendecomposition. |
 | **SVD** | Golub–Reinsch; Chan's R-SVD (QR first, then SVD); product (cross-product) SVD; bidiagonal SVD via QR or divide and conquer (`SecularSVD`). Thin, compact and full approaches, with absolute or relative tolerances. |
 | **Polar decomposition** | QDWH (QR-based dynamically weighted Halley) or SVD-based |
 | **Pseudospectra** | ‖(A − zI)⁻¹‖ over a grid of z values, via power iteration, Lanczos, IRL/IRA, or Hager–Higham one-norm estimation, plus analytic cases; `SnapshotCtrl` writes images during the computation |
