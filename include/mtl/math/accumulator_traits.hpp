@@ -130,8 +130,13 @@ struct accumulator_traits {
     /// per-thread or per-process partials of a parallel dot product. For this
     /// configuration it is an ordinary add, one rounding; for an exact
     /// super-accumulator it is exact, which is what makes a parallel reduction
-    /// independent of how the terms were partitioned.
-    static void merge(Acc& a, const Acc& b) { a += b; }
+    /// independent of how the terms were partitioned. Offered only when `Acc`
+    /// has a `+=`, so `mergeable_accumulator` is an accurate test.
+    static void merge(Acc& a, const Acc& b)
+        requires requires(Acc& x, const Acc& y) { x += y; }
+    {
+        a += b;
+    }
 };
 
 /// Configuration 3 via the ADL hook: does `Acc`'s own namespace provide the
@@ -234,6 +239,17 @@ struct accumulator_traits<fma_accumulator<T>, Value> {
 
     /// Combine two partial sums: one ordinary add, rounded to `T`.
     static void merge(Acc& a, const Acc& b) { a.sum += b.sum; }
+};
+
+/// Can two partial accumulators of a reduction be combined?
+///
+/// True for configurations 1 and 2, and for an ADL accumulator that provides
+/// `accumulator_merge`; false for a specialization without a `merge`. The
+/// reductions in dot.hpp and norms.hpp split across the thread pool only when
+/// this holds (#582), and otherwise run serially as before.
+template <typename Acc, typename Value>
+concept mergeable_accumulator = requires(Acc& a, const Acc& b) {
+    accumulator_traits<Acc, Value>::merge(a, b);
 };
 
 /// The arithmetic type an accumulator should be rounded out to before a scalar

@@ -12,6 +12,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/detail/accumulate.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
@@ -118,14 +119,21 @@ auto dot(const V1& v1, const V2& v2) {
             return simd::reduce_dot_widen<Accumulator, typename V1::value_type>(
                 v1.data(), v2.data(), v1.size());
         } else {
+            // Split across the thread pool when the operands are plain dense
+            // storage and the accumulator can merge (#582); serial otherwise,
+            // and at one thread exactly the loop it always was.
             using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
             using AT = math::accumulator_traits<Accumulator, Value>;
-            Accumulator acc{};
-            AT::clear(acc);
-            for (typename V1::size_type i = 0; i < v1.size(); ++i)
-                AT::add_product(acc,
-                    static_cast<Value>(functor::scalar::conj<typename V1::value_type>::apply(v1(i))),
-                    static_cast<Value>(v2(i)));
+            constexpr bool threadable = interface::ThreadableDenseVector<V1> &&
+                                        interface::ThreadableDenseVector<V2>;
+            const Accumulator acc = detail::accumulate<Accumulator, Value, threadable>(
+                v1.size(), detail::accumulate_chunk_units<Accumulator, Value>,
+                [&](Accumulator& a, std::size_t lo, std::size_t hi) {
+                    for (std::size_t i = lo; i < hi; ++i)
+                        AT::add_product(a,
+                            static_cast<Value>(functor::scalar::conj<typename V1::value_type>::apply(v1(i))),
+                            static_cast<Value>(v2(i)));
+                });
             return AT::template value<Result>(acc);
         }
     } else {
@@ -208,12 +216,17 @@ auto dot_real(const V1& v1, const V2& v2) {
             return simd::reduce_dot_widen<Accumulator, typename V1::value_type>(
                 v1.data(), v2.data(), v1.size());
         } else {
+            // Threaded as `dot` is (#582).
             using Value = std::common_type_t<typename V1::value_type, typename V2::value_type>;
             using AT = math::accumulator_traits<Accumulator, Value>;
-            Accumulator acc{};
-            AT::clear(acc);
-            for (typename V1::size_type i = 0; i < v1.size(); ++i)
-                AT::add_product(acc, static_cast<Value>(v1(i)), static_cast<Value>(v2(i)));
+            constexpr bool threadable = interface::ThreadableDenseVector<V1> &&
+                                        interface::ThreadableDenseVector<V2>;
+            const Accumulator acc = detail::accumulate<Accumulator, Value, threadable>(
+                v1.size(), detail::accumulate_chunk_units<Accumulator, Value>,
+                [&](Accumulator& a, std::size_t lo, std::size_t hi) {
+                    for (std::size_t i = lo; i < hi; ++i)
+                        AT::add_product(a, static_cast<Value>(v1(i)), static_cast<Value>(v2(i)));
+                });
             return AT::template value<Result>(acc);
         }
     } else {
