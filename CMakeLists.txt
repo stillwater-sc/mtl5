@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.22...4.2)
 # If building from a git tag like v5.3.0, extract the version automatically.
 # Falls back to the hardcoded version below when git is unavailable or
 # the working directory is not a tagged commit.
-set(MTL5_FALLBACK_VERSION "5.17.0")
+set(MTL5_FALLBACK_VERSION "5.18.0")
 
 find_package(Git QUIET)
 if(GIT_FOUND)
