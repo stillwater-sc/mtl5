@@ -26,6 +26,7 @@ before.
 | **GEMV** (row- and col-major) | `operation/mult.hpp` | output rows | **Yes** |
 | **axpy**, **scal** | `operation/{axpy,scale}.hpp` | element range | **Yes** |
 | **dot**, **two_norm** | `operation/{dot,norms}.hpp` | chunked reduction | No¹ |
+| **dot**, **dot_real**, **two_norm**, **frobenius_norm** with an `Accumulator` | `operation/{dot,norms}.hpp`, `detail/accumulate.hpp` | chunked reduction, partials combined by `accumulator_traits::merge` | **Yes** for an exact accumulator, otherwise No¹ ² |
 | **SpMV** (`compressed2D * vector`) | `mat/operators.hpp` | output rows | **Yes** |
 
 ¹ The reduction kernels sum per-chunk partials, so the result is **deterministic
@@ -33,6 +34,17 @@ for a fixed thread count** but not bit-identical to the serial summation (the
 grouping/associativity differs). The library's tolerances (`WithinRel`) account
 for this. Every other kernel produces each output element from exactly one chunk,
 so its result is bit-identical regardless of `MTL5_NUM_THREADS`.
+
+² The accumulator-typed reductions (#582) split only when the operands are plain
+dense storage (`ThreadableDenseVector`/`ThreadableDenseMatrix`) and the accumulator
+satisfies `mergeable_accumulator`. An accumulator without a `merge` runs serially,
+as before. With an exact accumulator, such as a Universal quire, every partial and
+the merge are exact, so the result is the same bits for any thread count: on 2²⁰
+posit<32,2> elements, `dot<quire<P>, P>` took 830 ms on 1 thread, 437 ms on 2,
+228 ms on 4 and 125 ms on 8, with identical results. A rounding accumulator (a plain
+wider type, `fma_accumulator`) regroups like the other reductions: a `double`
+accumulator over the same data gave a different last few bits at each of 1, 2, 4 and
+8 threads.
 
 Because the iterative solvers (`mtl::itl` — CG, GMRES, BiCGSTAB, MINRES, …) and
 the eigensolvers are written against `A * x`, `dot`, and `axpy`, they inherit the
@@ -48,6 +60,11 @@ SpMV/L1 threading with no solver-code changes.
   element-wise/per-row kernels.
 - **`parallel_reduce<T>(n, grain, map)`** — chunked reduction combined with
   `operator+` in chunk order, for `dot`/`nrm2`.
+- **`parallel_accumulate<Acc>(n, grain, init, map, combine)`** — the same chunking,
+  but each chunk accumulates into its own partial and the partials are folded in
+  chunk order by the caller's `combine`, for accumulators that have no `+`. One
+  thread, or too little work to split, is exactly `acc = init(); map(acc, 0, n)`.
+  `detail::accumulate` drives it with `accumulator_traits::merge`.
 - A **grain threshold** keeps small problems serial so the handoff never costs
   more than the work; nested/concurrent regions fall back to serial (no
   oversubscription or deadlock).
@@ -137,6 +154,8 @@ not GFLOP/s:
 ## Determinism guidance
 
 For reproducible-to-the-bit results across runs, keep `MTL5_NUM_THREADS` fixed
-(or `=1`): every kernel except `dot`/`nrm2` is bit-identical across thread counts,
-and even those are deterministic for a fixed thread count. If you need
-serial-exact reductions, run those with `MTL5_NUM_THREADS=1`.
+(or `=1`): every kernel except the reductions (`dot`/`nrm2`, and the
+accumulator-typed ones with a rounding accumulator) is bit-identical across thread
+counts, and even those are deterministic for a fixed thread count. If you need
+serial-exact reductions, run those with `MTL5_NUM_THREADS=1`, or use an exact
+accumulator, whose reductions give the same bits at any thread count.

@@ -24,6 +24,7 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace mtl::detail {
@@ -157,6 +158,50 @@ public:
         // so plus-only result types work. Deterministic tid order.
         for (unsigned t = 0; t < team; ++t) acc = acc + partials[t];
         return acc;
+    }
+
+    /// Reduce over [0, n) into accumulator partials that are combined by the
+    /// caller's `combine`, not by `+` on a result type (#582).
+    ///
+    /// `init()` returns an empty accumulator; `map(acc, begin, end)` adds one
+    /// chunk's terms to it; `combine(into, from)` folds a partial into another.
+    /// The chunking is parallel_for's: contiguous, deterministic, capped so each
+    /// chunk holds >= `grain` units. Partials are folded in tid order, starting
+    /// from tid 0's.
+    ///
+    /// Serially (one thread, or n too small to split) this is exactly
+    /// `acc = init(); map(acc, 0, n);`, so a caller's single-threaded result is
+    /// unchanged. Threaded, the result equals the serial one whenever `combine`
+    /// and `map` are exact -- a super-accumulator such as a quire -- whatever
+    /// the thread count. For a rounding accumulator it is deterministic for a
+    /// fixed thread count but regrouped, as parallel_reduce is.
+    template <typename Acc, typename InitFn, typename MapFn, typename CombineFn>
+    Acc parallel_accumulate(std::size_t n, std::size_t grain,
+                            InitFn&& init, MapFn&& map, CombineFn&& combine) {
+        unsigned team = n_;
+        if (team <= 1 || grain == 0 || n < grain * 2) {
+            team = 1;
+        } else {
+            const std::size_t max_chunks = n / grain;
+            if (static_cast<std::size_t>(team) > max_chunks)
+                team = static_cast<unsigned>(max_chunks);
+        }
+        if (team <= 1) {
+            Acc acc = init();
+            map(acc, std::size_t{0}, n);
+            return acc;
+        }
+        const std::size_t chunk = (n + team - 1) / team;
+        std::vector<Acc> partials;
+        partials.reserve(team);
+        for (unsigned t = 0; t < team; ++t) partials.push_back(init());
+        run(team, [&](unsigned tid) {
+            const std::size_t b = static_cast<std::size_t>(tid) * chunk;
+            if (b >= n) return;
+            map(partials[tid], b, (n < b + chunk) ? n : b + chunk);
+        });
+        for (unsigned t = 1; t < team; ++t) combine(partials[0], partials[t]);
+        return std::move(partials[0]);
     }
 
     thread_pool(const thread_pool&) = delete;

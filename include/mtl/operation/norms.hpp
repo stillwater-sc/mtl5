@@ -12,6 +12,7 @@
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/detail/accumulate.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <type_traits>
@@ -69,12 +70,18 @@ auto two_norm(const V& v) {
     if constexpr (!std::is_void_v<Accumulator>) {
         using out_t = std::conditional_t<std::is_void_v<Result>, mag_t, Result>;
         using AT = math::accumulator_traits<Accumulator, mag_t>;
-        Accumulator acc{};
-        AT::clear(acc);
-        for (typename V::size_type i = 0; i < v.size(); ++i) {
-            mag_t a = detail::generic_abs(v(i));
-            AT::add_product(acc, a, a);               // acc += a*a in Accumulator
-        }
+        // Split across the thread pool when v is plain dense storage and the
+        // accumulator can merge (#582); serial otherwise, and at one thread
+        // exactly the loop it always was.
+        const Accumulator acc = detail::accumulate<Accumulator, mag_t,
+                                                   interface::ThreadableDenseVector<V>>(
+            v.size(), detail::accumulate_chunk_units<Accumulator, mag_t>,
+            [&](Accumulator& part, std::size_t lo, std::size_t hi) {
+                for (std::size_t i = lo; i < hi; ++i) {
+                    mag_t a = detail::generic_abs(v(i));
+                    AT::add_product(part, a, a);       // part += a*a in Accumulator
+                }
+            });
         using std::sqrt;
         // Round out to the accumulator's own arithmetic precision, not to the
         // accumulator TYPE: the latter is a no-op for a plain arithmetic
@@ -153,14 +160,24 @@ auto frobenius_norm(const M& m) {
     if constexpr (!std::is_void_v<Accumulator>) {
         using out_t = std::conditional_t<std::is_void_v<Result>, mag_t, Result>;
         using AT = math::accumulator_traits<Accumulator, mag_t>;
-        Accumulator acc{};
-        AT::clear(acc);
-        for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
-            for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-                mag_t a = detail::generic_abs(m(r, c));
-                AT::add_product(acc, a, a);
-            }
-        }
+        // Split by rows across the thread pool when m is plain dense storage and
+        // the accumulator can merge (#582); serial otherwise. Each chunk walks
+        // its rows in the serial order, so one thread gives the original loop.
+        const std::size_t ncols = m.num_cols();
+        const std::size_t row_grain = ncols
+            ? std::max(std::size_t{1}, detail::accumulate_chunk_units<Accumulator, mag_t> / ncols)
+            : std::size_t{1};
+        const Accumulator acc = detail::accumulate<Accumulator, mag_t,
+                                                   interface::ThreadableDenseMatrix<M>>(
+            m.num_rows(), row_grain,
+            [&](Accumulator& part, std::size_t lo, std::size_t hi) {
+                for (std::size_t r = lo; r < hi; ++r) {
+                    for (std::size_t c = 0; c < ncols; ++c) {
+                        mag_t a = detail::generic_abs(m(r, c));
+                        AT::add_product(part, a, a);
+                    }
+                }
+            });
         using std::sqrt;
         // Round out to the accumulator's own arithmetic precision, not to the
         // accumulator TYPE: the latter is a no-op for a plain arithmetic
