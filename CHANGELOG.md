@@ -5,6 +5,24 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.18.0] - 2026-10-16
+
+A Universal quire is now an accumulator for any MTL5 operation that takes one, with no bridge header in between. `accumulator_traits` forwards to free functions defined next to the accumulator type, which Universal 5.7.0 provides for its quire. The trait also gains `merge`, the combine step a parallel reduction needs. Nothing changes for existing accumulators: plain and `fma_accumulator` behave as before, and an explicit `accumulator_traits` specialization still takes precedence. Two design documents compare MTL5 with Elemental.
+
+### Added
+
+- **Super-accumulators plug into `accumulator_traits` through free functions found by argument-dependent lookup** (#581, #582). When an accumulator's own namespace provides `accumulator_clear`, `accumulator_assign`, `accumulator_add_product` and `accumulator_value(acc, std::type_identity<R>{})`, the `adl_accumulator` concept is satisfied and a constrained specialization forwards each operation to them. `accumulator_merge` is optional.
+  - **Why:** the Universal quire's specialization was a header, `quire_accumulator.hpp`, copied byte for byte into mp-blas, mp-ir, mp-iterative and mp-numerics, with diverged copies in mp-spice and mtl5-python. It specialized MTL5's trait, so it had to include MTL5 and couldn't live in Universal. Now Universal defines the functions beside `quire` (universal#1699, in 5.7.0) without including MTL5, and MTL5 only names them, so it stays Universal-free. `dot<quire<P>, P>(x, y)` and `sparse_lu_solve<quire<P>>(A, x, b)` work with Universal 5.7.0 and nothing else. The mp-* repos have deleted their copies; mtl5-python can once it pins this release.
+  - **Precedence:** a specialization that names the accumulator type is more specialized than the constrained one, so an existing bridge keeps compiling and keeps being used until it is deleted.
+  - **Naming:** `accumulator_value` takes a `std::type_identity<R>` tag rather than an explicit template argument, so the call is an ordinary ADL call on every compiler. The hook functions should be constrained on the accumulator type, since ADL also searches the namespaces associated with `Value`.
+- **`accumulator_traits::merge(a, b)`** combines two partial accumulators of the same reduction: an ordinary add for plain accumulators and `fma_accumulator`, and `accumulator_merge` for an ADL accumulator, which has no `merge()` if it doesn't provide one. For an exact accumulator the combination is exact, so a reduction split across threads or processes gives the same bits however it was split. No kernel uses it yet; letting one accumulator-typed reduction run on `thread_pool` is tracked in #582.
+- **Tests:** `test_accumulator_adl_hook` uses a mock exact accumulator in its own namespace. It checks concept satisfaction (configurations 1 and 2 don't satisfy it), forwarding, a 1 − 10⁸ + 10⁸ cancellation that the accumulator keeps exact, `merge` for all three configurations, that a specialization beats the hook, `dot<Acc, Result>`, and all six one-shot sparse direct solvers factoring and solving through the hook.
+
+### Documentation
+
+- **`docs/other/elemental-architecture.md`** (#578) surveys Elemental: the `DistMatrix` distribution algebra, its MPI layer, the closed set of precisions it instantiates, and its maintenance status.
+- **`docs/other/mtl5-elemental-assessment.md`** (#580) compares MTL5 with Elemental and proposes a layering. Its recommendation is not to port Elemental. The single-node dense algorithms it has and MTL5 lacks, such as column-pivoted QR, pivoted Cholesky and polar decomposition, belong in MTL5. A distributed layer would be a separate repository depending on MTL5 alone, and is worth building only for reductions that are exact and independent of the process count. Its prerequisites were the ADL hook and `merge` above.
+
 ## [5.17.0] - 2026-10-15
 
 A thin SVD and a faster Jacobi core behind every `svd`, and the accumulator policy carried from the sparse direct factorizations into their solves, so a factorization with a wider or exact accumulator no longer ends in a plain rounded triangular solve. One behavior change: the generic `svd`, the V-only `svd` and `null_vector` return different last bits (see Changed); the LAPACK `gesdd` path is unaffected. The new `Accumulator` parameter on the sparse solves defaults to `void`, which returns exactly the bits 5.16.0 did.
