@@ -204,7 +204,7 @@ TEST_CASE("exact accumulator: exact sums and one correctly rounded round-out",
         accumulator_add_product(acc, -3.0f, 7.0f);
         REQUIRE(round_out(acc) == 0.0f);
         accumulator_add_product(acc, -0x1p-149f, 0x1p-10f);        // below every float
-        REQUIRE(round_out(acc) == -0.0f);
+        REQUIRE(same_bits(round_out(acc), -0.0f));               // the sign survives
         REQUIRE(accumulator_value(acc, std::type_identity<double>{}) == -0x1p-159);
         auto sub = zero<float>();
         accumulator_add_product(sub, 0x1p-75f, 0x1p-75f);           // 2^-150: half the least
@@ -371,6 +371,8 @@ TEST_CASE("[586:norms] two_norm and frobenius_norm: no overflow or underflow los
             v(i) = (i % 3 ? 1e30f : -3e29f) * static_cast<float>(1 + i % 7);
         REQUIRE(std::isinf(mtl::two_norm<float, double>(v)));
         REQUIRE(std::isinf(mtl::two_norm<fma_acc<float>, double>(v)));
+        REQUIRE(std::isinf(err(exact_test::zero<float>(), std::numeric_limits<float>::infinity())));
+        REQUIRE(std::isnan(err(exact_test::zero<float>(), std::numeric_limits<float>::quiet_NaN())));
         const double n3 = mtl::two_norm<exact_acc<float>, double>(v);
         REQUIRE(std::isfinite(n3));
         REQUIRE(n3 == expect(v));

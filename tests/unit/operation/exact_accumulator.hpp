@@ -196,9 +196,14 @@ exact_acc<T> zero() {
     return a;
 }
 
-/// |exact - computed|, rounded once to double.
+/// |exact - computed|, rounded once to double. A non-finite `computed` has a
+/// non-finite error (inf, or NaN, which fails every `<=` it meets); it is not
+/// handed to `decompose`, whose integer conversion assumes a finite value.
 template <typename T, typename C>
 double err(const exact_acc<T>& exact, C computed) {
+    if (!std::isfinite(computed))
+        return std::isnan(computed) ? std::numeric_limits<double>::quiet_NaN()
+                                    : std::numeric_limits<double>::infinity();
     exact_acc<T> d = exact;
     accumulator_add_product(d, static_cast<T>(-computed), T(1));
     return std::fabs(accumulator_value(d, std::type_identity<double>{}));
