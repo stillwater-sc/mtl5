@@ -83,6 +83,7 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # op_test_accumulation_configs_mt compares configuration 1 (the product rounds,
 # then the sum) with configuration 2 (fma_accumulator) (#586). Contracting
 # acc += a*b turns the first into the second, and the comparison measures nothing.
+# op_test_accumulation_solvers_mt runs the same configurations through the solvers.
 #
 # sparse_test_solve_accumulator_policy asserts that the level-scheduled solves,
 # with the default and with an `Acc == Value` accumulator (#535), are bit-identical
@@ -97,6 +98,7 @@ if(NOT MSVC)
                       op_test_householder_textbook
                       op_test_mult_acc_panel_mt
                       op_test_accumulation_configs_mt
+                      op_test_accumulation_solvers_mt
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
