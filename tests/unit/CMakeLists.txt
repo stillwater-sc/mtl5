@@ -75,6 +75,11 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # op_test_householder_textbook does the same for the textbook Householder
 # reflector and qr_factor (#559).
 #
+# op_test_mult_acc_panel_mt asserts that the packed-panel accumulator GEMM (#587)
+# is bit-identical to the dot-product kernel it replaced. The packed kernel
+# vectorizes across columns, so on an FMA target it can contract acc += a*b
+# where the scalar reference does not.
+#
 # sparse_test_solve_accumulator_policy asserts that the level-scheduled solves,
 # with the default and with an `Acc == Value` accumulator (#535), are bit-identical
 # to the dense_* scatter references -- the same order-of-operations claim as
@@ -86,6 +91,7 @@ if(NOT MSVC)
                       op_test_mult_ikj
                       op_test_cholesky_ordering
                       op_test_householder_textbook
+                      op_test_mult_acc_panel_mt
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
