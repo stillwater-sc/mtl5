@@ -32,16 +32,28 @@
 // one-ULP perturbation through into the silently-wrong-answer path.
 //
 // Reference: Golub & Van Loan, "Matrix Computations", Section 4.1.2
+//
+// Mixed precision (#585): every routine takes a leading `Accumulator` (default
+// void, see math/accumulator_traits.hpp); void is byte-identical to the
+// routines before #585. In the factorizations a non-void accumulator forms each
+// entry as ONE reduction, A(i,j) - sum_k L(i,k) v(k) with v(k) = conj(L(j,k))
+// D(k) rounded to the element type, then rounds once -- the sparse LDL^T's form
+// (#531). In the solves it forms each row's b(i) - sum_j L(i,j) x(j) the same
+// way, rounded once, as the sparse level-scheduled solves do (#535).
 
 #include <cassert>
 #include <cstddef>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <type_traits>
+#include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/functor/scalar/real.hpp>
 #include <mtl/functor/scalar/imag.hpp>
@@ -62,11 +74,90 @@ inline constexpr int LDLT_NOT_SYMMETRIC = -1;
 inline constexpr int LDLT_NOT_HERMITIAN = -2;
 
 
+namespace detail {
+
+/// The accumulator loop of ldlt_factor (Conj = false, A = L D L^T) and
+/// ldlt_h_factor (Conj = true, A = L D L^H, D real). Column j first forms
+/// v(k) = conj?(L(j,k)) * D(k), once, in the element type; then
+///
+///   D(j)   = A(j,j) - sum_k L(j,k) v(k)            (real part when Conj)
+///   L(i,j) = (A(i,j) - sum_k L(i,k) v(k)) / D(j)
+///
+/// each one accumulator, assigned the matrix entry and rounded once.
+template <typename Accumulator, bool Conj, typename M>
+int ldlt_factor_acc(M& A) {
+    using value_type = typename M::value_type;
+    using conj_t     = functor::scalar::conj<value_type>;
+    using AT         = math::accumulator_traits<Accumulator, value_type>;
+    const std::size_t n = A.num_rows();
+    std::vector<value_type> v(n);
+
+    auto reduce = [&](std::size_t i, std::size_t j) {
+        Accumulator acc{};
+        AT::assign(acc, A(i, j));
+        for (std::size_t k = 0; k < j; ++k)
+            AT::add_product(acc, value_type(-A(i, k)), v[k]);
+        return AT::template value<value_type>(acc);
+    };
+
+    for (std::size_t j = 0; j < n; ++j) {
+        for (std::size_t k = 0; k < j; ++k) {
+            const value_type ljk = A(j, k);
+            v[k] = (Conj ? conj_t::apply(ljk) : ljk) * A(k, k);   // A(k,k) holds D(k)
+        }
+        value_type dj = reduce(j, j);
+        if constexpr (Conj)
+            dj = value_type(functor::scalar::real<value_type>::apply(dj));
+        if (dj == math::zero<value_type>())
+            return static_cast<int>(j + 1);
+        A(j, j) = dj;
+        for (std::size_t i = j + 1; i < n; ++i)
+            A(i, j) = reduce(i, j) / dj;
+    }
+    return 0;
+}
+
+/// The three phases of an LDL^T (Conj = false) or LDL^H (true) solve, with each
+/// row's b(i) - sum of products formed in Accumulator and rounded once.
+template <typename Accumulator, bool Conj, typename M, typename VecX, typename VecB>
+void ldlt_solve_acc(const M& A, VecX& x, const VecB& b, const char* who) {
+    using value_type = typename VecX::value_type;
+    using conj_t     = functor::scalar::conj<value_type>;
+    using AT         = math::accumulator_traits<Accumulator, value_type>;
+    const std::size_t n = A.num_rows();
+
+    for (std::size_t i = 0; i < n; ++i) {
+        Accumulator acc{};
+        AT::assign(acc, value_type(b(i)));
+        for (std::size_t j = 0; j < i; ++j)
+            AT::add_product(acc, value_type(-A(i, j)), value_type(x(j)));
+        x(i) = AT::template value<value_type>(acc);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        if (A(i, i) == math::zero<value_type>())
+            throw std::domain_error(std::string(who) + ": zero diagonal pivot in D");
+        x(i) /= A(i, i);
+    }
+    for (std::size_t ii = 0; ii < n; ++ii) {
+        const std::size_t i = n - 1 - ii;
+        Accumulator acc{};
+        AT::assign(acc, value_type(x(i)));
+        for (std::size_t j = i + 1; j < n; ++j) {
+            const value_type lji = A(j, i);
+            AT::add_product(acc, value_type(-(Conj ? conj_t::apply(lji) : lji)), value_type(x(j)));
+        }
+        x(i) = AT::template value<value_type>(acc);
+    }
+}
+
+} // namespace detail
+
 /// LDL^T factorization: A = L * D * L^T.
 /// The strictly lower triangle of A is overwritten with L (unit diagonal implicit).
 /// The diagonal of A is overwritten with D.
 /// Returns 0 on success, k+1 if D(k,k) == 0 (zero pivot).
-template <FieldMatrix M>
+/// A non-void `Accumulator` forms each entry as one reduction (top of file).
+template <typename Accumulator = void, FieldMatrix M>
 int ldlt_factor(M& A) {
     using value_type = typename M::value_type;
     const std::size_t n = A.num_rows();
@@ -110,6 +201,9 @@ int ldlt_factor(M& A) {
         if (herm_err <= tol && sym_err > tol) return LDLT_NOT_SYMMETRIC;
     }
 
+    if constexpr (!std::is_void_v<Accumulator>)
+        return detail::ldlt_factor_acc<Accumulator, false>(A);
+
     // Algorithm: column-outer LDL^T (Golub & Van Loan, Algorithm 4.1.2)
     //
     // For j = 0..n-1:
@@ -142,11 +236,17 @@ int ldlt_factor(M& A) {
 /// Solve A*x = b using precomputed LDL^T factors stored in A.
 /// Lower triangle of A contains L (unit diagonal implicit), diagonal contains D.
 /// Three phases: L*y = b (forward), D*z = y (diagonal), L^T*x = z (backward).
-template <FieldMatrix M, Vector VecX, Vector VecB>
+/// `Accumulator` forms each row's sum of products.
+template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
 void ldlt_solve(const M& A, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     const std::size_t n = A.num_rows();
     assert(A.num_cols() == n && x.size() == n && b.size() == n);
+
+    if constexpr (!std::is_void_v<Accumulator>) {
+        detail::ldlt_solve_acc<Accumulator, false>(A, x, b, "ldlt_solve");
+        return;
+    }
 
     // Forward substitution: L*y = b (L has unit diagonal)
     for (std::size_t i = 0; i < n; ++i) {
@@ -190,7 +290,8 @@ void ldlt_solve(const M& A, VecX& x, const VecB& b) {
 /// For real element types conjugation is the identity and this is exactly
 /// ldlt_factor. For complex elements it is the factorization a Hermitian matrix
 /// actually has -- see the note at the top of this file (#352).
-template <FieldMatrix M>
+/// A non-void `Accumulator` forms each entry as one reduction (top of file).
+template <typename Accumulator = void, FieldMatrix M>
 int ldlt_h_factor(M& A) {
     using value_type = typename M::value_type;
     using mag_t      = magnitude_t<value_type>;
@@ -219,6 +320,9 @@ int ldlt_h_factor(M& A) {
         }
         if (dimag > detail::structure_tol(n, dscale)) return LDLT_NOT_HERMITIAN;
     }
+
+    if constexpr (!std::is_void_v<Accumulator>)
+        return detail::ldlt_factor_acc<Accumulator, true>(A);
 
     // For j = 0..n-1:
     //   D(j)   = Re( A(j,j) - sum_{k<j} |L(j,k)|^2 * D(k) )
@@ -252,12 +356,18 @@ int ldlt_h_factor(M& A) {
 
 /// Solve A*x = b using precomputed LDL^H factors stored in A.
 /// Three phases: L*y = b (forward), D*z = y (diagonal), L^H*x = z (backward).
-template <FieldMatrix M, Vector VecX, Vector VecB>
+/// `Accumulator` forms each row's sum of products.
+template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
 void ldlt_h_solve(const M& A, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     using conj_t     = functor::scalar::conj<value_type>;
     const std::size_t n = A.num_rows();
     assert(A.num_cols() == n && x.size() == n && b.size() == n);
+
+    if constexpr (!std::is_void_v<Accumulator>) {
+        detail::ldlt_solve_acc<Accumulator, true>(A, x, b, "ldlt_h_solve");
+        return;
+    }
 
     // Forward: L*y = b (unit diagonal)
     for (std::size_t i = 0; i < n; ++i) {
