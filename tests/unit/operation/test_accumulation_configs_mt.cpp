@@ -412,13 +412,18 @@ TEST_CASE("[586:norms] two_norm and frobenius_norm: no overflow or underflow los
 
 TEST_CASE("[586:determinism] Accumulator = void is configuration 1 at the same type",
           "[586:determinism][accumulator]") {
-#ifdef MTL5_HAS_BLAS
+#if defined(MTL5_HAS_BLAS)
     SKIP("with BLAS, Accumulator = void dispatches to the vendor kernel, whose order is its own");
+#elif defined(MTL5_NATIVE_FAST_GEMM)
+    SKIP("with MTL5_NATIVE_FAST_GEMM, Accumulator = void takes the SIMD GEMM/GEMV, "
+         "which split each entry's sum across lanes");
 #else
-    // The default GEMM and GEMV sum each entry in ascending k, as the
-    // accumulator kernels do, so the bits agree. (dot and two_norm with
-    // Accumulator = void take a SIMD reduction that splits the sum across
-    // lanes; that is a different order by design, and not claimed here.)
+    // The default native GEMM and GEMV sum each entry in ascending k, as the
+    // accumulator kernels do, so the bits agree. The claim is about THOSE
+    // kernels: with BLAS or MTL5_NATIVE_FAST_GEMM, Accumulator = void selects a
+    // kernel that blocks or splits the sum across SIMD lanes, a different order
+    // by design. (dot and two_norm with Accumulator = void always take a SIMD
+    // reduction, so they are not claimed at all.)
     rng r(6);
     constexpr std::size_t M = 37, N = 29, K = 53;
     mtl::mat::dense2D<double> A(M, K), B(K, N), Cv(M, N), Ca(M, N);
