@@ -432,7 +432,9 @@ void mult_acc_panel_row(const MA& A, MC& C, std::size_t r, std::size_t j0,
 /// conversion the reference applies per term. So every accumulator, rounding
 /// ones included, gives the same C, at every thread count (#446, #584).
 ///
-/// Packing costs O(K * N) per row band against O(band * K * N) work.
+/// Packing costs O(K * N) per row band against O(band * K * N) work. The panel
+/// holds K * min(nr, N) values: a ragged last panel is packed at its own width,
+/// so a narrow C (one column, long K) does not reserve nr columns it never uses.
 template <typename Accumulator, Matrix MA, Matrix MB, Matrix MC>
 void mult_acc_panel_rows(const MA& A, const MB& B, MC& C,
                          std::size_t rb, std::size_t re) {
@@ -447,12 +449,12 @@ void mult_acc_panel_rows(const MA& A, const MB& B, MC& C,
     const std::size_t kdim  = static_cast<std::size_t>(A.num_cols());
     if (ncols == 0 || rb >= re)
         return;
-    std::vector<Value> panel(kdim * nr);
+    std::vector<Value> panel(kdim * std::min(nr, ncols));
     for (std::size_t j0 = 0; j0 < ncols; j0 += nr) {
-        const std::size_t w = std::min(nr, ncols - j0);
+        const std::size_t w = std::min(nr, ncols - j0);   // also the panel's stride
         for (std::size_t k = 0; k < kdim; ++k)
             for (std::size_t jj = 0; jj < w; ++jj)
-                panel[k * nr + jj] = static_cast<Value>(
+                panel[k * w + jj] = static_cast<Value>(
                     B(static_cast<typename MB::size_type>(k),
                       static_cast<typename MB::size_type>(j0 + jj)));
         for (std::size_t r = rb; r < re; ++r) {
@@ -460,8 +462,8 @@ void mult_acc_panel_rows(const MA& A, const MB& B, MC& C,
                 mult_acc_panel_row<nr, nr, Accumulator, AT>(A, C, r, j0, kdim, panel.data());
             else
                 [&]<std::size_t... W>(std::index_sequence<W...>) {
-                    // the ragged last panel, 1 .. nr-1 columns wide
-                    ((w == W + 1 ? mult_acc_panel_row<W + 1, nr, Accumulator, AT>(
+                    // the ragged last panel, 1 .. nr-1 columns wide, packed at stride w
+                    ((w == W + 1 ? mult_acc_panel_row<W + 1, W + 1, Accumulator, AT>(
                                        A, C, r, j0, kdim, panel.data())
                                  : void()), ...);
                 }(std::make_index_sequence<nr - 1>{});
