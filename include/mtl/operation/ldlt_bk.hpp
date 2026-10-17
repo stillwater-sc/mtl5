@@ -18,16 +18,41 @@
 //   Bunch & Kaufman, "Some Stable Methods for Calculating Inertia and
 //   Solving Symmetric Linear Systems", Math. Comp. 31(137), 1977.
 //   Golub & Van Loan, "Matrix Computations", Section 4.4.
+//
+// Mixed precision (#585): ldlt_bk_factor and ldlt_bk_solve take a leading
+// `Accumulator` (default void, see math/accumulator_traits.hpp); void is
+// byte-identical to the routines before #585. The void factorization is
+// right-looking -- every trailing entry is updated once per step -- so there is
+// no sum for an accumulator to hold. A non-void accumulator therefore runs a
+// LEFT-looking Bunch-Kaufman: column k of the Schur complement is formed on
+// demand, each entry one reduction
+//
+//     S(i,k) = A(i,k) - sum_{p<k} L(i,p) W(k,p),     W = L * D,
+//
+// rounded once (W is the unscaled pivot columns), and so is column r when the
+// pivot tests need it. Same tests, same alpha, same 1x1 / 2x2 choices on the
+// computed values, same ipiv encoding. While factoring it keeps L and W in one
+// row order (interchanges permute whole rows); at the end it undoes the later
+// interchanges on the earlier columns, which is the per-step layout
+// ldlt_bk_solve reads (see symmetric_swap). The solve likewise rebuilds the
+// one-row-order L, permutes b once, and substitutes by rows, forming each
+// b(i) - sum in the accumulator, rounded once, as the sparse solves do (#535).
+// The accumulator path stores W (n x n) in the factorization and a copy of L
+// in the solve.
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
+#include <mtl/detail/thread_pool.hpp>
 
 namespace mtl {
 
@@ -92,11 +117,241 @@ void symmetric_swap(M& A, std::size_t r1, std::size_t r2, std::size_t first_col 
     }
 }
 
+namespace detail {
+
+/// One interchange of the factorization: rows r1 < r2, made at step k (so it
+/// applies to the L columns p < k in the one-row-order convention).
+struct bk_interchange {
+    std::size_t k, r1, r2;
+};
+
+/// The interchanges ipiv records, in the order the factorization made them.
+inline std::vector<bk_interchange> bk_interchanges(const std::vector<int>& ipiv) {
+    std::vector<bk_interchange> out;
+    const std::size_t n = ipiv.size();
+    for (std::size_t k = 0; k < n;) {
+        if (ipiv[k] > 0) {
+            const auto p = static_cast<std::size_t>(ipiv[k] - 1);
+            if (p != k) out.push_back({k, std::min(k, p), std::max(k, p)});
+            ++k;
+        } else {
+            const auto p = static_cast<std::size_t>(-ipiv[k] - 1);
+            if (p != k + 1) out.push_back({k, std::min(k + 1, p), std::max(k + 1, p)});
+            k += 2;
+        }
+    }
+    return out;
+}
+
+/// ldlt_bk_factor's accumulator path: left-looking Bunch-Kaufman (top of file).
+template <typename Accumulator, typename M>
+int ldlt_bk_factor_acc(M& A, bk_pivot_info& pivots) {
+    using value_type = typename M::value_type;
+    using AT = math::accumulator_traits<Accumulator, value_type>;
+    using std::abs;
+    const std::size_t n = A.num_rows();
+    const value_type alpha = value_type((1.0 + std::sqrt(17.0)) / 8.0);
+
+    std::vector<value_type> W(n * n);              // W(j,p) = W[j * n + p], p < k
+    std::vector<value_type> ck(n), cr(n);          // columns k and r of S, rows >= k
+    std::vector<bk_interchange> swaps;
+
+    // S(i,j) at step k, from the lower triangle's not-yet-factored entry.
+    auto schur = [&](std::size_t i, std::size_t j, std::size_t k) {
+        Accumulator acc{};
+        AT::assign(acc, value_type(i >= j ? A(i, j) : A(j, i)));
+        for (std::size_t p = 0; p < k; ++p)
+            AT::add_product(acc, value_type(-A(i, p)), W[j * n + p]);
+        return AT::template value<value_type>(acc);
+    };
+    // c[i] = S(i,j) for i in [k, n); entries are independent.
+    auto column = [&](std::vector<value_type>& c, std::size_t j, std::size_t k) {
+        const std::size_t grain =
+            std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / (k == 0 ? 1 : k));
+        detail::thread_pool::instance().parallel_for(n - k, grain,
+            [&](std::size_t b, std::size_t e) {
+                for (std::size_t t = b; t < e; ++t) c[k + t] = schur(k + t, j, k);
+            });
+    };
+    // Interchange rows/columns r1 < r2 everywhere: L, W and the unfactored part.
+    auto interchange = [&](std::size_t k, std::size_t r1, std::size_t r2) {
+        symmetric_swap(A, r1, r2, 0);
+        for (std::size_t p = 0; p < k; ++p) std::swap(W[r1 * n + p], W[r2 * n + p]);
+        swaps.push_back({k, r1, r2});
+    };
+
+    std::size_t k = 0;
+    while (k < n) {
+        column(ck, k, k);
+        if (k == n - 1) {
+            if (ck[k] == math::zero<value_type>())
+                return static_cast<int>(k + 1);
+            A(k, k) = ck[k];
+            pivots.ipiv[k] = static_cast<int>(k + 1);
+            ++k;
+            continue;
+        }
+
+        std::size_t r = k + 1;
+        value_type lambda_val = abs(ck[k + 1]);
+        for (std::size_t i = k + 2; i < n; ++i) {
+            value_type aik = abs(ck[i]);
+            if (aik > lambda_val) {
+                lambda_val = aik;
+                r = i;
+            }
+        }
+
+        bool use_2x2 = false;
+        std::size_t swap_r = k;
+        if (lambda_val == math::zero<value_type>()) {
+            if (ck[k] == math::zero<value_type>())
+                return static_cast<int>(k + 1);
+        } else if (abs(ck[k]) >= alpha * lambda_val) {
+            // Test 1: 1x1, no interchange.
+        } else {
+            column(cr, r, k);
+            cr[k] = ck[r];                         // S(k,r) == S(r,k): one value for both
+            value_type sigma = math::zero<value_type>();
+            for (std::size_t i = k; i < n; ++i)
+                if (i != r && abs(cr[i]) > sigma) sigma = abs(cr[i]);
+
+            if (abs(ck[k]) * sigma >= alpha * lambda_val * lambda_val) {
+                // Test 2: 1x1, no interchange.
+            } else if (abs(cr[r]) >= alpha * sigma) {
+                // Test 3: 1x1 on S(r,r); interchange k <-> r. The new column k is
+                // column r with entries k and r exchanged.
+                swap_r = r;
+                interchange(k, k, r);
+                std::swap(cr[k], cr[r]);
+                std::swap(ck, cr);
+            } else {
+                // 2x2 on {k, r}; interchange k+1 <-> r, which permutes both columns.
+                use_2x2 = true;
+                if (r != k + 1) {
+                    interchange(k, k + 1, r);
+                    std::swap(ck[k + 1], ck[r]);
+                    std::swap(cr[k + 1], cr[r]);
+                }
+            }
+        }
+
+        if (!use_2x2) {
+            const value_type dkk = ck[k];
+            if (dkk == math::zero<value_type>())
+                return static_cast<int>(k + 1);
+            pivots.ipiv[k] = static_cast<int>(swap_r + 1);
+            A(k, k) = dkk;
+            for (std::size_t i = k + 1; i < n; ++i) {
+                W[i * n + k] = ck[i];
+                A(i, k) = ck[i] / dkk;
+            }
+            ++k;
+        } else {
+            const value_type d00 = ck[k], d10 = ck[k + 1], d11 = cr[k + 1];
+            const value_type det = d00 * d11 - d10 * d10;
+            if (det == math::zero<value_type>())
+                return static_cast<int>(k + 1);
+            pivots.ipiv[k]     = -static_cast<int>(r + 1);
+            pivots.ipiv[k + 1] = -static_cast<int>(r + 1);
+            const value_type inv_det = math::one<value_type>() / det;
+            const value_type di00 =  d11 * inv_det;
+            const value_type di01 = -d10 * inv_det;
+            const value_type di11 =  d00 * inv_det;
+            A(k, k) = d00;
+            A(k + 1, k) = d10;
+            A(k + 1, k + 1) = d11;
+            for (std::size_t i = k + 2; i < n; ++i) {
+                W[i * n + k]     = ck[i];
+                W[i * n + k + 1] = cr[i];
+                A(i, k)     = ck[i] * di00 + cr[i] * di01;
+                A(i, k + 1) = ck[i] * di01 + cr[i] * di11;
+            }
+            k += 2;
+        }
+    }
+
+    // To the per-step layout: undo each interchange on the columns before it,
+    // latest first.
+    for (auto it = swaps.rbegin(); it != swaps.rend(); ++it)
+        for (std::size_t p = 0; p < it->k; ++p)
+            std::swap(A(it->r1, p), A(it->r2, p));
+    return 0;
+}
+
+/// ldlt_bk_solve's accumulator path (top of file).
+template <typename Accumulator, typename M, typename VecX, typename VecB>
+void ldlt_bk_solve_acc(const M& A, const bk_pivot_info& pivots, VecX& x, const VecB& b) {
+    using value_type = typename VecX::value_type;
+    using AT = math::accumulator_traits<Accumulator, value_type>;
+    const std::size_t n = A.num_rows();
+    const auto swaps = bk_interchanges(pivots.ipiv);
+
+    // L in one row order: replay each interchange on the columns before it.
+    std::vector<value_type> L(n * n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < i; ++j) L[i * n + j] = value_type(A(i, j));
+    for (const auto& s : swaps)
+        for (std::size_t p = 0; p < s.k; ++p) std::swap(L[s.r1 * n + p], L[s.r2 * n + p]);
+    // (k+1, k) of a 2x2 block holds D, not L.
+    std::vector<bool> block2(n, false);
+    for (std::size_t k = 0; k < n;) {
+        if (pivots.ipiv[k] > 0) { ++k; } else { block2[k] = true; k += 2; }
+    }
+
+    for (std::size_t i = 0; i < n; ++i) x(i) = b(i);
+    for (const auto& s : swaps) std::swap(x(s.r1), x(s.r2));
+
+    for (std::size_t i = 0; i < n; ++i) {          // L y = P b
+        Accumulator acc{};
+        AT::assign(acc, value_type(x(i)));
+        for (std::size_t j = 0; j < i; ++j)
+            if (!(j + 1 == i && block2[j]))
+                AT::add_product(acc, value_type(-L[i * n + j]), value_type(x(j)));
+        x(i) = AT::template value<value_type>(acc);
+    }
+
+    for (std::size_t k = 0; k < n;) {              // D z = y, as the void solve
+        if (!block2[k]) {
+            if (A(k, k) == math::zero<value_type>())
+                throw std::domain_error("ldlt_bk_solve: zero 1x1 pivot in D");
+            x(k) = x(k) / A(k, k);
+            ++k;
+        } else {
+            value_type d00 = A(k, k);
+            value_type d10 = A(k + 1, k);
+            value_type d11 = A(k + 1, k + 1);
+            value_type det = d00 * d11 - d10 * d10;
+            if (det == math::zero<value_type>())
+                throw std::domain_error("ldlt_bk_solve: singular 2x2 pivot in D");
+            value_type xk  = x(k);
+            value_type xk1 = x(k + 1);
+            x(k)     = (d11 * xk - d10 * xk1) / det;
+            x(k + 1) = (d00 * xk1 - d10 * xk) / det;
+            k += 2;
+        }
+    }
+
+    for (std::size_t ii = n; ii-- > 0;) {          // L^T u = z
+        Accumulator acc{};
+        AT::assign(acc, value_type(x(ii)));
+        for (std::size_t j = ii + 1; j < n; ++j)
+            if (!(j == ii + 1 && block2[ii]))
+                AT::add_product(acc, value_type(-L[j * n + ii]), value_type(x(j)));
+        x(ii) = AT::template value<value_type>(acc);
+    }
+
+    for (auto it = swaps.rbegin(); it != swaps.rend(); ++it) std::swap(x(it->r1), x(it->r2));
+}
+
+} // namespace detail
+
 /// Bunch-Kaufman pivoted LDL^T factorization: P*A*P^T = L*D*L^T.
 /// In-place: lower triangle of A is overwritten with L (unit diagonal implicit),
 /// D occupies the diagonal and first subdiagonal for 2x2 blocks.
 /// Returns 0 on success, k+1 if a singular block is encountered at step k.
-template <FieldMatrix M>
+/// A non-void `Accumulator` runs the left-looking form (top of file).
+template <typename Accumulator = void, FieldMatrix M>
 int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
     using value_type = typename M::value_type;
     using std::abs;
@@ -104,6 +359,9 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
     assert(A.num_cols() == n);
 
     pivots.ipiv.resize(n, 0);
+
+    if constexpr (!std::is_void_v<Accumulator>)
+        return detail::ldlt_bk_factor_acc<Accumulator>(A, pivots);
 
     // Bunch-Kaufman threshold: alpha = (1 + sqrt(17)) / 8
     const value_type alpha = value_type((1.0 + std::sqrt(17.0)) / 8.0);
@@ -255,12 +513,18 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
 /// Solve A*x = b using precomputed Bunch-Kaufman LDL^T factors.
 /// The factored A contains L (unit lower, implicit diagonal) and D
 /// (diagonal and subdiagonal for 2x2 blocks). pivots records the
-/// permutation and block structure.
-template <FieldMatrix M, Vector VecX, Vector VecB>
+/// permutation and block structure. A non-void `Accumulator` substitutes by
+/// rows, forming each b(i) - sum in one reduction (top of file).
+template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
 void ldlt_bk_solve(const M& A, const bk_pivot_info& pivots, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     const std::size_t n = A.num_rows();
     assert(A.num_cols() == n && x.size() == n && b.size() == n);
+
+    if constexpr (!std::is_void_v<Accumulator>) {
+        detail::ldlt_bk_solve_acc<Accumulator>(A, pivots, x, b);
+        return;
+    }
 
     // Copy b into x (we work in-place on x)
     for (std::size_t i = 0; i < n; ++i)
