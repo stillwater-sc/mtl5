@@ -74,6 +74,14 @@ static_assert(math::adl_accumulator<kahan_ns::kahan, double>);
 static_assert(detail::acc_panel_width<double> == 8);
 static_assert(detail::acc_panel_width<kahan_ns::kahan> == 4);
 
+// Which accumulators mult<Acc> sends to the packed kernel. A large accumulator
+// stands in for a quire: compute-bound, so it keeps the dot-product loop.
+struct big_acc { double limbs[8]; };
+using dmat = mat::dense2D<double>;
+static_assert(detail::acc_panel_gemm_v<double, dmat, dmat>);
+static_assert(detail::acc_panel_gemm_v<kahan_ns::kahan, dmat, dmat>);
+static_assert(!detail::acc_panel_gemm_v<big_acc, dmat, dmat>);
+
 namespace {
 
 using colmaj = mat::parameters<tag::col_major>;

@@ -363,19 +363,41 @@ void mult_generic(const MA& A, const MB& B, MC& C) {
                                    static_cast<std::size_t>(C.num_rows()));
 }
 
+/// Whether `mult<Acc>` takes the packed-panel kernel below (#587): hardware
+/// arithmetic operands and an accumulator of at most 32 bytes.
+///
+/// The column walk only costs a kernel that is waiting on memory. A software
+/// element type such as a posit, or a large accumulator such as a quire, is
+/// compute-bound, so packing has nothing to win there. Measured at n = 128, one
+/// thread: posit<32,2> plain and fma moved within 1%, and quire<double> ran 5%
+/// slower packed. (Identical posit code also swung +-5% between builds with code
+/// placement alone, so differences that small need an aligned rebuild before
+/// they mean anything.) Those keep the dot-product loop.
+/// False for `Accumulator = void`, which has its own kernels.
+template <typename Accumulator, typename MA, typename MB>
+inline constexpr bool acc_panel_gemm_v = [] {
+    if constexpr (std::is_void_v<Accumulator>)
+        return false;
+    else
+        return std::is_arithmetic_v<std::common_type_t<typename MA::value_type,
+                                                       typename MB::value_type>> &&
+               sizeof(Accumulator) <= 32;
+}();
+
 /// Columns of C an accumulator GEMM computes per pass over a row of A (#587).
-/// Eight independent accumulators hide the add latency of a cheap one; a large
-/// one (a quire is hundreds of bytes) gets four, which keeps the live set small.
+/// Eight independent accumulators hide the add latency of a cheap one; wider
+/// ones get four, since eight x87 long doubles already spill the register stack.
 template <typename Accumulator>
 inline constexpr std::size_t acc_panel_width = sizeof(Accumulator) <= 8 ? 8 : 4;
 
 /// One row of C, columns [j0, j0 + W), against a packed panel of W columns of B.
 /// `panel[k * Nr + jj]` holds B(k, j0 + jj) in the operands' common type.
-template <std::size_t W, std::size_t Nr, typename AT, typename Value, typename Accumulator,
+template <std::size_t W, std::size_t Nr, typename Accumulator, typename AT, typename Value,
           typename MA, typename MC>
 void mult_acc_panel_row(const MA& A, MC& C, std::size_t r, std::size_t j0,
-                        std::size_t kdim, const Value* panel, Accumulator* acc) {
+                        std::size_t kdim, const Value* panel) {
     using Result = typename MC::value_type;
+    Accumulator acc[W]{};
     const auto ra = static_cast<typename MA::size_type>(r);
     for (std::size_t jj = 0; jj < W; ++jj)
         AT::clear(acc[jj]);
@@ -391,7 +413,8 @@ void mult_acc_panel_row(const MA& A, MC& C, std::size_t r, std::size_t j0,
 }
 
 /// Accumulator-typed mat*mat over the OUTPUT ROW RANGE [rb, re) of C, through a
-/// packed panel of B (#587). This is what `mult<Acc>` runs on dense operands.
+/// packed panel of B (#587). This is what `mult<Acc>` runs on dense operands
+/// when `acc_panel_gemm_v` holds.
 ///
 /// The dot-product form in `mult_generic_rows` reads B(k, c) down a column for
 /// every C(r, c). Once B leaves cache every term of a row-major B misses, and at
@@ -425,7 +448,6 @@ void mult_acc_panel_rows(const MA& A, const MB& B, MC& C,
     if (ncols == 0 || rb >= re)
         return;
     std::vector<Value> panel(kdim * nr);
-    Accumulator acc[nr]{};
     for (std::size_t j0 = 0; j0 < ncols; j0 += nr) {
         const std::size_t w = std::min(nr, ncols - j0);
         for (std::size_t k = 0; k < kdim; ++k)
@@ -435,12 +457,12 @@ void mult_acc_panel_rows(const MA& A, const MB& B, MC& C,
                       static_cast<typename MB::size_type>(j0 + jj)));
         for (std::size_t r = rb; r < re; ++r) {
             if (w == nr)   // full panel: a compile-time width the loops unroll on
-                mult_acc_panel_row<nr, nr, AT>(A, C, r, j0, kdim, panel.data(), acc);
+                mult_acc_panel_row<nr, nr, Accumulator, AT>(A, C, r, j0, kdim, panel.data());
             else
                 [&]<std::size_t... W>(std::index_sequence<W...>) {
                     // the ragged last panel, 1 .. nr-1 columns wide
-                    ((w == W + 1 ? mult_acc_panel_row<W + 1, nr, AT>(A, C, r, j0, kdim,
-                                                                     panel.data(), acc)
+                    ((w == W + 1 ? mult_acc_panel_row<W + 1, nr, Accumulator, AT>(
+                                       A, C, r, j0, kdim, panel.data())
                                  : void()), ...);
                 }(std::make_index_sequence<nr - 1>{});
         }
@@ -463,8 +485,10 @@ void mult_acc_panel_rows(const MA& A, const MB& B, MC& C,
 // One exception to "the generic loops above": a mat*mat with an explicit
 // accumulator runs `mult_acc_panel_rows`, which packs B into column panels so the
 // k loop stops walking B down a column (#587). It computes the same terms in the
-// same order per entry, so the bit-identity argument is unchanged; it is not the
-// blocked kernel, and gives a software scalar nothing to lose.
+// same order per entry, so the bit-identity argument is unchanged. It is not the
+// blocked kernel, and it is limited to hardware element types and small
+// accumulators (`acc_panel_gemm_v`): a software scalar or a quire keeps the
+// generic loop.
 //
 // WHY THE SERIAL CASE IS DECIDED HERE and not left to `parallel_for`, which
 // already runs a single `body(0, n)` when the pool is serial or the problem is
@@ -522,14 +546,14 @@ void mult_generic_par(const MA& A, const MB& B, MC& C) {
         if (pool.size() > 1 && mm >= grain * 2) {
             pool.parallel_for(mm, grain,
                 [&](std::size_t b, std::size_t e) {
-                    if constexpr (std::is_void_v<Accumulator>)
-                        mult_generic_rows(A, B, C, b, e);
-                    else
+                    if constexpr (acc_panel_gemm_v<Accumulator, MA, MB>)
                         mult_acc_panel_rows<Accumulator>(A, B, C, b, e);
+                    else
+                        mult_generic_rows<Accumulator>(A, B, C, b, e);
                 });
             return;
         }
-        if constexpr (!std::is_void_v<Accumulator>) {
+        if constexpr (acc_panel_gemm_v<Accumulator, MA, MB>) {
             // An explicit accumulator takes the packed-panel kernel serially too
             // (#587); bit-identical to mult_generic, which stays the reference.
             mult_acc_panel_rows<Accumulator>(A, B, C, std::size_t{0}, mm);
