@@ -43,6 +43,10 @@
 //     1.3e-8, 1.3e-8). The dense solves form b(i) - sum in the accumulator, as
 //     the sparse ones do; rounding the sum before subtracting it loses the
 //     LU and Cholesky gains above.
+//   * dense Bunch-Kaufman LDLT (#585), Hilbert(n) and the indefinite saddle
+//     [[H, 1], [1^T, 0]], n = 4 .. 9 (one or two interchanges each): no
+//     ordering. Hilbert(6): 4.9e-8, 1.1e-8, 1.5e-8; saddle n = 7: 9.4e-8,
+//     2.3e-6, 8.0e-8.
 //   * CG and GMRES in float: the accumulator covers the dot products and the
 //     SpMV, but the recurrences update x, r and p in float, and that is what
 //     limits them. Iteration counts and true residuals agree to a few percent.
@@ -101,6 +105,7 @@
 #include <mtl/operation/eigenvalue_symmetric.hpp>
 #include <mtl/operation/inv.hpp>
 #include <mtl/operation/ldlt.hpp>
+#include <mtl/operation/ldlt_bk.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/operation/operators.hpp>   // A * x, for power_iteration
 #include <mtl/sparse/factorization/sparse_cholesky.hpp>
@@ -371,6 +376,14 @@ struct dense_ldlt_solve {
         mtl::ldlt_solve<Acc>(D, x, b);
     }
 };
+struct dense_ldlt_bk_solve {
+    template <typename Acc> void operator()(const smat& A, fvec& x, const fvec& b) const {
+        auto D = dense(A);
+        mtl::bk_pivot_info piv;
+        if (mtl::ldlt_bk_factor<Acc>(D, piv) != 0) throw std::runtime_error("ldlt_bk: singular block");
+        mtl::ldlt_bk_solve<Acc>(D, piv, x, b);
+    }
+};
 struct dense_inv_solve {
     template <typename Acc> void operator()(const smat& A, fvec& x, const fvec& b) const {
         const auto X = mtl::inv<Acc>(dense(A));
@@ -419,6 +432,36 @@ TEST_CASE("[586:direct] dense LDLT: every configuration solves; no ordering",
         CHECK(direct_residual<float>(A, dense_ldlt_solve{}) < 1e-6);
         CHECK(direct_residual<fma_acc<float>>(A, dense_ldlt_solve{}) < 1e-6);
         CHECK(direct_residual<exact_acc<float>>(A, dense_ldlt_solve{}) < 1e-6);
+    }
+}
+
+/// The saddle-point matrix [[H, 1], [1^T, 0]], H = Hilbert(n): symmetric
+/// indefinite, so Bunch-Kaufman interchanges and takes 2x2 pivots.
+smat saddle_hilbert(std::size_t n) {
+    smat A(n + 1, n + 1);
+    {
+        mtl::mat::inserter<smat> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            for (std::size_t j = 0; j < n; ++j)
+                ins[i][j] << static_cast<float>(1.0 / static_cast<double>(i + j + 1));
+            ins[i][n] << 1.0f;
+            ins[n][i] << 1.0f;
+        }
+    }
+    return A;
+}
+
+TEST_CASE("[586:direct] dense Bunch-Kaufman LDLT: every configuration solves; no ordering",
+          "[586:direct][accumulator]") {
+    // Measured (header): no configuration is reliably lowest -- fma is below
+    // exact on Hilbert(4) and (6), and reaches 2.3e-6 on the saddle at n = 7.
+    for (std::size_t n = 4; n <= 9; ++n) {
+        for (const auto& A : {hilbert<float>(n), saddle_hilbert(n)}) {
+            INFO("n = " << n << ", order " << A.num_rows());
+            CHECK(direct_residual<float>(A, dense_ldlt_bk_solve{}) < 1e-5);
+            CHECK(direct_residual<fma_acc<float>>(A, dense_ldlt_bk_solve{}) < 1e-5);
+            CHECK(direct_residual<exact_acc<float>>(A, dense_ldlt_bk_solve{}) < 1e-5);
+        }
     }
 }
 
