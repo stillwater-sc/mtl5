@@ -18,6 +18,16 @@
 //
 // In-place: lower triangle of A is overwritten with L.
 // Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
+//
+// Mixed precision (#585): the factor and solve routines take a leading
+// `Accumulator` (default void, see math/accumulator_traits.hpp); void is
+// byte-identical to the routines before #585. A non-void accumulator never
+// dispatches to LAPACK. In the factorizations it forms each entry as ONE
+// reduction, A(i,j) - sum_k L(i,k) conj(L(j,k)), rounded once, as the sparse
+// Cholesky does (#531); there is then no summation order to choose, so the
+// tag::subtract_* overloads stay void-only. In the solves it forms each row's
+// b(i) - sum_j L(i,j) x(j) the same way, rounded once before the division, as
+// the sparse level-scheduled solves do (#535).
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -30,6 +40,7 @@
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/functor/scalar/real.hpp>
 #include <mtl/functor/scalar/imag.hpp>
@@ -142,6 +153,84 @@ int cholesky_factor_generic(M& A) {
     return 0;
 }
 
+/// The accumulator A = L*L^H loop (#585): each entry is assign(A(i,j)), then
+/// add_product(-L(i,k), conj(L(j,k))) for k < j, rounded once. For a real
+/// element type conj is the identity and this is A = L*L^T. The pivot is the
+/// real part of its round-out, tested for positivity before the square root.
+/// Rows i > j are split over the pool as on the void path, bit-identically.
+template <typename Accumulator, typename M>
+int cholesky_factor_acc(M& A) {
+    using value_type = typename M::value_type;
+    using size_type  = typename M::size_type;
+    using mag_t      = magnitude_t<value_type>;
+    using conj_t     = functor::scalar::conj<value_type>;
+    using real_t     = functor::scalar::real<value_type>;
+    using AT         = math::accumulator_traits<Accumulator, value_type>;
+    using std::sqrt;
+    const size_type n = A.num_rows();
+
+    for (size_type j = 0; j < n; ++j) {
+        Accumulator dacc{};
+        AT::assign(dacc, A(j, j));
+        for (size_type k = 0; k < j; ++k)
+            AT::add_product(dacc, value_type(-A(j, k)), conj_t::apply(A(j, k)));
+        const mag_t diag = real_t::apply(AT::template value<value_type>(dacc));
+        if (!(diag > mag_t(0)))
+            return static_cast<int>(j + 1);
+        const mag_t ljj = sqrt(diag);
+        A(j, j) = value_type(ljj);
+
+        const size_type rows = n - j - 1;
+        if (rows > 0) {
+            const std::size_t inner = static_cast<std::size_t>(j == 0 ? 1 : j);
+            const std::size_t grain =
+                std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / inner);
+            detail::thread_pool::instance().parallel_for(
+                static_cast<std::size_t>(rows), grain,
+                [&](std::size_t b, std::size_t e) {
+                    for (std::size_t t = b; t < e; ++t) {
+                        const size_type i = j + 1 + static_cast<size_type>(t);
+                        Accumulator acc{};
+                        AT::assign(acc, A(i, j));
+                        for (size_type k = 0; k < j; ++k)
+                            AT::add_product(acc, value_type(-A(i, k)), conj_t::apply(A(j, k)));
+                        A(i, j) = AT::template value<value_type>(acc) / value_type(ljj);
+                    }
+                });
+        }
+    }
+    return 0;
+}
+
+/// The two substitutions of an L*L^H (Conj = true) or L*L^T (false) solve, with
+/// each row's b(i) - sum of products formed in Accumulator and rounded once.
+template <typename Accumulator, bool Conj, typename M, typename VecX, typename VecB>
+void cholesky_solve_acc(const M& L, VecX& x, const VecB& b) {
+    using value_type = typename VecX::value_type;
+    using size_type  = typename M::size_type;
+    using conj_t     = functor::scalar::conj<value_type>;
+    using AT         = math::accumulator_traits<Accumulator, value_type>;
+    const size_type n = L.num_rows();
+
+    for (size_type i = 0; i < n; ++i) {
+        Accumulator acc{};
+        AT::assign(acc, value_type(b(i)));
+        for (size_type j = 0; j < i; ++j)
+            AT::add_product(acc, value_type(-L(i, j)), value_type(x(j)));
+        x(i) = AT::template value<value_type>(acc) / L(i, i);
+    }
+    for (size_type ii = 0; ii < n; ++ii) {
+        const size_type i = n - 1 - ii;
+        Accumulator acc{};
+        AT::assign(acc, value_type(x(i)));
+        for (size_type j = i + 1; j < n; ++j) {
+            const value_type lji = L(j, i);
+            AT::add_product(acc, value_type(-(Conj ? conj_t::apply(lji) : lji)), value_type(x(j)));
+        }
+        x(i) = AT::template value<value_type>(acc) / L(i, i);
+    }
+}
+
 } // namespace detail
 
 /// Cholesky factorization: A = L * L^T, for a REAL symmetric positive definite A.
@@ -154,9 +243,19 @@ int cholesky_factor_generic(M& A) {
 /// MTL5_HAS_LAPACK is defined and the matrix qualifies.
 ///
 /// Complex element types are rejected at compile time; use cholesky_h_factor.
-template <FieldMatrix M>
+///
+/// A non-void `Accumulator` forms each entry as one reduction (see the top of
+/// this file) and never dispatches to LAPACK.
+template <typename Accumulator = void, FieldMatrix M>
 int cholesky_factor(M& A) {
     assert(A.num_cols() == A.num_rows());
+
+    if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
+        static_assert(!is_complex_v<typename M::value_type>,
+            "cholesky_factor computes A = L*L^T for a REAL symmetric positive definite "
+            "matrix; for a HERMITIAN one use cholesky_h_factor (#353).");
+        return detail::cholesky_factor_acc<Accumulator>(A);
+    } else {
 
 #ifdef MTL5_HAS_LAPACK
     if constexpr (interface::BlasDenseMatrix<M>) {
@@ -193,6 +292,7 @@ int cholesky_factor(M& A) {
 #endif
 
     return detail::cholesky_factor_generic<tag::subtract_sum>(A);
+    }
 }
 
 /// cholesky_factor(A), with the default summation order named explicitly.
@@ -218,13 +318,19 @@ int cholesky_factor(M& A, tag::subtract_term_by_term) {
 }
 
 /// Solve A*x = b using precomputed Cholesky factor L (stored in lower triangle of A).
-/// Solves L*y = b (forward), then L^T*x = y (backward).
-template <FieldMatrix M, Vector VecX, Vector VecB>
+/// Solves L*y = b (forward), then L^T*x = y (backward). `Accumulator` forms
+/// each row's sum of products.
+template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
 void cholesky_solve(const M& L, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     using size_type  = typename M::size_type;
     const size_type n = L.num_rows();
     assert(L.num_cols() == n && x.size() == n && b.size() == n);
+
+    if constexpr (!std::is_void_v<Accumulator>) {
+        detail::cholesky_solve_acc<Accumulator, false>(L, x, b);
+        return;
+    }
 
     // Forward substitution: L*y = b
     for (size_type i = 0; i < n; ++i) {
@@ -258,7 +364,11 @@ void cholesky_solve(const M& L, VecX& x, const VecB& b) {
 ///
 /// For real element types conjugation is the identity and this is exactly
 /// cholesky_factor -- see the note at the top of this file (#353).
-template <FieldMatrix M>
+///
+/// A non-void `Accumulator` forms each entry as one reduction and never
+/// dispatches to LAPACK; for a real element type it forwards to
+/// cholesky_factor<Accumulator>, so the two stay bit-identical.
+template <typename Accumulator = void, FieldMatrix M>
 int cholesky_h_factor(M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
@@ -278,10 +388,13 @@ int cholesky_h_factor(M& A) {
     // dispatch (row- and column-major). Complex Hermitian types are not
     // BlasDenseMatrix (float/double only), so they skip this and take the
     // generic L*L^H below -- the only correct path for them.
-    if constexpr (interface::BlasDenseMatrix<M>) {
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::accumulator_allows_blas_v<Accumulator>) {
         return cholesky_factor(A);
     }
 #endif
+    if constexpr (!std::is_void_v<Accumulator> && !is_complex_v<value_type>)
+        return cholesky_factor<Accumulator>(A);
 
     // A Hermitian matrix has a REAL diagonal. If a complex-symmetric matrix
     // arrives here by mistake, taking the real part below would silently
@@ -303,6 +416,9 @@ int cholesky_h_factor(M& A) {
             return CHOLESKY_NOT_HERMITIAN;
     }
 
+    if constexpr (!std::is_void_v<Accumulator>) {
+        return detail::cholesky_factor_acc<Accumulator>(A);
+    } else {
     // For j = 0..n-1:
     //   L(j,j) = sqrt( Re( A(j,j) ) - sum_{k<j} |L(j,k)|^2 )      -- real
     //   L(i,j) = ( A(i,j) - sum_{k<j} L(i,k) * conj(L(j,k)) ) / L(j,j)
@@ -346,18 +462,25 @@ int cholesky_h_factor(M& A) {
         }
     }
     return 0;
+    }
 }
 
 /// Solve A*x = b using precomputed Cholesky factors of a HERMITIAN A, i.e. the
 /// L of A = L*L^H stored in the lower triangle by cholesky_h_factor.
-/// Solves L*y = b (forward), then L^H*x = y (backward).
-template <FieldMatrix M, Vector VecX, Vector VecB>
+/// Solves L*y = b (forward), then L^H*x = y (backward). `Accumulator` forms
+/// each row's sum of products.
+template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
 void cholesky_h_solve(const M& L, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
     using size_type  = typename M::size_type;
     using conj_t     = functor::scalar::conj<value_type>;
     const size_type n = L.num_rows();
     assert(L.num_cols() == n && x.size() == n && b.size() == n);
+
+    if constexpr (!std::is_void_v<Accumulator>) {
+        detail::cholesky_solve_acc<Accumulator, true>(L, x, b);
+        return;
+    }
 
     // Forward substitution: L*y = b
     for (size_type i = 0; i < n; ++i) {

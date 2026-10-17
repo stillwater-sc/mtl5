@@ -85,6 +85,10 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # acc += a*b turns the first into the second, and the comparison measures nothing.
 # op_test_accumulation_solvers_mt runs the same configurations through the solvers.
 #
+# op_test_dense_direct_accumulator asserts that a plain accumulator in the
+# element type gives the void dense factorizations bit for bit (#585): the same
+# products in the same order, which contraction can fuse in one and not the other.
+#
 # sparse_test_solve_accumulator_policy asserts that the level-scheduled solves,
 # with the default and with an `Acc == Value` accumulator (#535), are bit-identical
 # to the dense_* scatter references -- the same order-of-operations claim as
@@ -99,6 +103,7 @@ if(NOT MSVC)
                       op_test_mult_acc_panel_mt
                       op_test_accumulation_configs_mt
                       op_test_accumulation_solvers_mt
+                      op_test_dense_direct_accumulator
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)

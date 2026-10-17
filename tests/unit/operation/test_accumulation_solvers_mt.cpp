@@ -22,6 +22,16 @@
 //       n = 5                              3.0e-8    2.1e-8    7.2e-9
 //       n = 8                              2.6e-8    1.3e-8    1.1e-9
 //   sparse Cholesky, Hilbert(9)            not positive definite  factors
+//   dense LU (#585)
+//       n = 5                              1.8e-8    8.5e-9    1.1e-9
+//       n = 8                              2.8e-8    1.3e-8    2.9e-9
+//   dense Cholesky (#585)
+//       n = 5                              3.0e-8    2.1e-8    7.2e-9
+//       n = 8                              2.6e-8    1.3e-8    1.1e-9
+//   dense inv, x = inv(A) b (#585)
+//       n = 5                              1.4e-3    3.1e-4    2.5e-5
+//       n = 8                              1.7e-1    6.9e-1    3.8e-3
+//   dense Cholesky, Hilbert(9)             not positive definite  factors
 //   LU refinement (float factor, double
 //   residual), Hilbert(n), n = 9 .. 11     stalls at 1e-4 .. 5e-4   1e-12
 //
@@ -29,6 +39,10 @@
 //
 //   * sparse LDLT and QR on the same Hilbert matrices: the three are within a
 //     small factor and swap places (QR at n = 8: 1.9e-7, 1.1e-7, 5.0e-7).
+//   * dense LDLT (#585): exact is lowest, by as little as 1.04x (n = 6: 2.0e-8,
+//     1.3e-8, 1.3e-8). The dense solves form b(i) - sum in the accumulator, as
+//     the sparse ones do; rounding the sum before subtracting it loses the
+//     LU and Cholesky gains above.
 //   * CG and GMRES in float: the accumulator covers the dot products and the
 //     SpMV, but the recurrences update x, r and p in float, and that is what
 //     limits them. Iteration counts and true residuals agree to a few percent.
@@ -83,7 +97,11 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/inserter.hpp>
+#include <mtl/operation/cholesky.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
+#include <mtl/operation/inv.hpp>
+#include <mtl/operation/ldlt.hpp>
+#include <mtl/operation/lu.hpp>
 #include <mtl/operation/operators.hpp>   // A * x, for power_iteration
 #include <mtl/sparse/factorization/sparse_cholesky.hpp>
 #include <mtl/sparse/factorization/sparse_ldlt.hpp>
@@ -321,6 +339,86 @@ TEST_CASE("[586:direct] sparse LDLT and QR: every configuration solves; no order
         CHECK(direct_residual<float>(A, qr_solve{}) < 1e-6);
         CHECK(direct_residual<fma_acc<float>>(A, qr_solve{}) < 1e-6);
         CHECK(direct_residual<exact_acc<float>>(A, qr_solve{}) < 1e-6);
+    }
+}
+
+// The dense direct factorizations (#585), on the same Hilbert matrices and
+// right-hand sides as the sparse rows above. Each copies A into a dense2D and
+// factors it in place; a failed factorization throws, as the sparse ones do.
+mtl::mat::dense2D<float> dense(const smat& A) {
+    mtl::mat::dense2D<float> D(A.num_rows(), A.num_cols());
+    for (std::size_t i = 0; i < A.num_rows(); ++i)
+        for (std::size_t j = 0; j < A.num_cols(); ++j) D(i, j) = A(i, j);
+    return D;
+}
+struct dense_lu_solve {
+    template <typename Acc> void operator()(const smat& A, fvec& x, const fvec& b) const {
+        auto D = dense(A);
+        if (mtl::lu_apply<Acc>(D, x, b) != 0) throw std::runtime_error("lu: singular");
+    }
+};
+struct dense_cholesky_solve {
+    template <typename Acc> void operator()(const smat& A, fvec& x, const fvec& b) const {
+        auto D = dense(A);
+        if (mtl::cholesky_factor<Acc>(D) != 0) throw std::runtime_error("cholesky: not positive definite");
+        mtl::cholesky_solve<Acc>(D, x, b);
+    }
+};
+struct dense_ldlt_solve {
+    template <typename Acc> void operator()(const smat& A, fvec& x, const fvec& b) const {
+        auto D = dense(A);
+        if (mtl::ldlt_factor<Acc>(D) != 0) throw std::runtime_error("ldlt: zero pivot");
+        mtl::ldlt_solve<Acc>(D, x, b);
+    }
+};
+struct dense_inv_solve {
+    template <typename Acc> void operator()(const smat& A, fvec& x, const fvec& b) const {
+        const auto X = mtl::inv<Acc>(dense(A));
+        mtl::mult<Acc>(X, b, x);   // x = inv(A) b, in the same configuration
+    }
+};
+
+TEST_CASE("[586:direct] dense LU, Cholesky and inv: configuration 3 cuts the residual",
+          "[586:direct][accumulator]") {
+    // Measured (header table): LU at least 4.3x, Cholesky 2.9x and inv 10x below
+    // both configurations 1 and 2 at every n; asserted with factors 2, 2 and 4.
+    for (std::size_t n = 5; n <= 8; ++n) {
+        const auto A = hilbert<float>(n);
+        INFO("Hilbert(" << n << ")");
+        auto row = [&](const char* name, auto solve, double factor) {
+            const double r1 = direct_residual<float>(A, solve);
+            const double r2 = direct_residual<fma_acc<float>>(A, solve);
+            const double r3 = direct_residual<exact_acc<float>>(A, solve);
+            INFO(name << ": plain " << r1 << ", fma " << r2 << ", exact " << r3);
+            CHECK(factor * r3 < r1);
+            CHECK(factor * r3 < r2);
+        };
+        row("LU", dense_lu_solve{}, 2.0);
+        row("Cholesky", dense_cholesky_solve{}, 2.0);
+        row("inv", dense_inv_solve{}, 4.0);
+    }
+}
+
+TEST_CASE("[586:direct] dense Cholesky of Hilbert(9): only configuration 3 factors it",
+          "[586:direct][accumulator]") {
+    // As for the sparse Cholesky above.
+    const auto A = hilbert<float>(9);
+    CHECK_THROWS_AS(direct_residual<float>(A, dense_cholesky_solve{}), std::runtime_error);
+    CHECK_THROWS_AS(direct_residual<fma_acc<float>>(A, dense_cholesky_solve{}), std::runtime_error);
+    double r3 = 1.0;
+    REQUIRE_NOTHROW(r3 = direct_residual<exact_acc<float>>(A, dense_cholesky_solve{}));
+    CHECK(r3 < 1e-7);
+}
+
+TEST_CASE("[586:direct] dense LDLT: every configuration solves; no ordering",
+          "[586:direct][accumulator]") {
+    // Measured: exact is lowest at every n but by as little as 1.04x (n = 6).
+    for (std::size_t n = 5; n <= 8; ++n) {
+        const auto A = hilbert<float>(n);
+        INFO("Hilbert(" << n << ")");
+        CHECK(direct_residual<float>(A, dense_ldlt_solve{}) < 1e-6);
+        CHECK(direct_residual<fma_acc<float>>(A, dense_ldlt_solve{}) < 1e-6);
+        CHECK(direct_residual<exact_acc<float>>(A, dense_ldlt_solve{}) < 1e-6);
     }
 }
 
