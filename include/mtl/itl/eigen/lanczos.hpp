@@ -13,7 +13,10 @@
 // in a precision distinct from the operand type (#261, Part C). Accumulator
 // leads the template list, so `lanczos<double>(A, v0, k)` selects it; the
 // default `void` accumulates in T, byte-identical to the former
-// `Accumulator = T`.
+// `Accumulator = T`. When `A` is a Matrix (dense2D, compressed2D) the
+// Accumulator also forms w = A q, through mult<Accumulator> in ev_matvec
+// (#591); a matrix-free operator keeps A * q, and its Accumulator covers only
+// the reductions above.
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
@@ -74,7 +77,7 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
     for (size_type j = 0; j < m; ++j) {
         for (size_type i = 0; i < n; ++i) V(i, j) = q(i);
 
-        w = ev_matvec(A, q);
+        w = ev_matvec<Accumulator>(A, q);
         if (j > 0)
             for (size_type i = 0; i < n; ++i) w(i) -= beta[j] * q_prev(i);
 

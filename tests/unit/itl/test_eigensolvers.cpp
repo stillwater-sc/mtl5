@@ -9,8 +9,11 @@
 #include <mtl/itl/eigen/eigensolvers.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <complex>
+#include <cstddef>
+#include <type_traits>
 #include <vector>
 
 using namespace mtl;
@@ -421,4 +424,125 @@ TEST_CASE("arnoldi: the accumulator policy decides a cancelling Rayleigh quotien
     INFO("exact=" << kCancelRayleigh << " naive=" << r_naive << " wide=" << r_wide);
     CHECK(r_naive == 0.0);
     CHECK(std::abs(r_wide - kCancelRayleigh) < 1e-2 * kCancelRayleigh);
+}
+
+// -- The Accumulator reaches the matrix-vector product (#591) ---------------
+
+namespace counting {
+
+// An ADL accumulator (configuration 3's hook) that sums in double and counts
+// every product it is handed, so a test can see WHICH reductions it reached.
+// No accumulator_merge: reductions that need one stay serial.
+struct count_acc {
+    double s;
+};
+
+inline std::atomic<std::size_t> products{0};
+
+inline void accumulator_clear(count_acc& a) { a.s = 0.0; }
+
+template <typename V>
+    requires std::is_floating_point_v<V>
+void accumulator_assign(count_acc& a, const V& v) { a.s = static_cast<double>(v); }
+
+template <typename V>
+    requires std::is_floating_point_v<V>
+void accumulator_add_product(count_acc& a, const V& m, const V& v) {
+    ++products;
+    a.s += static_cast<double>(m) * static_cast<double>(v);
+}
+
+template <typename R>
+R accumulator_value(const count_acc& a, std::type_identity<R>) { return static_cast<R>(a.s); }
+
+} // namespace counting
+
+namespace {
+
+mat::compressed2D<double> laplacian1d_sparse(std::size_t n) {
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 2.0;
+            if (i > 0)     ins[i][i - 1] << -1.0;
+            if (i + 1 < n) ins[i][i + 1] << -1.0;
+        }
+    }
+    return A;
+}
+
+// Products a solver's single step hands the counting accumulator.
+template <typename Step>
+std::size_t products_of(Step step) {
+    counting::products = 0;
+    step();
+    return counting::products;
+}
+
+} // namespace
+
+TEST_CASE("eigensolvers: the Accumulator reaches the matrix-vector product",
+          "[itl][eigen][accumulator]") {
+    // One step of each solver (max_iter = 1, subspace = 1) runs exactly one
+    // matvec. Run through a matrix-free operator, the counting accumulator sees
+    // only the solver's own reductions, since there is no accumulator to hand
+    // A * x. Run on the same matrix as dense2D or compressed2D, it must see
+    // those reductions PLUS one product per stored entry: n^2 for dense, nnz
+    // for sparse. Before #591 the three counts were equal.
+    using counting::count_acc;
+    constexpr std::size_t n = 12;
+    const auto D = laplacian1d(n);
+    const auto S = laplacian1d_sparse(n);
+    const MatFreeOp F{D};
+    const std::size_t nnz = 3 * n - 2;
+    vec::dense_vector<double> v0(n, 1.0);
+    v0(0) = 1.7;
+
+    SECTION("power_iteration") {
+        auto run = [&](const auto& A) {
+            return products_of([&] { (void)itl::power_iteration<count_acc>(A, v0, 1); });
+        };
+        const std::size_t own = run(F);
+        CHECK(own > 0);
+        CHECK(run(D) == own + n * n);
+        CHECK(run(S) == own + nnz);
+    }
+    SECTION("lanczos") {
+        auto run = [&](const auto& A) {
+            return products_of([&] {
+                (void)itl::lanczos<count_acc>(A, v0, 1, itl::eigen_which::largest_algebraic, 1);
+            });
+        };
+        const std::size_t own = run(F);
+        CHECK(own > 0);
+        CHECK(run(D) == own + n * n);
+        CHECK(run(S) == own + nnz);
+    }
+    SECTION("arnoldi") {
+        auto run = [&](const auto& A) {
+            return products_of([&] {
+                (void)itl::arnoldi<count_acc>(A, v0, 1, itl::eigen_which::largest_algebraic, 1);
+            });
+        };
+        const std::size_t own = run(F);
+        CHECK(own > 0);
+        CHECK(run(D) == own + n * n);
+        CHECK(run(S) == own + nnz);
+    }
+}
+
+TEST_CASE("eigensolvers: void keeps A * x for a matrix", "[itl][eigen][accumulator]") {
+    // The default must stay byte-identical to the operator product it used
+    // before #591 -- not mult(), which can take BLAS or a SIMD kernel.
+    constexpr std::size_t n = 40;
+    mat::dense2D<float> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = 1.0f / static_cast<float>(i + j + 1) - (i == j ? 0.5f : 0.0f);
+    vec::dense_vector<float> x(n);
+    for (std::size_t i = 0; i < n; ++i) x(i) = static_cast<float>(i % 5) - 1.75f;
+    const auto ref = A * x;
+    const auto w = itl::ev_matvec(A, x);
+    for (std::size_t i = 0; i < n; ++i) REQUIRE(w(i) == ref(i));
 }

@@ -35,9 +35,23 @@
 //   * eigenvalue_symmetric: the accumulator reaches only the Householder
 //     tridiagonalization. lambda_max is accurate in all three; lambda_min of
 //     Hilbert(7) is NOT improved (plain 7.6e-3, exact 0.43 relative error).
-//   * power_iteration: identical in all three. Its Accumulator covers the
-//     Rayleigh quotient and the Ritz residual, not the matrix-vector product
-//     (ev_matvec in eigen_common.hpp is A * x), which dominates.
+//   * power_iteration on the 1-D Laplacian: identical in all three. The
+//     matvec there is three well-scaled terms a row; there is nothing to lose.
+//   * arnoldi on the operator below: no clean ordering (n = 32, k = 16: plain
+//     6.4e-3, fma 9.7e-2, exact 1.3e-2). The Gram-Schmidt updates of w are in
+//     float, and they cancel as heavily as the matvec does.
+//
+// And one eigen row that does order, since the Accumulator reaches the matvec
+// (#591): power_iteration on A = P^-1 D P, an exactly representable non-normal
+// matrix whose matvec cancels by four orders of magnitude (see `cancelling_
+// similarity`), lambda_max = 2n, 5000 iterations, tol 1e-6:
+//
+//                                          plain     fma       exact
+//       n = 16, k = 16  relative error     5.4e-3    2.0e-2    8.0e-6
+//                       converged          no        no        yes, 14 its
+//       n = 32, k = 32                     8.9e-2    8.2e-1    6.9e-5
+//
+// Before #591 all three were 5.4e-3 and none converged.
 //
 // The determinism row does hold by construction: CG with an exact accumulator
 // is bit-identical threaded and serial; with plain float it is not.
@@ -56,6 +70,7 @@
 #include <cstring>
 #include <numbers>
 #include <stdexcept>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -426,6 +441,55 @@ TEST_CASE("[586:krylov][586:determinism] CG with configuration 3 is independent 
 // ---------------------------------------------------------------------------
 // Eigensolvers.
 // ---------------------------------------------------------------------------
+
+/// A = P^-1 D P with P = I + k e 1^T, e = (1, -1, 1, ...), so P^-1 = I - k e 1^T
+/// (1^T e = 0 for even n) and A's eigenvalues are exactly D = diag(2n, 1, 2,
+/// ..., n - 1). Every entry is an integer below 2^24, so A is exact in float.
+/// The dominant eigenvector P^-1 e_0 = e_0 - k e has entries of size k, and
+/// A v = 2n v is a cancellation of n terms of size ~k^3 n.
+mtl::mat::dense2D<float> cancelling_similarity(std::size_t n, double k) {
+    std::vector<double> d(n), e(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        d[i] = i ? static_cast<double>(i) : 2.0 * static_cast<double>(n);
+        e[i] = i % 2 ? -1.0 : 1.0;
+    }
+    double de = 0.0;   // 1^T D e
+    for (std::size_t i = 0; i < n; ++i) de += d[i] * e[i];
+    mtl::mat::dense2D<float> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            const double a = (i == j ? d[i] : 0.0) + k * d[i] * e[i] - k * e[i] * d[j] - k * k * e[i] * de;
+            A(i, j) = static_cast<float>(a);
+            REQUIRE(static_cast<double>(A(i, j)) == a);
+        }
+    return A;
+}
+
+TEST_CASE("[586:eigen] power_iteration on a cancelling matvec: exact converges, plain and fma do not",
+          "[586:eigen][accumulator]") {
+    for (const auto [n, k, bound] : {std::tuple{std::size_t{16}, 16.0, 1e-4},
+                                     std::tuple{std::size_t{32}, 32.0, 1e-3}}) {
+        const auto A = cancelling_similarity(n, k);
+        const double lam = 2.0 * static_cast<double>(n);
+        fvec v0(n);
+        for (std::size_t i = 0; i < n; ++i)
+            v0(i) = static_cast<float>(1 + (i * 7) % 5) * (i % 3 ? 1.0f : -1.0f);
+        const auto p1 = mtl::itl::power_iteration<float>(A, v0, 5000, 1e-6f);
+        const auto p2 = mtl::itl::power_iteration<fma_acc<float>>(A, v0, 5000, 1e-6f);
+        const auto p3 = mtl::itl::power_iteration<exact_acc<float>>(A, v0, 5000, 1e-6f);
+        const double e1 = std::fabs(p1.value - lam) / lam;
+        const double e2 = std::fabs(p2.value - lam) / lam;
+        const double e3 = std::fabs(p3.value - lam) / lam;
+        INFO("n = " << n << ", k = " << k << ": plain " << e1 << ", fma " << e2 << ", exact " << e3
+             << " (" << p3.iterations << " its)");
+        CHECK(p3.converged);
+        CHECK(e3 < bound);
+        CHECK_FALSE(p1.converged);
+        CHECK_FALSE(p2.converged);
+        CHECK(e1 > 10.0 * bound);
+        CHECK(e2 > 10.0 * bound);
+    }
+}
 
 TEST_CASE("[586:eigen] eigenvalue_symmetric and power_iteration: every configuration works",
           "[586:eigen][accumulator]") {

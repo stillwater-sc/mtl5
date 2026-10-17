@@ -1,7 +1,10 @@
 #pragma once
 // MTL5 -- Shared types/utilities for the iterative (Krylov) eigensolvers.
+#include <type_traits>
+#include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/operation/mult.hpp>
 
 namespace mtl::itl {
 
@@ -27,14 +30,27 @@ struct ritz_pairs {
 };
 
 /// Apply a LinearOperator and materialize the result as a dense_vector.
-template <typename LinearOp, typename T>
+///
+/// Accumulator (#591): a non-void accumulator reaches the matvec when `A` is a
+/// Matrix -- dense or compressed2D -- through `mult<Accumulator>`, as in the ITL
+/// linear solvers (cg.hpp). A matrix-free operator only offers `A * x`, so it has
+/// no accumulator to take, and the solvers' Accumulator then covers only their
+/// dot products. `void` keeps `A * x` for every operator, byte-identical to the
+/// helper before #591.
+template <typename Accumulator = void, typename LinearOp, typename T>
 vec::dense_vector<T> ev_matvec(const LinearOp& A, const vec::dense_vector<T>& x) {
-    auto w = A * x;
-    const auto n = x.size();
-    vec::dense_vector<T> y(n);
-    for (typename vec::dense_vector<T>::size_type i = 0; i < n; ++i)
-        y(i) = w(i);
-    return y;
+    if constexpr (!std::is_void_v<Accumulator> && Matrix<LinearOp>) {
+        vec::dense_vector<T> y(A.num_rows());
+        mtl::mult<Accumulator>(A, x, y);
+        return y;
+    } else {
+        auto w = A * x;
+        const auto n = x.size();
+        vec::dense_vector<T> y(n);
+        for (typename vec::dense_vector<T>::size_type i = 0; i < n; ++i)
+            y(i) = w(i);
+        return y;
+    }
 }
 
 } // namespace mtl::itl

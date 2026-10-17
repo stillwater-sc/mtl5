@@ -12,6 +12,9 @@
 // (#261, Part C). Accumulator leads the template list, as in lanczos and
 // power_iteration, so `arnoldi<double>(A, v0, k)` selects it; the default
 // `void` accumulates in T, byte-identical to the former `Accumulator = T`.
+// When `A` is a Matrix (dense2D, compressed2D) the Accumulator also forms
+// w = A q, through mult<Accumulator> in ev_matvec (#591); a matrix-free
+// operator keeps A * q, and its Accumulator covers only the reductions above.
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
@@ -75,7 +78,7 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
     for (size_type j = 0; j < m; ++j) {
         for (size_type i = 0; i < n; ++i) V(i, j) = q(i);
 
-        w = ev_matvec(A, q);
+        w = ev_matvec<Accumulator>(A, q);
 
         // Modified Gram-Schmidt with a second pass for numerical stability.
         for (int pass = 0; pass < 2; ++pass)

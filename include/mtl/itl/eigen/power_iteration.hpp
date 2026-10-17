@@ -28,6 +28,11 @@ struct eigenpair {
 ///
 /// `A` is any LinearOperator (A * v yields a vector); `v0` is the starting
 /// vector (need not be normalized). O(1) vectors of storage; one matvec/iter.
+///
+/// `Accumulator` forms the Rayleigh quotient and the Ritz residual and, when
+/// `A` is a Matrix (dense2D, compressed2D), the matvec too, through
+/// mult<Accumulator> (#591). A matrix-free operator keeps A * v. The default
+/// `void` accumulates in T and keeps A * v for every operator.
 template <typename Accumulator = void, typename LinearOp, typename T>
 eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
                              int max_iter = 1000, std::type_identity_t<T> tol = T(1e-10)) {
@@ -50,7 +55,7 @@ eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
     T lambda = T(0);
     int it = 0;
     for (; it < max_iter; ++it) {
-        vec::dense_vector<T> w = ev_matvec(A, v0);
+        vec::dense_vector<T> w = ev_matvec<Accumulator>(A, v0);
 
         // Rayleigh quotient (v is unit norm): lambda = v^T A v.
         lambda = mtl::dot<Acc, T>(v0, w);
