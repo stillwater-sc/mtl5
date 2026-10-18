@@ -104,6 +104,10 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # with the default and with an `Acc == Value` accumulator (#535), are bit-identical
 # to the dense_* scatter references -- the same order-of-operations claim as
 # trisolve_level_schedule_mt, broken the same way by contraction.
+#
+# op_test_ogita_rump_oishi evaluates Corollary 4.7's computable error bound in
+# working precision; the corollary is proved for separately rounded operations,
+# and a fused multiply-add in that expression changes the bound being tested.
 if(NOT MSVC)
     foreach(mt_target sparse_test_supernodal_ldlt_mt
                       sparse_test_supernodal_lu_mt
@@ -120,6 +124,7 @@ if(NOT MSVC)
                       op_test_svd_accumulator
                       op_test_sum_trace_accumulator
                       itl_test_mg_accumulator
+                      op_test_ogita_rump_oishi
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
