@@ -2,13 +2,31 @@
 // MTL5 -- ILDL (Incomplete LDL^T) preconditioner for compressed2D
 // For symmetric (possibly indefinite) matrices.
 // Preserves sparsity pattern of lower triangle.
+//
+// ACCUMULATOR (#585). A non-void trailing `Accumulator` routes the
+// factorization and both triangular solves through math::accumulator_traits.
+// The factorization is the up-looking (row-by-row, dot-product) form, as in
+// ic_0, so each entry is one reduction rounded once:
+//
+//   L(i,j) = (A(i,j) - sum_k (L(i,k) d_k) L(j,k)) / d_j
+//   d_i    =  A(i,i) - sum_k (L(i,k) L(i,k)) d_k
+//
+// Each term is a product of THREE values and the accumulator takes two, so the
+// first product -- L(i,k) d_k, or L(i,k)^2 -- rounds once in the element type,
+// exactly as the void path forms it; the accumulator covers the sum. (Dense
+// LDLT, #594, does the same with L(j,k) D(k).) A(i,j) is assigned into the
+// accumulator rather than subtracted from a rounded sum. The forward solve
+// forms b(i) - sum inside the accumulator; the L^T solve scatters into one
+// accumulator per component (workspace n) where the void path scans later rows.
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <cassert>
+#include <type_traits>
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl::pc {
 
@@ -17,7 +35,11 @@ namespace mtl::itl::pc {
 /// A must be symmetric; only the sparsity pattern of the lower triangle is preserved.
 /// For a complex Value that means complex SYMMETRIC (A^T == A), not Hermitian:
 /// the factorization reads only the lower triangle and conjugates nothing.
-template <Field Value, typename Parameters = mat::parameters<>>
+///
+/// `Accumulator` selects how the factorization and the triangular solves
+/// accumulate (see math/accumulator_traits.hpp and the header note). The default
+/// `void` keeps the naive value_type arithmetic unchanged.
+template <Field Value, typename Parameters = mat::parameters<>, typename Accumulator = void>
 class ildl {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;
@@ -58,6 +80,10 @@ private:
             if constexpr (Conj) return conj_t::apply(v);
             else                return v;
         };
+        if constexpr (!std::is_void_v<Accumulator>) {
+            apply_acc(x, b, c);
+            return;
+        }
 
         // Forward substitution: L*y = b (L has unit diagonal)
         for (size_type i = 0; i < n_; ++i) {
@@ -87,6 +113,59 @@ private:
         }
     }
 
+    using acc_type = std::conditional_t<std::is_void_v<Accumulator>, value_type, Accumulator>;
+    using AT = math::accumulator_traits<acc_type, value_type>;
+
+    /// apply() with the accumulator; `c` is the identity, or conj for the adjoint.
+    template <typename VecX, typename VecB, typename C>
+    void apply_acc(VecX& x, const VecB& b, C c) const {
+        std::vector<acc_type> acc(n_);
+        for (size_type i = 0; i < n_; ++i) {                    // L y = b
+            AT::assign(acc[i], static_cast<value_type>(b(i)));
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                AT::add_product(acc[i], -c(l_data_[k]), static_cast<value_type>(x(l_indices_[k])));
+            x(i) = AT::template value<value_type>(acc[i]);
+        }
+        for (size_type i = 0; i < n_; ++i)                      // D z = y
+            AT::assign(acc[i], static_cast<value_type>(x(i) / c(d_[i])));
+        for (size_type ii = 0; ii < n_; ++ii) {                 // L^T x = z
+            const size_type i = n_ - 1 - ii;
+            const value_type xi = AT::template value<value_type>(acc[i]);
+            x(i) = xi;
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                AT::add_product(acc[l_indices_[k]], -c(l_data_[k]), xi);
+        }
+    }
+
+    /// The factorization below with each entry one accumulator (header note).
+    void factorize_acc(std::vector<std::vector<std::pair<size_type, value_type>>>& l_rows) {
+        acc_type acc;
+        for (size_type i = 0; i < n_; ++i) {
+            for (auto& [j, val] : l_rows[i]) {
+                if (j == i) continue;
+                AT::assign(acc, val);
+                for (const auto& [ik, iv] : l_rows[i]) {
+                    if (ik >= j) break;
+                    for (const auto& [jk, jv] : l_rows[j]) {
+                        if (jk == ik) {
+                            AT::add_product(acc, -(iv * d_[ik]), jv);
+                            break;
+                        }
+                        if (jk > ik) break;
+                    }
+                }
+                val = AT::template value<value_type>(acc) / d_[j];
+            }
+
+            AT::clear(acc);
+            for (const auto& [j, v] : l_rows[i])
+                if (j == i) AT::assign(acc, v);
+            for (const auto& [j, v] : l_rows[i])
+                if (j != i) AT::add_product(acc, -(v * v), d_[j]);
+            d_[i] = AT::template value<value_type>(acc);
+        }
+    }
+
     void factorize(const matrix_type& A) {
         const auto& a_starts  = A.ref_major();
         const auto& a_indices = A.ref_minor();
@@ -105,6 +184,9 @@ private:
             }
         }
 
+        if constexpr (!std::is_void_v<Accumulator>) {
+            factorize_acc(l_rows);
+        } else {
         // ILDL factorization (row-by-row)
         // For each row i:
         //   For j < i at sparsity positions:
@@ -142,6 +224,7 @@ private:
             d_[i] = diag_val - sum_sq;
 
             // Update L(i,i) entry to 1 (unit diagonal) -- but we don't store diagonal in L
+        }
         }
 
         // Build CRS for strictly lower triangular L (exclude diagonal)
