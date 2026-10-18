@@ -36,8 +36,10 @@
 //     longer half a significand, and Dekker's product is no longer exact. GCC contracts by default (-ffp-contract=fast)
 //     wherever the target has an FMA: ARM64, or x86-64 with -march=native. So
 //     these two functions switch contraction off locally: a GCC optimize region
-//     and a Clang `fp contract(off)` pragma below, whatever the command line
-//     says. MSVC 2022 and later contract only under /fp:contract (or
+//     and a Clang `fp contract(off)` pragma below. GCC honours its region
+//     under any -ffp-contract; Clang honours the pragma under its default
+//     (-ffp-contract=on) and -ffp-contract=fast-honor-pragmas, but plain
+//     -ffp-contract=fast overrides pragmas in Clang, and is not supported. MSVC 2022 and later contract only under /fp:contract (or
 //     /fp:fast); older versions could contract under /fp:precise with
 //     /arch:AVX2, and need /fp:strict there.
 //     two_sum and fast_two_sum have no products to contract; two_product uses
@@ -158,7 +160,9 @@ exact_pair<T> split(T a) {
 /// of the Ogita-Rump-Oishi paper, and the one for a target without an FMA.
 /// An operand beyond `split`'s domain is scaled down by 2^(s+1) and the other
 /// up by 2^(s+1): both exact, the product unchanged. (Both beyond it, the product
-/// overflows.)
+/// overflows.) A product above 2^(max_exponent - 1) is formed at half scale, so
+/// no intermediate overflows either: exact for every finite product that does
+/// not underflow, `max * 1` included.
 template <typename T>
     requires binary_floating_point<T>
 exact_pair<T> two_product_dekker(T a, T b) {
@@ -176,9 +180,20 @@ exact_pair<T> two_product_dekker(T a, T b) {
         a = std::ldexp(a, k);
         b = std::ldexp(b, -k);
     }
+    // Within a factor (1 + 2^-(digits - s))^2 of max, a1 * b1 -- the halves
+    // round away from zero -- can overflow although x does not (max * 1).
+    // Then take the error of x / 2 from the larger operand halved: both
+    // scalings by 2 are exact, and so is doubling the error back.
+    const bool halve = std::fabs(x) > pow2<T>(std::numeric_limits<T>::max_exponent - 1);
+    if (halve) {
+        if (std::fabs(a) >= std::fabs(b)) a = std::ldexp(a, -1);
+        else                              b = std::ldexp(b, -1);
+    }
+    const T xs = halve ? std::ldexp(x, -1) : x;
     const auto [a1, a2] = split(a);
     const auto [b1, b2] = split(b);
-    return {x, a2 * b2 - (((x - a1 * b1) - a2 * b1) - a1 * b2)};
+    const T y = a2 * b2 - (((xs - a1 * b1) - a2 * b1) - a1 * b2);
+    return {x, halve ? std::ldexp(y, 1) : y};
 }
 
 #if defined(__GNUC__) && !defined(__clang__)

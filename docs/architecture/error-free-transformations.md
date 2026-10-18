@@ -52,7 +52,7 @@ For a significand of `p` bits, let `s = ⌈p/2⌉`; then `c = (2^s + 1)·a`, `hi
 
 Every product of two halves therefore fits in `p` bits, which is what Dekker's product needs.
 
-The domain bound, 2^(max_exponent − s − 1), keeps `c` from overflowing. The bound is a power of two because `max / (2^s + 1)` rounds up in double, and `c` overflows at that value. Above the domain `hi` is NaN, as in the paper. Splitting a scaled-down copy does not rescue the top of the range: there `hi` can round up to `2^max_exponent`.
+The domain bound, 2^(max_exponent − s − 1), keeps `c` from overflowing. The bound is a power of two because `max / (2^s + 1)` rounds up in double, and `c` overflows at that value. Just above the bound the result is not guaranteed; far enough above it (beyond about `max / (2^s + 1)`) `c` overflows and `hi` is NaN, as in the paper. Splitting a scaled-down copy does not rescue the top of the range: there `hi` can round up to `2^max_exponent`.
 
 ### `two_product_dekker` and `two_product`
 
@@ -64,7 +64,7 @@ x = a * b;
 y = a2*b2 - (((x - a1*b1) - a2*b1) - a1*b2);
 ```
 
-An operand beyond `split`'s domain is scaled down by 2^(s+1) and the other operand is scaled up by 2^(s+1). Both scalings are exact and leave the product unchanged. If both operands are beyond the domain, the product overflows. So `two_product_dekker` is exact for every product that is finite and does not underflow.
+An operand beyond `split`'s domain is scaled down by 2^(s+1) and the other operand is scaled up by 2^(s+1). Both scalings are exact and leave the product unchanged. If both operands are beyond the domain, the product overflows. Within a factor of about 1 + 2^-25 of `max`, the half-product `a1·b1` can overflow even though `a·b` does not: the halves round away from zero, and `max · 1` is the simplest case. So a product above 2^(max_exponent − 1) is formed at half scale: the larger operand is halved, the error of `x/2` is computed, and the result is doubled. Every one of these scalings is exact. So `two_product_dekker` is exact for every product that is finite and does not underflow.
 
 With a fused multiply-add, the error is a single operation: `y = fma(a, b, −x)`. The two forms return the same pair wherever both are exact; the test suite checks this. `two_product` is the one to use. `two_product_dekker` is the paper's form and the fallback for a target without an FMA.
 
@@ -83,11 +83,11 @@ Each transformation depends on every operation being rounded exactly as written.
 **FMA contraction: `-ffp-contract=fast`.** A compiler that may contract is allowed to rewrite `c − (c − a)`, where `c = factor·a`, as `fma(factor, a, −a)`. That form uses the unrounded product, so `split` returns `hi ≈ a` and `lo ≈ 0`: the halves are no longer half a significand, and Dekker's product is no longer exact. This is not hypothetical.
 
 - **GCC** contracts by default (`-ffp-contract=fast`) wherever the target has an FMA, which means ARM64, or x86-64 with `-march=native`. Built that way without a guard, MTL5's test of `split` sees a 24-bit `hi` for `float`, where 12 is the limit.
-- **Clang** contracts within a single expression by default (`-ffp-contract=on`).
+- **Clang** contracts within a single expression by default (`-ffp-contract=on`). It honours `#pragma clang fp contract(off)` under that default and under `-ffp-contract=fast-honor-pragmas`. Plain `-ffp-contract=fast` overrides the pragma in Clang, so it is **not supported** for code that uses `split` or `two_product_dekker`.
 
-So `split` and `two_product_dekker` switch contraction off locally, whatever the command line says:
+So `split` and `two_product_dekker` switch contraction off locally:
 
-- GCC: a `#pragma GCC optimize("fp-contract=off")` region around the two functions.
+- GCC: a `#pragma GCC optimize("fp-contract=off")` region around the two functions, honoured under any `-ffp-contract`.
 - Clang (and Clang-based compilers such as icx and Clang-CL): `#pragma clang fp contract(off)` in each function body.
 - MSVC: from Visual Studio 2022, MSVC contracts only under `/fp:contract` or `/fp:fast`. Older versions could contract under `/fp:precise` with `/arch:AVX2`, and need `/fp:strict` there.
 
@@ -112,11 +112,11 @@ The GCC region has a cost. GCC does not inline a function compiled with differen
 
 - `hi` is the plain result, and `fl(hi + lo) == hi`;
 - `split`'s bit widths, including at the edge of its domain;
-- Dekker's product gives the FMA product's pair, bit for bit over the random operands, and by value (a zero `lo` may differ in sign) for operands up to `max`, which take the rescaling path;
+- Dekker's product gives the FMA product's pair: bit for bit over the random operands, and by value (a zero `lo` may differ in sign) for operands up to `max` and for products just below `max`, which take the rescaling and half-scale paths;
 - `fast_two_sum`'s precondition counterexample;
 - the non-finite cases.
 
-The test target is built with **`-ffp-contract=fast`** on GCC and Clang, the opposite of the bit-reproducibility tests. On the ARM64 CI runners, which have an FMA, the `split` checks fail if the header's contraction guard stops working.
+The test target is built with the most aggressive contraction setting the header supports, the opposite of the bit-reproducibility tests: **`-ffp-contract=fast`** on GCC and **`-ffp-contract=fast-honor-pragmas`** on Clang. On the ARM64 CI runners, which have an FMA, the `split` checks fail if the header's contraction guard stops working.
 
 ## Related
 

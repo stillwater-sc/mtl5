@@ -7,10 +7,11 @@
 // split's halves have the bit widths Dekker's product needs, Dekker's
 // TwoProduct gives the FMA pair's bits, and a non-finite hi gets lo = 0.
 //
-// This target is built with -ffp-contract=fast (tests/unit/CMakeLists.txt) on
-// GCC and Clang: wherever the target has an FMA (ARM64, or x86-64 with
-// -march=native) that would contract split into the identity, unless the
-// header's own contraction guard holds.
+// This target is built with -ffp-contract=fast on GCC, and
+// -ffp-contract=fast-honor-pragmas on Clang (tests/unit/CMakeLists.txt):
+// wherever the target has an FMA (ARM64, or x86-64 with -march=native) that
+// would contract split into the identity, unless the header's own
+// contraction guard holds.
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -151,7 +152,8 @@ TEMPLATE_TEST_CASE("two_product and two_product_dekker are exact and agree",
     // rescales the pair, and the product is still exact and the FMA pair.
     const T max = std::numeric_limits<T>::max();
     for (T a : {max, -max, std::nextafter(max, T(0)), max / T(3)}) {
-        for (T b : {T(0.75), T(-0.3), T(1) / T(3), std::ldexp(T(1), -40)}) {
+        for (T b : {T(1), std::nextafter(T(1), T(0)), T(0.75), T(-0.3), T(1) / T(3),
+                    std::ldexp(T(1), -40)}) {
             const auto d = two_product_dekker(a, b);
             const auto f = two_product(a, b);
             REQUIRE(std::isfinite(d.hi));
@@ -163,6 +165,24 @@ TEMPLATE_TEST_CASE("two_product and two_product_dekker are exact and agree",
             CHECK(two_product_dekker(b, a).lo == d.lo);   // either operand order
         }
     }
+    // Products just below max, where the rounded-up halves a1 * b1 would
+    // overflow without the half-scale step.
+    std::mt19937 gen(4);
+    std::uniform_real_distribution<double> u(1.0, 2.0);
+    int near_max = 0;
+    for (int t = 0; t < 20000; ++t) {
+        const T a = T(std::ldexp(u(gen), std::numeric_limits<T>::max_exponent / 2));
+        const T b = T(max / a * T(u(gen) / 2.0));
+        const auto f = two_product(a, b);
+        if (!std::isfinite(f.hi)) continue;
+        ++near_max;
+        const auto d = two_product_dekker(a, b);
+        REQUIRE(d.lo == f.lo);
+        checker<T> c;
+        c.add_product(a, b); c.sub(d.hi); c.sub(d.lo);
+        REQUIRE(c.exactly_zero());
+    }
+    CHECK(near_max > 10000);
 }
 
 TEMPLATE_TEST_CASE("a non-finite result gets lo = 0", "[math][error_free][611]", float, double) {
