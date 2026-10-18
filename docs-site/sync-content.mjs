@@ -121,6 +121,7 @@ const FILE_MAP = {
   'generators/strengthen-LA-tests-with-generator-matrices.md': 'generators/strengthen-tests.md',
   'generators/tier1-2-matrices.md':                            'generators/tier1-2-matrices.md',
   'generators/tier3-spectral-control.md':                      'generators/tier3-spectral-control.md',
+  'generators/ill-conditioned.md':                             'generators/ill-conditioned.md',
 };
 
 // ── Root files (relative to repo root) ────────────────────────────

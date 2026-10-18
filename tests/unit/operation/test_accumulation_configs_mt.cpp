@@ -31,28 +31,29 @@
 //     is asserted where the product rounding is the whole error. It is NOT a
 //     per-sum ordering, and on ill-conditioned dot products it does not hold
 //     even on average: there the error is the cancellation in the running sum,
-//     which FMA does not touch. Measured on the battery below, 40 instances of
-//     n = 100, mean relative error plain vs fma:
-//
-//         float   cond 1e4   5.1e-3 vs 3.4e-3    cond 1e6   0.136 vs 0.101
-//         double  cond 1e8   3.4e-8 vs 3.2e-8    cond 1e12  1.06e-4 vs 1.15e-4
-//
-//     so the ordering of 1 and 2 flips with the instance; only 3 dominates.
+//     which FMA does not touch. In the table below fma is ahead of plain at
+//     float cond 1e6 and behind it at 1e8, behind at double 1e8 and ahead at
+//     1e12: the ordering of 1 and 2 flips with the instance; only 3 dominates.
 //   * Configuration 2c stays within the Dot2 bound of Ogita, Rump and Oishi,
-//     u |x.y| + gamma_n^2 sum |x_i y_i|, on every instance. Measured on the
-//     same battery (geometric mean of the relative error over 40 instances of
-//     n = 100; plain / fma / compensated / exact):
+//     u |x.y| + gamma_n^2 sum |x_i y_i|, on every instance.
 //
-//         float   cond 1e4    8.9e-4  9.3e-4  1.2e-8  1.2e-8
-//                 cond 1e8    6.1     5.6     7.7e-7  1.8e-8
-//                 cond 1e12   1.4e4   1.6e4   2.1e-3  1.7e-8
-//         double  cond 1e8    1.4e-8  1.2e-8  3.2e-17 3.2e-17
-//                 cond 1e16   0.40    0.43    1.1e-16 3.1e-17
-//                 cond 1e24   2.7e7   2.2e7   5.1e-9  2.6e-17
+// Measured on the battery (GenDot, generators/ill_conditioned.hpp, 40
+// instances of n = 100 per anticipated cond -- the achieved cond is typically
+// 10x higher, as in the paper; geometric mean of the relative error,
+// plain / fma / compensated / exact):
 //
-//     which is the paper's picture: 2c is at the level of 3 until cond nears
-//     1/u (1.7e7 in float, 9e15 in double), then grows as u^2 cond, where 1
-//     and 2 grow as u cond from the start.
+//         float   cond 1e4    2.8e-3  2.9e-3  1.3e-8  1.3e-8
+//                 cond 1e6    0.20    0.19    4.4e-8  1.5e-8
+//                 cond 1e8    9.6     11      1.7e-6  1.5e-8
+//                 cond 1e12   1.0e5   1.1e5   1.5e-2  1.6e-8
+//         double  cond 1e8    2.8e-8  3.8e-8  2.9e-17 2.9e-17
+//                 cond 1e12   4.1e-4  3.3e-4  3.2e-17 3.2e-17
+//                 cond 1e16   4.8     4.3     9.5e-16 3.5e-17
+//                 cond 1e24   1.0e8   8.5e7   1.5e-8  2.8e-17
+//
+// That is the paper's picture: 2c is at the level of 3 until cond nears 1/u
+// (1.7e7 in float, 9e15 in double), then grows as u^2 cond, where 1 and 2
+// grow as u cond from the start.
 //
 // Built with -ffp-contract=off (tests/unit/CMakeLists.txt). Configuration 1 is
 // "the product rounds": a compiler that contracts acc += a*b into an FMA turns
@@ -70,9 +71,11 @@
 #include <limits>
 #include <random>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/generators/ill_conditioned.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/operation/dot.hpp>
@@ -142,29 +145,13 @@ double round_out_double(const exact_acc<T>& a) {
 }
 
 /// An ill-conditioned dot product of condition number about `cond`: Ogita,
-/// Rump and Oishi, "Accurate sum and dot product", SIAM J. Sci. Comput. 26
-/// (2005), Algorithm 6.1 (GenDot). The second half cancels the first, term by
-/// term, against the exact running sum -- which the exact accumulator supplies.
+/// Rump and Oishi's GenDot (Algorithm 6.1), from the library
+/// (generators/ill_conditioned.hpp), drawing on this test's stream.
 template <typename T>
 void gen_dot(std::size_t n, double cond, rng& r, vec<T>& x, vec<T>& y) {
-    x.change_dim(n);
-    y.change_dim(n);
-    const std::size_t n2 = n / 2;
-    const int b = static_cast<int>(std::log2(cond));
-    const int bh = b / 2;
-    for (std::size_t i = 0; i < n2; ++i) {
-        const int e = i == 0 ? bh : (i + 1 == n2 ? 0 : r.integer(0, bh));
-        x(i) = static_cast<T>(std::ldexp(r.symmetric(), e));
-        y(i) = static_cast<T>(std::ldexp(r.symmetric(), e));
-    }
-    for (std::size_t i = n2; i < n; ++i) {
-        const int e = static_cast<int>(std::lround(
-            bh - static_cast<double>(bh) * static_cast<double>(i - n2) / static_cast<double>(n - n2)));
-        x(i) = static_cast<T>(std::ldexp(r.symmetric(), e));
-        const T partial = round_out(exact_dot<T>(x, y, i));
-        y(i) = static_cast<T>((static_cast<T>(std::ldexp(r.symmetric(), e)) - partial) / x(i));
-    }
-    r.shuffle(x, y);
+    auto d = mtl::generators::gen_dot<T>(n, cond, r.g);
+    x = std::move(d.x);
+    y = std::move(d.y);
 }
 
 bool pool_is_threaded() {
@@ -365,6 +352,7 @@ TEST_CASE("[586:dot] ill-conditioned dot: err(3) <= err(1), err(2), err(2c), eac
     auto check = [](const battery_means& m, double cond, double u) {
         INFO("cond=" << cond << ": plain " << m.plain << ", fma " << m.fma << ", compensated "
              << m.comp << ", exact " << m.exact);
+
         CHECK(m.comp < m.plain);
         CHECK(m.comp < m.fma);
         if (cond * u <= 0.01) CHECK(m.comp <= 1.5 * m.exact);
