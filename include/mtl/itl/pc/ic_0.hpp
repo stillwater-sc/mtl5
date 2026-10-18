@@ -2,19 +2,47 @@
 // MTL5 -- IC(0) incomplete Cholesky factorization preconditioner for compressed2D
 // Preserves the sparsity pattern of A (no fill-in). A must be SPD.
 // Constructor performs factorization; solve does L/L^T trisolves.
+//
+// ACCUMULATOR (#585). A non-void trailing `Accumulator` routes every
+// sum-of-products of the factorization and of both substitutions through
+// math::accumulator_traits, each rounded once:
+//
+//   factor:  L(i,j) = (A(i,j) - sum_k L(i,k) L(j,k)) / L(j,j)
+//            L(i,i) = sqrt(A(i,i) - sum_k L(i,k)^2)
+//   solve:   y(i)   = (b(i) - sum_j L(i,j) y(j)) / L(i,i)
+//            x(i)   = (y(i) - sum_j L(j,i) x(j)) / L(i,i)
+//
+// The factorization is already the up-looking (row-by-row, dot-product) form,
+// so each entry IS one reduction and the accumulator path needs no
+// restructuring: A(i,j) is assigned into the accumulator, the products are
+// subtracted inside it, and the division or square root follows the single
+// round-out. The void path rounds the sum first and then subtracts it, so the
+// two agree bit for bit only where a reduction has at most one term.
+//
+// The back substitution needs L by column. The void path finds each L(j,i) by
+// scanning every later row (O(n * nnz)); the accumulator path scatters instead,
+// into one live accumulator per component (workspace n, the shape of the
+// transposed SpMV in operation/mult.hpp; see the workspace note in
+// math/accumulator_traits.hpp).
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <cassert>
 #include <cmath>
+#include <type_traits>
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl::pc {
 
 /// IC(0) preconditioner for SPD compressed2D sparse matrices.
 /// Computes L such that L*L^T approximates A with the same sparsity pattern.
-template <Field Value, typename Parameters = mat::parameters<>>
+///
+/// `Accumulator` selects how the factorization and the triangular solves
+/// accumulate (see math/accumulator_traits.hpp and the header note). The default
+/// `void` keeps the naive value_type arithmetic unchanged.
+template <Field Value, typename Parameters = mat::parameters<>, typename Accumulator = void>
 class ic_0 {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;
@@ -28,6 +56,10 @@ public:
     /// Solve (L*L^T)*x = b: forward (L*y=b), then backward (L^T*x=y)
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        if constexpr (!std::is_void_v<Accumulator>) {
+            solve_acc(x, b);
+            return;
+        }
         // Forward substitution: L*y = b
         for (size_type i = 0; i < n_; ++i) {
             auto sum = math::zero<value_type>();
@@ -62,6 +94,33 @@ public:
     }
 
 private:
+    using acc_type = std::conditional_t<std::is_void_v<Accumulator>, value_type, Accumulator>;
+    using AT = math::accumulator_traits<acc_type, value_type>;
+
+    /// solve() with the accumulator: the forward rows gather, the backward
+    /// rows scatter into one accumulator per component.
+    template <typename VecX, typename VecB>
+    void solve_acc(VecX& x, const VecB& b) const {
+        std::vector<acc_type> acc(n_);
+        for (size_type i = 0; i < n_; ++i) {                    // L y = b
+            AT::assign(acc[i], static_cast<value_type>(b(i)));
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                if (l_indices_[k] < i)
+                    AT::add_product(acc[i], -l_data_[k], static_cast<value_type>(x(l_indices_[k])));
+            x(i) = AT::template value<value_type>(acc[i]) / l_diag_[i];
+        }
+        for (size_type i = 0; i < n_; ++i)
+            AT::assign(acc[i], static_cast<value_type>(x(i)));
+        for (size_type ii = 0; ii < n_; ++ii) {                 // L^T x = y
+            const size_type i = n_ - 1 - ii;
+            const value_type xi = AT::template value<value_type>(acc[i]) / l_diag_[i];
+            x(i) = xi;
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                if (l_indices_[k] < i)
+                    AT::add_product(acc[l_indices_[k]], -l_data_[k], xi);
+        }
+    }
+
     void factorize(const matrix_type& A) {
         using std::sqrt;
         const auto& a_starts  = A.ref_major();
@@ -81,6 +140,9 @@ private:
             }
         }
 
+        if constexpr (!std::is_void_v<Accumulator>) {
+            factorize_acc(l_rows);
+        } else {
         // IC(0) factorization (row-by-row Cholesky with no fill-in)
         for (size_type i = 0; i < n_; ++i) {
             // For each nonzero L(i,j) with j < i:
@@ -122,6 +184,7 @@ private:
                 }
             }
         }
+        }
 
         // Convert to CRS
         l_starts_.resize(n_ + 1);
@@ -140,6 +203,42 @@ private:
                 l_data_[pos] = v;
                 ++pos;
             }
+        }
+    }
+
+    /// The factorization above with each entry one accumulator: A(i,j) is
+    /// assigned, the products are subtracted inside it, and the division (or
+    /// square root, on the diagonal) follows the single round-out. The same
+    /// products in the same order as the void loop.
+    void factorize_acc(std::vector<std::vector<std::pair<size_type, value_type>>>& l_rows) {
+        using std::sqrt;
+        acc_type acc;
+        for (size_type i = 0; i < n_; ++i) {
+            for (auto& [j, val] : l_rows[i]) {
+                if (j == i) continue;
+                AT::assign(acc, val);
+                for (const auto& [ik, iv] : l_rows[i]) {
+                    if (ik >= j) break;
+                    for (const auto& [jk, jv] : l_rows[j]) {
+                        if (jk == ik) {
+                            AT::add_product(acc, -iv, jv);
+                            break;
+                        }
+                        if (jk > ik) break;
+                    }
+                }
+                val = AT::template value<value_type>(acc) / l_diag_[j];
+            }
+
+            AT::clear(acc);
+            for (const auto& [j, v] : l_rows[i])
+                if (j == i) AT::assign(acc, v);
+            for (const auto& [j, v] : l_rows[i])
+                if (j != i) AT::add_product(acc, -v, v);
+            l_diag_[i] = sqrt(AT::template value<value_type>(acc));
+
+            for (auto& [j, v] : l_rows[i])
+                if (j == i) { v = l_diag_[i]; break; }
         }
     }
 
