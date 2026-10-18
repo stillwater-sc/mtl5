@@ -2,9 +2,23 @@
 // MTL5 -- Singular Value Decomposition via one-sided Jacobi / iterative QR
 // Decomposes A = U * S * V^T where S is diagonal (singular values).
 // Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
+//
+// ACCUMULATOR (#585). Every overload takes a leading `Accumulator` (default
+// `void`, unchanged). A non-void one routes every inner product of the method
+// through math::accumulator_traits, each rounded once:
+//   * one-sided Jacobi: per column pair, alpha = ||b_p||^2, betac = ||b_q||^2
+//     and gamma = b_p . b_q (raw and scaled forms), and the final column norms;
+//   * the orthonormal completion of U: its Gram-Schmidt inner products;
+//   * the Householder QR preconditioner of a tall A, and U's back-application
+//     of its reflectors (qr_factor / apply_householder_left<Accumulator>, #563).
+// The plane rotations are two-term updates, not reductions, and stay in
+// value_type. A non-void accumulator skips LAPACK's gesdd, as for every other
+// accumulator-aware operation (interface::accumulator_allows_blas_v).
 #include <cmath>
 #include <algorithm>
 #include <cassert>
+#include <type_traits>
+#include <utility>
 #include <vector>
 #include <limits>
 #include <stdexcept>
@@ -16,6 +30,7 @@
 #include <mtl/operation/householder.hpp>
 #include <mtl/operation/trans.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
 #include <mtl/interface/lapack.hpp>
@@ -25,6 +40,62 @@ namespace mtl {
 
 namespace detail {
 
+/// sum_i a(i) * b(i) for i < len, where `term(i)` returns {a(i), b(i)}:
+/// a plain value_type sum for void, else one accumulator rounded once.
+template <typename Accumulator, typename value_type, typename Size, typename Term>
+value_type svd_dot(Size len, Term term) {
+    if constexpr (std::is_void_v<Accumulator>) {
+        value_type d = math::zero<value_type>();
+        for (Size i = 0; i < len; ++i) {
+            const auto [a, b] = term(i);
+            d += a * b;
+        }
+        return d;
+    } else {
+        using AT = math::accumulator_traits<Accumulator, value_type>;
+        Accumulator acc;
+        AT::clear(acc);
+        for (Size i = 0; i < len; ++i) {
+            const auto [a, b] = term(i);
+            AT::add_product(acc, a, b);
+        }
+        return AT::template value<value_type>(acc);
+    }
+}
+
+/// alpha = ||p||^2, betac = ||q||^2, gamma = p . q in one pass over the pair,
+/// `load(i)` returning {p(i), q(i)}: plain value_type sums for void, else three
+/// accumulators, each rounded once.
+template <typename Accumulator, typename value_type, typename Size, typename Load>
+void svd_pair_sums(Size len, Load load, value_type& alpha, value_type& betac, value_type& gamma) {
+    if constexpr (std::is_void_v<Accumulator>) {
+        alpha = math::zero<value_type>();
+        betac = math::zero<value_type>();
+        gamma = math::zero<value_type>();
+        for (Size i = 0; i < len; ++i) {
+            const auto [bp, bq] = load(i);
+            alpha += bp * bp;
+            betac += bq * bq;
+            gamma += bp * bq;
+        }
+    } else {
+        using AT = math::accumulator_traits<Accumulator, value_type>;
+        Accumulator a, b, g;
+        AT::clear(a);
+        AT::clear(b);
+        AT::clear(g);
+        for (Size i = 0; i < len; ++i) {
+            const auto [bp, bq] = load(i);
+            AT::add_product(a, bp, bp);
+            AT::add_product(b, bq, bq);
+            AT::add_product(g, bp, bq);
+        }
+        alpha = AT::template value<value_type>(a);
+        betac = AT::template value<value_type>(b);
+        gamma = AT::template value<value_type>(g);
+    }
+}
+
 /// One-sided Jacobi core shared by every svd overload. On entry B (m x n) holds
 /// the matrix to decompose and V (n x n) the identity. It rotates B's columns
 /// until each pair is orthogonal to `tol` (machine epsilon if tol <= 0),
@@ -32,7 +103,7 @@ namespace detail {
 /// the column norms -- the singular values -- in descending order into
 /// sigma_s (length n) and permutes the columns of B and V to match, so on
 /// return B's column j is sigma_s[j] times the j-th left singular vector.
-template <typename value_type>
+template <typename Accumulator = void, typename value_type>
 void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
                       std::vector<value_type>& sigma_s, value_type tol) {
     using size_type = typename mat::dense2D<value_type>::size_type;
@@ -87,12 +158,9 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
                 value_type betac = math::zero<value_type>();
                 bool in_range = false;
                 if constexpr (raw_ok) {
-                    for (size_type i = 0; i < m; ++i) {
-                        const value_type bp = bp_[i], bq = bq_[i];
-                        alpha += bp * bp;
-                        betac += bq * bq;
-                        gamma += bp * bq;
-                    }
+                    svd_pair_sums<Accumulator>(m, [&](size_type i) {
+                        return std::pair<value_type, value_type>{bp_[i], bq_[i]};
+                    }, alpha, betac, gamma);
                     in_range = alpha >= lo && alpha <= hi && betac >= lo && betac <= hi;
                 }
                 if (!in_range) {
@@ -104,15 +172,9 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
                     }
                     if (cs == math::zero<value_type>()) continue;   // both columns zero
 
-                    alpha = math::zero<value_type>();
-                    gamma = math::zero<value_type>();
-                    betac = math::zero<value_type>();
-                    for (size_type i = 0; i < m; ++i) {
-                        const value_type bp = bp_[i] / cs, bq = bq_[i] / cs;
-                        alpha += bp * bp;
-                        betac += bq * bq;
-                        gamma += bp * bq;
-                    }
+                    svd_pair_sums<Accumulator>(m, [&](size_type i) {
+                        return std::pair<value_type, value_type>{bp_[i] / cs, bq_[i] / cs};
+                    }, alpha, betac, gamma);
                 }
                 if (gamma == math::zero<value_type>()) continue;
                 const value_type scale = sqrt(alpha * betac);
@@ -160,11 +222,10 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
             if (a > cs) cs = a;
         }
         if (cs == math::zero<value_type>()) { sigma[j] = math::zero<value_type>(); continue; }
-        value_type s2 = math::zero<value_type>();
-        for (size_type i = 0; i < m; ++i) {
+        const value_type s2 = svd_dot<Accumulator, value_type>(m, [&](size_type i) {
             const value_type x = bj[i] / cs;
-            s2 += x * x;
-        }
+            return std::pair<value_type, value_type>{x, x};
+        });
         sigma[j] = cs * sqrt(s2);
     }
 
@@ -187,7 +248,7 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
 /// set, given that columns [0, filled) are already orthonormal. Used for the
 /// left singular vectors that one-sided Jacobi does not determine: those of
 /// zero singular values and, for the full U, the columns beyond rank n.
-template <typename value_type>
+template <typename Accumulator = void, typename value_type>
 void complete_orthonormal(mat::dense2D<value_type>& U, typename mat::dense2D<value_type>::size_type filled) {
     using size_type = typename mat::dense2D<value_type>::size_type;
     using std::sqrt;
@@ -216,8 +277,9 @@ void complete_orthonormal(mat::dense2D<value_type>& U, typename mat::dense2D<val
         for (size_type j = 0; j < filled; ++j)
             for (int pass = 0; pass < 2; ++pass)
                 for (size_type k = 0; k < m; ++k) {
-                    value_type d = math::zero<value_type>();
-                    for (size_type i = 0; i < m; ++i) d += U(i, j) * C(i, k);
+                    const value_type d = svd_dot<Accumulator, value_type>(m, [&](size_type i) {
+                        return std::pair<value_type, value_type>{U(i, j), C(i, k)};
+                    });
                     for (size_type i = 0; i < m; ++i) C(i, k) -= d * U(i, j);
                 }
 
@@ -225,8 +287,9 @@ void complete_orthonormal(mat::dense2D<value_type>& U, typename mat::dense2D<val
             size_type best = 0;
             value_type best_n2 = -math::one<value_type>();
             for (size_type k = 0; k < m; ++k) {
-                value_type n2 = math::zero<value_type>();
-                for (size_type i = 0; i < m; ++i) n2 += C(i, k) * C(i, k);
+                const value_type n2 = svd_dot<Accumulator, value_type>(m, [&](size_type i) {
+                    return std::pair<value_type, value_type>{C(i, k), C(i, k)};
+                });
                 if (n2 > best_n2) { best_n2 = n2; best = k; }
             }
             if (!(best_n2 > math::zero<value_type>())) break;   // numerically exhausted
@@ -236,20 +299,23 @@ void complete_orthonormal(mat::dense2D<value_type>& U, typename mat::dense2D<val
             // Re-orthogonalize the accepted column against the earlier ones.
             for (int pass = 0; pass < 2; ++pass)
                 for (size_type j = 0; j < filled; ++j) {
-                    value_type d = math::zero<value_type>();
-                    for (size_type i = 0; i < m; ++i) d += U(i, j) * U(i, filled);
+                    const value_type d = svd_dot<Accumulator, value_type>(m, [&](size_type i) {
+                        return std::pair<value_type, value_type>{U(i, j), U(i, filled)};
+                    });
                     for (size_type i = 0; i < m; ++i) U(i, filled) -= d * U(i, j);
                 }
-            value_type rn = math::zero<value_type>();
-            for (size_type i = 0; i < m; ++i) rn += U(i, filled) * U(i, filled);
+            value_type rn = svd_dot<Accumulator, value_type>(m, [&](size_type i) {
+                return std::pair<value_type, value_type>{U(i, filled), U(i, filled)};
+            });
             rn = sqrt(rn);
             if (!(rn > math::zero<value_type>())) break;
             for (size_type i = 0; i < m; ++i) U(i, filled) /= rn;
             ++filled;
 
             for (size_type k = 0; k < m; ++k) {
-                value_type d = math::zero<value_type>();
-                for (size_type i = 0; i < m; ++i) d += U(i, filled - 1) * C(i, k);
+                const value_type d = svd_dot<Accumulator, value_type>(m, [&](size_type i) {
+                    return std::pair<value_type, value_type>{U(i, filled - 1), C(i, k)};
+                });
                 for (size_type i = 0; i < m; ++i) C(i, k) -= d * U(i, filled - 1);
             }
         }
@@ -272,7 +338,7 @@ void complete_orthonormal(mat::dense2D<value_type>& U, typename mat::dense2D<val
 /// 1e-10 would cap accuracy several orders of magnitude short of what the
 /// method achieves. Callers wanting the old, looser behaviour can pass 1e-10
 /// explicitly, and a larger tolerance trades accuracy for fewer sweeps.
-template <FieldMatrix M>
+template <typename Accumulator = void, FieldMatrix M>
 void svd(const M& A,
          mat::dense2D<typename M::value_type>& U,
          mat::dense2D<typename M::value_type>& S,
@@ -292,7 +358,8 @@ void svd(const M& A,
     // No orientation guard: the branch copies A into a column-major buffer via
     // the (i,j) accessor and writes U/S/V back via (i,j), so it is correct for
     // row-major and column-major M alike (see #417).
-    if constexpr (interface::BlasDenseMatrix<M>) {
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::accumulator_allows_blas_v<Accumulator>) {
         // LAPACK gesdd: A_copy is overwritten, returns U, S_vec, VT
         U.change_dim(m, m);
         S.change_dim(m, n);
@@ -389,7 +456,7 @@ void svd(const M& A,
 
     const value_type eps = std::numeric_limits<value_type>::epsilon();
     std::vector<value_type> sigma_s;
-    detail::one_sided_jacobi(B, V, sigma_s, tol);
+    detail::one_sided_jacobi<Accumulator>(B, V, sigma_s, tol);
     const mat::dense2D<value_type>& Bs = B;
 
     for (size_type i = 0; i < m; ++i)
@@ -409,7 +476,7 @@ void svd(const M& A,
         for (size_type i = 0; i < m; ++i) U(i, filled) = Bs(i, j) / sigma_s[j];
         ++filled;
     }
-    detail::complete_orthonormal(U, filled);
+    detail::complete_orthonormal<Accumulator>(U, filled);
 }
 
 /// SVD without U: the singular values s (length min(m,n), descending) and the
@@ -428,7 +495,7 @@ void svd(const M& A,
 ///
 /// Always the generic C++ path: LAPACK's gesdd, the full svd's backend, has no
 /// V-only mode. `tol` is as for svd.
-template <FieldMatrix M>
+template <typename Accumulator = void, FieldMatrix M>
 void svd(const M& A,
          vec::dense_vector<typename M::value_type>& s,
          mat::dense2D<typename M::value_type>& V,
@@ -455,7 +522,7 @@ void svd(const M& A,
             for (size_type j = 0; j < n; ++j)
                 F(i, j) = A(i, j);
         vec::dense_vector<value_type> tau;
-        qr_factor(F, tau);
+        qr_factor<Accumulator>(F, tau);
         B.change_dim(n, n);
         for (size_type i = 0; i < n; ++i)
             for (size_type j = 0; j < n; ++j)
@@ -468,7 +535,7 @@ void svd(const M& A,
     }
 
     std::vector<value_type> sigma;
-    detail::one_sided_jacobi(B, V, sigma, tol);
+    detail::one_sided_jacobi<Accumulator>(B, V, sigma, tol);
     for (size_type j = 0; j < mn; ++j)
         s(j) = sigma[j];
 }
@@ -487,7 +554,7 @@ void svd(const M& A,
 ///    to the first m of svd(A, U, S, V).
 /// U's columns for zero singular values are completed to an orthonormal set
 /// as in the full svd. `tol` is as for svd.
-template <FieldMatrix M>
+template <typename Accumulator = void, FieldMatrix M>
 void svd(const M& A,
          mat::dense2D<typename M::value_type>& U,
          vec::dense_vector<typename M::value_type>& s,
@@ -507,7 +574,8 @@ void svd(const M& A,
     if (k == 0) return;
 
 #ifdef MTL5_HAS_LAPACK
-    if constexpr (interface::BlasDenseMatrix<M>) {
+    if constexpr (interface::BlasDenseMatrix<M> &&
+                  interface::accumulator_allows_blas_v<Accumulator>) {
         std::vector<value_type> A_copy(m * n);
         for (size_type i = 0; i < m; ++i)
             for (size_type j = 0; j < n; ++j)
@@ -557,7 +625,7 @@ void svd(const M& A,
         for (size_type i = 0; i < m; ++i)
             for (size_type j = 0; j < n; ++j)
                 F(i, j) = A(i, j);
-        qr_factor(F, tau);
+        qr_factor<Accumulator>(F, tau);
         B.change_dim(n, n);
         for (size_type i = 0; i < n; ++i)
             for (size_type j = 0; j < n; ++j)
@@ -570,7 +638,7 @@ void svd(const M& A,
     }
 
     std::vector<value_type> sigma;
-    detail::one_sided_jacobi(B, Vf, sigma, tol);
+    detail::one_sided_jacobi<Accumulator>(B, Vf, sigma, tol);
     for (size_type j = 0; j < k; ++j)
         s(j) = sigma[j];
     for (size_type i = 0; i < n; ++i)
@@ -589,7 +657,7 @@ void svd(const M& A,
         for (size_type i = 0; i < r; ++i) UB(i, filled) = B(i, j) / sigma[j];
         ++filled;
     }
-    detail::complete_orthonormal(UB, filled);
+    detail::complete_orthonormal<Accumulator>(UB, filled);
 
     if (m > n) {
         // U = Q [UB; 0] = H_0 H_1 ... H_{n-1} [UB; 0], applied right to left.
@@ -601,7 +669,7 @@ void svd(const M& A,
             vec::dense_vector<value_type> v(m - j);
             v(0) = math::one<value_type>();
             for (size_type i = 1; i < m - j; ++i) v(i) = F(j + i, j);
-            apply_householder_left(U, v, tau(j), j, 0);
+            apply_householder_left<Accumulator>(U, v, tau(j), j, 0);
         }
     } else {
         U = UB;
@@ -613,7 +681,7 @@ void svd(const M& A,
 /// (#566). For a wide A (m < n) the null space has dimension at least n - m
 /// and x is one vector in it. The sign is arbitrary. Returns an empty vector
 /// when A has no columns.
-template <FieldMatrix M>
+template <typename Accumulator = void, FieldMatrix M>
 vec::dense_vector<typename M::value_type>
 null_vector(const M& A,
             typename M::value_type tol =
@@ -625,19 +693,19 @@ null_vector(const M& A,
     if (n == 0) return x;
     vec::dense_vector<value_type> s;
     mat::dense2D<value_type> V;
-    svd(A, s, V, tol);
+    svd<Accumulator>(A, s, V, tol);
     for (size_type i = 0; i < n; ++i)
         x(i) = V(i, n - 1);
     return x;
 }
 
 /// Convenience overload returning a tuple of (U, S, V).
-template <FieldMatrix M>
+template <typename Accumulator = void, FieldMatrix M>
 auto svd(const M& A,
          typename M::value_type tol = std::numeric_limits<typename M::value_type>::epsilon()) {
     using value_type = typename M::value_type;
     mat::dense2D<value_type> U, S, V;
-    svd(A, U, S, V, tol);
+    svd<Accumulator>(A, U, S, V, tol);
     return std::make_tuple(std::move(U), std::move(S), std::move(V));
 }
 
