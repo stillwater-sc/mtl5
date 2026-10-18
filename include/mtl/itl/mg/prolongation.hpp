@@ -6,6 +6,9 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
+#include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
+#include <type_traits>
 
 namespace mtl::itl::mg {
 
@@ -32,7 +35,13 @@ inline mat::compressed2D<double> make_prolongation_1d(std::size_t n_coarse) {
 
 /// Prolongation: interpolate coarse-grid vector to fine grid.
 /// x_fine = P * x_coarse
-template <typename Value>
+///
+/// `Accumulator` (#585) routes each row's sum of products through
+/// math::accumulator_traits, rounded once; the default `void` is the plain
+/// Value sum. The sum starts from math::zero<Value>(), not `Value{}`: the two
+/// agree for the built-in types, but a value-initialized LNS is 1, not 0 (see
+/// math/accumulator_traits.hpp), which made every prolongated entry off by one.
+template <typename Accumulator = void, typename Value>
 vec::dense_vector<Value> prolongate(const mat::compressed2D<Value>& P,
                                     const vec::dense_vector<Value>& coarse) {
     using size_type = std::size_t;
@@ -42,10 +51,19 @@ vec::dense_vector<Value> prolongate(const mat::compressed2D<Value>& P,
     const auto& indices = P.ref_minor();
     const auto& data    = P.ref_data();
     for (size_type i = 0; i < nf; ++i) {
-        Value sum{};
-        for (size_type k = starts[i]; k < starts[i + 1]; ++k)
-            sum += data[k] * coarse(indices[k]);
-        fine(i) = sum;
+        if constexpr (!std::is_void_v<Accumulator>) {
+            using AT = math::accumulator_traits<Accumulator, Value>;
+            Accumulator acc;
+            AT::clear(acc);
+            for (size_type k = starts[i]; k < starts[i + 1]; ++k)
+                AT::add_product(acc, data[k], coarse(indices[k]));
+            fine(i) = AT::template value<Value>(acc);
+        } else {
+            Value sum = math::zero<Value>();
+            for (size_type k = starts[i]; k < starts[i + 1]; ++k)
+                sum += data[k] * coarse(indices[k]);
+            fine(i) = sum;
+        }
     }
     return fine;
 }

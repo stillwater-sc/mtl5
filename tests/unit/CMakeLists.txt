@@ -98,6 +98,8 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 #
 # op_test_sum_trace_accumulator asserts the same for sum and trace (#585).
 #
+# itl_test_mg_accumulator asserts the same for the multigrid transfers (#585).
+#
 # sparse_test_solve_accumulator_policy asserts that the level-scheduled solves,
 # with the default and with an `Acc == Value` accumulator (#535), are bit-identical
 # to the dense_* scatter references -- the same order-of-operations claim as
@@ -117,6 +119,7 @@ if(NOT MSVC)
                       op_test_spgemm_accumulator
                       op_test_svd_accumulator
                       op_test_sum_trace_accumulator
+                      itl_test_mg_accumulator
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
