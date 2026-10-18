@@ -1,6 +1,7 @@
 // The accumulator policy in the dense direct factorizations (#585): lu_factor,
 // lu_solve, lu_adjoint_solve, lu_apply, inv, cholesky_factor / _solve,
-// cholesky_h_factor / _solve, ldlt_factor / _solve, ldlt_h_factor / _solve.
+// cholesky_h_factor / _solve, ldlt_factor / _solve, ldlt_h_factor / _solve,
+// ldlt_bk_factor / _solve.
 //
 // What is checked:
 //   - REACH. A counting ADL accumulator sees exactly the products each routine
@@ -17,12 +18,17 @@
 //     (the sparse solves' form), so lu_solve<float> is compared with a
 //     reference written that way.
 //   - COMPLEX. The Hermitian forms take a complex accumulator.
+//   - BUNCH-KAUFMAN. The accumulator ldlt_bk_factor is a different, left-looking
+//     algorithm that must leave the factor in the void one's per-step layout, so
+//     a random indefinite sweep with interchanges and 2x2 blocks (#335) mixes
+//     the accumulator factor with the void solve and vice versa.
 //
 // The accuracy ordering of configurations 1/2/3 is measured in
 // test_accumulation_solvers_mt.cpp ([586:direct]).
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -34,9 +40,12 @@
 #include <mtl/operation/cholesky.hpp>
 #include <mtl/operation/inv.hpp>
 #include <mtl/operation/ldlt.hpp>
+#include <mtl/operation/ldlt_bk.hpp>
 #include <mtl/operation/lu.hpp>
 #include <mtl/tag/summation_order.hpp>
 #include <mtl/vec/dense_vector.hpp>
+
+#include "exact_accumulator.hpp"
 
 using namespace mtl;
 
@@ -114,6 +123,11 @@ std::size_t cholesky_products(std::size_t n) {    // pivot j: j terms; rows i > 
     for (std::size_t j = 0; j < n; ++j) c += j + (n - j - 1) * j;
     return c;
 }
+std::size_t bk_products(std::size_t n) {          // 1x1 steps, no interchange: column k only
+    std::size_t c = 0;
+    for (std::size_t k = 0; k < n; ++k) c += k * (n - k);
+    return c;
+}
 std::size_t solve_products(std::size_t n) { return n * (n - 1); }   // two triangles
 
 template <typename M>
@@ -158,6 +172,16 @@ TEST_CASE("dense direct: the Accumulator reaches every reduction", "[operation][
         dmat H = spd<double>(n);
         CHECK(products_of([&] { REQUIRE(ldlt_h_factor<count_acc>(H) == 0); }) == cholesky_products(n));
         CHECK(products_of([&] { ldlt_h_solve<count_acc>(H, x, b); }) == solve_products(n));
+    }
+    SECTION("ldlt_bk_factor / _solve, no interchanges") {
+        // Diagonally dominant: every step takes test 1, a 1x1 pivot in place,
+        // so column k is n - k entries of k products.
+        dmat A = spd<double>(n);
+        bk_pivot_info piv;
+        CHECK(products_of([&] { REQUIRE(ldlt_bk_factor<count_acc>(A, piv) == 0); }) ==
+              bk_products(n));
+        for (std::size_t k = 0; k < n; ++k) CHECK(piv.ipiv[k] == static_cast<int>(k + 1));
+        CHECK(products_of([&] { ldlt_bk_solve<count_acc>(A, piv, x, b); }) == solve_products(n));
     }
     SECTION("void hands the accumulator nothing") {
         dmat A = pivoting<double>(n);
@@ -259,4 +283,69 @@ TEST_CASE("dense direct: wider accumulators solve, real and complex", "[operatio
         ldlt_h_solve<cd>(D, x, b);
         CHECK(residual() < 1e-5);
     }
+}
+
+namespace {
+
+double bk_backward_error(const dmat& A, const dvec& x, const dvec& b) {
+    double r2 = 0.0, a2 = 0.0, x2 = 0.0;
+    for (std::size_t i = 0; i < A.num_rows(); ++i) {
+        double r = b(i);
+        for (std::size_t j = 0; j < A.num_cols(); ++j) {
+            r -= A(i, j) * x(j);
+            a2 += A(i, j) * A(i, j);
+        }
+        r2 += r * r;
+        x2 += x(i) * x(i);
+    }
+    return std::sqrt(r2) / (std::sqrt(a2) * std::sqrt(x2));
+}
+
+} // namespace
+
+TEST_CASE("dense direct: accumulator Bunch-Kaufman through interchanges and 2x2 blocks",
+          "[operation][accumulator][585][ldlt_bk]") {
+    // The #335 sweep (test_ldlt_bk.cpp): random symmetric indefinite n = 4..12.
+    // Each draw is solved four ways. Mixing a factor from one path with the
+    // solve from the other checks that both leave and read the same per-step
+    // layout, which a residual of matched pairs alone would not.
+    using exact_test::exact_acc;
+    std::uint64_t seed = 20260802u;
+    auto next = [&seed]() {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>((seed >> 11) % 2000001) / 1000000.0 - 1.0;
+    };
+    std::size_t saw_2x2 = 0, saw_swap = 0, checked = 0;
+    for (std::size_t n = 4; n <= 12; ++n) {
+        for (int trial = 0; trial < 20; ++trial) {
+            dmat A0(n, n);
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j <= i; ++j) A0(i, j) = A0(j, i) = next();
+            dvec b(n), x(n);
+            for (std::size_t i = 0; i < n; ++i) b(i) = next();
+
+            dmat Fv = A0, Fa = A0, Fe = A0;
+            bk_pivot_info pv, pa, pe;
+            if (ldlt_bk_factor(Fv, pv) != 0) continue;   // singular draw
+            REQUIRE(ldlt_bk_factor<double>(Fa, pa) == 0);
+            REQUIRE(ldlt_bk_factor<exact_acc<double>>(Fe, pe) == 0);
+            ++checked;
+            for (std::size_t k = 0; k < n; ++k) {
+                if (pa.ipiv[k] < 0) { ++saw_2x2; break; }
+                if (static_cast<std::size_t>(pa.ipiv[k] - 1) != k) { ++saw_swap; break; }
+            }
+            INFO("n = " << n << ", trial = " << trial);
+            ldlt_bk_solve<double>(Fa, pa, x, b);
+            CHECK(bk_backward_error(A0, x, b) < 1e-10);
+            ldlt_bk_solve(Fa, pa, x, b);                 // accumulator factor, void solve
+            CHECK(bk_backward_error(A0, x, b) < 1e-10);
+            ldlt_bk_solve<double>(Fv, pv, x, b);         // void factor, accumulator solve
+            CHECK(bk_backward_error(A0, x, b) < 1e-10);
+            ldlt_bk_solve<exact_acc<double>>(Fe, pe, x, b);
+            CHECK(bk_backward_error(A0, x, b) < 1e-10);
+        }
+    }
+    REQUIRE(checked > 0);
+    REQUIRE(saw_2x2 > 0);
+    REQUIRE(saw_swap > 0);
 }
