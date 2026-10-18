@@ -5,14 +5,15 @@ name: CI
 # PUSH runs only for `main` and release tags. A push to a branch that has an open
 # PR also fires `pull_request`, so `push: branches: ['**']` built every PR commit
 # twice: 20 jobs per event, on 8 platforms. The PR run is the one that tests the
-# merge result, and the one Tier 2 gates on. To get CI on a branch with no PR,
+# merge result. To get CI on a branch with no PR,
 # open it as a draft (Tier 1 runs on drafts) or run
 # `gh workflow run ci.yml --ref <branch>`.
 #
 # PATHS: a change that touches only documentation runs no CI at all. Nothing
 # under docs/ or docs-site/, and no Markdown file, is read by the build or the
 # tests; docs.yml builds the site for those changes. The list is repeated
-# under both events below; keep the two copies the same. If a PR mixes docs with
+# under both events below, and once more in regression.yml; keep all three
+# copies the same. If a PR mixes docs with
 # anything else, the whole workflow runs: `paths-ignore` skips a run only when
 # EVERY changed file matches. Path filters are not evaluated for tag pushes, so
 # a release tag always runs the full matrix.
@@ -46,16 +47,12 @@ on:
       - 'LICENSE'
       - '.coderabbit.yaml'
       - '.nojekyll'
-    # `ready_for_review` matters: the Tier 2 regression job gates on
-    # `pull_request.draft == false`, so a PR opened as a draft only ever has
-    # runs in which that job skipped. Without this trigger, promoting the draft
-    # re-evaluates nothing and Tier 2 never runs unless another commit is
-    # pushed -- and `gh pr checks` still reports green, because a skipped job
-    # is not a failure (#333).
-    #
-    # The other three are the defaults, and must be listed explicitly: naming
-    # `types` REPLACES the default set rather than extending it.
-    types: [ opened, synchronize, reopened, ready_for_review ]
+    # The default types, and deliberately NOT `ready_for_review`. Promoting a
+    # draft changes nothing this workflow tests: the head commit already ran
+    # here as a draft. Tier 2 lives in regression.yml, which does trigger on
+    # `ready_for_review`, so promotion runs the one job that is new instead of
+    # all 21 again (~128 runner-minutes per promotion, measured on #609/#610).
+    types: [ opened, synchronize, reopened ]
 
 # A new commit on a PR supersedes the run for the previous one: cancel it rather
 # than finish a 20-job matrix nobody will read. Pushes to main and tags are keyed
@@ -637,47 +634,3 @@ jobs:
       # are built but not run.
       - name: Smoke check
         run: ./build-bench/benchmarks/bench_all --help
-
-  # ── Tier 2: Regression tests on Linux (~10 min) ─────────────────────
-  # Runs only on non-draft PRs, after Tier 1 passes.
-  # Exercises dense, sparse, and iterative solvers at 100–50K DOF.
-  regression:
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.draft == false
-    needs: build
-    runs-on: ubuntu-24.04
-
-    # Same trusted-run gate as the build job (see note there): forked PRs skip
-    # sccache so they cannot poison the shared GHA cache.
-    env:
-      SCCACHE_LAUNCHER: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'sccache' || '' }}
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up sccache
-        if: >-
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.head.repo.full_name == github.repository
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-
-      - name: Configure
-        run: >
-          cmake --preset ci-regression
-          -DCMAKE_C_COMPILER=gcc-13
-          -DCMAKE_CXX_COMPILER=g++-13
-          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
-          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
-
-      - name: Build
-        run: cmake --build build-ci-regression --parallel 2
-
-      - name: Run regression tests
-        run: >
-          ctest --test-dir build-ci-regression
-          -L regression
-          --output-on-failure
-          --timeout 600

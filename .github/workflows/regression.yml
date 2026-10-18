@@ -1,0 +1,82 @@
+name: Regression
+
+# Tier 2: the regression tests, on non-draft PRs only.
+#
+# This was the `regression` job of ci.yml. It is a workflow of its own so that
+# promoting a draft PR runs only this job. Tier 2 gates on
+# `pull_request.draft == false`, so it has to trigger on `ready_for_review`, or
+# a PR opened as a draft never runs it -- and `gh pr checks` still reports
+# green, because a skipped job is not a failure (#333). In ci.yml that trigger
+# re-ran the whole Tier 1 matrix on a commit that had already passed it as a
+# draft: 21 jobs and ~135 runner-minutes for one 7-minute job (#609, #610).
+#
+# The cost of the split: Tier 2 no longer waits for Tier 1 (`needs: build`
+# cannot reach across workflows). On a push to a ready PR both start together,
+# so a commit that breaks Tier 1 also spends one regression run. Promotion, the
+# common case, is the one this saves on.
+#
+# PATHS: the same list as ci.yml; keep the three copies the same.
+on:
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-site/**'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
+      - 'LICENSE'
+      - '.coderabbit.yaml'
+      - '.nojekyll'
+    # Naming `types` replaces the default set, so the defaults are listed too.
+    types: [ opened, synchronize, reopened, ready_for_review ]
+
+permissions:
+  contents: read
+
+# A new commit, or a promotion while a run is in flight, supersedes the
+# previous run for this PR. Its own group, so it never cancels ci.yml's run.
+concurrency:
+  group: regression-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Exercises dense, sparse, and iterative solvers at 100-50K DOF (~10 min).
+  regression:
+    if: github.event.pull_request.draft == false
+    name: Regression (Linux GCC 13)
+    runs-on: ubuntu-24.04
+
+    # Same trusted-run gate as ci.yml's build job (see the note there): forked
+    # PRs skip sccache so they cannot poison the shared GHA cache.
+    env:
+      SCCACHE_LAUNCHER: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'sccache' || '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up sccache
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Configure
+        run: >
+          cmake --preset ci-regression
+          -DCMAKE_C_COMPILER=gcc-13
+          -DCMAKE_CXX_COMPILER=g++-13
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+
+      - name: Build
+        run: cmake --build build-ci-regression --parallel 2
+
+      - name: Run regression tests
+        run: >
+          ctest --test-dir build-ci-regression
+          -L regression
+          --output-on-failure
+          --timeout 600
