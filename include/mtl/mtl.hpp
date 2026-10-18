@@ -155,6 +155,7 @@
 #include <mtl/operation/convert.hpp>
 #include <mtl/operation/axpy.hpp>
 #include <mtl/operation/sum.hpp>
+#include <mtl/operation/sum_dot_k.hpp>
 #include <mtl/operation/product.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/scale.hpp>

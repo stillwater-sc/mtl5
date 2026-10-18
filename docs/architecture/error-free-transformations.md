@@ -140,12 +140,45 @@ How it differs from the other configurations:
 - **Widths.** A `Value` wider than `T` keeps its low part in `err` on `assign`. A `Result` wider than `T` gets `sum + err` added in its own precision.
 - **Scope.** It works for built-in binary floating `T` only, and it needs the strict IEEE semantics above.
 
+## K-fold precision: `sum_k` and `dot_k`
+
+`include/mtl/operation/sum_dot_k.hpp` implements the paper's K-fold algorithms. The algorithm, proposition and bound numbers below are taken from the paper.
+
+```cpp
+double s = mtl::sum_k<3>(x);       // the sum, as if in 3-fold precision, rounded once
+double d = mtl::dot_k<4>(x, y);    // the dot product, as if in 4-fold precision
+```
+
+- **VecSum** (Algorithm 4.3) runs `two_sum` down a vector. The exact sum does not change. The last entry becomes the rounded sum and the others become the rounding errors. When the sum cancels, those errors are small, so one pass improves the condition number of what is left by about a factor of `u`.
+- **SumK** (Algorithm 4.8) makes K − 1 VecSum passes, then sums plainly. `sum_k<1>` is the recursive sum, and `sum_k<2>` is Sum2, the same bits as `mtl::sum<compensated_accumulator<T>>`.
+- **DotK** (Algorithm 5.10) collects each `two_product`'s error and the running sum's `two_sum` errors into 2n terms, then runs SumK over them with K − 1. As in the paper, `dot_k<2>` is Dot2 (Algorithm 5.3), the same bits as `mtl::dot<compensated_accumulator<T>, T>`.
+
+The bounds use `s` for the exact result, `S = Σ|pᵢ|` (or `|x|·|y|`), `u` for the unit roundoff (the paper's `eps`) and `γ_m = m·u/(1 − m·u)`:
+
+| | bound | paper |
+|---|---|---|
+| `sum_k<2>` | `u·|s| + γ²_{n−1}·S` | Proposition 4.5 |
+| `sum_k<K>`, K ≥ 3 | `(u + 3γ²_{n−1})·|s| + γ^K_{2n−2}·S` | Proposition 4.10 |
+| `dot_k<2>` | `u·|x·y| + γ_n²·|x|·|y|` | Proposition 5.5 |
+| `dot_k<K>`, K ≥ 3 | `(u + 2γ²_{4n−2})·|x·y| + γ^K_{4n−2}·|x|·|y|` | Proposition 5.11 |
+
+So the relative error is `u` plus about `(φu)^K` times the condition number, and each extra pass buys another factor of `u`. `test_sum_dot_k.cpp` asserts every bound for K = 1..5, on cancelling sums and dot products in `float` and `double`. It also shows the K-fold behaviour. The table gives the worst relative error over 20 dot products of length 200:
+
+| `T` | cond | K = 2 | K = 3 | K = 4 |
+|---|---|---|---|---|
+| float | 2^48 | 17 | 3.0e-6 | 5.0e-8 |
+| double | 2^106 | 8.0 | 1.5e-15 | 6.8e-17 |
+
+**SumK and DotK are not accumulators.** They keep every error term, n words for a sum and 2n for a dot product, and make K − 1 passes over them. They therefore work on whole vectors, not through `accumulator_traits`. Only K = 2 streams, and it is the compensated accumulator. In the language of the accuracy-architecture document (#596): DotK applies where a reduction's terms can be stored, as in a `dot` or a row of a `gemv`. It does not apply to the inner reduction of a factorization.
+
+**Cost.** `sum_k<K>` takes `(6K − 5)(n − 1)` flops (Proposition 4.10). `dot_k<K>` with the FMA `two_product` takes about `(12K − 14)·n`: 8n for the products and the running sum, then SumK over 2n terms. Each call makes one allocation of n or 2n values.
+
 ## Where MTL5 uses them
 
 - **Three-factor terms** (#602). The LDLᵀ factorizations sum terms `L(i,k)·d_k·L(j,k)`, and the accumulator protocol takes two factors. When `math::splits_product_terms_v<Acc, Value>` holds, which means an exact, a compensated or a wider accumulator, the kernels feed it `two_product(L, d)` as two products, so the whole term reaches the accumulator. See `accumulator_traits.hpp` and [Exact Accumulator](exact-accumulator.md).
 - **The compensated accumulator** (configuration 2c, above).
+- **`sum_k` and `dot_k`** (above).
 - **Next under #611:**
-  - `sum_k` and `dot_k`;
   - the paper's test-data generators;
   - an example that reproduces the paper's results.
 
