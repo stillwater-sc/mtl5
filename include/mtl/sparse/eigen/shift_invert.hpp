@@ -9,6 +9,17 @@
 //     inverse inside Arnoldi. An eigenpair (theta, y) of (A - sigma*I)^{-1}
 //     corresponds to an eigenpair (lambda, y) of A with lambda = sigma + 1/theta
 //     and the SAME eigenvector, and "nearest sigma" becomes "largest |theta|".
+//
+// ACCUMULATOR (#585). Both entry points take a leading `Accumulator` (default
+// `void`, unchanged) and forward it to every sum of products underneath:
+//   * sparse_eigs: itl::arnoldi<Accumulator> -- its dot products and, since
+//     #593, its matvec (mult<Accumulator> on the compressed2D).
+//   * sparse_eigs_shift_invert: the shift_invert_operator's LU factorization
+//     (sparse_lu_numeric<Accumulator>, #530) and its solves (lu_numeric::solve
+//     <Accumulator>, #535), which ARE the operator Arnoldi applies, plus
+//     Arnoldi's own dot products.
+// shift_diagonal's A - sigma*I is one subtraction per diagonal entry, not a
+// reduction, and stays in Value.
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -19,6 +30,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
 #include <mtl/itl/eigen/arnoldi.hpp>
+#include <type_traits>
 
 namespace mtl::sparse {
 
@@ -51,7 +63,10 @@ mat::compressed2D<Value> shift_diagonal(const mat::compressed2D<Value, Parameter
 
 /// LinearOperator applying (A - sigma*I)^{-1} via a cached sparse LU
 /// factorization: factor once, apply many. Plug into the iterative eigensolvers.
-template <typename Value>
+///
+/// `Accumulator` (trailing, as for the other class templates) selects the
+/// accumulation of the factorization and of every solve; `void` is unchanged.
+template <typename Value, typename Accumulator = void>
 class shift_invert_operator {
 public:
     template <typename Parameters>
@@ -68,14 +83,14 @@ public:
             std::sqrt(std::numeric_limits<Value>::epsilon()) * maxabs;
 
         auto sym = factorization::sparse_lu_symbolic(B);
-        num_ = factorization::sparse_lu_numeric(B, sym, Value(1), perturb);
+        num_ = factorization::sparse_lu_numeric<Accumulator>(B, sym, Value(1), perturb);
     }
 
     /// y = (A - sigma*I)^{-1} x
     template <typename Vec>
     vec::dense_vector<Value> operator*(const Vec& x) const {
         vec::dense_vector<Value> y(n_);
-        num_.solve(y, x);
+        num_.template solve<Accumulator>(y, x);
         return y;
     }
 
@@ -94,7 +109,10 @@ private:
 ///
 /// `subspace` is the Krylov dimension (default: modest multiple of k, capped at
 /// n); `tol` flags convergence via the Arnoldi Ritz residual.
-template <typename Value, typename Parameters>
+///
+/// `Accumulator` reaches the factorization, the solves and Arnoldi's inner
+/// products (see the header note); `void` is unchanged.
+template <typename Accumulator = void, typename Value, typename Parameters>
 itl::ritz_pairs<std::complex<Value>>
 sparse_eigs_shift_invert(const mat::compressed2D<Value, Parameters>& A, Value sigma,
                          std::size_t k, std::size_t subspace = 0,
@@ -102,7 +120,7 @@ sparse_eigs_shift_invert(const mat::compressed2D<Value, Parameters>& A, Value si
     using complex_type = std::complex<Value>;
     const std::size_t n = A.num_rows();
 
-    shift_invert_operator<Value> op(A, sigma);
+    shift_invert_operator<Value, Accumulator> op(A, sigma);
 
     // Start vector: index-varied to break symmetry.
     vec::dense_vector<Value> v0(n);
@@ -110,7 +128,7 @@ sparse_eigs_shift_invert(const mat::compressed2D<Value, Parameters>& A, Value si
         v0(i) = Value(1) + Value(i) / Value(n == 0 ? 1 : n);
 
     // Nearest sigma  <=>  largest |theta| of the shift-inverted operator.
-    auto r = itl::arnoldi(op, v0, k, itl::eigen_which::largest_magnitude, subspace, tol);
+    auto r = itl::arnoldi<Accumulator>(op, v0, k, itl::eigen_which::largest_magnitude, subspace, tol);
 
     // Map Ritz values back: lambda = sigma + 1/theta. Eigenvectors are unchanged.
     itl::ritz_pairs<complex_type> out;
@@ -130,7 +148,8 @@ sparse_eigs_shift_invert(const mat::compressed2D<Value, Parameters>& A, Value si
 /// Compute the `k` eigenvalues of a sparse matrix `A` of largest magnitude (or
 /// per `which`) with eigenvectors, by Arnoldi applied directly to the sparse
 /// operator -- no factorization. A thin convenience over itl::arnoldi.
-template <typename Value, typename Parameters>
+/// `Accumulator` is forwarded to it (dot products and matvec); `void` is unchanged.
+template <typename Accumulator = void, typename Value, typename Parameters>
 itl::ritz_pairs<std::complex<Value>>
 sparse_eigs(const mat::compressed2D<Value, Parameters>& A, std::size_t k,
             itl::eigen_which which = itl::eigen_which::largest_magnitude,
@@ -139,7 +158,7 @@ sparse_eigs(const mat::compressed2D<Value, Parameters>& A, std::size_t k,
     vec::dense_vector<Value> v0(n);
     for (std::size_t i = 0; i < n; ++i)
         v0(i) = Value(1) + Value(i) / Value(n == 0 ? 1 : n);
-    return itl::arnoldi(A, v0, k, which, subspace, tol);
+    return itl::arnoldi<Accumulator>(A, v0, k, which, subspace, tol);
 }
 
 } // namespace mtl::sparse
