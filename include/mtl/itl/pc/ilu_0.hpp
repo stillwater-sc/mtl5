@@ -2,19 +2,54 @@
 // MTL5 -- ILU(0) incomplete LU factorization preconditioner for compressed2D
 // Preserves the sparsity pattern of A (no fill-in).
 // Constructor performs factorization; solve/adjoint_solve do L/U trisolves.
+//
+// ACCUMULATOR (#585). A non-void trailing `Accumulator` routes every
+// sum-of-products of the factorization and of both solves through
+// math::accumulator_traits, so each stored entry and each solution component is
+// one reduction rounded once:
+//
+//   factor:  U(i,j) = A(i,j) - sum_k L(i,k) U(k,j),
+//            L(i,j) = (A(i,j) - sum_k L(i,k) U(k,j)) / U(j,j)
+//   solve:   y(i)   = b(i) - sum_j L(i,j) y(j)
+//            x(i)   = (y(i) - sum_j U(i,j) x(j)) / U(i,i)
+//
+// A(i,j), b(i) and y(i) enter the accumulator through assign(), not by being
+// subtracted from a rounded sum -- rounding the sum first gives the accuracy
+// back (measured on the dense solves, #594).
+//
+// The IKJ factorization is right-looking WITHIN a row: entry (i,j) receives
+// one update per eliminated k. That works here without restructuring because
+// the whole row is live while it is eliminated, so the accumulator path keeps
+// one accumulator per stored entry of the CURRENT row (workspace: the longest
+// row of A) and rounds each out when the row is split into L and U. The
+// products and their order are the void path's, so a plain `Acc == Value`
+// accumulator reproduces it bit for bit.
+//
+// adjoint_solve reads the row storage by column and is therefore a scatter;
+// its accumulator path keeps one live accumulator per component (workspace n,
+// the shape of the transposed SpMV in operation/mult.hpp; see the workspace
+// note in math/accumulator_traits.hpp).
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
+#include <algorithm>
 #include <cassert>
+#include <limits>
+#include <type_traits>
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl::pc {
 
 /// ILU(0) preconditioner for compressed2D sparse matrices.
 /// Computes L and U factors with the same sparsity pattern as A.
-template <Field Value, typename Parameters = mat::parameters<>>
+///
+/// `Accumulator` selects how the factorization and the triangular solves
+/// accumulate (see math/accumulator_traits.hpp and the header note). The default
+/// `void` keeps the naive value_type arithmetic unchanged.
+template <Field Value, typename Parameters = mat::parameters<>, typename Accumulator = void>
 class ilu_0 {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;
@@ -28,6 +63,10 @@ public:
     /// Solve (L*U)*x = b: forward substitution (L*y=b), then back substitution (U*x=y)
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        if constexpr (!std::is_void_v<Accumulator>) {
+            solve_acc(x, b);
+            return;
+        }
         // Forward substitution: L*y = b (L has unit diagonal)
         for (size_type i = 0; i < n_; ++i) {
             auto sum = math::zero<value_type>();
@@ -63,6 +102,10 @@ public:
     /// it is laid out and needs no transposed copy.
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
+        if constexpr (!std::is_void_v<Accumulator>) {
+            adjoint_solve_acc(x, b);
+            return;
+        }
         using conj_t = functor::scalar::conj<value_type>;
 
         for (size_type i = 0; i < n_; ++i)
@@ -87,6 +130,109 @@ public:
     }
 
 private:
+    using AT = math::accumulator_traits<std::conditional_t<std::is_void_v<Accumulator>,
+                                                           value_type, Accumulator>,
+                                        value_type>;
+    using acc_type = std::conditional_t<std::is_void_v<Accumulator>, value_type, Accumulator>;
+
+    /// solve() with the accumulator: b(i) and y(i) are assigned into the
+    /// accumulator and the row sum is subtracted inside it, rounded once.
+    template <typename VecX, typename VecB>
+    void solve_acc(VecX& x, const VecB& b) const {
+        acc_type acc;
+        for (size_type i = 0; i < n_; ++i) {
+            AT::assign(acc, static_cast<value_type>(b(i)));
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                AT::add_product(acc, -l_data_[k], static_cast<value_type>(x(l_indices_[k])));
+            x(i) = AT::template value<value_type>(acc);
+        }
+        for (size_type ii = 0; ii < n_; ++ii) {
+            const size_type i = n_ - 1 - ii;
+            AT::assign(acc, static_cast<value_type>(x(i)));
+            for (size_type k = u_starts_[i]; k < u_starts_[i + 1]; ++k)
+                AT::add_product(acc, -u_data_[k], static_cast<value_type>(x(u_indices_[k])));
+            x(i) = AT::template value<value_type>(acc) / u_diag_[i];
+        }
+    }
+
+    /// adjoint_solve() with the accumulator. The same scatter as the void path,
+    /// but into one live accumulator per component, each rounded once when its
+    /// component becomes final.
+    template <typename VecX, typename VecB>
+    void adjoint_solve_acc(VecX& x, const VecB& b) const {
+        using conj_t = functor::scalar::conj<value_type>;
+        std::vector<acc_type> acc(n_);
+
+        for (size_type i = 0; i < n_; ++i)
+            AT::assign(acc[i], static_cast<value_type>(b(i)));
+        for (size_type i = 0; i < n_; ++i) {                    // U^H y = b
+            const value_type yi = AT::template value<value_type>(acc[i]) / conj_t::apply(u_diag_[i]);
+            x(i) = yi;
+            for (size_type k = u_starts_[i]; k < u_starts_[i + 1]; ++k)
+                AT::add_product(acc[u_indices_[k]], -conj_t::apply(u_data_[k]), yi);
+        }
+
+        for (size_type i = 0; i < n_; ++i)
+            AT::assign(acc[i], static_cast<value_type>(x(i)));
+        for (size_type ii = 0; ii < n_; ++ii) {                 // L^H x = y
+            const size_type i = n_ - 1 - ii;
+            const value_type xi = AT::template value<value_type>(acc[i]);
+            x(i) = xi;
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                AT::add_product(acc[l_indices_[k]], -conj_t::apply(l_data_[k]), xi);
+        }
+    }
+
+    /// The IKJ elimination with one accumulator per stored entry of row i. Same
+    /// products in the same order as factorize(); each entry rounds once, when
+    /// the row is split. ILU(0) has no fill, so the eliminated k are exactly the
+    /// stored j < i, taken in increasing order as factorize() takes them.
+    void factorize_acc(const matrix_type& A,
+                       std::vector<std::vector<std::pair<size_type, value_type>>>& l_rows,
+                       std::vector<std::vector<std::pair<size_type, value_type>>>& u_rows) {
+        const auto& a_starts  = A.ref_major();
+        const auto& a_indices = A.ref_minor();
+        const auto& a_data    = A.ref_data();
+        constexpr size_type none = std::numeric_limits<size_type>::max();
+
+        std::vector<size_type> slot(n_, none);   // column -> accumulator of row i
+        std::vector<acc_type> acc;
+        std::vector<value_type> lval;            // L(i,k), rounded, by slot
+        std::vector<size_type> cols, lower;
+
+        for (size_type i = 0; i < n_; ++i) {
+            const size_type len = a_starts[i + 1] - a_starts[i];
+            if (acc.size() < len) { acc.resize(len); lval.resize(len); }
+            cols.clear();
+            lower.clear();
+            for (size_type k = a_starts[i]; k < a_starts[i + 1]; ++k) {
+                const size_type j = a_indices[k];
+                slot[j] = cols.size();
+                AT::assign(acc[slot[j]], a_data[k]);
+                cols.push_back(j);
+                if (j < i) lower.push_back(j);
+            }
+            std::sort(lower.begin(), lower.end());
+
+            for (auto k : lower) {
+                const size_type sk = slot[k];
+                const value_type l = AT::template value<value_type>(acc[sk]) / u_diag_[k];
+                lval[sk] = l;
+                for (const auto& [uj, uv] : u_rows[k])
+                    if (slot[uj] != none)
+                        AT::add_product(acc[slot[uj]], -l, uv);
+            }
+
+            for (auto j : cols) {
+                const size_type sj = slot[j];
+                if (j < i)       l_rows[i].emplace_back(j, lval[sj]);
+                else if (j > i)  u_rows[i].emplace_back(j, AT::template value<value_type>(acc[sj]));
+                else             u_diag_[i] = AT::template value<value_type>(acc[sj]);
+            }
+            for (auto j : cols) slot[j] = none;
+        }
+    }
+
     void factorize(const matrix_type& A) {
         const auto& a_starts  = A.ref_major();
         const auto& a_indices = A.ref_minor();
@@ -103,6 +249,13 @@ private:
         std::vector<std::vector<std::pair<size_type, value_type>>> l_rows(n_);
         std::vector<std::vector<std::pair<size_type, value_type>>> u_rows(n_);
         u_diag_.resize(n_);
+
+        if constexpr (!std::is_void_v<Accumulator>) {
+            factorize_acc(A, l_rows, u_rows);
+            build_crs(l_rows, l_starts_, l_indices_, l_data_);
+            build_crs(u_rows, u_starts_, u_indices_, u_data_);
+            return;
+        }
 
         // Copy A into row-indexed structure
         std::vector<value_type> row_work(n_, math::zero<value_type>());
