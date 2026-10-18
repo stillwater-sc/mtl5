@@ -24,6 +24,11 @@
 // (supernodal_ldlt_numeric<Acc>(A, sym)); the default void accumulates in Value,
 // byte-identical to a plain Value-precision factorization.
 //
+// Three-factor terms (#602): each update term is L(r,k) D(k) L(c,k), and the
+// coefficient D(k) L(c,k) is formed in Value. When the accumulator can keep it
+// (math::splits_product_terms_v) the coefficient's rounding error is added as a
+// second product, so the whole term reaches the accumulator.
+//
 // References: Davis, "Direct Methods for Sparse Linear Systems", SIAM 2006;
 //             Ng & Peyton, "Block sparse Cholesky algorithms ...", SIAM 1993.
 
@@ -223,6 +228,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
     // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
     using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using AT = mtl::math::accumulator_traits<Acc, Value>;
+    constexpr bool split = mtl::math::splits_product_terms_v<Acc, Value>;   // #602
     const std::size_t n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -321,8 +327,15 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
                     for (std::size_t kk = 0; kk < wK; ++kk) {
                         // coefficient D(k)*L(row_b,k) formed in Value; product with
                         // L(row_u,k) accumulated in Accumulator (negated -> subtract).
-                        const Value coef = D[fK + kk] * UK[kk * moff + bi];
-                        AT::add_product(*dst, UK[kk * moff + ui], -coef);
+                        if constexpr (split) {
+                            const auto coef = mtl::math::two_product(D[fK + kk], UK[kk * moff + bi]);
+                            AT::add_product(*dst, UK[kk * moff + ui], -coef.hi);
+                            if (coef.lo != Value{0})
+                                AT::add_product(*dst, UK[kk * moff + ui], -coef.lo);
+                        } else {
+                            const Value coef = D[fK + kk] * UK[kk * moff + bi];
+                            AT::add_product(*dst, UK[kk * moff + ui], -coef);
+                        }
                     }
                 }
             }
@@ -355,10 +368,18 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
             // Rank-1 update of the remaining diagonal-block columns cc in (c,w):
             //   P(r,cc) -= L(r,c) * dcc * L(cc,c)   for r >= cc.
             for (std::size_t cc = c + 1; cc < w; ++cc) {
-                const Value coef = dcc * Lcol[cc];          // dcc * L(cc,c), in Value
                 Acc* col = &P[cc * m];
-                for (std::size_t r = cc; r < m; ++r)
-                    AT::add_product(col[r], Lcol[r], -coef);
+                if constexpr (split) {
+                    const auto coef = mtl::math::two_product(dcc, Lcol[cc]);
+                    for (std::size_t r = cc; r < m; ++r) {
+                        AT::add_product(col[r], Lcol[r], -coef.hi);
+                        if (coef.lo != Value{0}) AT::add_product(col[r], Lcol[r], -coef.lo);
+                    }
+                } else {
+                    const Value coef = dcc * Lcol[cc];      // dcc * L(cc,c), in Value
+                    for (std::size_t r = cc; r < m; ++r)
+                        AT::add_product(col[r], Lcol[r], -coef);
+                }
             }
 
             // Store column f+c: off-diagonal entries (rows > c) into CSC L, and the

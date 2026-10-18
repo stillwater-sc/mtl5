@@ -13,8 +13,12 @@
 //
 // Each term is a product of THREE values and the accumulator takes two, so the
 // first product -- L(i,k) d_k, or L(i,k)^2 -- rounds once in the element type,
-// exactly as the void path forms it; the accumulator covers the sum. (Dense
-// LDLT, #594, does the same with L(j,k) D(k).) A(i,j) is assigned into the
+// exactly as the void path forms it. When the accumulator can keep it
+// (math::splits_product_terms_v: an IEEE element type and an exact or strictly
+// wider built-in accumulator, #602) that product's rounding error is added as a
+// second term, so the whole three-factor term reaches the accumulator; otherwise
+// the accumulator covers the sum only. (Dense LDLT, #594, does the same with
+// L(j,k) D(k).) A(i,j) is assigned into the
 // accumulator rather than subtracted from a rounded sum. The forward solve
 // forms b(i) - sum inside the accumulator; the L^T solve scatters into one
 // accumulator per component (workspace n) where the void path scans later rows.
@@ -137,6 +141,19 @@ private:
         }
     }
 
+    /// acc -= a * b * c. The product a * b is formed in value_type; when the
+    /// accumulator can keep it, its rounding error goes in too (#602).
+    static void add_term(acc_type& acc, const value_type& a, const value_type& b,
+                         const value_type& c) {
+        if constexpr (math::splits_product_terms_v<acc_type, value_type>) {
+            const auto t = math::two_product(a, b);
+            AT::add_product(acc, -t.hi, c);
+            if (t.lo != value_type(0)) AT::add_product(acc, -t.lo, c);
+        } else {
+            AT::add_product(acc, -(a * b), c);
+        }
+    }
+
     /// The factorization below with each entry one accumulator (header note).
     void factorize_acc(std::vector<std::vector<std::pair<size_type, value_type>>>& l_rows) {
         acc_type acc;
@@ -148,7 +165,7 @@ private:
                     if (ik >= j) break;
                     for (const auto& [jk, jv] : l_rows[j]) {
                         if (jk == ik) {
-                            AT::add_product(acc, -(iv * d_[ik]), jv);
+                            add_term(acc, iv, d_[ik], jv);
                             break;
                         }
                         if (jk > ik) break;
@@ -161,7 +178,7 @@ private:
             for (const auto& [j, v] : l_rows[i])
                 if (j == i) AT::assign(acc, v);
             for (const auto& [j, v] : l_rows[i])
-                if (j != i) AT::add_product(acc, -(v * v), d_[j]);
+                if (j != i) add_term(acc, v, v, d_[j]);
             d_[i] = AT::template value<value_type>(acc);
         }
     }

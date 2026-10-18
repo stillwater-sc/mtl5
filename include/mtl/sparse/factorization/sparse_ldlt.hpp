@@ -188,6 +188,7 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
     using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using size_type = std::size_t;
     using AT = mtl::math::accumulator_traits<Acc, Value>;  // numeric workspace policy
+    constexpr bool split = mtl::math::splits_product_terms_v<Acc, Value>;   // #602
     size_type n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -266,16 +267,32 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
 
             if (ljk == Value{0}) continue;
 
-            Value ljk_dk = ljk * D[col_k];
+            // ljk * D[col_k] is formed in Value. When the accumulator can keep
+            // it, its rounding error goes in as a second product, so the whole
+            // three-factor term L(i,k) D(k) L(j,k) reaches the accumulator
+            // (math::splits_product_terms_v, #602); otherwise lo stays 0.
+            Value ljk_dk, ljk_dk_lo = Value{0};
+            if constexpr (split) {
+                const auto t = mtl::math::two_product(ljk, D[col_k]);
+                ljk_dk = t.hi;
+                ljk_dk_lo = t.lo;
+            } else {
+                ljk_dk = ljk * D[col_k];
+            }
 
             // Subtract from diagonal: x[j] -= ljk_dk * ljk, via add_product so
             // a config-2/3 accumulator never rounds the intermediate product.
             AT::add_product(x[j], -ljk_dk, ljk);
+            if constexpr (split)
+                if (ljk_dk_lo != Value{0}) AT::add_product(x[j], -ljk_dk_lo, ljk);
 
             for (size_type p = col_start; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
-                if (i > j)
+                if (i > j) {
                     AT::add_product(x[i], -ljk_dk, L.values[p]);
+                    if constexpr (split)
+                        if (ljk_dk_lo != Value{0}) AT::add_product(x[i], -ljk_dk_lo, L.values[p]);
+                }
             }
         }
 

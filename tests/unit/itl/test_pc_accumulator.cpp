@@ -43,24 +43,24 @@
 // implementations. With dropping, ILUT's accumulator also decides the pattern:
 // the drop tests read the single-rounded entries.
 //
-// ILDL is the exception, and the reason is instructive: its terms are products
-// of THREE values, L(i,k) d_k L(j,k), and add_product takes two, so L(i,k) d_k
-// rounds in the element type before the accumulator sees it. That pre-rounded
-// factor costs most of the gain. Hilbert(n), float (plain / fma / exact, then
-// exact with the three-factor term fed exactly -- measured with a scratch
-// variant forming L(i,k) d_k in double, exact for float * float, into a double
-// Kulisch accumulator):
+// ILDL's terms are products of THREE values, L(i,k) d_k L(j,k), and
+// add_product takes two, so L(i,k) d_k (or L(i,k)^2) rounds in the element type
+// before the accumulator sees it. Fed that way the exact accumulator showed no
+// ordering on Hilbert. Since #602 an accumulator that keeps it also receives
+// that product's rounding error (math::two_product), so the whole term arrives
+// and the ordering is back. Hilbert(n), float (plain / fma / exact; the last
+// column is the exact accumulator fed pre-rounded terms, as before #602):
 //
-//   n   plain    fma      exact    exact, three-factor exact
-//   5   2.2e-6   9.2e-6   2.7e-6   1.7e-6
-//   6   9.2e-5   2.4e-5   1.7e-5   9.2e-6
-//   7   7.8e-5   9.0e-5   8.9e-5   2.0e-5
-//   8   2.9e-4   2.0e-4   4.3e-5   5.0e-6
+//   n   plain    fma      exact    exact, pre-rounded
+//   5   2.2e-6   9.2e-6   1.7e-6   2.7e-6
+//   6   9.2e-5   2.4e-5   9.2e-6   1.7e-5
+//   7   7.8e-5   9.0e-5   2.0e-5   8.9e-5
+//   8   2.9e-4   2.0e-4   5.0e-6   4.3e-5
 //
-// The likely same cause explains the absent ordering of dense LDLT and
-// Bunch-Kaufman (#594, #595), which pre-round L(j,k) D(k) the same way. An
-// error-free product split (p = a*b, e = fma(a, b, -p), two exact add_products)
-// would recover it within the two-argument protocol; tracked in #602.
+// Single matrices are noisy; operation/test_three_factor_terms.cpp measures
+// the split over an ensemble, where it gains 1.1-1.6x on top of the exact
+// accumulator's ordering. Bunch-Kaufman (#595) is not affected: it feeds the
+// stored Schur column, not a product formed for the accumulator.
 //
 // At n = 9 IC(0) breaks down under configurations 1 and 2 -- a pivot cancels
 // below zero and its square root is NaN -- and only configuration 3 still
@@ -631,9 +631,13 @@ TEST_CASE("ildl: the accumulator reaches the factorization and both solves (#585
     const auto p = pattern(A);
     const auto b = rhs<double>(n);
 
+    // count_acc is an ADL accumulator over a real IEEE type, so each
+    // three-factor term arrives as hi plus, when its rounding error is
+    // nonzero, lo (#602): between one and two products per term.
     counting::products = 0;
     itl::pc::ildl<double, mat::parameters<>, counting::count_acc> M(A);
-    REQUIRE(counting::products == ic0_products(p));
+    REQUIRE(counting::products > ic0_products(p));
+    REQUIRE(counting::products <= 2 * ic0_products(p));
 
     vec::dense_vector<double> x(n);
     counting::products = 0;
@@ -684,7 +688,7 @@ TEST_CASE("ildl: a plain element-type accumulator is the void path bit for bit (
     CHECK(residual(A, xp, b) < 1e-5);
 }
 
-TEST_CASE("[586:pc] ildl: every configuration solves; no ordering (see the header)",
+TEST_CASE("[586:pc] ildl: the exact accumulator orders below plain and fma (see the header)",
           "[586:pc][itl][pc][ildl][accumulator]") {
     using exact = exact_test::exact_acc<float>;
     using fma   = math::fma_accumulator<float>;
@@ -698,6 +702,7 @@ TEST_CASE("[586:pc] ildl: every configuration solves; no ordering (see the heade
         INFO("ildl Hilbert(" << n << "): " << r1 << " / " << r2 << " / " << r3);
         CHECK(r1 < 1e-3);
         CHECK(r2 < 1e-3);
-        CHECK(r3 < 1e-3);
+        CHECK(r3 < r1);
+        CHECK(r3 < r2);
     }
 }

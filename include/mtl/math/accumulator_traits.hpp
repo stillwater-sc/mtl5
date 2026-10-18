@@ -86,6 +86,7 @@
 #include <mtl/math/identity.hpp>
 #include <cmath>        // std::fma
 #include <concepts>
+#include <limits>
 #include <type_traits>
 
 namespace mtl::math {
@@ -283,5 +284,48 @@ struct accumulator_round_type<fma_accumulator<T>, Mag> {
 
 template <typename Acc, typename Mag>
 using accumulator_round_type_t = typename accumulator_round_type<Acc, Mag>::type;
+
+/// Three-factor terms (#602). The LDL^T-type factorizations sum terms
+/// `a * b * c` -- L(i,k) d_k L(j,k) -- but `add_product` takes two factors, so
+/// they form `a * b` in `Value` first. That rounding happens before the
+/// accumulator sees the term, and no accumulator, exact or not, can undo it.
+///
+/// For an IEEE `Value` the rounding can be recovered without a protocol change:
+/// with `p = a * b` rounded and `e = fma(a, b, -p)`, `a * b == p + e` exactly
+/// (absent underflow of `e`), so `add_product(acc, p, c)` and
+/// `add_product(acc, e, c)` together carry the whole term. This is worth its
+/// second `add_product` only when the accumulator keeps `e * c`: an exact one
+/// (the ADL hook) or a strictly wider built-in floating type. A plain `Value`
+/// accumulator would round the small term away again, and an FMA accumulator
+/// rounds each term to `T` anyway, so for configurations 1 (at `Value`) and 2
+/// the kernels keep the single pre-rounded `add_product` and their bits.
+///
+/// Not for non-IEEE `Value`s: a posit or an LNS has no such splitting identity.
+/// An accumulator that specializes `accumulator_traits` directly rather than
+/// through the ADL hook is not detected and keeps the pre-rounded form.
+template <typename Acc, typename Value>
+inline constexpr bool splits_product_terms_v =
+    std::is_floating_point_v<Value> &&
+    (adl_accumulator<Acc, Value> ||
+     (std::is_floating_point_v<Acc> &&
+      std::numeric_limits<Acc>::digits > std::numeric_limits<Value>::digits));
+
+/// `a * b` as `hi + lo`: `hi` the rounded product, `lo` its rounding error.
+template <typename T>
+struct split_product {
+    T hi;
+    T lo;
+};
+
+/// The error-free product of two IEEE values (see `splits_product_terms_v`).
+/// A non-finite `hi` gets `lo = 0`, so an overflowing product is the infinity
+/// it was before the split instead of `inf + (-inf)`.
+template <typename T>
+    requires std::is_floating_point_v<T>
+split_product<T> two_product(T a, T b) {
+    const T p = a * b;
+    if (!std::isfinite(p)) return {p, T(0)};
+    return {p, std::fma(a, b, -p)};
+}
 
 } // namespace mtl::math
