@@ -10,10 +10,31 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstddef>
+#include <type_traits>
 #include <vector>
 
 using namespace mtl;
 using cplx = std::complex<double>;
+
+namespace counting {
+
+/// Configuration-3 shape (the ADL hook) that counts its products (#585).
+struct count_acc { double s; };
+inline std::size_t products = 0;
+
+inline void accumulator_clear(count_acc& a) { a.s = 0.0; }
+template <typename V>
+void accumulator_assign(count_acc& a, const V& v) { a.s = static_cast<double>(v); }
+template <typename V>
+void accumulator_add_product(count_acc& a, const V& m, const V& v) {
+    ++products;
+    a.s += static_cast<double>(m) * static_cast<double>(v);
+}
+template <typename R>
+R accumulator_value(const count_acc& a, std::type_identity<R>) { return static_cast<R>(a.s); }
+
+} // namespace counting
 
 namespace {
 
@@ -149,4 +170,65 @@ TEST_CASE("sparse shift-invert: nonsymmetric matrix", "[sparse][eigen][shift-inv
         if (std::abs(r.values(i) - cplx(3.0, 0.0)) < 1e-6) found3 = true;
     REQUIRE(found3);
     REQUIRE(max_residual(A, r) < 1e-6);
+}
+
+TEST_CASE("sparse eigensolvers: the Accumulator reaches the factorization, the solves and Arnoldi (#585)",
+          "[sparse][eigen][shift-invert][accumulator]") {
+    const std::size_t n = 30;
+    auto A = laplacian1d(n);
+    vec::dense_vector<double> x(n, 1.0);
+
+    SECTION("shift_invert_operator: factorization and every application") {
+        counting::products = 0;
+        sparse::shift_invert_operator<double, counting::count_acc> op(A, 0.1);
+        const std::size_t factor = counting::products;
+        CHECK(factor > 0);
+        counting::products = 0;
+        (void)(op * x);
+        const std::size_t one = counting::products;
+        CHECK(one > 0);
+        counting::products = 0;
+        (void)(op * x);
+        CHECK(counting::products == one);        // each application, same work
+
+        counting::products = 0;
+        sparse::shift_invert_operator<double> v(A, 0.1);
+        (void)(v * x);
+        CHECK(counting::products == 0);
+    }
+    SECTION("sparse_eigs_shift_invert and sparse_eigs") {
+        counting::products = 0;
+        (void)sparse::sparse_eigs_shift_invert<counting::count_acc>(A, 0.0, 3);
+        CHECK(counting::products > 0);
+        counting::products = 0;
+        (void)sparse::sparse_eigs<counting::count_acc>(A, 3, itl::eigen_which::largest_magnitude, n);
+        CHECK(counting::products > 0);
+        counting::products = 0;
+        (void)sparse::sparse_eigs_shift_invert(A, 0.0, 3);
+        (void)sparse::sparse_eigs(A, 3, itl::eigen_which::largest_magnitude, n);
+        CHECK(counting::products == 0);
+    }
+}
+
+TEST_CASE("sparse eigensolvers: an accumulated run finds the same eigenvalues (#585)",
+          "[sparse][eigen][shift-invert][accumulator]") {
+    const std::size_t n = 40;
+    auto A = laplacian1d(n);
+    auto expected = laplacian1d_eigs(n);
+
+    auto r = sparse::sparse_eigs_shift_invert<double>(A, 0.0, 3);
+    REQUIRE(r.converged);
+    std::vector<double> got(3);
+    for (std::size_t i = 0; i < 3; ++i) got[i] = r.values(i).real();
+    std::sort(got.begin(), got.end());
+    for (std::size_t i = 0; i < 3; ++i)
+        CHECK_THAT(got[i], Catch::Matchers::WithinAbs(expected[i], 1e-7));
+    CHECK(max_residual(A, r) < 1e-6);
+
+    auto s = sparse::sparse_eigs<double>(A, 3, itl::eigen_which::largest_magnitude, n);
+    std::vector<double> top(3);
+    for (std::size_t i = 0; i < 3; ++i) top[i] = s.values(i).real();
+    std::sort(top.begin(), top.end());
+    for (std::size_t i = 0; i < 3; ++i)
+        CHECK_THAT(top[i], Catch::Matchers::WithinAbs(expected[n - 3 + i], 1e-7));
 }
