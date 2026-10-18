@@ -53,22 +53,116 @@
 // amortised O(1), so it would be speculative here. It would slot in as a
 // pattern-only sweep ahead of the loop below, filling starts_ before the
 // numeric pass.
+//
+// ACCUMULATOR (#585). spgemm<Accumulator>(A, B) routes each C(i,j) =
+// sum_k A(i,k) B(k,j) through math::accumulator_traits and rounds it once, at
+// the gather. Gustavson's update is a scatter -- C(i,j) receives one product
+// per k -- but the whole row of C is live while it is built, so one
+// accumulator per touched column of the current row holds the complete sum
+// without restructuring the loop. Columns map to accumulators through a slot
+// table, so the live accumulators number nnz(C row i), not n: the workspace
+// that matters when each one is a quire.
+//
+// A plain `Acc == result_t` accumulator performs the void path's additions in
+// the void path's order and gives the same bits, with one exception: the void
+// accumulator STORES the first product of each entry, the policy path adds it
+// to a cleared zero, and 0 + (-0) is +0. An entry whose first product is -0
+// and whose later products are all zero therefore comes back +0 instead of -0.
+// A non-void Accumulator never takes the void path's code.
 #include <cassert>
 #include <cstddef>
 #include <algorithm>
+#include <limits>
 #include <vector>
 #include <type_traits>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 #include <mtl/sparse/util/scatter.hpp>
 
 namespace mtl {
 
+namespace detail {
+
+/// spgemm with an accumulator: one per touched column of the current row,
+/// rounded once at the gather (see the header note).
+template <typename Accumulator, typename V1, typename P1, typename V2, typename P2>
+auto spgemm_acc(const mat::compressed2D<V1, P1>& A,
+                const mat::compressed2D<V2, P2>& B) {
+    using result_t  = std::common_type_t<V1, V2>;
+    using size_type = typename mat::compressed2D<V1, P1>::size_type;
+    using AT        = math::accumulator_traits<Accumulator, result_t>;
+    constexpr size_type none = std::numeric_limits<size_type>::max();
+
+    const size_type m = A.num_rows();
+    const size_type n = B.num_cols();
+
+    const auto& a_starts  = A.ref_major();
+    const auto& a_indices = A.ref_minor();
+    const auto& a_data    = A.ref_data();
+    const auto& b_starts  = B.ref_major();
+    const auto& b_indices = B.ref_minor();
+    const auto& b_data    = B.ref_data();
+
+    std::vector<size_type> c_starts(m + 1, size_type(0));
+    std::vector<size_type> c_indices;
+    std::vector<result_t>  c_data;
+
+    std::vector<size_type>   slot(n, none);   // column -> accumulator of row i
+    std::vector<Accumulator> accs;            // grows to the longest row of C
+    std::vector<size_type>   cols;            // touched columns of row i
+
+    for (size_type i = 0; i < m; ++i) {
+        cols.clear();
+        for (size_type ka = a_starts[i]; ka < a_starts[i + 1]; ++ka) {
+            const size_type k   = a_indices[ka];
+            const result_t  aik = static_cast<result_t>(a_data[ka]);
+            for (size_type kb = b_starts[k]; kb < b_starts[k + 1]; ++kb) {
+                const size_type j = b_indices[kb];
+                if (slot[j] == none) {
+                    slot[j] = cols.size();
+                    if (accs.size() <= slot[j]) accs.resize(slot[j] + 1);
+                    AT::clear(accs[slot[j]]);
+                    cols.push_back(j);
+                }
+                AT::add_product(accs[slot[j]], aik, static_cast<result_t>(b_data[kb]));
+            }
+        }
+
+        // Gather in ascending column order (CSR invariant, see the header),
+        // rounding each entry once.
+        std::sort(cols.begin(), cols.end());
+        for (size_type j : cols) {
+            c_indices.push_back(j);
+            c_data.push_back(AT::template value<result_t>(accs[slot[j]]));
+        }
+        for (size_type j : cols) slot[j] = none;
+        c_starts[i + 1] = static_cast<size_type>(c_indices.size());
+    }
+
+    const size_type nnz = static_cast<size_type>(c_data.size());
+    if (nnz == 0)
+        return mat::compressed2D<result_t>(m, n);
+    return mat::compressed2D<result_t>(m, n, nnz,
+                                       c_starts.data(), c_indices.data(), c_data.data());
+}
+
+}  // namespace detail
+
 /// Sparse-sparse product C = A * B, all in CSR (compressed2D).
 /// Requires A.num_cols() == B.num_rows().
-template <typename V1, typename P1, typename V2, typename P2>
+///
+/// `Accumulator` selects how each C(i,j) accumulates (see
+/// math/accumulator_traits.hpp and the header note); the default `void` keeps
+/// the plain scatter.
+template <typename Accumulator = void, typename V1, typename P1, typename V2, typename P2>
 auto spgemm(const mat::compressed2D<V1, P1>& A,
             const mat::compressed2D<V2, P2>& B) {
+    if constexpr (!std::is_void_v<Accumulator>) {
+        assert(A.num_cols() == B.num_rows());
+        return detail::spgemm_acc<Accumulator>(A, B);
+    }
+
     using result_t  = std::common_type_t<V1, V2>;
     using size_type = typename mat::compressed2D<V1, P1>::size_type;
 
