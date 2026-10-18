@@ -34,3 +34,6 @@
 #include <mtl/generators/randspd.hpp>
 #include <mtl/generators/rosser.hpp>
 #include <mtl/generators/wilkinson.hpp>
+
+// Ill-conditioned dot products and sums (Ogita-Rump-Oishi GenDot / GenSum)
+#include <mtl/generators/ill_conditioned.hpp>

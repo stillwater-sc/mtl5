@@ -117,19 +117,19 @@ Its state is two `T`s, `sum` and `err`. Each term is processed in four steps:
 The paper's error bound for Dot2 is
 
 ```
-|res − x·y| ≤ u·|x·y| + γ_n²·Σ|x_i·y_i|,     u = eps/2,  γ_n = n·u / (1 − n·u),
+|res − x·y| ≤ u·|x·y| + γ_n²·Σ|x_i·y_i|,     u = 2^−p, the paper's eps;  γ_n = n·u / (1 − n·u),
 ```
 
-where configurations 1 and 2 have `γ_n·Σ|x_i·y_i|`. The error therefore stays at `u` until the condition number approaches `1/u`, and only then grows, as `u²·cond`. The `[586:dot]` battery asserts this bound on every instance. The table gives the geometric mean of the relative error over 40 instances of `n = 100`, generated with GenDot:
+where configurations 1 and 2 have `γ_n·Σ|x_i·y_i|`. The error therefore stays at `u` until the condition number approaches `1/u`, and only then grows, as `u²·cond`. The `[586:dot]` battery asserts this bound on every instance. The data come from `generators::gen_dot`, the paper's GenDot ([Ill-Conditioned Sums and Dot Products](../generators/ill-conditioned.md)). The table gives the geometric mean of the relative error over 40 instances of `n = 100` per anticipated condition number; the achieved condition number is typically about 10× higher, as in the paper:
 
 | `T` | cond | plain | fma | **compensated** | exact |
 |---|---|---|---|---|---|
-| float | 1e4 | 8.9e-4 | 9.3e-4 | **1.2e-8** | 1.2e-8 |
-| float | 1e8 | 6.1 | 5.6 | **7.7e-7** | 1.8e-8 |
-| float | 1e12 | 1.4e4 | 1.6e4 | **2.1e-3** | 1.7e-8 |
-| double | 1e8 | 1.4e-8 | 1.2e-8 | **3.2e-17** | 3.2e-17 |
-| double | 1e16 | 0.40 | 0.43 | **1.1e-16** | 3.1e-17 |
-| double | 1e24 | 2.7e7 | 2.2e7 | **5.1e-9** | 2.6e-17 |
+| float | 1e4 | 2.8e-3 | 2.9e-3 | **1.3e-8** | 1.3e-8 |
+| float | 1e8 | 9.6 | 11 | **1.7e-6** | 1.5e-8 |
+| float | 1e12 | 1.0e5 | 1.1e5 | **1.5e-2** | 1.6e-8 |
+| double | 1e8 | 2.8e-8 | 3.8e-8 | **2.9e-17** | 2.9e-17 |
+| double | 1e16 | 4.8 | 4.3 | **9.5e-16** | 3.5e-17 |
+| double | 1e24 | 1.0e8 | 8.5e7 | **1.5e-8** | 2.8e-17 |
 
 How it differs from the other configurations:
 
@@ -178,8 +178,8 @@ So the relative error is `u` plus about `(φu)^K` times the condition number, an
 - **Three-factor terms** (#602). The LDLᵀ factorizations sum terms `L(i,k)·d_k·L(j,k)`, and the accumulator protocol takes two factors. When `math::splits_product_terms_v<Acc, Value>` holds, which means an exact, a compensated or a wider accumulator, the kernels feed it `two_product(L, d)` as two products, so the whole term reaches the accumulator. See `accumulator_traits.hpp` and [Exact Accumulator](exact-accumulator.md).
 - **The compensated accumulator** (configuration 2c, above).
 - **`sum_k` and `dot_k`** (above).
+- **The paper's test data** (GenDot, GenSum): `generators::gen_dot` and `generators::gen_sum`, see [Ill-Conditioned Sums and Dot Products](../generators/ill-conditioned.md).
 - **Next under #611:**
-  - the paper's test-data generators;
   - an example that reproduces the paper's results.
 
 ## Testing
