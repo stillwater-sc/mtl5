@@ -127,6 +127,15 @@ if(NOT MSVC)
     endforeach()
 endif()
 
+# math_test_error_free checks that the error-free transformations hold under
+# the most aggressive contraction setting: error_free.hpp switches contraction
+# off for split and two_product_dekker itself, so the test does the opposite of
+# the targets above and asks for -ffp-contract=fast. It bites wherever the
+# target has an FMA (the ARM64 runners); -ffast-math stays unsupported.
+if(NOT MSVC AND TARGET math_test_error_free)
+    target_compile_options(math_test_error_free PRIVATE -ffp-contract=fast)
+endif()
+
 file(GLOB ARRAY_SRC "array/*.cpp")
 compile_all("true" "array" "Tests/array" "MTL5::mtl5;Catch2::Catch2WithMain" ${ARRAY_SRC})
 

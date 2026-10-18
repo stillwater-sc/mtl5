@@ -84,6 +84,7 @@
 // change that made a workspace superlinear fails rather than silently shipping.
 
 #include <mtl/math/identity.hpp>
+#include <mtl/math/error_free.hpp>
 #include <cmath>        // std::fma
 #include <concepts>
 #include <limits>
@@ -310,22 +311,6 @@ inline constexpr bool splits_product_terms_v =
      (std::is_floating_point_v<Acc> &&
       std::numeric_limits<Acc>::digits > std::numeric_limits<Value>::digits));
 
-/// `a * b` as `hi + lo`: `hi` the rounded product, `lo` its rounding error.
-template <typename T>
-struct split_product {
-    T hi;
-    T lo;
-};
-
-/// The error-free product of two IEEE values (see `splits_product_terms_v`).
-/// A non-finite `hi` gets `lo = 0`, so an overflowing product is the infinity
-/// it was before the split instead of `inf + (-inf)`.
-template <typename T>
-    requires std::is_floating_point_v<T>
-split_product<T> two_product(T a, T b) {
-    const T p = a * b;
-    if (!std::isfinite(p)) return {p, T(0)};
-    return {p, std::fma(a, b, -p)};
-}
+// two_product and split_product (= exact_pair) are in error_free.hpp.
 
 } // namespace mtl::math

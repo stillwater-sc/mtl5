@@ -42,6 +42,7 @@ export default defineConfig({
             { slug: 'architecture/concepts' },
             { slug: 'architecture/aggregate-types' },
             { slug: 'architecture/exact-accumulator' },
+            { slug: 'architecture/error-free-transformations' },
             {
               // Per-type architecture docs for every mat/ and vec/ container.
               label: 'Containers',
