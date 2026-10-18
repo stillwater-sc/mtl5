@@ -6,6 +6,8 @@
 //
 //   1. plain  (Acc = T)                  product rounds, then the sum rounds
 //   2. FMA    (fma_accumulator<T>)       one rounding per term
+//   2c. compensated (compensated_accumulator<T>)  Dot2: as if in twice the
+//                                        precision, then one rounding (#611)
 //   3. exact  (exact_test::exact_acc<T>) one rounding at the end
 //
 // Configuration 3 is played here by a test-only Kulisch accumulator
@@ -36,6 +38,21 @@
 //         double  cond 1e8   3.4e-8 vs 3.2e-8    cond 1e12  1.06e-4 vs 1.15e-4
 //
 //     so the ordering of 1 and 2 flips with the instance; only 3 dominates.
+//   * Configuration 2c stays within the Dot2 bound of Ogita, Rump and Oishi,
+//     u |x.y| + gamma_n^2 sum |x_i y_i|, on every instance. Measured on the
+//     same battery (geometric mean of the relative error over 40 instances of
+//     n = 100; plain / fma / compensated / exact):
+//
+//         float   cond 1e4    8.9e-4  9.3e-4  1.2e-8  1.2e-8
+//                 cond 1e8    6.1     5.6     7.7e-7  1.8e-8
+//                 cond 1e12   1.4e4   1.6e4   2.1e-3  1.7e-8
+//         double  cond 1e8    1.4e-8  1.2e-8  3.2e-17 3.2e-17
+//                 cond 1e16   0.40    0.43    1.1e-16 3.1e-17
+//                 cond 1e24   2.7e7   2.2e7   5.1e-9  2.6e-17
+//
+//     which is the paper's picture: 2c is at the level of 3 until cond nears
+//     1/u (1.7e7 in float, 9e15 in double), then grows as u^2 cond, where 1
+//     and 2 grow as u cond from the start.
 //
 // Built with -ffp-contract=off (tests/unit/CMakeLists.txt). Configuration 1 is
 // "the product rounds": a compiler that contracts acc += a*b into an FMA turns
@@ -79,6 +96,7 @@ const int g_set_threads = [] {
 using exact_test::exact_acc;
 using exact_test::err;
 template <typename T> using fma_acc = mtl::math::fma_accumulator<T>;
+template <typename T> using comp_acc = mtl::math::compensated_accumulator<T>;
 template <typename T> using vec = mtl::vec::dense_vector<T>;
 
 static_assert(mtl::math::adl_accumulator<exact_acc<float>, float>);
@@ -117,6 +135,11 @@ exact_acc<T> exact_dot(const V& x, const V& y, std::size_t n) {
 
 template <typename T>
 T round_out(const exact_acc<T>& a) { return accumulator_value(a, std::type_identity<T>{}); }
+
+template <typename T>
+double round_out_double(const exact_acc<T>& a) {
+    return accumulator_value(a, std::type_identity<double>{});
+}
 
 /// An ill-conditioned dot product of condition number about `cond`: Ogita,
 /// Rump and Oishi, "Accurate sum and dot product", SIAM J. Sci. Comput. 26
@@ -278,43 +301,85 @@ double dot_error_bound(const V& x, const V& y, std::size_t n) {
     return nu / (1.0 - nu) * accumulator_value(a, std::type_identity<double>{});
 }
 
+/// u |x.y| + gamma_n^2 sum |x_i y_i|: the Dot2 bound (Ogita, Rump and Oishi),
+/// which configuration 2c meets. gamma_{n+1} and a (1 + 4u) factor, to absorb
+/// the rounding of the exact quantities to double.
+template <typename T, typename V>
+double dot2_error_bound(const V& x, const V& y, std::size_t n) {
+    auto a = exact_test::zero<T>();
+    for (std::size_t i = 0; i < n; ++i) accumulator_add_product(a, std::fabs(x(i)), std::fabs(y(i)));
+    const double u = std::numeric_limits<T>::epsilon() / 2;
+    const double nu = static_cast<double>(n + 1) * u;
+    const double g = nu / (1.0 - nu);
+    const double dot = std::fabs(round_out_double(exact_dot<T>(x, y, n)));
+    return (u * dot + g * g * accumulator_value(a, std::type_identity<double>{})) * (1.0 + 4.0 * u);
+}
+
+/// Geometric means of the relative errors of one battery, per configuration.
+struct battery_means {
+    double plain, fma, comp, exact;
+};
+
 /// The ill-conditioned dot battery for element type T, at one condition number.
 template <typename T>
-void dot_battery(double cond, std::size_t n, int instances) {
+battery_means dot_battery(double cond, std::size_t n, int instances) {
     rng r(static_cast<std::uint64_t>(cond));
     vec<T> x, y;
+    battery_means m{0, 0, 0, 0};
     for (int s = 0; s < instances; ++s) {
         gen_dot<T>(n, cond, r, x, y);
         const auto exact = exact_dot<T>(x, y, n);
         const T c1 = mtl::dot<T, T>(x, y);
         const T c2 = mtl::dot<fma_acc<T>, T>(x, y);
+        const T c2c = mtl::dot<comp_acc<T>, T>(x, y);
         const T c3 = mtl::dot<exact_acc<T>, T>(x, y);
         INFO("cond=" << cond << " instance=" << s);
         REQUIRE(same_bits(c3, round_out(exact)));        // config 3 is correctly rounded
-        const double e1 = err(exact, c1), e2 = err(exact, c2), e3 = err(exact, c3);
+        const double e1 = err(exact, c1), e2 = err(exact, c2), e2c = err(exact, c2c);
+        const double e3 = err(exact, c3);
         REQUIRE(e3 <= e2);
         REQUIRE(e3 <= e1);
+        REQUIRE(e3 <= e2c);
         const double bound = dot_error_bound<T>(x, y, n);
         REQUIRE(e1 <= bound);
         REQUIRE(e2 <= bound);
+        REQUIRE(e2c <= dot2_error_bound<T>(x, y, n));
+        // Relative errors, floored at u / 2^20 so that an exact result does not
+        // send the geometric mean to zero.
+        const double scale = std::fabs(round_out_double(exact));
+        const double floor = std::numeric_limits<T>::epsilon() * 0x1p-21;
+        auto rel = [&](double e) { return std::log(std::max(e / scale, floor)); };
+        m.plain += rel(e1); m.fma += rel(e2); m.comp += rel(e2c); m.exact += rel(e3);
     }
+    for (double* v : {&m.plain, &m.fma, &m.comp, &m.exact}) *v = std::exp(*v / instances);
+    return m;
 }
 
 } // namespace
 
-TEST_CASE("[586:dot] ill-conditioned dot: err(3) <= err(1), err(2), both within the bound",
+TEST_CASE("[586:dot] ill-conditioned dot: err(3) <= err(1), err(2), err(2c), each within its bound",
           "[586:dot][accumulator]") {
+    // Configuration 2c, on average: below 1 and 2 at every condition number,
+    // and at configuration 3's level while cond * u is small (Dot2 is "as if
+    // in twice the precision": its error only starts to grow near cond = 1/u).
+    auto check = [](const battery_means& m, double cond, double u) {
+        INFO("cond=" << cond << ": plain " << m.plain << ", fma " << m.fma << ", compensated "
+             << m.comp << ", exact " << m.exact);
+        CHECK(m.comp < m.plain);
+        CHECK(m.comp < m.fma);
+        if (cond * u <= 0.01) CHECK(m.comp <= 1.5 * m.exact);
+    };
     SECTION("float") {
-        for (double cond : {1e2, 1e4, 1e6, 1e8, 1e12})
-            dot_battery<float>(cond, 100, 40);
+        for (double cond : {1e2, 1e4, 1e6, 1e8, 1e12, 1e16, 1e20})
+            check(dot_battery<float>(cond, 100, 40), cond, 0x1p-24);
     }
     SECTION("double") {
-        for (double cond : {1e4, 1e8, 1e12, 1e16, 1e24})
-            dot_battery<double>(cond, 100, 40);
+        for (double cond : {1e4, 1e8, 1e12, 1e16, 1e24, 1e32, 1e40})
+            check(dot_battery<double>(cond, 100, 40), cond, 0x1p-53);
     }
 }
 
-TEST_CASE("[586:gemm] gemm: configuration 3 correctly rounded, 1 and 2 within the bound",
+TEST_CASE("[586:gemm] gemm: configuration 3 correctly rounded, 1, 2 and 2c within their bounds",
           "[586:gemm][accumulator]") {
     // Row i of A and column i of B are one ill-conditioned dot product, so the
     // diagonal of C is the dot battery through mult<Acc>; the off-diagonal
@@ -328,9 +393,10 @@ TEST_CASE("[586:gemm] gemm: configuration 3 correctly rounded, 1 and 2 within th
         gen_dot<float>(K, 1e6, r, x, y);
         for (std::size_t k = 0; k < K; ++k) { A(i, k) = x(k); B(k, i) = y(k); }
     }
-    mtl::mat::dense2D<float> C1(M, M), C2(M, M), C3(M, M);
+    mtl::mat::dense2D<float> C1(M, M), C2(M, M), C2c(M, M), C3(M, M);
     mtl::mult<float>(A, B, C1);
     mtl::mult<fma_acc<float>>(A, B, C2);
+    mtl::mult<comp_acc<float>>(A, B, C2c);   // 8 bytes: the panel kernel (#587)
     mtl::mult<exact_acc<float>>(A, B, C3);
 
     for (std::size_t i = 0; i < M; ++i)
@@ -347,6 +413,8 @@ TEST_CASE("[586:gemm] gemm: configuration 3 correctly rounded, 1 and 2 within th
             const double bound = dot_error_bound<float>(row, col, K);
             REQUIRE(e1 <= bound);
             REQUIRE(e2 <= bound);
+            REQUIRE(err(exact, C3(i, j)) <= err(exact, C2c(i, j)));
+            REQUIRE(err(exact, C2c(i, j)) <= dot2_error_bound<float>(row, col, K));
         }
 }
 
