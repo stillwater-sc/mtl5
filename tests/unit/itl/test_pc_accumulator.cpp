@@ -43,6 +43,25 @@
 // implementations. With dropping, ILUT's accumulator also decides the pattern:
 // the drop tests read the single-rounded entries.
 //
+// ILDL is the exception, and the reason is instructive: its terms are products
+// of THREE values, L(i,k) d_k L(j,k), and add_product takes two, so L(i,k) d_k
+// rounds in the element type before the accumulator sees it. That pre-rounded
+// factor costs most of the gain. Hilbert(n), float (plain / fma / exact, then
+// exact with the three-factor term fed exactly -- measured with a scratch
+// variant forming L(i,k) d_k in double, exact for float * float, into a double
+// Kulisch accumulator):
+//
+//   n   plain    fma      exact    exact, three-factor exact
+//   5   2.2e-6   9.2e-6   2.7e-6   1.7e-6
+//   6   9.2e-5   2.4e-5   1.7e-5   9.2e-6
+//   7   7.8e-5   9.0e-5   8.9e-5   2.0e-5
+//   8   2.9e-4   2.0e-4   4.3e-5   5.0e-6
+//
+// The likely same cause explains the absent ordering of dense LDLT and
+// Bunch-Kaufman (#594, #595), which pre-round L(j,k) D(k) the same way. An
+// error-free product split (p = a*b, e = fma(a, b, -p), two exact add_products)
+// would recover it within the two-argument protocol; tracked in #602.
+//
 // At n = 9 IC(0) breaks down under configurations 1 and 2 -- a pivot cancels
 // below zero and its square root is NaN -- and only configuration 3 still
 // applies M^-1, as only it factors Hilbert(9) by dense Cholesky (#594).
@@ -64,6 +83,7 @@
 #include <mtl/itl/pc/ilu_0.hpp>
 #include <mtl/itl/pc/ic_0.hpp>
 #include <mtl/itl/pc/ilut.hpp>
+#include <mtl/itl/pc/ildl.hpp>
 
 #include "../operation/exact_accumulator.hpp"
 
@@ -599,5 +619,85 @@ TEST_CASE("[586:pc] ilut: no-drop ILUT on a dense pattern has the LU ordering",
         INFO("ilut Hilbert(" << n << "): " << r1 << " / " << r2 << " / " << r3);
         CHECK(4.0 * r3 < r1);
         CHECK(4.0 * r3 < r2);
+    }
+}
+
+TEST_CASE("ildl: the accumulator reaches the factorization and both solves (#585)",
+          "[itl][pc][ildl][accumulator]") {
+    // Same pattern walk as IC(0): one product per k < j common to rows i and j
+    // for each L(i,j), one per stored L(i,k) for each d_i.
+    const auto A = laplacian5<double>(6);
+    const std::size_t n = A.num_rows();
+    const auto p = pattern(A);
+    const auto b = rhs<double>(n);
+
+    counting::products = 0;
+    itl::pc::ildl<double, mat::parameters<>, counting::count_acc> M(A);
+    REQUIRE(counting::products == ic0_products(p));
+
+    vec::dense_vector<double> x(n);
+    counting::products = 0;
+    M.solve(x, b);
+    REQUIRE(counting::products == 2 * strictly_lower(p));    // L, then L^T
+    counting::products = 0;
+    M.adjoint_solve(x, b);
+    REQUIRE(counting::products == 2 * strictly_lower(p));
+
+    counting::products = 0;
+    itl::pc::ildl<double> V(A);
+    V.solve(x, b);
+    REQUIRE(counting::products == 0);
+
+    vec::dense_vector<double> xv(n), xa(n);
+    V.solve(xv, b);
+    itl::pc::ildl<double, mat::parameters<>, double> D(A);
+    D.solve(xa, b);
+    for (std::size_t i = 0; i < n; ++i)
+        REQUIRE_THAT(xa(i), Catch::Matchers::WithinRel(xv(i), 1e-12));
+}
+
+TEST_CASE("ildl: a plain element-type accumulator is the void path bit for bit (#585)",
+          "[itl][pc][ildl][accumulator]") {
+    // One-term reductions only (see the header), on an INDEFINITE tridiagonal:
+    // d alternates sign, which is what ILDL is for and IC(0) cannot do.
+    const std::size_t n = 60;
+    mat::compressed2D<float> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<float>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << ((i % 2) ? -3.0f : 3.0f) + 0.1f * float(i % 7);
+            if (i)         ins[i][i - 1] << -1.0f - 0.01f * float(i % 5);
+            if (i + 1 < n) ins[i][i + 1] << -1.0f - 0.01f * float((i + 1) % 5);
+        }
+    }
+    const auto b = rhs<float>(n);
+    itl::pc::ildl<float> V(A);
+    itl::pc::ildl<float, mat::parameters<>, float> P(A);
+    vec::dense_vector<float> xv(n), xp(n);
+    V.solve(xv, b);
+    P.solve(xp, b);
+    REQUIRE(same_bits(xv, xp));
+    V.adjoint_solve(xv, b);
+    P.adjoint_solve(xp, b);
+    REQUIRE(same_bits(xv, xp));
+    // And it is an exact solve: a tridiagonal has no fill.
+    CHECK(residual(A, xp, b) < 1e-5);
+}
+
+TEST_CASE("[586:pc] ildl: every configuration solves; no ordering (see the header)",
+          "[586:pc][itl][pc][ildl][accumulator]") {
+    using exact = exact_test::exact_acc<float>;
+    using fma   = math::fma_accumulator<float>;
+    using P     = mat::parameters<>;
+    for (std::size_t n = 5; n <= 8; ++n) {
+        const auto A = hilbert_sparse(n);
+        vec::dense_vector<float> b(n, 1.0f);
+        const double r1 = pc_residual<itl::pc::ildl<float, P, float>>(A, b);
+        const double r2 = pc_residual<itl::pc::ildl<float, P, fma>>(A, b);
+        const double r3 = pc_residual<itl::pc::ildl<float, P, exact>>(A, b);
+        INFO("ildl Hilbert(" << n << "): " << r1 << " / " << r2 << " / " << r3);
+        CHECK(r1 < 1e-3);
+        CHECK(r2 < 1e-3);
+        CHECK(r3 < 1e-3);
     }
 }
