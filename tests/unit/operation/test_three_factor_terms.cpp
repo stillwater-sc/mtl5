@@ -26,7 +26,10 @@
 //    n = 20:  2.9e-6 / 2.3e-6 / 1.4e-6 / 9.1e-7
 //
 // So exact accumulation already orders below plain and fma with pre-rounded
-// terms; the split adds 1.1-1.6x on top, growing with n. Bunch-Kaufman is not
+// terms; the split adds 1.1-1.6x on top, growing with n. The compensated
+// accumulator (Dot2, #611) takes the split as well, and lands on the exact
+// split's mean to two digits: 5.3e-7 at n = 12 and 8.6e-7 at n = 20 over 100
+// draws, against 5.3e-7 and 8.6e-7 for exact. Bunch-Kaufman is not
 // affected: it feeds the stored Schur column W, not a product formed for the
 // accumulator.
 #include <catch2/catch_test_macros.hpp>
@@ -85,6 +88,9 @@ static_assert(math::splits_product_terms_v<exact_test::exact_acc<double>, double
 static_assert(!math::splits_product_terms_v<float, float>);
 static_assert(!math::splits_product_terms_v<double, double>);
 static_assert(!math::splits_product_terms_v<fma_acc, float>);
+static_assert(math::splits_product_terms_v<math::compensated_accumulator<float>, float>);
+static_assert(math::splits_product_terms_v<math::compensated_accumulator<double>, float>);
+static_assert(!math::splits_product_terms_v<math::compensated_accumulator<float>, double>);
 static_assert(!math::splits_product_terms_v<math::fma_accumulator<double>, float>);
 static_assert(!math::splits_product_terms_v<unsplit::exact_pre, float>);
 static_assert(!math::splits_product_terms_v<std::complex<double>, std::complex<float>>);
@@ -199,33 +205,41 @@ TEST_CASE("[586:direct] [586:pc] the split exact accumulator beats pre-rounded t
           "[586:direct][586:pc][accumulator][602][ldlt]") {
     for (std::size_t n : {12u, 20u}) {
         std::mt19937 gen(static_cast<std::uint32_t>(n));
-        double lp = 0, lf = 0, le = 0, ls = 0, ldw = 0;
+        double lp = 0, lf = 0, le = 0, ls = 0, ldw = 0, lc = 0;
         int count = 0;
         for (int t = 0; t < 100; ++t) {
             const auto a = perturbed_hilbert(n, gen, 0.05);
-            const double r[5] = {
+            const double r[6] = {
                 residual(a, n, ildl_solve<F>(a, n)),
                 residual(a, n, ildl_solve<fma_acc>(a, n)),
                 residual(a, n, ildl_solve<unsplit::exact_pre>(a, n)),
                 residual(a, n, ildl_solve<exact>(a, n)),
                 residual(a, n, dense_ldlt_solve<exact>(a, n)),
+                residual(a, n, ildl_solve<math::compensated_accumulator<F>>(a, n)),
             };
             bool finite = true;
             for (double v : r) finite = finite && std::isfinite(v) && v > 0.0;
             if (!finite) continue;
             ++count;
             lp += std::log(r[0]); lf += std::log(r[1]); le += std::log(r[2]);
-            ls += std::log(r[3]); ldw += std::log(r[4]);
+            ls += std::log(r[3]); ldw += std::log(r[4]); lc += std::log(r[5]);
         }
         REQUIRE(count > 50);
         const double plain = std::exp(lp / count), fm = std::exp(lf / count);
         const double pre = std::exp(le / count), split = std::exp(ls / count);
+        const double comp = std::exp(lc / count);
         INFO("n = " << n << " (" << count << " draws): plain " << plain << ", fma " << fm
-             << ", exact pre-rounded " << pre << ", exact split " << split);
+             << ", exact pre-rounded " << pre << ", exact split " << split << ", compensated " << comp);
         CHECK(split < pre);
         CHECK(pre < plain);
         CHECK(pre < fm);
         CHECK(std::exp(ldw / count) == split);   // dense LDL^T: the same bits, so the same mean
+        // The compensated accumulator (#611) takes the split too, and its twice-
+        // working precision is enough for reductions this short: within 5% of
+        // the exact accumulator.
+        CHECK(comp < pre);
+        CHECK(comp <= 1.05 * split);
+        CHECK(comp >= split / 1.05);
     }
 }
 

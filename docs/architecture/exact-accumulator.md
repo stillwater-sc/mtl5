@@ -23,6 +23,7 @@ Every MTL5 operation that forms a sum of products takes an `Accumulator` templat
 |---|---|---|---|
 | 1. Plain | `T`, or a wider built-in such as `double` over `float` | 2: the product, then the sum | Error grows with the length and condition of the sum |
 | 2. Fused | `math::fma_accumulator<T>` | 1: `fma(m, v, acc)` | The product rounding is gone; the sum still rounds every term |
+| 2c. Compensated | `math::compensated_accumulator<T>` | 0 lost: each rounding error is kept in a second `T` | As if in twice the precision of `T`, then rounded once ([Error-Free Transformations](error-free-transformations.md#the-compensated-accumulator-sum2--dot2)) |
 | 3. Exact | `math::exact_accumulator<T>`, or a posit quire from a number library | **0**, then one at the end | The correctly rounded value of the exact sum |
 
 So the precision of a computation splits into three independent choices:

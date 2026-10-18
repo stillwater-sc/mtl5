@@ -26,6 +26,11 @@
 //      instead of two. The fused step is `using std::fma; fma(...)`, so `T` may
 //      be a built-in float or any custom arithmetic type with an ADL-found `fma`.
 //
+//   2c. Compensated (Sum2 / Dot2) -- `compensated_accumulator<T>`. Each
+//      product and each addition is split by an error-free transformation and
+//      the errors are summed alongside: as accurate as twice the precision of
+//      `T`, at two words of state. Built-in IEEE `T` only.
+//
 //   3. Super-accumulator (exact sum of products, single final round-out).
 //      A caller supplies a custom `Acc` (a compensated/Kahan accumulator, or a
 //      Universal `quire` exact dot product) in one of two ways:
@@ -243,6 +248,87 @@ struct accumulator_traits<fma_accumulator<T>, Value> {
     static void merge(Acc& a, const Acc& b) { a.sum += b.sum; }
 };
 
+/// Configuration 2c -- compensated accumulator: Ogita, Rump and Oishi's Sum2
+/// and Dot2 ("Accurate sum and dot product", SIAM J. Sci. Comput. 26(6), 2005).
+///
+/// Pass it as the `Acc` of any accumulator-aware operation. Each `m * v` is
+/// split by `two_product` into its rounded value and its error, the rounded
+/// value is added to `sum` by `two_sum`, and both errors are collected in
+/// `err` (error_free.hpp). The round-out is `sum + err`, so the result is as
+/// accurate as if the reduction ran in twice the precision of `T` and was
+/// rounded once: the Dot2 bound
+///
+///     |res - x.y| <= u |x.y| + gamma_n^2 sum |x_i y_i|,   u = eps / 2,
+///
+/// where configuration 1 and 2 have gamma_n sum |x_i y_i|. The error stays at
+/// u up to a condition number of about 1/u, then grows linearly with it;
+/// configuration 3 (`exact_accumulator`) stays at u for every condition number.
+///
+/// It sits between configurations 2 and 3 in every other respect too. It is
+/// two `T`s, not a quire, so a kernel that holds n accumulators holds 2n
+/// words. It is about 10 flops per term (2 for `two_product`, 6 for
+/// `two_sum`, 2 for the errors) and no limb arithmetic. Its merge is a
+/// `two_sum` of the two sums plus the two errors: within the bound, but not
+/// exact, so a threaded reduction is deterministic for a given thread count
+/// and not bit-identical across thread counts.
+///
+/// Built-in binary floating `T` only: the error-free transformations have no
+/// counterpart for a posit or an LNS. They need strict IEEE semantics as well:
+/// no -ffast-math (error_free.hpp).
+template <typename T = double>
+    requires binary_floating_point<T>
+struct compensated_accumulator {
+    T sum = T(0);   // the running sum, rounded to T
+    T err = T(0);   // the sum of the rounding errors of `sum` and of the products
+};
+
+/// Accumulator policy for the compensated reduction (configuration 2c).
+template <typename T, typename Value>
+struct accumulator_traits<compensated_accumulator<T>, Value> {
+    using Acc = compensated_accumulator<T>;
+
+    static void clear(Acc& a) {
+        a.sum = T(0);
+        a.err = T(0);
+    }
+
+    /// `acc = v`. A `Value` wider than `T` keeps its low part in `err`, so the
+    /// initial value is held to twice the precision of `T` as well.
+    static void assign(Acc& a, const Value& v) {
+        a.sum = static_cast<T>(v);
+        if constexpr (std::is_floating_point_v<Value> &&
+                      (std::numeric_limits<Value>::digits > std::numeric_limits<T>::digits))
+            a.err = std::isfinite(a.sum) ? static_cast<T>(v - static_cast<Value>(a.sum)) : T(0);
+        else
+            a.err = T(0);
+    }
+
+    /// `sum + err`, rounded once to `Result`. A `Result` wider than `T` gets
+    /// the two parts added in its own precision.
+    template <typename Result = Value>
+    static Result value(const Acc& a) {
+        if constexpr (std::is_floating_point_v<Result> &&
+                      (std::numeric_limits<Result>::digits > std::numeric_limits<T>::digits))
+            return static_cast<Result>(a.sum) + static_cast<Result>(a.err);
+        else
+            return static_cast<Result>(a.sum + a.err);
+    }
+
+    static void add_product(Acc& a, const Value& m, const Value& v) {
+        const auto p = two_product(static_cast<T>(m), static_cast<T>(v));
+        const auto s = two_sum(a.sum, p.hi);
+        a.sum = s.hi;
+        a.err += s.lo + p.lo;
+    }
+
+    /// Combine two partials: `two_sum` of the sums, plus both errors.
+    static void merge(Acc& a, const Acc& b) {
+        const auto s = two_sum(a.sum, b.sum);
+        a.sum = s.hi;
+        a.err += s.lo + b.err;
+    }
+};
+
 /// Can two partial accumulators of a reduction be combined?
 ///
 /// True for configurations 1 and 2, and for an ADL accumulator that provides
@@ -269,6 +355,10 @@ concept mergeable_accumulator = requires(Acc& a, const Acc& b) {
 ///
 ///   * configuration 1 (arithmetic `Acc`)   -> `Acc` itself
 ///   * configuration 2 (`fma_accumulator<T>`) -> `T`
+///   * configuration 2c (`compensated_accumulator<T>`) -> `T`. Its `sum + err`
+///     is twice the precision of `T`, so this rounds that precision away
+///     before the post-processing step; a caller who wants it kept names a
+///     wider `Result` and rounds out to that instead.
 ///   * configuration 3 (custom/quire)       -> `Mag`, the documented delivery
 ///     type. A super-accumulator is exact, so this is the single final
 ///     round-out its contract already promises, and external specializations
@@ -280,6 +370,11 @@ struct accumulator_round_type {
 
 template <typename T, typename Mag>
 struct accumulator_round_type<fma_accumulator<T>, Mag> {
+    using type = T;
+};
+
+template <typename T, typename Mag>
+struct accumulator_round_type<compensated_accumulator<T>, Mag> {
     using type = T;
 };
 
@@ -296,7 +391,8 @@ using accumulator_round_type_t = typename accumulator_round_type<Acc, Mag>::type
 /// (absent underflow of `e`), so `add_product(acc, p, c)` and
 /// `add_product(acc, e, c)` together carry the whole term. This is worth its
 /// second `add_product` only when the accumulator keeps `e * c`: an exact one
-/// (the ADL hook) or a strictly wider built-in floating type. A plain `Value`
+/// (the ADL hook), a compensated one at least as wide as `Value` (it keeps
+/// twice the precision), or a strictly wider built-in floating type. A plain `Value`
 /// accumulator would round the small term away again, and an FMA accumulator
 /// rounds each term to `T` anyway, so for configurations 1 (at `Value`) and 2
 /// the kernels keep the single pre-rounded `add_product` and their bits.
@@ -305,9 +401,16 @@ using accumulator_round_type_t = typename accumulator_round_type<Acc, Mag>::type
 /// An accumulator that specializes `accumulator_traits` directly rather than
 /// through the ADL hook is not detected and keeps the pre-rounded form.
 template <typename Acc, typename Value>
+inline constexpr bool is_compensated_accumulator_v = false;
+
+template <typename T, typename Value>
+inline constexpr bool is_compensated_accumulator_v<compensated_accumulator<T>, Value> =
+    std::numeric_limits<T>::digits >= std::numeric_limits<Value>::digits;
+
+template <typename Acc, typename Value>
 inline constexpr bool splits_product_terms_v =
     std::is_floating_point_v<Value> &&
-    (adl_accumulator<Acc, Value> ||
+    (adl_accumulator<Acc, Value> || is_compensated_accumulator_v<Acc, Value> ||
      (std::is_floating_point_v<Acc> &&
       std::numeric_limits<Acc>::digits > std::numeric_limits<Value>::digits));
 

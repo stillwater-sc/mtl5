@@ -97,16 +97,61 @@ The GCC region has a cost. GCC does not inline a function compiled with differen
 
 **Extended-precision intermediates.** On 32-bit x86 without SSE2, x87 registers hold 64-bit significands, and the double roundings break the identities. Every platform MTL5 targets uses SSE2 or NEON, so this does not arise there.
 
+## The compensated accumulator: Sum2 / Dot2
+
+`math::compensated_accumulator<T>` (in `accumulator_traits.hpp`) is Ogita, Rump and Oishi's Sum2 and Dot2 as an accumulation configuration, **2c**, between `fma_accumulator` and the exact accumulator. Any accumulator-aware MTL5 operation takes it:
+
+```cpp
+using comp = mtl::math::compensated_accumulator<double>;
+double d = mtl::dot<comp, double>(x, y);       // Dot2
+mtl::mult<comp>(A, B, C);                      // each C(i,j) a Dot2
+```
+
+Its state is two `T`s, `sum` and `err`. Each term is processed in four steps:
+
+1. `two_product` splits `m·v` into its rounded value `h` and that rounding's error.
+2. `two_sum` adds `h` to `sum`, which yields a second error.
+3. Both errors go into `err`.
+4. The round-out is `sum + err`.
+
+The paper's error bound for Dot2 is
+
+```
+|res − x·y| ≤ u·|x·y| + γ_n²·Σ|x_i·y_i|,     u = eps/2,  γ_n = n·u / (1 − n·u),
+```
+
+where configurations 1 and 2 have `γ_n·Σ|x_i·y_i|`. The error therefore stays at `u` until the condition number approaches `1/u`, and only then grows, as `u²·cond`. The `[586:dot]` battery asserts this bound on every instance. The table gives the geometric mean of the relative error over 40 instances of `n = 100`, generated with GenDot:
+
+| `T` | cond | plain | fma | **compensated** | exact |
+|---|---|---|---|---|---|
+| float | 1e4 | 8.9e-4 | 9.3e-4 | **1.2e-8** | 1.2e-8 |
+| float | 1e8 | 6.1 | 5.6 | **7.7e-7** | 1.8e-8 |
+| float | 1e12 | 1.4e4 | 1.6e4 | **2.1e-3** | 1.7e-8 |
+| double | 1e8 | 1.4e-8 | 1.2e-8 | **3.2e-17** | 3.2e-17 |
+| double | 1e16 | 0.40 | 0.43 | **1.1e-16** | 3.1e-17 |
+| double | 1e24 | 2.7e7 | 2.2e7 | **5.1e-9** | 2.6e-17 |
+
+How it differs from the other configurations:
+
+- **Size.** It is 2 words, 16 bytes for `double`, against 536 bytes for the exact accumulator. A kernel that keeps one accumulator per output entry therefore keeps 2n words, not 67n.
+- **Cost.** It takes about 10 flops per term: 2 for `two_product`, 6 for `two_sum` and 2 for the errors. There is no limb arithmetic.
+- **Merge.** Two partials combine as a `two_sum` of the sums plus both errors. The result stays within the bound but is not exact. A threaded reduction is therefore deterministic for a given thread count, but not bit-identical across thread counts. The exact accumulator's merge, by contrast, is the same for every partition.
+- **Three-factor terms.** It keeps a product's rounding error, so `splits_product_terms_v` holds for it, and the LDLᵀ kernels feed it whole terms. On the perturbed-Hilbert ensemble of `test_three_factor_terms.cpp`, ILDL with it lands on the exact accumulator's mean residual to two digits.
+- **Widths.** A `Value` wider than `T` keeps its low part in `err` on `assign`. A `Result` wider than `T` gets `sum + err` added in its own precision.
+- **Scope.** It works for built-in binary floating `T` only, and it needs the strict IEEE semantics above.
+
 ## Where MTL5 uses them
 
-- **Three-factor terms** (#602). The LDLᵀ factorizations sum terms `L(i,k)·d_k·L(j,k)`, and the accumulator protocol takes two factors. When `math::splits_product_terms_v<Acc, Value>` holds, which means an exact or a wider accumulator, the kernels feed it `two_product(L, d)` as two products, so the whole term reaches the accumulator. See `accumulator_traits.hpp` and [Exact Accumulator](exact-accumulator.md).
+- **Three-factor terms** (#602). The LDLᵀ factorizations sum terms `L(i,k)·d_k·L(j,k)`, and the accumulator protocol takes two factors. When `math::splits_product_terms_v<Acc, Value>` holds, which means an exact, a compensated or a wider accumulator, the kernels feed it `two_product(L, d)` as two products, so the whole term reaches the accumulator. See `accumulator_traits.hpp` and [Exact Accumulator](exact-accumulator.md).
+- **The compensated accumulator** (configuration 2c, above).
 - **Next under #611:**
-  - a compensated (Sum2/Dot2) accumulation configuration, between `fma_accumulator` and the exact accumulator;
   - `sum_k` and `dot_k`;
   - the paper's test-data generators;
   - an example that reproduces the paper's results.
 
 ## Testing
+
+`tests/unit/math/test_compensated_accumulator.cpp` checks that `mtl::dot` with the compensated accumulator gives the bits of the paper's Dot2 loop, written out with Dekker's TwoProduct. It also checks the cancellations that plain and FMA lose, the merge, wider initial values and results, and non-finite inputs. Its accuracy is checked in the #586 matrix.
 
 `tests/unit/math/test_error_free.cpp` checks each transformation in `float` and `double` against `math::exact_accumulator`. For example, `a + b − hi − lo` is accumulated exactly and must be zero in every limb. Over random operands spanning each function's domain, the test also checks:
 
