@@ -47,6 +47,7 @@ const FILE_MAP = {
   'architecture/index.md':           'architecture/index.md',
   'architecture/concepts.md':        'architecture/concepts.md',
   'architecture/aggregate-types.md': 'architecture/aggregate-types.md',
+  'architecture/exact-accumulator.md': 'architecture/exact-accumulator.md',
 
   // Container & view type architecture (sidebar: Architecture > Containers)
   'architecture/containers/dense2d-architecture.md':            'architecture/containers/dense2d-architecture.md',
