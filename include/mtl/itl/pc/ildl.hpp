@@ -8,12 +8,15 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl::itl::pc {
 
 /// ILDL preconditioner: incomplete L*D*L^T factorization.
 /// D is diagonal (may have negative entries), L is unit lower triangular.
 /// A must be symmetric; only the sparsity pattern of the lower triangle is preserved.
+/// For a complex Value that means complex SYMMETRIC (A^T == A), not Hermitian:
+/// the factorization reads only the lower triangle and conjugates nothing.
 template <Field Value, typename Parameters = mat::parameters<>>
 class ildl {
     using matrix_type = mat::compressed2D<Value, Parameters>;
@@ -28,17 +31,45 @@ public:
     /// Solve (L*D*L^T)*x = b
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        apply<false>(x, b);
+    }
+
+    /// Solve (L*D*L^T)^H * x = b.
+    ///
+    /// This used to delegate to solve(), commented "L*D*L^T is symmetric". It
+    /// is -- but symmetric is self-adjoint only for a REAL Value. For a complex
+    /// one M^T == M gives M^H = conj(M), so M^-H is the same three solves with
+    /// L and D conjugated. Delegating applied M^-1 instead: the adjoint
+    /// identity <M^-1 b, c> == <b, M^-H c> was violated by 3.7e-02 on a
+    /// complex-symmetric tridiagonal and 1.2e+00 on a dense one (#394's defect,
+    /// for complex only). For a real Value conj is the identity, and this is
+    /// solve() operation for operation.
+    template <typename VecX, typename VecB>
+    void adjoint_solve(VecX& x, const VecB& b) const {
+        apply<true>(x, b);
+    }
+
+private:
+    /// (L D L^T)^-1 b, or with Conj its adjoint (conj(L) conj(D) L^H)^-1 b.
+    template <bool Conj, typename VecX, typename VecB>
+    void apply(VecX& x, const VecB& b) const {
+        using conj_t = functor::scalar::conj<value_type>;
+        auto c = [](const value_type& v) {
+            if constexpr (Conj) return conj_t::apply(v);
+            else                return v;
+        };
+
         // Forward substitution: L*y = b (L has unit diagonal)
         for (size_type i = 0; i < n_; ++i) {
             auto sum = math::zero<value_type>();
             for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
-                sum += l_data_[k] * x(l_indices_[k]);
+                sum += c(l_data_[k]) * x(l_indices_[k]);
             x(i) = b(i) - sum;
         }
 
         // Diagonal solve: D*z = y
         for (size_type i = 0; i < n_; ++i)
-            x(i) /= d_[i];
+            x(i) /= c(d_[i]);
 
         // Back substitution: L^T*x = z
         for (size_type ii = 0; ii < n_; ++ii) {
@@ -47,7 +78,7 @@ public:
             for (size_type j = i + 1; j < n_; ++j) {
                 for (size_type k = l_starts_[j]; k < l_starts_[j + 1]; ++k) {
                     if (l_indices_[k] == i) {
-                        x(i) -= l_data_[k] * x(j);
+                        x(i) -= c(l_data_[k]) * x(j);
                         break;
                     }
                     if (l_indices_[k] > i) break;
@@ -56,12 +87,6 @@ public:
         }
     }
 
-    template <typename VecX, typename VecB>
-    void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);  // L*D*L^T is symmetric
-    }
-
-private:
     void factorize(const matrix_type& A) {
         const auto& a_starts  = A.ref_major();
         const auto& a_indices = A.ref_minor();
