@@ -54,3 +54,6 @@ compile_all("false" "example" "Examples/ukf_cholesky_vs_ldlt" "MTL5::mtl5" ${UKF
 
 file(GLOB UKF_BEARING_SRC "ukf_bearing_only/*.cpp")
 compile_all("false" "example" "Examples/ukf_bearing_only" "MTL5::mtl5" ${UKF_BEARING_SRC})
+
+file(GLOB ACCURATE_SUM_DOT_SRC "accurate_sum_dot/*.cpp")
+compile_all("false" "example" "Examples/accurate_sum_dot" "MTL5::mtl5" ${ACCURATE_SUM_DOT_SRC})

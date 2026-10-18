@@ -179,8 +179,7 @@ So the relative error is `u` plus about `(φu)^K` times the condition number, an
 - **The compensated accumulator** (configuration 2c, above).
 - **`sum_k` and `dot_k`** (above).
 - **The paper's test data** (GenDot, GenSum): `generators::gen_dot` and `generators::gen_sum`, see [Ill-Conditioned Sums and Dot Products](../generators/ill-conditioned.md).
-- **Next under #611:**
-  - an example that reproduces the paper's results.
+- **The paper's experiments**: `examples/accurate_sum_dot/accurate_sum_dot.cpp` runs Section 6 of the paper (Figures 6.1–6.4, Tables 6.2, 6.4 and 6.5) and writes the results as CSV.
 
 ## Testing
 
