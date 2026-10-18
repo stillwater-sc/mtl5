@@ -24,6 +24,7 @@
 #include <mtl/itl/pc/diagonal.hpp>
 #include <mtl/itl/pc/ilu_0.hpp>
 #include <mtl/itl/pc/ic_0.hpp>
+#include <mtl/itl/pc/ilut.hpp>
 #include <mtl/itl/pc/block_diagonal.hpp>
 #include <mtl/itl/pc/ssor.hpp>
 
@@ -124,6 +125,26 @@ TEST_CASE("ic_0 adjoint identity (#394)", "[itl][pc][adjoint][regression]") {
     const auto A = pc_matrix(12, true);
     itl::pc::ic_0<double> M(A);
     REQUIRE(adjoint_violation(M, A.num_rows()) < 1e-12);
+}
+
+TEST_CASE("ilut adjoint identity", "[itl][pc][adjoint][ilut][regression]") {
+    // ilut::adjoint_solve delegated to solve(), the #394 defect, which the #394
+    // audit fixed in ilu_0 but never reached here: ilut was not in this file.
+    // Measured before the fix: 4.0e-01 (no-drop) and 4.0e-01 (default) on the
+    // non-symmetric matrix, and 1.6e-03 with the default dropping even on the
+    // SYMMETRIC one -- the drop tolerance is relative to each row's norm, so
+    // ILUT of a symmetric A is not symmetric and delegating was never right.
+    // Both a no-drop factorization (= LU, so M = A) and the default dropping.
+    for (bool sym : {true, false}) {
+        const auto A = pc_matrix(12, sym);
+        itl::pc::ilut<double> exact(A, A.num_rows(), 0.0);
+        itl::pc::ilut<double> dropping(A);
+        const double v1 = adjoint_violation(exact, A.num_rows());
+        const double v2 = adjoint_violation(dropping, A.num_rows());
+        INFO((sym ? "symmetric" : "non-symmetric") << ": no-drop " << v1 << ", default " << v2);
+        CHECK(v1 < 1e-12);
+        CHECK(v2 < 1e-12);
+    }
 }
 
 TEST_CASE("ssor adjoint identity (#398)", "[itl][pc][adjoint][ssor][regression]") {

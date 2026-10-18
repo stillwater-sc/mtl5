@@ -11,6 +11,7 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl::itl::pc {
 
@@ -48,7 +49,11 @@ public:
                 sum += l_data_[k] * x(l_indices_[k]);
             x(i) = b(i) - sum;
         }
-        // Back substitution: U*x = y
+        // Back substitution: U*x = y, i.e.
+        //   x(i) = (y(i) - sum_{j>i} U(i,j)*x(j)) / U(i,i)
+        // u_data_ holds only the strictly upper entries, so the sum is exactly
+        // the j > i terms and the diagonal divides once -- the #323 fix to
+        // ilu_0, which this class had kept the bug of.
         for (size_type ii = 0; ii < n_; ++ii) {
             size_type i = n_ - 1 - ii;
             auto sum = math::zero<value_type>();
@@ -58,9 +63,34 @@ public:
         }
     }
 
+    /// Solve (L*U)^H * x = b, i.e. x = U^-H (L^-H b).
+    ///
+    /// This used to delegate to solve(), which applies M^-1 rather than M^-H
+    /// and is wrong for every non-symmetric A -- the #394 defect, which ilu_0
+    /// had fixed and this class still carried. The triangular solves are in
+    /// scatter form exactly as in ilu_0::adjoint_solve: L and U are stored by
+    /// row, the adjoint needs them by column, and scattering each finished
+    /// component reads the row storage as it is laid out.
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);
+        using conj_t = functor::scalar::conj<value_type>;
+
+        for (size_type i = 0; i < n_; ++i)
+            x(i) = b(i);
+
+        // U^H y = b: lower triangular with diagonal conj(U(i,i)).
+        for (size_type i = 0; i < n_; ++i) {
+            x(i) = x(i) / conj_t::apply(u_diag_[i]);
+            for (size_type k = u_starts_[i]; k < u_starts_[i + 1]; ++k)
+                x(u_indices_[k]) -= conj_t::apply(u_data_[k]) * x(i);
+        }
+
+        // L^H x = y: upper triangular with unit diagonal.
+        for (size_type ii = 0; ii < n_; ++ii) {
+            const size_type i = n_ - 1 - ii;
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                x(l_indices_[k]) -= conj_t::apply(l_data_[k]) * x(i);
+        }
     }
 
 private:
@@ -133,7 +163,13 @@ private:
                 }
             }
 
-            // Split into L (j < i) and U (j >= i) parts
+            // Split into L (j < i), the diagonal, and U (j > i).
+            //
+            // The diagonal is kept ONLY in u_diag_, never also in u_rows, as in
+            // ilu_0 (#323). It used to be stored in both, and the back
+            // substitution then summed U(i,i)*x(i) into the j > i sum and
+            // divided by U(i,i) as well -- wrong for every input, including the
+            // no-drop ILUT that is exactly LU.
             // Collect and sort by magnitude for truncation
             using entry = std::pair<size_type, value_type>;
             std::vector<entry> l_entries, u_entries;
@@ -142,12 +178,9 @@ private:
                 if (!w_nz[j]) continue;
                 if (abs(w[j]) < drop_tol && j != i) continue;  // never drop diagonal
 
-                if (j < i) {
-                    l_entries.emplace_back(j, w[j]);
-                } else {
-                    u_entries.emplace_back(j, w[j]);
-                    if (j == i) u_diag_[i] = w[j];
-                }
+                if (j < i)       l_entries.emplace_back(j, w[j]);
+                else if (j > i)  u_entries.emplace_back(j, w[j]);
+                else             u_diag_[i] = w[j];
             }
 
             // Count original nnz in each part for fill limit
@@ -179,26 +212,19 @@ private:
                           [](const entry& a, const entry& b) { return a.first < b.first; });
             }
 
-            // Truncate U: keep at most (orig_u + fill_) largest entries (diagonal always kept)
-            size_type max_u = orig_u + fill_;
+            // Truncate U: keep at most (orig_u + fill_) entries counting the
+            // diagonal, which is always kept -- so at most orig_u + fill_ - 1
+            // of the largest strictly upper entries. (orig_u counts j >= i.)
+            const size_type max_u = orig_u + fill_ - 1;
             if (u_entries.size() > max_u) {
-                // Separate diagonal, sort rest by magnitude, truncate, add diagonal back
-                entry diag_entry{i, u_diag_[i]};
-                u_entries.erase(
-                    std::remove_if(u_entries.begin(), u_entries.end(),
-                                   [i](const entry& e) { return e.first == i; }),
-                    u_entries.end());
-                if (u_entries.size() > max_u - 1) {
-                    std::partial_sort(u_entries.begin(),
-                                      u_entries.begin() + static_cast<std::ptrdiff_t>(max_u - 1),
-                                      u_entries.end(),
-                                      [](const entry& a, const entry& b) {
-                                          using std::abs;
-                                          return abs(a.second) > abs(b.second);
-                                      });
-                    u_entries.resize(max_u - 1);
-                }
-                u_entries.push_back(diag_entry);
+                std::partial_sort(u_entries.begin(),
+                                  u_entries.begin() + static_cast<std::ptrdiff_t>(max_u),
+                                  u_entries.end(),
+                                  [](const entry& a, const entry& b) {
+                                      using std::abs;
+                                      return abs(a.second) > abs(b.second);
+                                  });
+                u_entries.resize(max_u);
                 std::sort(u_entries.begin(), u_entries.end(),
                           [](const entry& a, const entry& b) { return a.first < b.first; });
             }

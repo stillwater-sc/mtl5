@@ -117,6 +117,51 @@ TEST_CASE("ILUT with fill-in on arrowhead matrix", "[itl][pc][ilut]") {
     REQUIRE(res < 1e-8);
 }
 
+TEST_CASE("ILUT without dropping is an exact LU solve", "[itl][pc][ilut][regression]") {
+    // With threshold 0 and a fill allowance of n nothing is dropped, so ILUT is
+    // the complete LU factorization and solve() must solve A x = b to rounding.
+    // Before the fix it did not, for ANY input: U(i,i) was stored in the U rows
+    // as well as in u_diag_, so the back substitution subtracted U(i,i)*x(i)
+    // and divided by U(i,i) again -- the #323 bug of ilu_0, never fixed here.
+    // Measured before: (A x)(0) = -3.0 against b(0) = 1.0 on the tridiagonal.
+    //
+    // The existing ILUT tests did not see it because they only ask a Krylov
+    // solver to converge, and a wrong preconditioner still converges.
+    SECTION("tridiagonal: no fill") {
+        const auto A = make_tridiagonal(40, 4.0, -1.0);
+        const std::size_t n = A.num_rows();
+        itl::pc::ilut<double> P(A, n, 0.0);
+        vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
+        P.solve(x, b);
+        auto r = A * x;
+        for (std::size_t i = 0; i < n; ++i)
+            REQUIRE_THAT(r(i), Catch::Matchers::WithinAbs(b(i), 1e-12));
+    }
+    SECTION("non-symmetric 2-D grid: fill-in at every level") {
+        const std::size_t m = 6, n = m * m;
+        mat::compressed2D<double> A(n, n);
+        {
+            mat::inserter<mat::compressed2D<double>> ins(A);
+            for (std::size_t r = 0; r < m; ++r)
+                for (std::size_t c = 0; c < m; ++c) {
+                    const std::size_t i = r * m + c;
+                    ins[i][i] << 4.0 + 0.1 * double(i % 3);
+                    if (c)         ins[i][i - 1] << -1.3;
+                    if (c + 1 < m) ins[i][i + 1] << -0.7;
+                    if (r)         ins[i][i - m] << -1.1;
+                    if (r + 1 < m) ins[i][i + m] << -0.9;
+                }
+        }
+        itl::pc::ilut<double> P(A, n, 0.0);
+        vec::dense_vector<double> b(n), x(n, 0.0);
+        for (std::size_t i = 0; i < n; ++i) b(i) = std::sin(0.3 * double(i) + 0.1);
+        P.solve(x, b);
+        auto r = A * x;
+        for (std::size_t i = 0; i < n; ++i)
+            REQUIRE_THAT(r(i), Catch::Matchers::WithinAbs(b(i), 1e-12));
+    }
+}
+
 // --- ILDL tests ---
 
 TEST_CASE("ILDL preconditioned CG on SPD system converges", "[itl][pc][ildl]") {
