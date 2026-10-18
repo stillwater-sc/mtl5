@@ -116,7 +116,7 @@ The GCC region has a cost. GCC does not inline a function compiled with differen
 - `fast_two_sum`'s precondition counterexample;
 - the non-finite cases.
 
-The test target is built with the most aggressive contraction setting the header supports, the opposite of the bit-reproducibility tests: **`-ffp-contract=fast`** on GCC and **`-ffp-contract=fast-honor-pragmas`** on Clang. On the ARM64 CI runners, which have an FMA, the `split` checks fail if the header's contraction guard stops working.
+The test target is built with the most aggressive contraction setting the header supports, the opposite of the bit-reproducibility tests: **`-ffp-contract=fast`** on GCC and **`-ffp-contract=fast-honor-pragmas`** on Clang, or `-ffp-contract=on` where Clang lacks that mode (Apple Clang). On the ARM64 CI runners, which have an FMA, the `split` checks fail if the header's contraction guard stops working.
 
 ## Related
 

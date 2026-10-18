@@ -8,7 +8,8 @@
 // TwoProduct gives the FMA pair's bits, and a non-finite hi gets lo = 0.
 //
 // This target is built with -ffp-contract=fast on GCC, and
-// -ffp-contract=fast-honor-pragmas on Clang (tests/unit/CMakeLists.txt):
+// -ffp-contract=fast-honor-pragmas on Clang (=on for Apple Clang, which lacks
+// it; tests/unit/CMakeLists.txt):
 // wherever the target has an FMA (ARM64, or x86-64 with -march=native) that
 // would contract split into the identity, unless the header's own
 // contraction guard holds.
