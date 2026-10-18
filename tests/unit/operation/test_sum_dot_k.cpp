@@ -14,8 +14,8 @@
 //
 // The data are cancelling sums built here (a random half, its exact negation
 // and a few small terms, shuffled), with the condition number set by the
-// exponent range. The paper's own GenDot / GenSum battery and its theorem
-// tests are a later #611 task.
+// exponent range. The paper's theorems over its own GenDot / GenSum battery
+// are asserted in test_ogita_rump_oishi.cpp.
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
