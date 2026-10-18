@@ -166,11 +166,19 @@ TEST_CASE("dense direct: the Accumulator reaches every reduction", "[operation][
         CHECK(products_of([&] { cholesky_h_solve<count_acc>(H, x, b); }) == solve_products(n));
     }
     SECTION("ldlt_factor / _solve and ldlt_h_factor / _solve") {
+        // count_acc is an ADL accumulator over a real IEEE type, so each
+        // three-factor term arrives as hi plus, when its rounding error is
+        // nonzero, lo (#602): between one and two products per term.
+        const std::size_t terms = cholesky_products(n);
         dmat A = spd<double>(n);
-        CHECK(products_of([&] { REQUIRE(ldlt_factor<count_acc>(A) == 0); }) == cholesky_products(n));
+        const std::size_t f = products_of([&] { REQUIRE(ldlt_factor<count_acc>(A) == 0); });
+        CHECK(f > terms);
+        CHECK(f <= 2 * terms);
         CHECK(products_of([&] { ldlt_solve<count_acc>(A, x, b); }) == solve_products(n));
         dmat H = spd<double>(n);
-        CHECK(products_of([&] { REQUIRE(ldlt_h_factor<count_acc>(H) == 0); }) == cholesky_products(n));
+        const std::size_t fh = products_of([&] { REQUIRE(ldlt_h_factor<count_acc>(H) == 0); });
+        CHECK(fh > terms);
+        CHECK(fh <= 2 * terms);
         CHECK(products_of([&] { ldlt_h_solve<count_acc>(H, x, b); }) == solve_products(n));
     }
     SECTION("ldlt_bk_factor / _solve, no interchanges") {

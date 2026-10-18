@@ -38,7 +38,9 @@
 // routines before #585. In the factorizations a non-void accumulator forms each
 // entry as ONE reduction, A(i,j) - sum_k L(i,k) v(k) with v(k) = conj(L(j,k))
 // D(k) rounded to the element type, then rounds once -- the sparse LDL^T's form
-// (#531). In the solves it forms each row's b(i) - sum_j L(i,j) x(j) the same
+// (#531). When the accumulator can keep it (math::splits_product_terms_v, #602),
+// v(k)'s rounding error is fed in as a second product, so the whole three-factor
+// term L(i,k) L(j,k) D(k) reaches the accumulator. In the solves it forms each row's b(i) - sum_j L(i,j) x(j) the same
 // way, rounded once, as the sparse level-scheduled solves do (#535).
 
 #include <cassert>
@@ -89,21 +91,32 @@ int ldlt_factor_acc(M& A) {
     using value_type = typename M::value_type;
     using conj_t     = functor::scalar::conj<value_type>;
     using AT         = math::accumulator_traits<Accumulator, value_type>;
+    constexpr bool split = math::splits_product_terms_v<Accumulator, value_type>;
     const std::size_t n = A.num_rows();
     std::vector<value_type> v(n);
+    std::vector<value_type> v_lo(split ? n : 0);   // v's rounding error (#602)
 
     auto reduce = [&](std::size_t i, std::size_t j) {
         Accumulator acc{};
         AT::assign(acc, A(i, j));
-        for (std::size_t k = 0; k < j; ++k)
+        for (std::size_t k = 0; k < j; ++k) {
             AT::add_product(acc, value_type(-A(i, k)), v[k]);
+            if constexpr (split)
+                if (v_lo[k] != value_type(0)) AT::add_product(acc, value_type(-A(i, k)), v_lo[k]);
+        }
         return AT::template value<value_type>(acc);
     };
 
     for (std::size_t j = 0; j < n; ++j) {
         for (std::size_t k = 0; k < j; ++k) {
             const value_type ljk = A(j, k);
-            v[k] = (Conj ? conj_t::apply(ljk) : ljk) * A(k, k);   // A(k,k) holds D(k)
+            if constexpr (split) {             // real: Conj is the identity
+                const auto t = math::two_product(ljk, value_type(A(k, k)));
+                v[k] = t.hi;
+                v_lo[k] = t.lo;
+            } else {
+                v[k] = (Conj ? conj_t::apply(ljk) : ljk) * A(k, k);   // A(k,k) holds D(k)
+            }
         }
         value_type dj = reduce(j, j);
         if constexpr (Conj)

@@ -35,18 +35,23 @@
 //   LU refinement (float factor, double
 //   residual), Hilbert(n), n = 9 .. 11     stalls at 1e-4 .. 5e-4   1e-12
 //
+// Dense and sparse LDLT showed no ordering until #602. Their terms are products
+// of three values, and one product was rounded in the element type before the
+// accumulator saw it; an accumulator that keeps it now also receives that
+// product's rounding error (math::two_product), and exact is lowest at every
+// n = 5 .. 10, by 1.06x (n = 6: 2.0e-8, 1.3e-8, 1.2e-8) up to 28x (n = 9:
+// 3.4e-7, 1.3e-7, 1.2e-8). Dense and sparse give the same numbers. The dense
+// solves form b(i) - sum in the accumulator, as the sparse ones do.
+//
 // And measured to show NO ordering, so asserted only to work:
 //
-//   * sparse LDLT and QR on the same Hilbert matrices: the three are within a
-//     small factor and swap places (QR at n = 8: 1.9e-7, 1.1e-7, 5.0e-7).
-//   * dense LDLT (#585): exact is lowest, by as little as 1.04x (n = 6: 2.0e-8,
-//     1.3e-8, 1.3e-8). The dense solves form b(i) - sum in the accumulator, as
-//     the sparse ones do; rounding the sum before subtracting it loses the
-//     LU and Cholesky gains above.
+//   * sparse QR on the same Hilbert matrices: the three are within a small
+//     factor and swap places (n = 8: 1.9e-7, 1.1e-7, 5.0e-7).
 //   * dense Bunch-Kaufman LDLT (#585), Hilbert(n) and the indefinite saddle
 //     [[H, 1], [1^T, 0]], n = 4 .. 9 (one or two interchanges each): no
 //     ordering. Hilbert(6): 4.9e-8, 1.1e-8, 1.5e-8; saddle n = 7: 9.4e-8,
-//     2.3e-6, 8.0e-8.
+//     2.3e-6, 8.0e-8. Not the #602 cause: its terms are L(i,p) W(j,p) with W
+//     the stored Schur column, not a product formed for the accumulator.
 //   * CG and GMRES in float: the accumulator covers the dot products and the
 //     SpMV, but the recurrences update x, r and p in float, and that is what
 //     limits them. Iteration counts and true residuals agree to a few percent.
@@ -332,15 +337,29 @@ TEST_CASE("[586:direct] sparse Cholesky of Hilbert(9): only configuration 3 fact
     CHECK(r3 < 1e-7);
 }
 
-TEST_CASE("[586:direct] sparse LDLT and QR: every configuration solves; no ordering",
+TEST_CASE("[586:direct] sparse LDLT: configuration 3 is lowest (#602)",
+          "[586:direct][accumulator]") {
+    // Measured (header): exact lowest at every n, by as little as 1.06x (n = 6).
+    for (std::size_t n = 5; n <= 8; ++n) {
+        const auto A = hilbert<float>(n);
+        INFO("Hilbert(" << n << ")");
+        const double r1 = direct_residual<float>(A, ldlt_solve{});
+        const double r2 = direct_residual<fma_acc<float>>(A, ldlt_solve{});
+        const double r3 = direct_residual<exact_acc<float>>(A, ldlt_solve{});
+        INFO("plain " << r1 << ", fma " << r2 << ", exact " << r3);
+        CHECK(r1 < 1e-6);
+        CHECK(r2 < 1e-6);
+        CHECK(r3 < r1);
+        CHECK(r3 < r2);
+    }
+}
+
+TEST_CASE("[586:direct] sparse QR: every configuration solves; no ordering",
           "[586:direct][accumulator]") {
     // Measured: no consistent ordering between the configurations (header).
     for (std::size_t n = 5; n <= 8; ++n) {
         const auto A = hilbert<float>(n);
         INFO("Hilbert(" << n << ")");
-        CHECK(direct_residual<float>(A, ldlt_solve{}) < 1e-6);
-        CHECK(direct_residual<fma_acc<float>>(A, ldlt_solve{}) < 1e-6);
-        CHECK(direct_residual<exact_acc<float>>(A, ldlt_solve{}) < 1e-6);
         CHECK(direct_residual<float>(A, qr_solve{}) < 1e-6);
         CHECK(direct_residual<fma_acc<float>>(A, qr_solve{}) < 1e-6);
         CHECK(direct_residual<exact_acc<float>>(A, qr_solve{}) < 1e-6);
@@ -423,15 +442,20 @@ TEST_CASE("[586:direct] dense Cholesky of Hilbert(9): only configuration 3 facto
     CHECK(r3 < 1e-7);
 }
 
-TEST_CASE("[586:direct] dense LDLT: every configuration solves; no ordering",
+TEST_CASE("[586:direct] dense LDLT: configuration 3 is lowest (#602)",
           "[586:direct][accumulator]") {
-    // Measured: exact is lowest at every n but by as little as 1.04x (n = 6).
+    // Measured (header): exact lowest at every n, by as little as 1.06x (n = 6).
     for (std::size_t n = 5; n <= 8; ++n) {
         const auto A = hilbert<float>(n);
         INFO("Hilbert(" << n << ")");
-        CHECK(direct_residual<float>(A, dense_ldlt_solve{}) < 1e-6);
-        CHECK(direct_residual<fma_acc<float>>(A, dense_ldlt_solve{}) < 1e-6);
-        CHECK(direct_residual<exact_acc<float>>(A, dense_ldlt_solve{}) < 1e-6);
+        const double r1 = direct_residual<float>(A, dense_ldlt_solve{});
+        const double r2 = direct_residual<fma_acc<float>>(A, dense_ldlt_solve{});
+        const double r3 = direct_residual<exact_acc<float>>(A, dense_ldlt_solve{});
+        INFO("plain " << r1 << ", fma " << r2 << ", exact " << r3);
+        CHECK(r1 < 1e-6);
+        CHECK(r2 < 1e-6);
+        CHECK(r3 < r1);
+        CHECK(r3 < r2);
     }
 }
 
