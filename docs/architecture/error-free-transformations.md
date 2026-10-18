@@ -184,6 +184,21 @@ So the relative error is `u` plus about `(φu)^K` times the condition number, an
 
 ## Testing
 
+`tests/unit/operation/test_ogita_rump_oishi.cpp` asserts the paper's theorems over the paper's own test data. The battery is GenDot and GenSum with `n` ∈ {50, 200, 1000}, anticipated condition numbers 1..1e100 in `double` and 1..1e30 in `float`, and three seeds each. Each test case is one numbered result, checked on every instance:
+
+| Result | What it bounds | MTL5 code checked |
+|---|---|---|
+| Theorem 3.4 | TwoSum and TwoProduct are error-free, and `\|y\| ≤ eps·\|x\|` | `two_sum`, `two_product`, `two_product_dekker` |
+| (2.4) | the recursive sum | `sum_k<1>` |
+| Proposition 4.5 | Sum2 | `sum_k<2>`, `sum<compensated_accumulator>` |
+| Corollary 4.7 | Sum2's computable bound `err`, which must enclose the exact sum (decided exactly) | Sum2 with the paper's appended statements |
+| (4.14), Lemma 4.9 | each VecSum pass keeps the sum and shrinks `Σ\|p\|` | `detail::vec_sum`, 5 passes |
+| Proposition 4.10 | SumK | `sum_k<3..6>` |
+| Proposition 5.5, Corollary 5.7 | Dot2, absolute and relative | `dot_k<2>`, `dot<compensated_accumulator>` |
+| Proposition 5.11, (5.11) | DotK, absolute and relative | `dot_k<3..6>` |
+
+The tests assert the inequalities, never individual values. The exact quantities (`s`, `S`, `|x|·|y|` and every error) come from `math::exact_accumulator`.
+
 `tests/unit/math/test_compensated_accumulator.cpp` checks that `mtl::dot` with the compensated accumulator gives the bits of the paper's Dot2 loop, written out with Dekker's TwoProduct. It also checks the cancellations that plain and FMA lose, the merge, wider initial values and results, and non-finite inputs. Its accuracy is checked in the #586 matrix.
 
 `tests/unit/math/test_error_free.cpp` checks each transformation in `float` and `double` against `math::exact_accumulator`. For example, `a + b − hi − lo` is accumulated exactly and must be zero in every limb. Over random operands spanning each function's domain, the test also checks:
