@@ -47,6 +47,7 @@
 // Math
 #include <mtl/math/operations.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/error_free.hpp>
 #include <mtl/math/exact_accumulator.hpp>
 
 // Detail

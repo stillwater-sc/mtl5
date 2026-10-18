@@ -127,6 +127,29 @@ if(NOT MSVC)
     endforeach()
 endif()
 
+# math_test_error_free checks that the error-free transformations hold under
+# the most aggressive contraction setting the header supports: error_free.hpp
+# switches contraction off for split and two_product_dekker itself, so the test
+# does the opposite of the targets above. GCC honours its optimize region under
+# -ffp-contract=fast; Clang's plain -ffp-contract=fast overrides pragmas, so
+# Clang gets -ffp-contract=fast-honor-pragmas where it has it (LLVM Clang 12+;
+# Apple Clang does not), and else its default, -ffp-contract=on, which honours
+# the pragma too. It bites wherever the target has an FMA (the ARM64 runners);
+# -ffast-math stays unsupported.
+if(NOT MSVC AND TARGET math_test_error_free)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        include(CheckCXXCompilerFlag)
+        check_cxx_compiler_flag(-ffp-contract=fast-honor-pragmas MTL5_HAS_FP_CONTRACT_HONOR_PRAGMAS)
+        if(MTL5_HAS_FP_CONTRACT_HONOR_PRAGMAS)
+            target_compile_options(math_test_error_free PRIVATE -ffp-contract=fast-honor-pragmas)
+        else()
+            target_compile_options(math_test_error_free PRIVATE -ffp-contract=on)
+        endif()
+    else()
+        target_compile_options(math_test_error_free PRIVATE -ffp-contract=fast)
+    endif()
+endif()
+
 file(GLOB ARRAY_SRC "array/*.cpp")
 compile_all("true" "array" "Tests/array" "MTL5::mtl5;Catch2::Catch2WithMain" ${ARRAY_SRC})
 
