@@ -229,6 +229,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
     using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
     using AT = mtl::math::accumulator_traits<Acc, Value>;
     constexpr bool split = mtl::math::splits_product_terms_v<Acc, Value>;   // #602
+    std::vector<mtl::math::split_product<Value>> split_coef;   // per-bi, split path only
     const std::size_t n = sym.n;
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
@@ -320,6 +321,13 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
             while (s0 < moff && rowsK[s0] < f) ++s0;
             for (std::size_t bi = s0; bi < moff && rowsK[bi] < l; ++bi) {
                 const std::size_t tc = rowsK[bi] - f;       // target column in [0,w)
+                // The split coefficients depend on (bi, kk) only: form them once
+                // per bi, not once per destination row.
+                if constexpr (split) {
+                    split_coef.resize(wK);
+                    for (std::size_t kk = 0; kk < wK; ++kk)
+                        split_coef[kk] = mtl::math::two_product(D[fK + kk], UK[kk * moff + bi]);
+                }
                 for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
                     const std::size_t tr = rel[rowsK[ui]];
                     assert(tr != NPOS && "update row must lie in the target panel");
@@ -328,7 +336,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
                         // coefficient D(k)*L(row_b,k) formed in Value; product with
                         // L(row_u,k) accumulated in Accumulator (negated -> subtract).
                         if constexpr (split) {
-                            const auto coef = mtl::math::two_product(D[fK + kk], UK[kk * moff + bi]);
+                            const auto& coef = split_coef[kk];
                             AT::add_product(*dst, UK[kk * moff + ui], -coef.hi);
                             if (coef.lo != Value{0})
                                 AT::add_product(*dst, UK[kk * moff + ui], -coef.lo);
