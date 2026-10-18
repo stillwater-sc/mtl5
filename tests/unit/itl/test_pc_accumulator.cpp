@@ -38,6 +38,11 @@
 //   8   2.0e-4 / 2.9e-4 / 3.9e-5        2.0e-4 / 2.5e-4 / 5.4e-6
 //   9      NaN /    NaN / 7.0e-5        2.0e-4 / 2.6e-4 / 2.1e-6
 //
+// No-drop ILUT on the dense pattern is the same elimination as ILU(0) there and
+// gives the same numbers bit for bit, which cross-checks the two
+// implementations. With dropping, ILUT's accumulator also decides the pattern:
+// the drop tests read the single-rounded entries.
+//
 // At n = 9 IC(0) breaks down under configurations 1 and 2 -- a pivot cancels
 // below zero and its square root is NaN -- and only configuration 3 still
 // applies M^-1, as only it factors Hilbert(9) by dense Cholesky (#594).
@@ -45,6 +50,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
+#include <array>
 #include <complex>
 #include <cstddef>
 #include <cstring>
@@ -57,6 +63,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/itl/pc/ilu_0.hpp>
 #include <mtl/itl/pc/ic_0.hpp>
+#include <mtl/itl/pc/ilut.hpp>
 
 #include "../operation/exact_accumulator.hpp"
 
@@ -243,6 +250,28 @@ inline std::size_t strictly_lower(const std::vector<std::set<std::size_t>>& p) {
     for (std::size_t i = 0; i < p.size(); ++i)
         for (auto j : p[i]) if (j < i) ++count;
     return count;
+}
+
+/// Products of a no-drop ILUT (= LU with fill): the IKJ elimination run
+/// symbolically, one product per U(k,j) that updates row i. Returns
+/// {factorization products, strictly-lower count, strictly-upper count}.
+inline std::array<std::size_t, 3> ilut_nodrop_counts(const std::vector<std::set<std::size_t>>& p) {
+    const std::size_t n = p.size();
+    std::vector<std::vector<bool>> U(n, std::vector<bool>(n, false));
+    std::size_t prods = 0, lower = 0, upper = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        std::vector<bool> row(n, false);
+        for (auto j : p[i]) row[j] = true;
+        for (std::size_t k = 0; k < i; ++k) {
+            if (!row[k]) continue;
+            ++lower;
+            for (std::size_t j = k + 1; j < n; ++j)
+                if (U[k][j]) { row[j] = true; ++prods; }
+        }
+        for (std::size_t j = i + 1; j < n; ++j)
+            if (row[j]) { U[i][j] = true; ++upper; }
+    }
+    return {prods, lower, upper};
 }
 
 template <typename PC>
@@ -487,5 +516,88 @@ TEST_CASE("[586:pc] incomplete factorizations: the ordering follows the reductio
         CHECK(!(c1 < 1.0));          // NaN: a pivot goes negative
         CHECK(!(c2 < 1.0));
         CHECK(c3 < 1e-3);
+    }
+}
+
+TEST_CASE("ilut: the accumulator reaches the elimination and both solves (#585)",
+          "[itl][pc][ilut][accumulator]") {
+    // No dropping (threshold 0, fill n): the pattern is the symbolic LU fill,
+    // so the product counts follow from the sparsity pattern alone.
+    const auto A = convection_diffusion<double>(5);
+    const std::size_t n = A.num_rows();
+    const auto [prods, lower, upper] = ilut_nodrop_counts(pattern(A));
+    REQUIRE(prods > lower);                       // fill-in really happened
+    const auto b = rhs<double>(n);
+
+    counting::products = 0;
+    itl::pc::ilut<double, mat::parameters<>, counting::count_acc> M(A, n, 0.0);
+    REQUIRE(counting::products == prods);
+
+    vec::dense_vector<double> x(n);
+    counting::products = 0;
+    M.solve(x, b);
+    REQUIRE(counting::products == lower + upper);
+    counting::products = 0;
+    M.adjoint_solve(x, b);
+    REQUIRE(counting::products == lower + upper);
+
+    counting::products = 0;
+    itl::pc::ilut<double> V(A, n, 0.0);
+    V.solve(x, b);
+    V.adjoint_solve(x, b);
+    REQUIRE(counting::products == 0);
+}
+
+TEST_CASE("ilut: a plain element-type accumulator is the void path bit for bit (#585)",
+          "[itl][pc][ilut][accumulator]") {
+    // The elimination matches on any pattern -- with the default dropping and
+    // truncation too, since both read the same values -- and adjoint_solve()
+    // reads every stored entry. solve() matches only for one-term rows.
+    SECTION("float, 5-point, default dropping: elimination and adjoint_solve") {
+        const auto A = convection_diffusion<float>(8);
+        const auto b = rhs<float>(A.num_rows());
+        for (float tau : {1e-4f, 5e-2f}) {
+            itl::pc::ilut<float> V(A, 2, tau);
+            itl::pc::ilut<float, mat::parameters<>, float> P(A, 2, tau);
+            vec::dense_vector<float> xv(A.num_rows()), xp(A.num_rows());
+            V.adjoint_solve(xv, b);
+            P.adjoint_solve(xp, b);
+            INFO("threshold " << tau);
+            REQUIRE(same_bits(xv, xp));
+        }
+    }
+    SECTION("float, tridiagonal: solve") {
+        const auto A = tridiagonal<float>(60);
+        const auto b = rhs<float>(A.num_rows());
+        itl::pc::ilut<float> V(A);
+        itl::pc::ilut<float, mat::parameters<>, float> P(A);
+        vec::dense_vector<float> xv(A.num_rows()), xp(A.num_rows());
+        V.solve(xv, b);
+        P.solve(xp, b);
+        REQUIRE(same_bits(xv, xp));
+    }
+}
+
+TEST_CASE("[586:pc] ilut: no-drop ILUT on a dense pattern has the LU ordering",
+          "[586:pc][itl][pc][ilut][accumulator]") {
+    using exact = exact_test::exact_acc<float>;
+    using fma   = math::fma_accumulator<float>;
+    using P     = mat::parameters<>;
+    for (std::size_t n = 5; n <= 8; ++n) {
+        const auto A = hilbert_sparse(n);
+        vec::dense_vector<float> b(n, 1.0f);
+        auto run = [&](auto tag) {
+            using PC = typename decltype(tag)::type;
+            PC M(A, n, 0.0f);
+            vec::dense_vector<float> x(n);
+            M.solve(x, b);
+            return residual(A, x, b);
+        };
+        const double r1 = run(std::type_identity<itl::pc::ilut<float, P, float>>{});
+        const double r2 = run(std::type_identity<itl::pc::ilut<float, P, fma>>{});
+        const double r3 = run(std::type_identity<itl::pc::ilut<float, P, exact>>{});
+        INFO("ilut Hilbert(" << n << "): " << r1 << " / " << r2 << " / " << r3);
+        CHECK(4.0 * r3 < r1);
+        CHECK(4.0 * r3 < r2);
     }
 }

@@ -1,24 +1,47 @@
 #pragma once
 // MTL5 -- ILUT (Incomplete LU with Threshold) preconditioner for compressed2D
 // Saad's ILUT: allows fill-in up to p entries per row, drops entries below tau*||row||.
+//
+// ACCUMULATOR (#585). A non-void trailing `Accumulator` routes the elimination
+// and both triangular solves through math::accumulator_traits. As in ilu_0 the
+// IKJ elimination is right-looking within a row, but the whole work row is
+// live while it is eliminated, so each live entry -- fill-in included -- gets
+// its own accumulator: A(i,j) is assigned into it (fill starts cleared), each
+// update is added as a product, and the entry rounds ONCE, when it is consumed
+// (L(i,k) when row k eliminates it, U(i,j) when the row is split). The drop
+// tests and the magnitude truncation read those single-rounded values, so the
+// accumulator decides the pattern as well as the values. Workspace: n
+// accumulators, since fill can reach any column (see the workspace note in
+// math/accumulator_traits.hpp). A plain `Acc == Value` accumulator performs the
+// void path's operations in the void path's order, bit for bit.
+//
+// solve() forms b(i) - sum and y(i) - sum inside the accumulator, rounded once;
+// the void path rounds the sum first, so the two agree only for one-term rows.
+// adjoint_solve() scatters into one live accumulator per component.
 #include <mtl/concepts/magnitude.hpp>   // magnitude_t (#505 review)
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <type_traits>
 #include <vector>
 #include <utility>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl::pc {
 
 /// ILUT preconditioner for compressed2D sparse matrices.
 /// fill: max extra entries per row in L and U.
 /// threshold: drop tolerance relative to row 2-norm.
-template <Field Value, typename Parameters = mat::parameters<>>
+///
+/// `Accumulator` selects how the elimination and the triangular solves
+/// accumulate (see math/accumulator_traits.hpp and the header note). The default
+/// `void` keeps the naive value_type arithmetic unchanged.
+template <Field Value, typename Parameters = mat::parameters<>, typename Accumulator = void>
 class ilut {
     using matrix_type = mat::compressed2D<Value, Parameters>;
     using value_type  = Value;
@@ -42,6 +65,10 @@ public:
 
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        if constexpr (!std::is_void_v<Accumulator>) {
+            solve_acc(x, b);
+            return;
+        }
         // Forward substitution: L*y = b (L has unit diagonal)
         for (size_type i = 0; i < n_; ++i) {
             auto sum = math::zero<value_type>();
@@ -73,6 +100,10 @@ public:
     /// component reads the row storage as it is laid out.
     template <typename VecX, typename VecB>
     void adjoint_solve(VecX& x, const VecB& b) const {
+        if constexpr (!std::is_void_v<Accumulator>) {
+            adjoint_solve_acc(x, b);
+            return;
+        }
         using conj_t = functor::scalar::conj<value_type>;
 
         for (size_type i = 0; i < n_; ++i)
@@ -94,6 +125,55 @@ public:
     }
 
 private:
+    static constexpr bool accumulated = !std::is_void_v<Accumulator>;
+    using acc_type = std::conditional_t<accumulated, Accumulator, value_type>;
+    using AT = math::accumulator_traits<acc_type, value_type>;
+
+    /// solve() with the accumulator, as ilu_0::solve_acc.
+    template <typename VecX, typename VecB>
+    void solve_acc(VecX& x, const VecB& b) const {
+        acc_type acc;
+        for (size_type i = 0; i < n_; ++i) {
+            AT::assign(acc, static_cast<value_type>(b(i)));
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                AT::add_product(acc, -l_data_[k], static_cast<value_type>(x(l_indices_[k])));
+            x(i) = AT::template value<value_type>(acc);
+        }
+        for (size_type ii = 0; ii < n_; ++ii) {
+            const size_type i = n_ - 1 - ii;
+            AT::assign(acc, static_cast<value_type>(x(i)));
+            for (size_type k = u_starts_[i]; k < u_starts_[i + 1]; ++k)
+                AT::add_product(acc, -u_data_[k], static_cast<value_type>(x(u_indices_[k])));
+            x(i) = AT::template value<value_type>(acc) / u_diag_[i];
+        }
+    }
+
+    /// adjoint_solve() with the accumulator, as ilu_0::adjoint_solve_acc.
+    template <typename VecX, typename VecB>
+    void adjoint_solve_acc(VecX& x, const VecB& b) const {
+        using conj_t = functor::scalar::conj<value_type>;
+        std::vector<acc_type> acc(n_);
+
+        for (size_type i = 0; i < n_; ++i)
+            AT::assign(acc[i], static_cast<value_type>(b(i)));
+        for (size_type i = 0; i < n_; ++i) {                    // U^H y = b
+            const value_type yi = AT::template value<value_type>(acc[i]) / conj_t::apply(u_diag_[i]);
+            x(i) = yi;
+            for (size_type k = u_starts_[i]; k < u_starts_[i + 1]; ++k)
+                AT::add_product(acc[u_indices_[k]], -conj_t::apply(u_data_[k]), yi);
+        }
+
+        for (size_type i = 0; i < n_; ++i)
+            AT::assign(acc[i], static_cast<value_type>(x(i)));
+        for (size_type ii = 0; ii < n_; ++ii) {                 // L^H x = y
+            const size_type i = n_ - 1 - ii;
+            const value_type xi = AT::template value<value_type>(acc[i]);
+            x(i) = xi;
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                AT::add_product(acc[l_indices_[k]], -conj_t::apply(l_data_[k]), xi);
+        }
+    }
+
     void factorize(const matrix_type& A) {
         using std::abs;
         using std::sqrt;
@@ -109,6 +189,8 @@ private:
         std::vector<value_type> w(n_, math::zero<value_type>());
         std::vector<bool> w_nz(n_, false);
         std::vector<size_type> nz_cols;
+        // One accumulator per column of the work row; empty for void.
+        std::vector<acc_type> wa(accumulated ? n_ : 0);
 
         for (size_type i = 0; i < n_; ++i) {
             nz_cols.clear();
@@ -128,6 +210,7 @@ private:
             for (size_type k = a_starts[i]; k < a_starts[i + 1]; ++k) {
                 size_type j = a_indices[k];
                 w[j] = a_data[k];
+                if constexpr (accumulated) AT::assign(wa[j], a_data[k]);
                 w_nz[j] = true;
                 nz_cols.push_back(j);
             }
@@ -141,6 +224,7 @@ private:
             for (size_type k = 0; k < i; ++k) {
                 if (!w_nz[k]) continue;
 
+                if constexpr (accumulated) w[k] = AT::template value<value_type>(wa[k]);
                 w[k] /= u_diag_[k];
 
                 // Drop small entries in L part
@@ -157,9 +241,11 @@ private:
                         // Fill-in: new nonzero position
                         w_nz[uj] = true;
                         w[uj] = math::zero<value_type>();
+                        if constexpr (accumulated) AT::clear(wa[uj]);
                         nz_cols.push_back(uj);
                     }
-                    w[uj] -= w[k] * uv;
+                    if constexpr (accumulated) AT::add_product(wa[uj], -w[k], uv);
+                    else                       w[uj] -= w[k] * uv;
                 }
             }
 
@@ -173,6 +259,13 @@ private:
             // Collect and sort by magnitude for truncation
             using entry = std::pair<size_type, value_type>;
             std::vector<entry> l_entries, u_entries;
+
+            // The L part (j < i) was rounded and divided as it was eliminated;
+            // the diagonal and U part round out here, once, before the drop
+            // test reads them.
+            if constexpr (accumulated)
+                for (auto j : nz_cols)
+                    if (j >= i && w_nz[j]) w[j] = AT::template value<value_type>(wa[j]);
 
             for (auto j : nz_cols) {
                 if (!w_nz[j]) continue;
