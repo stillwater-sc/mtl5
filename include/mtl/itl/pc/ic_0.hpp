@@ -33,11 +33,14 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl::itl::pc {
 
 /// IC(0) preconditioner for SPD compressed2D sparse matrices.
 /// Computes L such that L*L^T approximates A with the same sparsity pattern.
+/// For a complex Value that is L*L^T, not L*L^H: the factorization conjugates
+/// nothing, so it models a complex SYMMETRIC A (A^T == A), not a Hermitian one.
 ///
 /// `Accumulator` selects how the factorization and the triangular solves
 /// accumulate (see math/accumulator_traits.hpp and the header note). The default
@@ -56,18 +59,47 @@ public:
     /// Solve (L*L^T)*x = b: forward (L*y=b), then backward (L^T*x=y)
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        apply<false>(x, b);
+    }
+
+    /// Solve (L*L^T)^H * x = b.
+    ///
+    /// This used to delegate to solve(), commented "L*L^T is self-adjoint for
+    /// real" -- true, and wrong for complex: M = L*L^T has M^T == M, so
+    /// M^H = conj(M), and M^-H is the same two solves with L conjugated.
+    /// Delegating applied M^-1 instead, violating <M^-1 b, c> == <b, M^-H c> by
+    /// 3.6e-02 on a complex-symmetric tridiagonal (#394's defect, for complex
+    /// only). For a real Value conj is the identity, and this is solve()
+    /// operation for operation.
+    template <typename VecX, typename VecB>
+    void adjoint_solve(VecX& x, const VecB& b) const {
+        apply<true>(x, b);
+    }
+
+private:
+    /// Returns v, or conj(v) when Conj.
+    template <bool Conj>
+    static value_type maybe_conj(const value_type& v) {
+        if constexpr (Conj) return functor::scalar::conj<value_type>::apply(v);
+        else                return v;
+    }
+
+    /// (L L^T)^-1 b, or with Conj (conj(L) L^H)^-1 b.
+    template <bool Conj, typename VecX, typename VecB>
+    void apply(VecX& x, const VecB& b) const {
         if constexpr (!std::is_void_v<Accumulator>) {
-            solve_acc(x, b);
+            solve_acc<Conj>(x, b);
             return;
         }
+        constexpr auto c = [](const value_type& v) { return maybe_conj<Conj>(v); };
         // Forward substitution: L*y = b
         for (size_type i = 0; i < n_; ++i) {
             auto sum = math::zero<value_type>();
             for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k) {
                 if (l_indices_[k] < i)
-                    sum += l_data_[k] * x(l_indices_[k]);
+                    sum += c(l_data_[k]) * x(l_indices_[k]);
             }
-            x(i) = (b(i) - sum) / l_diag_[i];
+            x(i) = (b(i) - sum) / c(l_diag_[i]);
         }
         // Back substitution: L^T*x = y
         // L^T is upper triangular. We use the stored L in column-access pattern.
@@ -78,46 +110,40 @@ public:
             for (size_type j = i + 1; j < n_; ++j) {
                 for (size_type k = l_starts_[j]; k < l_starts_[j + 1]; ++k) {
                     if (l_indices_[k] == i) {
-                        sum += l_data_[k] * x(j);
+                        sum += c(l_data_[k]) * x(j);
                         break;
                     }
                 }
             }
-            x(i) = (x(i) - sum) / l_diag_[i];
+            x(i) = (x(i) - sum) / c(l_diag_[i]);
         }
     }
 
-    /// adjoint_solve: same as solve (L*L^T is self-adjoint for real)
-    template <typename VecX, typename VecB>
-    void adjoint_solve(VecX& x, const VecB& b) const {
-        solve(x, b);
-    }
-
-private:
     using acc_type = std::conditional_t<std::is_void_v<Accumulator>, value_type, Accumulator>;
     using AT = math::accumulator_traits<acc_type, value_type>;
 
     /// solve() with the accumulator: the forward rows gather, the backward
-    /// rows scatter into one accumulator per component.
-    template <typename VecX, typename VecB>
+    /// rows scatter into one accumulator per component. With Conj, the adjoint.
+    template <bool Conj, typename VecX, typename VecB>
     void solve_acc(VecX& x, const VecB& b) const {
+        constexpr auto c = [](const value_type& v) { return maybe_conj<Conj>(v); };
         std::vector<acc_type> acc(n_);
         for (size_type i = 0; i < n_; ++i) {                    // L y = b
             AT::assign(acc[i], static_cast<value_type>(b(i)));
             for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
                 if (l_indices_[k] < i)
-                    AT::add_product(acc[i], -l_data_[k], static_cast<value_type>(x(l_indices_[k])));
-            x(i) = AT::template value<value_type>(acc[i]) / l_diag_[i];
+                    AT::add_product(acc[i], -c(l_data_[k]), static_cast<value_type>(x(l_indices_[k])));
+            x(i) = AT::template value<value_type>(acc[i]) / c(l_diag_[i]);
         }
         for (size_type i = 0; i < n_; ++i)
             AT::assign(acc[i], static_cast<value_type>(x(i)));
         for (size_type ii = 0; ii < n_; ++ii) {                 // L^T x = y
             const size_type i = n_ - 1 - ii;
-            const value_type xi = AT::template value<value_type>(acc[i]) / l_diag_[i];
+            const value_type xi = AT::template value<value_type>(acc[i]) / c(l_diag_[i]);
             x(i) = xi;
             for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
                 if (l_indices_[k] < i)
-                    AT::add_product(acc[l_indices_[k]], -l_data_[k], xi);
+                    AT::add_product(acc[l_indices_[k]], -c(l_data_[k]), xi);
         }
     }
 

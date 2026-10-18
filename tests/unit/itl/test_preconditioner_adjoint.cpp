@@ -15,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <complex>
 #include <random>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -25,6 +26,7 @@
 #include <mtl/itl/pc/ilu_0.hpp>
 #include <mtl/itl/pc/ic_0.hpp>
 #include <mtl/itl/pc/ilut.hpp>
+#include <mtl/itl/pc/ildl.hpp>
 #include <mtl/itl/pc/block_diagonal.hpp>
 #include <mtl/itl/pc/ssor.hpp>
 
@@ -66,6 +68,52 @@ double adjoint_violation(const Prec& M, std::size_t n) {
         M.adjoint_solve(MHc, c);
         const double lhs = mtl::dot(Mb, c);
         const double rhs = mtl::dot(b, MHc);
+        worst = std::max(worst, std::abs(lhs - rhs) / std::max(1.0, std::abs(lhs)));
+    }
+    return worst;
+}
+
+using CMat = mat::compressed2D<std::complex<double>>;
+
+/// Complex SYMMETRIC (A^T == A, not Hermitian) 2-D grid: what ic_0 and ildl
+/// factor, since neither conjugates. Imaginary parts on and off the diagonal.
+CMat pc_complex_symmetric(std::size_t k) {
+    const std::size_t n = k * k;
+    CMat A(n, n);
+    {
+        mat::inserter<CMat> ins(A);
+        for (std::size_t i = 0; i < k; ++i)
+            for (std::size_t j = 0; j < k; ++j) {
+                const std::size_t r = i * k + j;
+                ins[r][r] << std::complex<double>(4.0 + 0.1 * double(r % 7), 0.3);
+                const std::complex<double> v(-1.0, 0.2), h(-0.8, -0.25);
+                if (i)         ins[r][r - k] << v;
+                if (i + 1 < k) ins[r][r + k] << v;
+                if (j)         ins[r][r - 1] << h;
+                if (j + 1 < k) ins[r][r + 1] << h;
+            }
+    }
+    return A;
+}
+
+/// The violation of <M^-1 b, c> == <b, M^-H c> for complex vectors, with the
+/// inner product <u, v> = sum conj(u_i) v_i.
+template <typename Prec>
+double complex_adjoint_violation(const Prec& M, std::size_t n) {
+    using C = std::complex<double>;
+    std::mt19937 gen(11);
+    std::normal_distribution<double> nd(0.0, 1.0);
+    double worst = 0.0;
+    for (int t = 0; t < 5; ++t) {
+        vec::dense_vector<C> b(n), c(n), Mb(n), MHc(n);
+        for (std::size_t i = 0; i < n; ++i) { b[i] = {nd(gen), nd(gen)}; c[i] = {nd(gen), nd(gen)}; }
+        M.solve(Mb, b);
+        M.adjoint_solve(MHc, c);
+        C lhs = 0.0, rhs = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            lhs += std::conj(Mb[i]) * c[i];
+            rhs += std::conj(b[i]) * MHc[i];
+        }
         worst = std::max(worst, std::abs(lhs - rhs) / std::max(1.0, std::abs(lhs)));
     }
     return worst;
@@ -118,10 +166,11 @@ TEST_CASE("preconditioner adjoint_solve really is the adjoint (#394)",
 }
 
 TEST_CASE("ic_0 adjoint identity (#394)", "[itl][pc][adjoint][regression]") {
-    // Correct for a reason worth stating: IC produces L*L^H, which is
-    // self-adjoint by construction, so delegating to solve() is right rather
-    // than lucky. Same for ildl (L*D*L^T). Only ilu_0, ssor and block_diagonal
-    // were ever in question.
+    // For a REAL A, IC produces L*L^T, which is self-adjoint by construction.
+    // (This comment used to say L*L^H and conclude that delegating
+    // adjoint_solve to solve() was right for every element type. ic_0 does not
+    // conjugate, so for a complex A it is L*L^T, symmetric but not
+    // self-adjoint; see "complex ic_0 and ildl" below.)
     const auto A = pc_matrix(12, true);
     itl::pc::ic_0<double> M(A);
     REQUIRE(adjoint_violation(M, A.num_rows()) < 1e-12);
@@ -191,5 +240,38 @@ TEST_CASE("ssor adjoint identity (#398)", "[itl][pc][adjoint][ssor][regression]"
         const double v = adjoint_violation(M, A.num_rows());
         INFO("ssor, NON-symmetric A, violation = " << v << " (expected: large)");
         CHECK(v > 1e-3);
+    }
+}
+
+TEST_CASE("complex ic_0 and ildl: adjoint_solve applies M^-H", "[itl][pc][adjoint][regression]") {
+    // Both factor a complex SYMMETRIC A without conjugating, so M^T == M and
+    // M^H == conj(M) != M. adjoint_solve used to delegate to solve() and so
+    // applied M^-1. Measured before the fix: 3.6e-02 (ic_0) and 3.7e-02 (ildl)
+    // on a complex-symmetric tridiagonal, 1.2e+00 for ildl on a dense one, and
+    // 8.1e-01 for all three sections on the grid below (on one pattern IC(0)
+    // and ILDL are the same operator).
+    // Real element types were and are correct (the cases above), and their
+    // arithmetic is unchanged: conj of a real value is the value.
+    using C = std::complex<double>;
+    const auto A = pc_complex_symmetric(8);
+    const std::size_t n = A.num_rows();
+
+    SECTION("ic_0") {
+        itl::pc::ic_0<C> M(A);
+        const double v = complex_adjoint_violation(M, n);
+        INFO("ic_0 complex violation = " << v);
+        CHECK(v < 1e-12);
+    }
+    SECTION("ic_0 with an accumulator (#598)") {
+        itl::pc::ic_0<C, mat::parameters<>, C> M(A);
+        const double v = complex_adjoint_violation(M, n);
+        INFO("ic_0<.., C> complex violation = " << v);
+        CHECK(v < 1e-12);
+    }
+    SECTION("ildl") {
+        itl::pc::ildl<C> M(A);
+        const double v = complex_adjoint_violation(M, n);
+        INFO("ildl complex violation = " << v);
+        CHECK(v < 1e-12);
     }
 }
