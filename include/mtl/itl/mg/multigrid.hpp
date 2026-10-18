@@ -2,8 +2,17 @@
 // MTL5 -- Multigrid V-cycle / W-cycle driver
 // Template parameters: Smoother, CoarseSolver types.
 // Uses restriction/prolongation matrices for inter-grid transfer.
+//
+// ACCUMULATOR (#585). A trailing `Accumulator` (default `void`, unchanged)
+// reaches every sum of products the cycle itself forms: the residual
+// r = b - A x, with b(i) assigned into the accumulator and the products
+// subtracted inside it, rounded once; and the restriction and prolongation
+// (restrict / prolongate<Accumulator>). The smoothers are the caller's: pass
+// accumulator-aware ones (smoother::*<Matrix, Accumulator>, #265) through the
+// factory.
 #include <cassert>
 #include <cstddef>
+#include <type_traits>
 #include <vector>
 #include <functional>
 #include <mtl/vec/dense_vector.hpp>
@@ -19,13 +28,14 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/itl/mg/restriction.hpp>
 #include <mtl/itl/mg/prolongation.hpp>
+#include <mtl/math/accumulator_traits.hpp>
 
 namespace mtl::itl::mg {
 
 /// Multigrid solver/preconditioner.
 /// Smoother must have operator()(VecX&, const VecB&) -> VecX& interface.
 /// CoarseSolver must have operator()(VecX&, const VecB&) interface.
-template <typename Value = double>
+template <typename Value = double, typename Accumulator = void>
 class multigrid {
     using matrix_type = mat::compressed2D<Value>;
     using vector_type = vec::dense_vector<Value>;
@@ -88,13 +98,10 @@ public:
 
         // Compute residual: r = b - A*x
         size_type n = levels_[l].num_rows();
-        vector_type r(n);
-        auto Ax = levels_[l] * x;
-        for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - Ax(i);
+        vector_type r = residual(levels_[l], x, b);
 
         // Restrict residual to coarse grid
-        auto r_coarse = mg::restrict(restrictors_[l], r);
+        auto r_coarse = mg::restrict<Accumulator>(restrictors_[l], r);
 
         // Recurse on coarse grid
         size_type nc = levels_[l + 1].num_rows();
@@ -102,7 +109,7 @@ public:
         vcycle(e_coarse, r_coarse, level + 1);
 
         // Prolongate correction and add to x
-        auto e_fine = prolongate(prolongators_[l], e_coarse);
+        auto e_fine = prolongate<Accumulator>(prolongators_[l], e_coarse);
         for (size_type i = 0; i < n; ++i)
             x(i) += e_fine(i);
 
@@ -126,12 +133,9 @@ public:
 
         // Compute residual
         size_type n = levels_[l].num_rows();
-        vector_type r(n);
-        auto Ax = levels_[l] * x;
-        for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - Ax(i);
+        vector_type r = residual(levels_[l], x, b);
 
-        auto r_coarse = mg::restrict(restrictors_[l], r);
+        auto r_coarse = mg::restrict<Accumulator>(restrictors_[l], r);
 
         size_type nc = levels_[l + 1].num_rows();
         vector_type e_coarse(nc, Value{0});
@@ -140,7 +144,7 @@ public:
         wcycle(e_coarse, r_coarse, level + 1);
         wcycle(e_coarse, r_coarse, level + 1);
 
-        auto e_fine = prolongate(prolongators_[l], e_coarse);
+        auto e_fine = prolongate<Accumulator>(prolongators_[l], e_coarse);
         for (size_type i = 0; i < n; ++i)
             x(i) += e_fine(i);
 
@@ -175,6 +179,31 @@ public:
 
 private:
     std::vector<matrix_type> levels_;
+    /// r = b - A x. With an accumulator, b(i) is assigned and A's row products
+    /// subtracted inside it, rounded once; void keeps the original A * x.
+    static vector_type residual(const matrix_type& A, const vector_type& x, const vector_type& b) {
+        const size_type n = A.num_rows();
+        vector_type r(n);
+        if constexpr (!std::is_void_v<Accumulator>) {
+            using AT = math::accumulator_traits<Accumulator, Value>;
+            const auto& starts  = A.ref_major();
+            const auto& indices = A.ref_minor();
+            const auto& data    = A.ref_data();
+            Accumulator acc;
+            for (size_type i = 0; i < n; ++i) {
+                AT::assign(acc, b(i));
+                for (size_type k = starts[i]; k < starts[i + 1]; ++k)
+                    AT::add_product(acc, -data[k], x(indices[k]));
+                r(i) = AT::template value<Value>(acc);
+            }
+        } else {
+            auto Ax = A * x;
+            for (size_type i = 0; i < n; ++i)
+                r(i) = b(i) - Ax(i);
+        }
+        return r;
+    }
+
     std::vector<matrix_type> restrictors_;
     std::vector<matrix_type> prolongators_;
     std::vector<std::function<void(vector_type&, const vector_type&)>> smoothers_;
