@@ -191,3 +191,13 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 | Example | Description |
 |---------|-------------|
 | `sparse_direct_solvers.cpp` | Unified dispatch demo: Cholesky/LU/QR on sparse and dense systems, backend selection, fill-in comparison (natural vs RCM vs AMD) |
+
+---
+
+## accurate_sum_dot/
+
+**Reproducing Ogita, Rump and Oishi, "Accurate sum and dot product" (2005).** Runs the experiments of the paper's Section 6 on its own test data (GenDot, GenSum), with an exact reference. It measures relative error against condition number for Dot, Dot2 and DotK up to K = 7, with the error bounds (5.8) and (5.11), in double and float. It also reproduces the correct digits of the summation algorithms (Table 6.2) and their computing times relative to the plain loop (Tables 6.4 and 6.5). The results are written as CSV.
+
+| Example | Description |
+|---------|-------------|
+| `accurate_sum_dot.cpp` | Plain, FMA, Sum2/Dot2, SumK/DotK, XBLAS double-double and exact: accuracy sweeps, bound checks, Table 6.2 and timings. `--out DIR`, `--samples N`, `--quick` |
