@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <random>
 #include <vector>
 
@@ -53,13 +54,18 @@ M random_spd(std::size_t n) {
     return A;
 }
 
+volatile double sink = 0;   // keeps the factors observable, so no work is elided
+
+/// f() factors a fresh copy and returns a checksum of the factor; it is added
+/// to `sink` after the stop timestamp.
 template <typename F>
 double best_ms(F f) {
     double best = 1e300, total = 0;
     for (int r = 0; r < 5 || total < 200.0; ++r) {
         const auto t0 = std::chrono::steady_clock::now();
-        f();
+        const double check = f();
         const auto dt = std::chrono::steady_clock::now() - t0;
+        sink = sink + check;
         const double ms = std::chrono::duration<double, std::milli>(dt).count();
         best = std::min(best, ms);
         total += ms;
@@ -67,12 +73,24 @@ double best_ms(F f) {
     return best;
 }
 
+[[noreturn]] void fail(const char* what) {
+    std::fprintf(stderr, "%s failed on an SPD matrix\n", what);
+    std::exit(1);
+}
+
+double checksum(const M& A) {
+    double s = 0;
+    for (std::size_t i = 0; i < A.num_rows(); ++i) s += A(i, i) + A(i, 0);
+    return s;
+}
+
 template <typename Acc>
 double lu_ms(const M& A0) {
     return best_ms([&] {
         M A(A0);
         std::vector<std::size_t> p;
-        mtl::lu_factor<Acc>(A, p);
+        if (mtl::lu_factor<Acc>(A, p) != 0) fail("lu_factor");
+        return checksum(A) + static_cast<double>(p.back());
     });
 }
 
@@ -80,7 +98,8 @@ template <typename Acc>
 double cholesky_ms(const M& A0) {
     return best_ms([&] {
         M A(A0);
-        mtl::cholesky_factor<Acc>(A);
+        if (mtl::cholesky_factor<Acc>(A) != 0) fail("cholesky_factor");
+        return checksum(A);
     });
 }
 

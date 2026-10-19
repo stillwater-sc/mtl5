@@ -57,7 +57,10 @@ Three corollaries follow.
   - The triangular solves of the dense factorizations learned this in #594. The first accumulator-aware substitution rounded `Σ` and then subtracted it from `b(i)`, and gave up the whole LU and Cholesky gain.
   - The current solves `assign(b(i))`, add the negated products, and round once, as the sparse level-scheduled solves always did (#535).
 - **Nonlinear steps come after the round-out.** Divisions, square roots and pivot decisions happen after the reduction has been rounded. A pivot test therefore needs its candidates *complete*, which matters in §2.
-- **Short reductions gain nothing.** An accumulator can only keep what a reduction would have lost. A reduction of one term rounds once in any configuration. A recurrence that rounds its state every iteration loses accuracy outside any reduction.
+- **Short reductions gain little.** An accumulator can only keep what a reduction would have lost.
+  - A lone product with no initial value rounds once in any configuration.
+  - With an initial value, `c₀ + a·b` rounds twice in plain arithmetic (the product, then the sum) but once with FMA or exact. So FMA already captures everything an exact accumulator could add to a one-term update.
+  - A recurrence that rounds its state every iteration loses accuracy outside any reduction.
 
 ### The dispatch rule
 
@@ -138,18 +141,18 @@ The right-looking form does almost all its work in the trailing update, a rank-1
 
 | | n | native (void) | plain | FMA | compensated | exact |
 |---|---|---:|---:|---:|---:|---:|
-| `lu_factor` | 100 | 0.054 | 0.092 (1.7) | 0.33 (6.2) | 0.62 (11) | 6.9 (129) |
-| | 200 | 0.44 | 0.78 (1.8) | 2.3 (5.2) | 4.8 (11) | 50 (114) |
-| | 400 | 3.7 | 7.3 (2.0) | 17 (4.7) | 38 (10) | 380 (103) |
-| `cholesky_factor` | 100 | 0.040 | 0.050 (1.3) | 0.18 (4.5) | 0.34 (8.6) | 3.6 (89) |
-| | 200 | 0.36 | 0.42 (1.2) | 1.2 (3.5) | 2.6 (7.3) | 25 (72) |
-| | 400 | 3.2 | 3.6 (1.1) | 9.2 (2.9) | 20 (6.3) | 193 (61) |
+| `lu_factor` | 100 | 0.054 | 0.093 (1.7) | 0.33 (6.2) | 0.63 (12) | 6.5 (120) |
+| | 200 | 0.44 | 0.78 (1.8) | 2.3 (5.2) | 4.9 (11) | 46 (105) |
+| | 400 | 3.7 | 7.3 (2.0) | 17 (4.8) | 38 (10) | 347 (95) |
+| `cholesky_factor` | 100 | 0.038 | 0.042 (1.1) | 0.16 (4.3) | 0.31 (8.0) | 3.5 (92) |
+| | 200 | 0.35 | 0.37 (1.1) | 1.1 (3.3) | 2.3 (6.7) | 25 (72) |
+| | 400 | 3.1 | 3.3 (1.1) | 8.7 (2.8) | 18 (5.8) | 191 (61) |
 
 - **Loop order alone** costs LU about 2× at this size: the plain accumulator does the native arithmetic in the left-looking order. Cholesky's native path is already left-looking (column dot form), so it costs it almost nothing.
 - **The accumulator** costs what its arithmetic costs per term:
   - FMA about 3–6×;
-  - compensated 6–11×;
-  - exact about 60–130×.
+  - compensated 6–12×;
+  - exact about 60–120×.
 - **Against LAPACK** the gap would be larger, since `getrf` and `potrf` run at GEMM speed. An accumulated factorization is for accuracy, not speed.
 
 ### Making a right-looking form work, and what it costs
@@ -202,7 +205,11 @@ The pivot must be chosen from completed candidates.
 - **Partial pivoting fits naturally.** `lu_factor`'s accumulator path forms column k for all `i ≥ k`, each entry one reduction, then chooses the pivot, swaps, and forms row k of U.
 - **Bunch–Kaufman fits** at the price above: at most two candidate columns, formed on demand.
 - **Rook pivoting** alternates row and column searches until it finds an entry that is largest in both. Each search needs a complete row or column of the Schur complement. A left-looking form can supply them on demand, one full reduction per candidate, but the number of searches is data-dependent.
-- **Complete pivoting** needs the largest entry of the whole trailing Schur complement at every step: exactly the n² live quantities that a left-looking form avoids. It does not fit.
+- **Complete pivoting** needs the largest entry of the whole trailing Schur complement at every step. A gathering form has two ways to supply it:
+  - keep the trailing entries live as accumulators, which is the n² storage of a right-looking form;
+  - recompute every candidate entry, each one full reduction, while scanning for the pivot. That needs no accumulator storage, but repeats O(n²) reductions at every step, O(n⁴) work in all where the factorization itself is O(n³).
+
+  Either is feasible; neither is cheap.
 - **The layout.** Interchanges change the stored layout either way. A left-looking form that keeps one row order must convert at the end, or ship its own solve, as Bunch–Kaufman does.
 
 ### Where an exact accumulator helps
@@ -357,7 +364,7 @@ The exact merge is the only option that is both reproducible and correctly round
 
 ### Can this algorithm use an exact accumulator?
 
-1. For each output entry, is there a reduction `c₀ + Σ aᵢ·bᵢ` long enough to lose accuracy? If every reduction has one or a few terms, stop: an accumulator buys nothing.
+1. For each output entry, is there a reduction `c₀ + Σ aᵢ·bᵢ` long enough to lose accuracy? If every reduction has one or a few terms, an exact accumulator buys little: FMA already rounds a one-term update `c₀ + a·b` once.
 2. Can all of its terms be added while one accumulator is live? In a gathering form, yes. In a scattering form, only if the targets can stay accumulators, at the cost of a workspace of accumulators: n for a sparse column, n² for a dense trailing matrix.
 3. Does the initial value enter through `assign`? A sum rounded and then subtracted from `b(i)` or `A(i,j)` loses the gain.
 4. Is the entry rounded once, and do divisions, square roots and pivot tests read only rounded-out values? A pivot test needs its candidates complete.

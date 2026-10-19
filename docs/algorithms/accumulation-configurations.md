@@ -164,7 +164,7 @@ The split adds 1.1–1.6× on top of exact accumulation, growing with n. The com
 
 **The ordering follows the length of the reductions, not which preconditioner it is.** Residuals are `‖A·M⁻¹·b − b‖∞` in float, computed in double, and given as plain / fma / exact.
 
-- **Stencil patterns: no ordering.** A 5-point stencil gives reductions of at most four terms, and a tridiagonal gives one, so there is nothing for an accumulator to keep.
+- **Stencil patterns: no ordering.** A 5-point stencil gives reductions of at most four terms, and a tridiagonal gives one. A one-term update `A(i,j) − L·U` rounds twice in plain arithmetic but once with FMA, so FMA and exact agree there, and there is little for an accumulator to keep.
   - ILU(0) on a tridiagonal, where it is exact LU, n = 1024: 3.5e-7 / 3.0e-7 / 3.0e-7.
   - ILU(0) and IC(0) on a 5-point Laplacian, n = 256: 4.0e-1 / 4.0e-1 / 4.0e-1. The dropped fill is the whole error.
 - **Dense pattern: the direct-solver ordering returns.** On a full pattern, ILU(0) and IC(0) are the complete factorizations. Hilbert(n), b = 1:
@@ -249,7 +249,11 @@ MTL5 stays independent of the Universal number library, so its configuration-3 r
 - the Krylov solvers in mp-iterative, including the posit + quire CG retest (#237, #238);
 - direct solvers and refinement in mp-ir or mp-numerics.
 
-Each should carry the `[586:<row>]` tag it mirrors and assert `err(3) ≤ min(err(1), err(2))` and the bounds, not a strict chain. As of this writing those rows are not yet written; they are tracked in #586.
+Each should carry the `[586:<row>]` tag it mirrors. What to assert depends on the row:
+- **Where the exact result is correctly rounded** (`dot`, `gemm`, `sum`, `spgemm`, norms), `err(3) ≤ min(err(1), err(2))` is guaranteed: no representable value is closer. Assert it with the bounds, and never assert a strict chain such as `err(3) ≤ err(2) ≤ err(1)`.
+- **For solvers**, assert what was measured, with a margin, as the MTL5 rows above do. A solver's output is not one correctly rounded reduction, and there is no guaranteed ordering: Bunch–Kaufman has a case where FMA's residual is below exact's.
+
+As of this writing those rows are not yet written; they are tracked in #586.
 
 ## Which accumulator when
 
