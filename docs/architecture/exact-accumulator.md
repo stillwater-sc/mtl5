@@ -145,7 +145,8 @@ The measurements and their assertions are in the `[586:*]` tests.
 ## Related
 
 - [#586](https://github.com/stillwater-sc/mtl5/issues/586): the accumulation matrix, configurations 1–3 across MTL5's operations
-- [#596](https://github.com/stillwater-sc/mtl5/issues/596): the accuracy-architecture document, which explains which algorithm forms can use an exact accumulator
+- [The Accuracy Architecture](accuracy-architecture.md): which algorithm forms can use an exact accumulator (#596)
+- [Accumulation Configurations](../algorithms/accumulation-configurations.md): what it buys across the library, measured (#592)
 - [Error-Free Transformations](error-free-transformations.md): `two_sum`, `split`, `two_product` and the rest, checked exact against this accumulator
 - [#602](https://github.com/stillwater-sc/mtl5/issues/602): three-factor terms and `math::two_product`
 - [#611](https://github.com/stillwater-sc/mtl5/issues/611): reproducing Ogita, Rump and Oishi, "Accurate sum and dot product" (2005), with this accumulator as the reference

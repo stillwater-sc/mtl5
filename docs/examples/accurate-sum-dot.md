@@ -162,4 +162,4 @@ The plain loops take about 2 µs at n = 5000.
 - [Error-Free Transformations](../architecture/error-free-transformations.md): `two_sum`, `two_product`, the compensated accumulator, `sum_k` and `dot_k`, and the theorems the tests assert
 - [Ill-Conditioned Sums and Dot Products](../generators/ill-conditioned.md): `gen_dot` and `gen_sum`
 - [Exact Accumulator](../architecture/exact-accumulator.md): the exact reference
-- [#611](https://github.com/stillwater-sc/mtl5/issues/611): reproducing Ogita, Rump and Oishi; [#596](https://github.com/stillwater-sc/mtl5/issues/596): the accuracy architecture
+- [#611](https://github.com/stillwater-sc/mtl5/issues/611): reproducing Ogita, Rump and Oishi; [The Accuracy Architecture](../architecture/accuracy-architecture.md) (#596)

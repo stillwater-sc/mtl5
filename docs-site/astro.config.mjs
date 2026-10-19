@@ -41,6 +41,7 @@ export default defineConfig({
             { slug: 'architecture' },
             { slug: 'architecture/concepts' },
             { slug: 'architecture/aggregate-types' },
+            { slug: 'architecture/accuracy-architecture' },
             { slug: 'architecture/exact-accumulator' },
             { slug: 'architecture/error-free-transformations' },
             {

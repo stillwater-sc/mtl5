@@ -244,4 +244,8 @@ For the sparse counterpart, see the
 [sparse direct solvers](../sparse-direct-solvers-design.md) design doc; for the
 LAPACK-vs-native dispatch, the [operation dispatch layer](operation-dispatch-architecture.md);
 for the orthogonal primitives it shares, the
-[eigensolvers](eigensolvers-architecture.md) doc.
+[eigensolvers](eigensolvers-architecture.md) doc. The accumulator paths of these
+factorizations are left-looking forms of their own; [The Accuracy
+Architecture](../architecture/accuracy-architecture.md) explains why, and
+[Accumulation Configurations](../algorithms/accumulation-configurations.md) gives
+what they measure.

@@ -104,6 +104,11 @@ with a higher-precision residual.
   so its time/fill comparison is between two *correct* solvers — not a
   fast-but-wrong vs slow-but-right mismatch.
 
+## See also
+
+- [Accumulation Configurations](accumulation-configurations.md) — residuals of the direct solvers, preconditioners and Krylov solvers under each accumulator, computed exactly.
+- [The Accuracy Architecture](../architecture/accuracy-architecture.md) — why an accumulator helps some solvers and not others.
+
 ## References
 
 - Higham, *Accuracy and Stability of Numerical Algorithms*, SIAM, 2002

@@ -357,3 +357,5 @@ The takeaways that generalize beyond GEMM:
 - [BLAS kernel architecture](../design/blas-kernel-architecture.md) — the blocking and scheduling of the L1/L2/L3 kernels.
 - [Custom number types through the SIMD BLAS](../design/mixed-precision-custom-types-SIMD.md) — how an arbitrary storage type flows through the `batch<T>` seam.
 - [Measuring Solver Accuracy](measuring-solver-accuracy.md) — residuals, norms, and the error model that motivates wide accumulation.
+- [Accumulation Configurations](accumulation-configurations.md) — what plain, FMA, compensated and exact accumulation each buy, measured across the library.
+- [The Accuracy Architecture](../architecture/accuracy-architecture.md) — input, accumulation and output precision, and which loop orders let an accumulator see a whole reduction.

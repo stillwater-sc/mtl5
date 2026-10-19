@@ -49,6 +49,7 @@ const FILE_MAP = {
   'architecture/aggregate-types.md': 'architecture/aggregate-types.md',
   'architecture/exact-accumulator.md': 'architecture/exact-accumulator.md',
   'architecture/error-free-transformations.md': 'architecture/error-free-transformations.md',
+  'architecture/accuracy-architecture.md': 'architecture/accuracy-architecture.md',
 
   // Container & view type architecture (sidebar: Architecture > Containers)
   'architecture/containers/dense2d-architecture.md':            'architecture/containers/dense2d-architecture.md',
@@ -68,6 +69,7 @@ const FILE_MAP = {
   'algorithms/on-node-threading.md':            'algorithms/on-node-threading.md',
   'algorithms/mixed-precision-kernels.md':      'algorithms/mixed-precision-kernels.md',
   'algorithms/measuring-solver-accuracy.md':    'algorithms/measuring-solver-accuracy.md',
+  'algorithms/accumulation-configurations.md':  'algorithms/accumulation-configurations.md',
   'numerical/index.md':                         'numerical/index.md',
   'numerical/summation-order-in-cholesky.md':   'numerical/summation-order-in-cholesky.md',
   'numerical/householder-reflector-forms.md':   'numerical/householder-reflector-forms.md',
