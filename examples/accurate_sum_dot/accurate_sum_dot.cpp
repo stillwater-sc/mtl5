@@ -71,6 +71,9 @@
 //   dot_float_n100.csv     and each algorithm's bound
 //   sum_digits.csv         Table 6.2: one row per sum
 //   timing.csv             Tables 6.4 and 6.5: one row per algorithm and length
+//
+// plot_accurate_sum_dot.py, next to this file, draws the figures from them;
+// the results are discussed in docs/examples/accurate-sum-dot.md.
 
 #include <mtl/mtl.hpp>
 

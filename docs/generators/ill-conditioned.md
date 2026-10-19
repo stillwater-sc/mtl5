@@ -82,4 +82,5 @@ The `[586:dot]`, `[586:gemm]` and `[586:determinism]` batteries in `tests/unit/o
 
 - [Error-Free Transformations](../architecture/error-free-transformations.md): `two_sum`, `two_product`, the compensated accumulator, `sum_k` and `dot_k`, and their bounds
 - [Exact Accumulator](../architecture/exact-accumulator.md): the `DotExact` behind GenDot
+- [Accurate Sum and Dot Product](../examples/accurate-sum-dot.md): the paper's Section 6 experiments, run on this data
 - [#611](https://github.com/stillwater-sc/mtl5/issues/611): reproducing Ogita, Rump and Oishi

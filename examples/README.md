@@ -201,3 +201,4 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 | Example | Description |
 |---------|-------------|
 | `accurate_sum_dot.cpp` | Plain, FMA, Sum2/Dot2, SumK/DotK, XBLAS double-double and exact: accuracy sweeps, bound checks, Table 6.2 and timings. `--out DIR`, `--samples N`, `--quick` |
+| `plot_accurate_sum_dot.py` | Plots the example's CSV output (Python and matplotlib); the results are in [docs/examples/accurate-sum-dot.md](../docs/examples/accurate-sum-dot.md) |
