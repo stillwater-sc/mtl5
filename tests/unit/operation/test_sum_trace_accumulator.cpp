@@ -53,9 +53,14 @@ vec::dense_vector<float> cancelling(std::size_t n, std::uint32_t seed) {
     std::mt19937 gen(seed);
     std::uniform_real_distribution<double> u(0.0, 1.0);
     vec::dense_vector<float> x(n);
-    for (std::size_t i = 0; i < n; ++i)
-        x(i) = static_cast<float>((u(gen) < 0.5 ? -1.0 : 1.0) *
-                                  std::ldexp(1.0 + u(gen), static_cast<int>(u(gen) * 24.0) - 12));
+    for (std::size_t i = 0; i < n; ++i) {
+        // One draw per statement -- sign, exponent, mantissa: the operands are
+        // evaluated in an unspecified order, and that is GCC's, the one the
+        // recorded numbers were measured with.
+        const double sign = u(gen) < 0.5 ? -1.0 : 1.0;
+        const int e = static_cast<int>(u(gen) * 24.0) - 12;
+        x(i) = static_cast<float>(sign * std::ldexp(1.0 + u(gen), e));
+    }
     return x;
 }
 

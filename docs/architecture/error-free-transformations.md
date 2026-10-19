@@ -129,7 +129,7 @@ where configurations 1 and 2 have `γ_n·Σ|x_i·y_i|`. The error therefore stay
 | float | 1e12 | 1.0e5 | 1.1e5 | **1.5e-2** | 1.6e-8 |
 | double | 1e8 | 2.8e-8 | 3.8e-8 | **2.9e-17** | 2.9e-17 |
 | double | 1e16 | 4.8 | 4.3 | **9.5e-16** | 3.5e-17 |
-| double | 1e24 | 1.0e8 | 8.5e7 | **1.5e-8** | 2.8e-17 |
+| double | 1e24 | 1.1e8 | 1.3e8 | **2.6e-8** | 2.8e-17 |
 
 How it differs from the other configurations:
 

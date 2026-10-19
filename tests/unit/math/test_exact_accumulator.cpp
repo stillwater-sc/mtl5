@@ -67,13 +67,22 @@ TEST_CASE("exact_accumulator: a single product rounds to the IEEE product", "[ma
     std::uniform_real_distribution<double> u(-1.0, 1.0);
     std::uniform_int_distribution<int> ex(-200, 200);
     for (int i = 0; i < 20000; ++i) {
-        const double a = std::ldexp(u(gen), ex(gen)), b = std::ldexp(u(gen), ex(gen));
+        // One draw per statement, exponent first: a call's arguments are evaluated in
+        // an unspecified order, and GCC's (the last argument first) is the one the
+        // recorded numbers were measured with.
+        const int ea = ex(gen);
+        const double a = std::ldexp(u(gen), ea);
+        const int eb = ex(gen);
+        const double b = std::ldexp(u(gen), eb);
         auto acc = cleared<double>();
         accumulator_add_product(acc, a, b);
         REQUIRE(same_bits(value<double>(acc), a * b));
         // Exponents within float range: an underflow to -0 would meet the documented
         // +0 of an exactly zero sum.
-        const float fa = float(std::ldexp(u(gen), ex(gen) / 4)), fb = float(std::ldexp(u(gen), ex(gen) / 4));
+        const int efa = ex(gen) / 4;
+        const float fa = float(std::ldexp(u(gen), efa));
+        const int efb = ex(gen) / 4;
+        const float fb = float(std::ldexp(u(gen), efb));
         auto accf = cleared<float>();
         accumulator_add_product(accf, fa, fb);
         REQUIRE(same_bits(value<float>(accf), fa * fb));

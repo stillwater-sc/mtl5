@@ -59,7 +59,7 @@ The battery is GenDot, the ill-conditioned dot product generator of Ogita, Rump 
 | double | 1e8 | 2.8e-8 | 3.8e-8 | **2.9e-17** | 2.9e-17 |
 | double | 1e12 | 4.1e-4 | 3.3e-4 | **3.2e-17** | 3.2e-17 |
 | double | 1e16 | 4.8 | 4.3 | **9.5e-16** | 3.5e-17 |
-| double | 1e24 | 1.0e8 | 8.5e7 | **1.5e-8** | 2.8e-17 |
+| double | 1e24 | 1.1e8 | 1.3e8 | **2.6e-8** | 2.8e-17 |
 
 **What is asserted, on every instance:**
 - **Exact.** The exact accumulator returns the correctly rounded result, and its error is at most that of plain, FMA and compensated. This is provable: the correctly rounded value is the nearest representable number, so no configuration can be closer.

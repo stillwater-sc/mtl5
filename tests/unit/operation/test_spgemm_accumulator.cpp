@@ -60,7 +60,11 @@ mat::compressed2D<float> random_sparse(std::size_t m, std::size_t n, double dens
     for (std::size_t i = 0; i < m; ++i)
         for (std::size_t j = 0; j < n; ++j)
             if (u(gen) < density) {
-                const double mag  = std::ldexp(1.0 + u(gen), static_cast<int>(u(gen) * 24.0) - 12);
+                // One draw per statement, exponent first: a call's arguments are evaluated in
+                // an unspecified order, and GCC's (the last argument first) is the one the
+                // recorded numbers were measured with.
+                const int e = static_cast<int>(u(gen) * 24.0) - 12;
+                const double mag  = std::ldexp(1.0 + u(gen), e);
                 const double sign = u(gen) < 0.5 ? -1.0 : 1.0;
                 ins[i][j] << static_cast<float>(sign * mag);
             }

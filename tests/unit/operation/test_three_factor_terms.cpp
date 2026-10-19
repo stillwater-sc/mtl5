@@ -165,8 +165,13 @@ TEST_CASE("two_product splits a product exactly (#602)", "[accumulator][602]") {
     std::mt19937 gen(1);
     std::uniform_real_distribution<double> u(-1.0, 1.0);
     for (int t = 0; t < 1000; ++t) {
-        const F a = F(std::ldexp(u(gen), int(u(gen) * 20)));
-        const F b = F(std::ldexp(u(gen), int(u(gen) * 20)));
+        // One draw per statement, exponent first: a call's arguments are evaluated in
+        // an unspecified order, and GCC's (the last argument first) is the one the
+        // recorded numbers were measured with.
+        const int ea = int(u(gen) * 20);
+        const F a = F(std::ldexp(u(gen), ea));
+        const int eb = int(u(gen) * 20);
+        const F b = F(std::ldexp(u(gen), eb));
         const auto s = math::two_product(a, b);
         CHECK(s.hi == a * b);
         CHECK(double(s.hi) + double(s.lo) == double(a) * double(b));   // exact in double

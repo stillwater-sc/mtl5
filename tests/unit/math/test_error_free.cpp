@@ -68,7 +68,13 @@ struct values {
     int range;
     std::uniform_real_distribution<double> u{-1.0, 1.0};
     values(std::uint32_t seed, int r) : gen(seed), range(r) {}
-    T operator()() { return T(std::ldexp(u(gen), int(u(gen) * range))); }
+    T operator()() {
+        // One draw per statement, exponent first: a call's arguments are
+        // evaluated in an unspecified order, and GCC's (the last first) is the
+        // one these tests were written against.
+        const int e = int(u(gen) * range);
+        return T(std::ldexp(u(gen), e));
+    }
 };
 
 } // namespace
