@@ -49,7 +49,7 @@
 //         double  cond 1e8    2.8e-8  3.8e-8  2.9e-17 2.9e-17
 //                 cond 1e12   4.1e-4  3.3e-4  3.2e-17 3.2e-17
 //                 cond 1e16   4.8     4.3     9.5e-16 3.5e-17
-//                 cond 1e24   1.0e8   8.5e7   1.5e-8  2.8e-17
+//                 cond 1e24   1.1e8   1.3e8   2.6e-8  2.8e-17
 //
 // That is the paper's picture: 2c is at the level of 3 until cond nears 1/u
 // (1.7e7 in float, 9e15 in double), then grows as u^2 cond, where 1 and 2
@@ -174,8 +174,13 @@ TEST_CASE("exact accumulator: exact sums and one correctly rounded round-out",
     SECTION("a single product rounds to the IEEE product") {
         rng r(1);
         for (int i = 0; i < 10000; ++i) {
-            const float a = static_cast<float>(std::ldexp(r.symmetric(), r.integer(-60, 60)));
-            const float b = static_cast<float>(std::ldexp(r.symmetric(), r.integer(-60, 60)));
+            // One draw per statement, exponent first: a call's arguments are evaluated in
+            // an unspecified order, and GCC's (the last argument first) is the one the
+            // recorded numbers were measured with.
+            const int ea = r.integer(-60, 60);
+            const float a = static_cast<float>(std::ldexp(r.symmetric(), ea));
+            const int eb = r.integer(-60, 60);
+            const float b = static_cast<float>(std::ldexp(r.symmetric(), eb));
             auto acc = zero<float>();
             accumulator_add_product(acc, a, b);
             REQUIRE(same_bits(round_out(acc), a * b));
@@ -310,7 +315,12 @@ struct battery_means {
 /// The ill-conditioned dot battery for element type T, at one condition number.
 template <typename T>
 battery_means dot_battery(double cond, std::size_t n, int instances) {
-    rng r(static_cast<std::uint64_t>(cond));
+    // Seeded by cond; past 2^64 (float 1e20, double 1e24 and up) converting it is
+    // undefined behaviour, and GCC and Clang chose different instances, so those
+    // batteries are seeded by log10(cond).
+    const std::uint64_t seed = cond < 0x1p64 ? static_cast<std::uint64_t>(cond)
+                                             : static_cast<std::uint64_t>(std::log10(cond));
+    rng r(seed);
     vec<T> x, y;
     battery_means m{0, 0, 0, 0};
     for (int s = 0; s < instances; ++s) {
@@ -540,7 +550,9 @@ TEST_CASE("[586:determinism] configuration 3 is independent of the thread count"
     rng r(8);
     vec<float> x(n), y(n);
     for (std::size_t i = 0; i < n; ++i) {
-        x(i) = static_cast<float>(std::ldexp(r.symmetric(), r.integer(-20, 20)));
+        // Exponent first, as GCC evaluates the arguments (see the [586:exact] case).
+        const int e = r.integer(-20, 20);
+        x(i) = static_cast<float>(std::ldexp(r.symmetric(), e));
         y(i) = static_cast<float>(r.symmetric());
     }
     const auto exact = exact_dot<float>(x, y, n);

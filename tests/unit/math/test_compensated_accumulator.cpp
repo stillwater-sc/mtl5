@@ -74,7 +74,11 @@ TEMPLATE_TEST_CASE("compensated accumulator: mtl::dot is the paper's Dot2, bit f
     for (std::size_t n : {1u, 2u, 7u, 100u, 1000u}) {
         vec::dense_vector<T> x(n), y(n);
         for (std::size_t i = 0; i < n; ++i) {
-            x(i) = T(std::ldexp(u(gen), int(u(gen) * 30)));
+            // One draw per statement, exponent first: a call's arguments are evaluated in
+            // an unspecified order, and GCC's (the last argument first) is the one the
+            // recorded numbers were measured with.
+            const int e = int(u(gen) * 30);
+            x(i) = T(std::ldexp(u(gen), e));
             y(i) = T(u(gen));
         }
         INFO("n = " << n);
@@ -124,7 +128,9 @@ TEMPLATE_TEST_CASE("compensated accumulator: merge keeps both partials' errors",
     constexpr std::size_t n = 2000;
     vec::dense_vector<T> x(n), y(n);
     for (std::size_t i = 0; i < n; ++i) {
-        x(i) = T(std::ldexp(u(gen), int(u(gen) * 20)));
+        // Exponent first, as GCC evaluates the arguments (see above).
+        const int e = int(u(gen) * 20);
+        x(i) = T(std::ldexp(u(gen), e));
         y(i) = T(u(gen));
     }
     compensated_accumulator<T> lo, hi;
