@@ -169,7 +169,7 @@ So the relative error is `u` plus about `(φu)^K` times the condition number, an
 | float | 2^48 | 17 | 3.0e-6 | 5.0e-8 |
 | double | 2^106 | 8.0 | 1.5e-15 | 6.8e-17 |
 
-**SumK and DotK are not accumulators.** They keep every error term, n words for a sum and 2n for a dot product, and make K − 1 passes over them. They therefore work on whole vectors, not through `accumulator_traits`. Only K = 2 streams, and it is the compensated accumulator. In the language of the accuracy-architecture document (#596): DotK applies where a reduction's terms can be stored, as in a `dot` or a row of a `gemv`. It does not apply to the inner reduction of a factorization.
+**SumK and DotK are not accumulators.** They keep every error term, n words for a sum and 2n for a dot product, and make K − 1 passes over them. They therefore work on whole vectors, not through `accumulator_traits`. Only K = 2 streams, and it is the compensated accumulator. In the language of [The Accuracy Architecture](accuracy-architecture.md): DotK applies where a reduction's terms are all stored at once, as in a `dot`, a row of a `gemv`, or an entry of a left-looking factorization. It does not apply where the terms arrive one step at a time and are not kept, as in a right-looking factorization.
 
 **Cost.** `sum_k<K>` takes `(6K − 5)(n − 1)` flops (Proposition 4.10). `dot_k<K>` with the FMA `two_product` takes about `(12K − 14)·n`: 8n for the products and the running sum, then SumK over 2n terms. Each call makes one allocation of n or 2n values.
 
@@ -213,7 +213,8 @@ The test target is built with the most aggressive contraction setting the header
 ## Related
 
 - [Exact Accumulator](exact-accumulator.md): the reference these are checked against, and configuration 3 of the accumulation protocol
-- [#596](https://github.com/stillwater-sc/mtl5/issues/596): the accuracy-architecture document; it places compensated accumulation between configurations 2 and 3
+- [The Accuracy Architecture](accuracy-architecture.md): places compensated accumulation between configurations 2 and 3 (#596)
+- [Accumulation Configurations](../algorithms/accumulation-configurations.md): configuration 2c measured against the others (#592)
 - [#602](https://github.com/stillwater-sc/mtl5/issues/602): three-factor terms and `two_product`
 - [#611](https://github.com/stillwater-sc/mtl5/issues/611): reproducing Ogita, Rump and Oishi
 - T. Ogita, S. M. Rump, S. Oishi, "Accurate sum and dot product", *SIAM J. Sci. Comput.* 26(6):1955–1988, 2005

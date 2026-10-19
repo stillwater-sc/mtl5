@@ -28,6 +28,12 @@ before.
 | **dot**, **two_norm** | `operation/{dot,norms}.hpp` | chunked reduction | No¹ |
 | **dot**, **dot_real**, **two_norm**, **frobenius_norm** with an `Accumulator` | `operation/{dot,norms}.hpp`, `detail/accumulate.hpp` | chunked reduction, partials combined by `accumulator_traits::merge` | **Yes** for an exact accumulator, otherwise No¹ ² |
 | **SpMV** (`compressed2D * vector`) | `mat/operators.hpp` | output rows | **Yes** |
+| **GEMM**, **GEMV**, **SpMV** with an `Accumulator` | `operation/mult.hpp` | output rows, one accumulator per output entry | **Yes** |
+| **LU** (native right-looking trailing update; accumulator path: column k and row k) | `operation/lu.hpp` | rows of the trailing matrix / entries of the column and row | **Yes** |
+| **Cholesky** (native and accumulator paths) | `operation/cholesky.hpp` | rows below the diagonal | **Yes** |
+| **Householder application** (QR, tridiagonalization; void path) | `operation/householder.hpp` | columns (left) / rows (right) | **Yes** |
+| **Bunch–Kaufman LDLᵀ**, accumulator path | `operation/ldlt_bk.hpp` | rows of the on-demand Schur column | **Yes** |
+| **Sparse triangular solves** (level-scheduled, #535) | `sparse/factorization/level_schedule.hpp` | rows within a level | **Yes** |
 
 ¹ The reduction kernels sum per-chunk partials, so the result is **deterministic
 for a fixed thread count** but not bit-identical to the serial summation (the
@@ -143,13 +149,25 @@ not GFLOP/s:
 > performance-engineering case study:
 > [Multi-Core Scaling of MTL5's Threaded Kernels](../performance/multicore-scaling-investigation.md).
 
+Every row added above is owner-computes: each output entry is produced by exactly
+one thread, so the accumulator paths are bit-identical to serial for every
+accumulation configuration. Only the four reductions in the `merge` row split a
+single sum across threads. [The Accuracy
+Architecture](../architecture/accuracy-architecture.md#4-parallel-reductions-threads-and-mpi)
+explains the two kinds, and [Accumulation
+Configurations](accumulation-configurations.md#determinism) gives the measured
+determinism results.
+
 ## Not yet threaded
 
-- **Transposed SpMV** (scatters into `y`, which would race across rows).
-- **Sparse triangular solve** — inherently sequential (forward/back
-  substitution); parallelizing it needs level scheduling.
-- **Dense factorizations** (LU/QR/Cholesky) on the in-house path — these need
-  blocked algorithms over the L3 building blocks first.
+- **Transposed SpMV** (scatters into `y`, which would race across rows). Its
+  accumulator path keeps one accumulator per output entry and stays serial, since
+  privatizing them per thread would change the summation grouping.
+- **Sparse numeric factorizations** (LU, Cholesky, LDLᵀ, supernodal, QR), `spgemm`,
+  the preconditioners and the smoothers run serially, with or without an
+  accumulator. Their solves use the level-scheduled triangular solves above.
+- **Dense factorizations** are threaded within each step (above) but not blocked
+  over the L3 building blocks, and `ldlt_factor` is serial.
 
 ## Determinism guidance
 
