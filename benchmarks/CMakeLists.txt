@@ -131,6 +131,17 @@ add_executable(fig_mult_ikj fig_mult_ikj.cpp)
 target_link_libraries(fig_mult_ikj PRIVATE MTL5::mtl5)
 set_target_properties(fig_mult_ikj PROPERTIES FOLDER "Benchmarks")
 
+# The accuracy architecture (#596): the cost of the accumulator paths of
+# lu_factor and cholesky_factor, and the loop-order figures of
+# docs/architecture/accuracy-architecture.md.
+add_executable(bench_accumulator_factor bench_accumulator_factor.cpp)
+target_link_libraries(bench_accumulator_factor PRIVATE MTL5::mtl5)
+set_target_properties(bench_accumulator_factor PROPERTIES FOLDER "Benchmarks")
+
+add_executable(fig_loop_orders fig_loop_orders.cpp)
+target_link_libraries(fig_loop_orders PRIVATE MTL5::mtl5)
+set_target_properties(fig_loop_orders PROPERTIES FOLDER "Benchmarks")
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)
