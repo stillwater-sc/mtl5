@@ -5,6 +5,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 
 namespace mtl::itl {
 
@@ -19,6 +20,8 @@ namespace mtl::itl {
 /// behavior is unchanged.
 ///
 /// Returns the iteration object (convertible to int error code).
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -33,7 +36,7 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
     // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i)
         r(i) = b(i) - Ax(i);
 
@@ -59,7 +62,7 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         }
 
         // q = A * p
-        mtl::mult<Accumulator>(A, p, q);
+        apply_operator<Accumulator>(A, p, q);
 
         // alpha = rho / dot(p, q)
         value_type alpha = rho / mtl::dot<Accumulator, value_type>(p, q);

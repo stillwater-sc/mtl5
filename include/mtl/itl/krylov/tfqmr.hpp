@@ -7,6 +7,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 
 namespace mtl::itl {
 
@@ -17,6 +18,8 @@ namespace mtl::itl {
 /// matrix-vector products (see math/accumulator_traits.hpp, #158).
 /// Defaults to void, matching dot()/mult()'s own default -- unspecified
 /// behavior is unchanged.
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -33,7 +36,7 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
     // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i) {
         r(i) = b(i) - Ax(i);
         r_star(i) = r(i);
@@ -44,7 +47,7 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // y1 = M^{-1} r
     M.solve(y1, r);
 
-    mtl::mult<Accumulator>(A, y1, u1);
+    apply_operator<Accumulator>(A, y1, u1);
     for (size_type i = 0; i < n; ++i)
         v(i) = u1(i);
 
@@ -86,7 +89,7 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // y2 = M^{-1} w
         M.solve(y2, w);
 
-        mtl::mult<Accumulator>(A, y2, u2);
+        apply_operator<Accumulator>(A, y2, u2);
 
         // Even half-step
         for (size_type i = 0; i < n; ++i)
@@ -117,7 +120,7 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // y1 = M^{-1} w
         M.solve(y1, w);
 
-        mtl::mult<Accumulator>(A, y1, u1);
+        apply_operator<Accumulator>(A, y1, u1);
 
         // v = u1 + beta * (u2 + beta * v)
         for (size_type i = 0; i < n; ++i)

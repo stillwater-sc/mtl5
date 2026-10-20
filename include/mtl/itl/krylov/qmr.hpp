@@ -9,10 +9,14 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/trans.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 
 namespace mtl::itl {
 
 /// QMR solver for non-symmetric systems A*x = b.
+/// A is a Matrix or any LinearOperator (A * x) that also provides trans(A)
+/// by ADL. With a matrix-free A the Accumulator reaches only the dot products
+/// (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -30,7 +34,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
     // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i) {
         r(i) = b(i) - Ax(i);
         v_tilde(i) = r(i);
@@ -108,7 +112,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         }
 
         // p_tilde = A * p
-        mtl::mult<Accumulator>(A, p, p_tilde);
+        apply_operator<Accumulator>(A, p, p_tilde);
 
         epsilon = mtl::dot<Accumulator, value_type>(q, p_tilde);
         if (epsilon == value_type(0)) {
@@ -129,7 +133,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
         // w_tilde = A^T * q - beta * w
         vec::dense_vector<value_type> Atq(n);
-        mtl::mult<Accumulator>(trans(A), q, Atq);
+        apply_transpose<Accumulator>(A, q, Atq);
         for (size_type i = 0; i < n; ++i)
             w_tilde(i) = Atq(i) - beta * w(i);
 
