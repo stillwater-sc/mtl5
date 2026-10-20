@@ -270,9 +270,17 @@ echo "$ARMS" | grep -qw "$BASE" || BASE=$FIRST_ARM
 # read silently returns (mc,nc) for the older layout. It happens to group
 # correctly today, because a session only ever reads files it just wrote, which
 # is exactly the kind of accident that stops being true later.
+#
+# AND BY WHAT THE NEST STEPPED, not only what it was configured with. `legacymc`
+# (#458) derives the same kc/mc as `default` and then chooses a different ic
+# step at run time, so comparing configured blocking alone called a real A/B a
+# consistency check -- and told the operator the arms "must agree". Where the
+# file records mc_used, every row's value joins the key.
 blocking_of() {
     awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
-             NR == 2 { if (col["kc"] && col["mc"]) print $col["kc"] "," $col["mc"]; exit }' \
+             NR == 2 { if (!(col["kc"] && col["mc"])) exit; key = $col["kc"] "," $col["mc"] }
+             col["mc_used"] { key = key ";" $col["mc_used"] }
+             END { if (key != "") print key }' \
         "$(arm_csv "$1")" 2>/dev/null
 }
 CHECKS=""

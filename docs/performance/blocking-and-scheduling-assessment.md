@@ -52,6 +52,16 @@ alongside A (`ccap`) won 15% on large square shapes and lost 15% elsewhere;
 charging C alone (`ccap2`) removed every loss and kept only 1–2.5% of the win.
 No threshold on residency produces both outcomes (#453).
 
+**The W is the register tile, seen through the partition (#458).** The serial
+path steps `mc` in whole `mr`-row micro-panels; the threaded path did not, so
+the shipped threaded `mc = 32` (`mr = 6`) ran every ic block as 5.33 panels
+padded to 6. The busiest thread's panel count correlates with this curve at
+r = +0.83 (kc = 512) and +0.74 (kc = 256); the block-count balance that
+`balanced_mc` optimised correlates at +0.23 and 0.00. `balanced_mc` now chooses
+by panels, which measured 3–9% faster on 12 of the 13 plans it changed on an
+i7-12700K and slower on none. See
+[the threaded ic step, counted in micro-panels](mc-critical-panels.md).
+
 ### 3. Partition arithmetic has produced the largest measured wins
 
 | change | effect |
