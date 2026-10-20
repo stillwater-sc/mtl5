@@ -69,6 +69,8 @@ fi
 #   mconly     L2    -- mc detected, kc from the default model
 #   ccap       L2    -- mconly PLUS the runtime C-strip bound on mc (#453)
 #   ccap2      L2    -- as ccap, but the bound charges the C strip ALONE
+#   legacymc   none  -- `default` with the pre-#458 balanced_mc: the threaded
+#                       ic step chosen by block count, not by micro-panels
 #
 # kconly/mconly exist because the four-machine result (#430) implicated kc and
 # exonerated mc without ever varying them separately: the Ryzen run happened to
@@ -82,7 +84,7 @@ for a in $ARMS; do
     b="$BUILD_DIR/benchmarks/bench_blocking_ab_$a"
     if [ ! -x "$b" ]; then
         echo "missing $b" >&2
-        echo "known arms: default detected kconly mconly ccap ccap2" >&2
+        echo "known arms: default detected kconly mconly ccap ccap2 legacymc" >&2
         echo "build with:  cmake --preset release && cmake --build $BUILD_DIR --target \\" >&2
         for x in $ARMS; do echo "                 bench_blocking_ab_$x \\" >&2; done
         echo "                 -j4" >&2
