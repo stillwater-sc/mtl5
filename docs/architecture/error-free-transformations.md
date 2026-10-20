@@ -133,7 +133,7 @@ where configurations 1 and 2 have `γ_n·Σ|x_i·y_i|`. The error therefore stay
 
 How it differs from the other configurations:
 
-- **Size.** It is 2 words, 16 bytes for `double`, against 536 bytes for the exact accumulator. A kernel that keeps one accumulator per output entry therefore keeps 2n words, not 67n.
+- **Size.** It is 2 words, 16 bytes for `double`, against 544 bytes for the exact accumulator. A kernel that keeps one accumulator per output entry therefore keeps 2n words, not 68n.
 - **Cost.** It takes about 10 flops per term: 2 for `two_product`, 6 for `two_sum` and 2 for the errors. There is no limb arithmetic.
 - **Merge.** Two partials combine as a `two_sum` of the sums plus both errors. The result stays within the bound but is not exact. A threaded reduction is therefore deterministic for a given thread count, but not bit-identical across thread counts. The exact accumulator's merge, by contrast, is the same for every partition.
 - **Three-factor terms.** It keeps a product's rounding error, so `splits_product_terms_v` holds for it, and the LDLᵀ kernels feed it whole terms. On the perturbed-Hilbert ensemble of `test_three_factor_terms.cpp`, ILDL with it lands on the exact accumulator's mean residual to two digits.

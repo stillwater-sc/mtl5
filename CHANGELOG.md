@@ -5,6 +5,116 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.19.0] - 2026-10-20
+
+The accumulator policy now reaches every reduction-bearing routine in the library (#585): the dense direct factorizations, Bunch–Kaufman, the four incomplete-factorization preconditioners, `spgemm`, `svd`, `sum` and `trace`, the sparse eigensolvers, and the multigrid transfers and cycle. Accumulator-typed `dot` and norms run on the thread pool through `merge`, and the accumulator GEMM is up to 23× faster. Three new accumulation tools join plain and FMA:
+- `math::exact_accumulator<T>`, an in-library Kulisch accumulator for `float` and `double`;
+- Ogita, Rump and Oishi's compensated Sum2/Dot2 as `compensated_accumulator<T>` (configuration 2c);
+- their K-fold `sum_k` / `dot_k`, built on new error-free transformations.
+
+The configuration 1/2/2c/3 accumulation matrix (#586) is measured, tested and published. Two preconditioner bugs are fixed, and matrix-free operators work in the Krylov solvers again.
+
+Every new `Accumulator` parameter defaults to `void`, which runs exactly the code 5.18.0 ran. Three behaviour changes affect only callers who pass an accumulator explicitly; see Changed.
+
+### Added
+
+- **Accumulator policy for the dense direct factorizations** (#594, #595, #585). `lu_factor`, `lu_solve`, `lu_adjoint_solve`, `lu_apply`, `inv`, `cholesky_factor`/`_solve`, `cholesky_h_factor`/`_solve`, `ldlt_factor`/`_solve`, `ldlt_h_factor`/`_solve`, `ldlt_bk_factor` and `ldlt_bk_solve` take a leading `Accumulator = void`. A non-void accumulator skips LAPACK (`interface::accumulator_allows_blas_v`).
+  - **LU and Bunch–Kaufman change loop order for it.** Their `void` factorizations are right-looking, where an entry is updated once per step and there is no single sum to hold. The accumulator paths are left-looking: Doolittle for LU, and a Bunch–Kaufman that forms each Schur column on demand from W = L·D. Each entry of the factor is one reduction, rounded once. Pivoting, storage and the `ipiv` encoding are the same as the `void` path's, so either solve reads either factor. The tests mix the factor of one path with the solve of the other.
+  - **Solves form `b(i) − Σ` inside the accumulator** and round once before the division. Rounding the sum first, as `lower_trisolve` does, gave away the whole gain: every configuration landed near 1e-8.
+  - **Effect** (float Hilbert(n), exact relative residuals; plain / fma / exact): LU n = 8 gives 2.8e-8 / 1.3e-8 / 2.9e-9, and `inv` n = 8 gives 1.7e-1 / 6.9e-1 / 3.8e-3. Cholesky of Hilbert(9) factors only with the exact accumulator.
+  - **Cost:** the accumulator paths of LU and Bunch–Kaufman store an n × n workspace; see `docs/architecture/accuracy-architecture.md` §2.
+- **Accumulator policy for the incomplete-factorization preconditioners** (#597, #598, #600, #603). `pc::ilu_0`, `pc::ic_0`, `pc::ilut` and `pc::ildl` take a trailing `Accumulator = void`, the class-template convention `pc::ssor` set.
+  - **Factorizations:** ILU(0) and ILUT keep one accumulator per live entry of the row being eliminated. IC(0) and ILDL are already up-looking, so each entry is one reduction.
+  - **Solves:** they form `b − Σ` in the accumulator. The adjoint and Lᵀ solves scatter into n accumulators, which is O(nnz), where the `void` path scans later rows.
+  - **ILUT drop tests** read the single-rounded values, so with dropping, a different accumulator can keep a different pattern.
+  - **Finding:** the length of the reductions decides whether an exact accumulator helps. On stencil patterns all configurations agree. On a dense pattern, where IC(0) and ILU(0) are Cholesky and LU, exact is 2–4× better at least. At Hilbert(9), IC(0) breaks down to NaN under plain and FMA but not under exact.
+- **Accumulator policy for `spgemm`** (#604). A leading `Accumulator = void`, with one accumulator per touched column of the current row, mapped through a slot table so that at most nnz(C row i) are live. The pattern is unchanged.
+  - With the exact accumulator every entry is correctly rounded. On a 40×60 · 60×40 cancelling product, plain misses at 584 of 1589 entries, FMA at 446 and exact at none.
+  - A plain element-type accumulator gives the `void` bits, except that an entry whose only nonzero contribution is a −0 product comes back +0.
+- **Accumulator policy for `svd` and `null_vector`** (#606). Every overload takes a leading `Accumulator = void`. It covers:
+  - the one-sided Jacobi inner products, raw and scaled;
+  - the Gram–Schmidt completion of U;
+  - the Householder QR preconditioner and U's reflector back-application.
+
+  The plane rotations stay in `value_type`, and a non-void accumulator skips `gesdd` and `geqrf`. The finding is no ordering: Jacobi's error comes from applying the rotations, not from the inner products that choose them.
+- **Accumulator policy for `sum` and `trace`** (#607). Each element goes through `add_product(acc, x, 1)`, which is exact for every number system, so the protocol needs no `add` primitive. For a plain sum, configurations 1 and 2 are therefore bit-identical. The exact accumulator returns the correctly rounded sum.
+- **Accumulator policy for the sparse eigensolvers** (#605). `sparse_eigs` and `sparse_eigs_shift_invert` take a leading `Accumulator`, and `shift_invert_operator` takes a trailing one. It reaches:
+  - the LU factorization of A − σI and every solve that applies it;
+  - Arnoldi's inner products;
+  - for `sparse_eigs`, the matvec through `mult<Accumulator>`.
+- **Accumulator policy for multigrid** (#608). `restrict` and `prolongate` take a leading `Accumulator`, and `multigrid<Value, Accumulator>` passes it to both transfers in the V- and W-cycles and to the cycle residual `r = b − A·x`, formed in the `b − Σ` shape. Smoothers remain the caller's choice (`smoother::*<Matrix, Accumulator>`). This completes #585.
+- **Accumulator-typed reductions run on the thread pool** (#584). `dot`, `dot_real`, `two_norm` and `frobenius_norm` with an explicit `Accumulator` split across `thread_pool` when `mergeable_accumulator<Acc, Value>` holds, combining partials with `accumulator_traits::merge` (5.18.0) in chunk order.
+  - **Determinism:** an exact accumulator gives the serial bits at every thread count. For a posit⟨32,2⟩ quire over 2²⁰ elements it went from 830 ms on one thread to 125 ms on eight, with identical bits.
+  - Accumulators without a `merge`, and non-dense operands, stay serial. The new `detail::parallel_accumulate` and `detail::accumulate` carry it.
+- **`math::exact_accumulator<T>`** (#612, #611), in `include/mtl/math/exact_accumulator.hpp`. The test-only Kulisch accumulator of #589 moves into the library: an exact sum of products of `float` or `double`, rounded once to nearest-even, with subnormals and overflow handled. Each object is 88 bytes for float and 544 for double: 10 or 67 64-bit limbs plus a non-finite flag.
+  - **Non-finite inputs follow IEEE**, kept apart from the finite sum.
+  - **Operand types:** `V` must be exactly representable in `T`. `long double` is excluded.
+  - **Integration:** it plugs in through the ADL hook, so every accumulator-aware operation takes it, and its `merge` is exact.
+  - **Docs:** `docs/architecture/exact-accumulator.md`.
+- **Error-free transformations** (#614), in `include/mtl/math/error_free.hpp`: `two_sum`, `fast_two_sum`, Veltkamp `split`, `two_product_dekker` (exact up to `max` by rescaling) and `two_product` (FMA, moved from `accumulator_traits.hpp`, which includes the new header; `split_product` is kept as an alias). Each returns `exact_pair<T>{hi, lo}`.
+  - `split` and `two_product_dekker` switch FP contraction off locally, since GCC's `-ffp-contract=fast` otherwise turns `split` into `(a, 0)` on any FMA target. Their test is built with `-ffp-contract=fast` so the ARM64 runners exercise the guard.
+  - `-ffast-math` is unsupported. See `docs/architecture/error-free-transformations.md`.
+- **`math::compensated_accumulator<T>`, configuration 2c** (#615). This is Ogita–Rump–Oishi Sum2/Dot2 as an accumulator, holding two `T`s. The result is as accurate as twice the working precision, rounded once. `mtl::dot` with it gives the bits of the paper's Dot2 loop.
+  - **Merge** stays within the bound but is not bit-identical across thread counts.
+  - **Accuracy:** on GenDot in double it stays at exact's level up to cond ≈ 1e16 and then grows as u²·cond.
+- **`sum_k<K>(x)` and `dot_k<K>(x, y)`** (#616), in `include/mtl/operation/sum_dot_k.hpp`: Ogita–Rump–Oishi SumK and DotK. Each returns the sum or dot product as if computed in K-fold precision, then rounded once. `sum_k<2>` and `dot_k<2>` give the same bits as `compensated_accumulator`. They take whole vectors, since they keep n or 2n error terms.
+- **Exact three-factor terms in the LDLᵀ accumulator paths** (#609, #610, #602). `add_product` takes two factors, so the `L·d` of each `L(i,k)·d_k·L(j,k)` was rounded before the accumulator saw it. A new trait, `math::splits_product_terms_v<Acc, Value>`, marks when that rounding error is worth recovering. When it holds, the kernels also pass `two_product`'s `lo`, so the whole term reaches the accumulator. Over 300 perturbed Hilbert matrices this adds 1.1–1.6×, and dense LDLᵀ, sparse LDLᵀ and ILDL now order exact below plain and FMA.
+  - **Paths changed:** dense `ldlt_factor`/`ldlt_h_factor`, `ildl`, `sparse_ldlt_numeric` and `supernodal_ldlt_numeric`. Bunch–Kaufman feeds stored Schur columns and is unaffected.
+  - **Trait coverage:** it holds for an IEEE `Value` with an ADL accumulator, the compensated accumulator, or a strictly wider built-in float.
+  - **Perf:** #610 forms the supernodal split coefficients once per update column, with identical bits.
+- **`generators::gen_dot` and `gen_sum`** (#617), in `include/mtl/generators/ill_conditioned.hpp`: the Ogita–Rump–Oishi Algorithm 6.1 GenDot and its derived ill-conditioned sums. `exact_accumulator` serves as the paper's `DotExact`. Each returns the exact result rounded to nearest and the achieved condition number. A seed reproduces the same vectors with any standard library. See `docs/generators/ill-conditioned.md`.
+- **`examples/accurate_sum_dot`** (#619, #620) reproduces Section 6 of Ogita, Rump and Oishi:
+  - Figures 6.1–6.4, with an added float run;
+  - Table 6.2, correct digits;
+  - Tables 6.4–6.5, timings.
+
+  Errors are measured exactly, and no proven bound is violated on 3000 dot products under GCC or Clang. `docs/examples/accurate-sum-dot.md` plots the results beside the paper's.
+- **Tests for the accumulation matrix** (#589, #590, #622). The configuration 1/2/2c/3 matrix covers dot, gemm, norms, the direct solvers, refinement, Krylov, eigen, the preconditioners, `spgemm`, `sum` and `svd`, plus determinism. The rows are tagged `[586:*]` so the peer repos' quire rows can name them.
+  - **Theorem tests:** `test_ogita_rump_oishi` asserts the paper's numbered bounds as inequalities on every GenDot/GenSum instance (#618).
+  - **Portability:** #622 fixed undefined seed conversions and unspecified argument evaluation order, so GCC, Clang and MSVC now draw the same random inputs.
+
+### Changed
+
+- **A non-void `Accumulator` now reaches the eigensolvers' matrix-vector product** (#593, #591). `power_iteration`, `lanczos` and `arnoldi` take a leading `Accumulator`. When `A` is a `Matrix`, `ev_matvec` now forms `w` with `mult<Accumulator>`, as the Krylov solvers do; before, the accumulator covered only the dot products.
+  - Results change for callers who pass one. On a float matrix whose matvec cancels by four orders of magnitude, `power_iteration` with the exact accumulator now converges, to 8.0e-6, where all configurations previously stalled at 5.4e-3.
+  - `void` and matrix-free operators keep `A * x`, byte-identical.
+- **Threaded accumulator reductions regroup by chunk** (#584). With `MTL5_NUM_THREADS` > 1, a rounding accumulator such as a wider type or `fma_accumulator` in `dot`, `dot_real`, `two_norm` or `frobenius_norm` now gives bits that depend on the thread count. This is the contract the threaded `float`/`double` reductions already have. With one thread, the default, nothing changes; exact accumulators are unaffected.
+- **LDLᵀ results with exact, compensated or wider accumulators change** (#609): they now see whole three-factor terms. `void`, plain, `fma_accumulator`, complex, non-IEEE types, and accumulators with a direct `accumulator_traits` specialization give the 5.18.0 bits.
+- **The accumulator GEMM is 5–23× faster** (#588). `mult<Acc>(A, B, C)` packs B into k-major column panels and keeps one accumulator per column, so the k loop is unit-stride. At n = 1024: 23× for `double`/plain, 4.6× for `fma_accumulator` and 8–15× for `float` into a `double` accumulator.
+  - **Bits:** each entry gets the same terms in the same order, so results are bit-identical under `-ffp-contract=off`. Under FMA contraction the new kernel may fuse where the old one didn't on GCC.
+  - **Gate:** software element types such as posits, and large accumulators such as quires, keep the dot-product loop.
+- **`itl::idr_s` accepts any linear operator** (#624): its `Matrix LinearOp` constraint is now `typename`, like the other Krylov solvers.
+
+### Fixed
+
+- **Matrix-free operators compile in the Krylov solvers again** (#624, #278). The accumulator rollout (#254) moved every matvec to `mult<Accumulator>`, which requires a `Matrix`, so an operator with only `operator*` stopped compiling in all ten solvers.
+  - **Fix:** the new `itl::apply_operator` and `apply_transpose` (in `itl/krylov/apply_operator.hpp`) send a `Matrix` through `mult<Accumulator>` exactly as before, and apply anything else as `A * x`. `bicg` and `qmr` use a matrix-free `trans(A)` found by ADL.
+  - **Accumulator contract:** a non-void accumulator reaches only the dot products around a matrix-free operator, the contract `ev_matvec` has.
+  - **Tests:** all ten solvers run on a matrix-free operator and are bit-identical to the stored-matrix solve. A lazy-product case runs `apply_transpose` past a temporary `trans(A)`; it fails under AddressSanitizer without the lifetime fix.
+- **`pc::ilut` back substitution counted the diagonal twice** (#599). This is the #323 bug `ilu_0` once had. The diagonal was stored in the U rows and divided by again, which is wrong for every input: a no-drop ILUT, which is an exact LU, gave `(Ax)(0) = −3` for `b(0) = 1`. The diagonal now lives only in `u_diag_`.
+- **`pc::ilut::adjoint_solve` applied M⁻¹ instead of M⁻ᴴ** (#599), the #394 defect. ILUT of a symmetric A is not symmetric, so even there the adjoint identity failed, by 1.6e-3. It now has a real scatter-form adjoint.
+- **`pc::ic_0` and `pc::ildl` `adjoint_solve` applied M⁻¹ for complex values** (#601). Both factor L·Lᵀ (L·D·Lᵀ) without conjugation, so a complex `Value` models a complex symmetric matrix, whose adjoint is conj(M), not M. The adjoint identity was off by up to 1.2. `solve` and `adjoint_solve` now share `apply<Conj>`, and real types are byte-identical.
+- **The multigrid transfers started their sums from `Value{}`** (#608), which is 1, not 0, for an LNS type. They start from `math::zero<Value>()`, byte-identical for built-in types.
+
+### CI
+
+- **Tier 2 runs from its own workflow, `regression.yml`** (#613), so promoting a draft no longer re-runs Tier 1 on an already-tested commit. That saves about 128 runner-minutes per promotion. Tier 2 no longer waits for Tier 1.
+
+### Documentation
+
+- **`docs/algorithms/accumulation-configurations.md`** (#621, #623, #592) publishes the #586 matrix. It covers what plain, FMA, compensated and exact accumulation each buy, routine by routine, with the tag that reproduces each number.
+  - It includes the configuration-3 quire rows from mp-blas, mp-iterative and mp-ir, whose IEEE quires equal the exact accumulator bit for bit, and the posit⟨32,2⟩ CG result.
+  - It ends with a "which accumulator when" table.
+- **`docs/architecture/accuracy-architecture.md`** (#621, #596) explains why the results come out as they do:
+  - the accumulator protocol and what an exact accumulator needs from an algorithm;
+  - left- against right-looking loops, with a measured cost table from the new `bench_accumulator_factor`;
+  - per-algorithm coverage tables;
+  - parallel and distributed reductions;
+  - guidance.
+- **New pages:** `docs/architecture/exact-accumulator.md`, `docs/architecture/error-free-transformations.md`, `docs/generators/ill-conditioned.md`, `docs/examples/accurate-sum-dot.md`.
+- **`docs/algorithms/on-node-threading.md`** is reconciled with the threaded kernels.
+- **`docs/design/iterative-solvers-architecture.md`** documents the matrix-free operator contract (#624).
+
 ## [5.18.0] - 2026-10-16
 
 A Universal quire is now an accumulator for any MTL5 operation that takes one, with no bridge header in between. `accumulator_traits` forwards to free functions defined next to the accumulator type, which Universal 5.7.0 provides for its quire. The trait also gains `merge`, the combine step a parallel reduction needs. Nothing changes for existing accumulators: plain and `fma_accumulator` behave as before, and an explicit `accumulator_traits` specialization still takes precedence. Two design documents compare MTL5 with Elemental.

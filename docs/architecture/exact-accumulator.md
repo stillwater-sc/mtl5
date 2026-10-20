@@ -58,10 +58,12 @@ struct exact_accumulator {
 
 Bit 0 of `w` has weight `2^lsb`, where `lsb` is the exponent of the smallest product of two subnormals. The top of the array is set by the largest product of two finite values, plus 64 carry bits:
 
-| `T` | `lsb` | bits | limbs | size |
-|---|---|---|---|---|
-| `float` | −298 | 618 | 10 | 80 bytes |
-| `double` | −2148 | 4260 | 67 | 536 bytes |
+| `T` | `lsb` | bits | limbs | limb array | `sizeof` |
+|---|---|---|---|---|---|
+| `float` | −298 | 618 | 10 | 80 bytes | 88 bytes |
+| `double` | −2148 | 4260 | 67 | 536 bytes | 544 bytes |
+
+`sizeof` adds the `special` byte, padded to the limbs' 8-byte alignment. Workspace estimates should use it.
 
 The 64 carry bits mean that up to 2^64 maximal products can be added before the integer could wrap.
 
@@ -115,7 +117,7 @@ That is a property no rounding accumulator has. With configurations 1 and 2, the
 - **Every accumulator-aware operation accepts it**: `dot`, `gemm`, the norms, `sum` and `trace`, the dense and sparse factorizations and their solves, the incomplete factorizations, `spgemm`, `svd`, the Krylov solvers and eigensolvers, multigrid (the #585 programme).
 - **BLAS is skipped.** A non-void accumulator routes an operation to the native kernels (`interface::accumulator_allows_blas_v`), because a BLAS library accumulates in its own precision.
 - **Three-factor terms are fed whole.** The LDLᵀ factorizations sum `L(i,k)·d_k·L(j,k)`. For an exact accumulator over an IEEE type, `math::splits_product_terms_v` holds, and the kernels split the product they form into `hi + lo` (`math::two_product`) so that no part of the term is rounded before it arrives (#602).
-- **Workspace.** A kernel that keeps one accumulator per output entry, such as `sparse_lu` or the supernodal panels, holds Θ(n) of them, and an `exact_accumulator<double>` is 67 times the size of a `double`. The workspace note in `accumulator_traits.hpp` gives the measured scaling.
+- **Workspace.** A kernel that keeps one accumulator per output entry, such as `sparse_lu` or the supernodal panels, holds Θ(n) of them, and an `exact_accumulator<double>` is 68 times the size of a `double`. The workspace note in `accumulator_traits.hpp` gives the measured scaling.
 
 ## Accuracy and cost
 

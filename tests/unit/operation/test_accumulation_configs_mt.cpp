@@ -381,7 +381,7 @@ TEST_CASE("[586:gemm] gemm: configuration 3 correctly rounded, 1, 2 and 2c withi
           "[586:gemm][accumulator]") {
     // Row i of A and column i of B are one ill-conditioned dot product, so the
     // diagonal of C is the dot battery through mult<Acc>; the off-diagonal
-    // entries are ordinary random dots. exact_acc<float> is 80 bytes, so mult
+    // entries are ordinary random dots. exact_acc<float> is 88 bytes, so mult
     // keeps the dot-product kernel for it (#587's acc_panel_gemm_v).
     constexpr std::size_t M = 24, K = 64;
     rng r(5);

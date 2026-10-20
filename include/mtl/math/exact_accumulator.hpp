@@ -21,7 +21,7 @@
 // exact accumulator, so math::splits_product_terms_v holds and the LDL^T paths
 // feed it whole three-factor terms (#602).
 //
-// SIZE. binary32: 10 limbs, 80 bytes. binary64: 67 limbs, 536 bytes. Kernels
+// SIZE. binary32: 10 limbs, sizeof 88 bytes. binary64: 67 limbs, 544 bytes. Kernels
 // that keep one accumulator per output entry hold n of them; see the workspace
 // note in accumulator_traits.hpp.
 //
