@@ -347,7 +347,7 @@ A distributed dot product or norm ends in `MPI_Allreduce`. The reduction tree de
 | binned summation (ReproBLAS style) | a few words | yes | comparable to or better than the plain sum, independent of order |
 | Kulisch / quire state, custom `MPI_Op` | 544 bytes for `double`, 64 bytes for a posit⟨32,2⟩ quire | yes | exact, one rounding |
 
-The exact merge is the only option that is both reproducible and correctly rounded. Its cost is bandwidth, about 67 times a double per value, which for a scalar reduction is still one small message. Compensated states are the cheap middle: accurate, but not reproducible.
+The exact merge is the only option that is both reproducible and correctly rounded. Its cost is bandwidth, about 68 times a double per value, which for a scalar reduction is still one small message. Compensated states are the cheap middle: accurate, but not reproducible.
 
 ### Distributed factorizations
 
