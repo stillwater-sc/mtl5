@@ -151,8 +151,7 @@ where the plan changed:
 ## Not yet measured
 
 **Ryzen 9 8945HS (Zen 4)** is the third machine in #458's acceptance criterion.
-Run `ARMS="default legacymc"` with its existing profile, after giving that
-profile its own `OUTDIR`. If its build derives the same `mr = 6` and
+Run `benchmarks/machines/ryzen-9-8945hs-mc.sh` under WSL. If its build derives the same `mr = 6` and
 `mc_max = 64` as the i7, the rule changes the same plans there.
 
 ## Reproducing
