@@ -17,7 +17,9 @@
 //                than on the stored matrix, and more than none.
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <type_traits>
@@ -73,6 +75,46 @@ struct op {
 };
 
 inline transposed_op trans(const op& A) { return transposed_op{A.S}; }
+
+// The same operator with LAZY products: operator* returns an expression that
+// refers to the operator and to x and computes an entry when it is read, as an
+// expression template does. trans() returns its operator by value, so a solver
+// that read the product after that temporary died would read freed memory.
+struct lazy_op;
+struct lazy_transposed_op;
+
+template <typename Op>
+struct lazy_product {
+    const Op& A;   // the operator: a temporary, for the transpose
+    const dvec& x;
+    std::size_t size() const { return A.S.num_rows(); }
+    double operator()(std::size_t i) const { return A.entry(i, x); }
+};
+
+struct lazy_op {
+    const smat& S;
+    lazy_product<lazy_op> operator*(const dvec& x) const { return {*this, x}; }
+    double entry(std::size_t i, const dvec& x) const {
+        double s = 0.0;
+        for (auto k = S.ref_major()[i]; k < S.ref_major()[i + 1]; ++k)
+            s += S.ref_data()[k] * x(S.ref_minor()[k]);
+        return s;
+    }
+};
+
+struct lazy_transposed_op {
+    smat S;   // owns a copy: destroying the temporary frees what the product reads
+    lazy_product<lazy_transposed_op> operator*(const dvec& x) const { return {*this, x}; }
+    double entry(std::size_t i, const dvec& x) const {   // (S^T x)(i) = sum_r S(r, i) x(r)
+        double s = 0.0;
+        for (std::size_t r = 0; r < S.num_rows(); ++r)
+            for (auto k = S.ref_major()[r]; k < S.ref_major()[r + 1]; ++k)
+                if (S.ref_minor()[k] == i) s += S.ref_data()[k] * x(r);
+        return s;
+    }
+};
+
+inline lazy_transposed_op trans(const lazy_op& A) { return lazy_transposed_op{A.S}; }
 
 } // namespace matfree
 
@@ -221,3 +263,32 @@ MTL5_KRYLOV_ROW("gmres", false, itl::gmres<Acc>(A, x, b, M, it, 20))
 MTL5_KRYLOV_ROW("idr_s", false, itl::idr_s<Acc>(A, x, b, M, it, 4))
 MTL5_KRYLOV_ROW("qmr", false, itl::qmr<Acc>(A, x, b, M, it))
 MTL5_KRYLOV_ROW("tfqmr", false, itl::tfqmr<Acc>(A, x, b, M, it))
+
+TEST_CASE("matrix-free operator: lazy products, and a transpose returned by value",
+          "[itl][krylov][matrix-free][278]") {
+    // The product is read after the statement that formed it, so the operator it
+    // refers to must still be alive: for the transpose, a temporary returned by
+    // trans(A). Run under AddressSanitizer this fails if apply_transpose lets it die.
+    const smat S = tridiag(40, 0.3);
+    const dvec b = rhs(40);
+    const matfree::lazy_op F{S};
+    itl::pc::identity<smat> M(S);
+    auto residual = [&](const dvec& x) {
+        dvec Ax(40);
+        mtl::mult(S, x, Ax);
+        double r = 0.0;
+        for (std::size_t i = 0; i < 40; ++i) r = std::max(r, std::abs(b(i) - Ax(i)));
+        return r;
+    };
+    auto check_solver = [&](const char* name, auto solve) {
+        dvec x(40, 0.0);
+        itl::basic_iteration<double> iter(b, 500, 1e-10);
+        const int code = solve(x, iter);
+        INFO(name << ": code " << code << ", residual " << residual(x));
+        CHECK(code == 0);
+        CHECK(residual(x) < 1e-8);
+    };
+    check_solver("bicg", [&](dvec& x, auto& it) { return itl::bicg(F, x, b, M, it); });
+    check_solver("qmr", [&](dvec& x, auto& it) { return itl::qmr(F, x, b, M, it); });
+    check_solver("gmres", [&](dvec& x, auto& it) { return itl::gmres(F, x, b, M, it, 20); });
+}

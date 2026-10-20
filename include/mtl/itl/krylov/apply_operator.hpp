@@ -47,7 +47,10 @@ void apply_transpose(const LinearOp& A, const VecIn& x, VecOut& y) {
         static_assert(requires(const LinearOp& a, const VecIn& v) { trans(a) * v; },
                       "a matrix-free operator used with bicg or qmr must provide trans(A), "
                       "found by argument-dependent lookup, supporting trans(A) * x");
-        const auto w = trans(A) * x;
+        // trans(A) may return an operator by value whose product is a lazy
+        // expression referring to it, so keep it alive while w is read.
+        auto&& At = trans(A);
+        const auto w = At * x;
         for (std::size_t i = 0; i < static_cast<std::size_t>(y.size()); ++i)
             y(i) = w(i);
     }
