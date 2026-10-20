@@ -134,9 +134,9 @@ The test factors and solves Hilbert(n) in float, `x(i) = (1 + (7919·i) mod 13) 
 | dense `inv`, `x = inv(A)·b` | 5 | 1.4e-3 | 3.1e-4 | **2.5e-5** |
 | | 8 | 1.7e-1 | 6.9e-1 | **3.8e-3** |
 
-- **What is asserted.** For n = 5..8, exact is at least 2× below both plain and FMA for LU and Cholesky, and at least 4× for `inv`. The measured margins are larger: 4.3× for dense LU, 2.9× for dense Cholesky, 10× for `inv`, and 2.8× for the sparse factorizations. FMA is worse than plain in two cells (sparse LU at n = 8, `inv` at n = 8), so the finding above holds here as well.
+- **What is asserted.** For n = 5..8, exact is at least 2× below both plain and FMA for LU and Cholesky, and at least 4× for `inv`. The measured margins are larger. The smallest, over n = 5..8 and against the better of plain and FMA, are 4.3× for dense LU, 2.9× for dense Cholesky, 10× for `inv` (n = 6), and 2.8× for the sparse factorizations. FMA is worse than plain in two cells (sparse LU at n = 8, `inv` at n = 8), so the finding above holds here as well.
 - **Hilbert(9).** Its smallest eigenvalue is about 5e-13. Under plain and FMA, sparse and dense Cholesky both stop with *not positive definite*. Under exact, both factor it, with a residual below 1e-7.
-- **Refinement.** This is the strongest result. The factor is in float, and the residual is in double (`supernodal_lu_solve_refined<float, Acc>`, Hilbert(n), n = 9..11). Plain and FMA stall at relative residuals between 1.2e-4 and 5.3e-4. Exact converges to 1.1e-12 or better. Only the accumulator differs between the three runs.
+- **Refinement.** This is the strongest result. The factor is in float, and the residual is in double (`supernodal_lu_solve_refined<float, Acc>`, Hilbert(n), n = 9..11). Plain and FMA stall at relative residuals between 1.2e-4 and 5.3e-4. Exact converges to 1.1e-12, 7.3e-12 and 6.8e-13 at n = 9, 10 and 11; the test asserts below 1e-10. Only the accumulator differs between the three runs.
 
 ### LDLᵀ: exact is lowest, since the three-factor split
 
@@ -198,7 +198,7 @@ The split adds 1.1–1.6× on top of exact accumulation, growing with n. The com
 
 **Why.** The accumulator covers each dot product and each sparse matrix-vector product. But the recurrences update x, r and p in float, and each iteration rounds them again. A better reduction inside an iteration cannot undo the rounding of the iteration itself. The [architecture page](../architecture/accuracy-architecture.md) discusses this.
 
-The original result that a quire helps CG (#237, #238) was found with posits, whose tapered precision may be what made the difference there. Its retest is a peer-repo row (see below).
+The original result that a quire helps CG (#237, #238) was found with posits. Its retest in mp-iterative confirms that tapered precision is what made the difference: on badly scaled systems a posit quire is what lets CG converge at all (see [below](#krylov-in-posits-mp-iterative)).
 
 ## Eigensolvers and the SVD
 
@@ -244,16 +244,50 @@ Which kernels thread, and how, is in [On-Node Threading](on-node-threading.md).
 
 ## Configuration 3 with real quires
 
-MTL5 stays independent of the Universal number library, so its configuration-3 rows use the exact accumulator for `float` and `double`. The rows with Universal's quires belong in the peer repositories that depend on both libraries:
-- the BLAS level in mp-blas;
-- the Krylov solvers in mp-iterative, including the posit + quire CG retest (#237, #238);
-- direct solvers and refinement in mp-ir or mp-numerics.
+MTL5 stays independent of the Universal number library, so its configuration-3 rows use the exact accumulator for `float` and `double`. The rows with Universal's quires, `sw::universal::quire<T>`, live in the peer repositories that depend on both libraries. Each test names the `[586:<row>]` tag it mirrors, is registered with ctest, and runs in that repository's CI on Linux GCC and Clang, MSVC and macOS.
 
-Each should carry the `[586:<row>]` tag it mirrors. What to assert depends on the row:
-- **Where the exact result is correctly rounded** (`dot`, `gemm`, `sum`, `spgemm`, norms), `err(3) ≤ min(err(1), err(2))` is guaranteed: no representable value is closer. Assert it with the bounds, and never assert a strict chain such as `err(3) ≤ err(2) ≤ err(1)`.
-- **For solvers**, assert what was measured, with a margin, as the MTL5 rows above do. A solver's output is not one correctly rounded reduction, and there is no guaranteed ordering: Bunch–Kaufman has a case where FMA's residual is below exact's.
+| repository | test | tags |
+|---|---|---|
+| [mp-blas](https://github.com/stillwater-sc/mp-blas) (#35) | `tests/level1/test_accumulation_matrix_l1.cpp`, `tests/level3/test_accumulation_matrix_l3.cpp` | `[586:dot]`, `[586:sum]`, `[586:norms]`, `[586:determinism]`, `[586:gemm]`, `[586:spgemm]` |
+| [mp-iterative](https://github.com/stillwater-sc/mp-iterative) (#48) | `tests/krylov/test_accumulation_matrix_krylov.cpp` | `[586:krylov]`, `[586:determinism]` |
+| [mp-ir](https://github.com/stillwater-sc/mp-ir) (#12) | `tests/accumulation/test_accumulation_matrix_direct.cpp` | `[586:direct]`, `[586:refine]` |
 
-As of this writing those rows are not yet written; they are tracked in #586.
+**The IEEE quires agree with the exact accumulator, bit for bit.** Universal's native quires for `float` and `double` let configuration 3 run at the same element type as configurations 1 and 2. Both the quire and MTL5's exact accumulator are correctly rounded, so on the same inputs they must give the same bits, and the peer tests check that:
+- **Inner products.** On the GenDot battery the quire's errors are the exact column of the [table above](#inner-products-dot-and-gemm), to the digit. It is correctly rounded on every instance, and `err(quire) ≤ min(err(plain), err(fma), err(compensated))` on every instance.
+- **Solvers.** Every direct-solver and refinement row runs the quire and the exact accumulator side by side and asserts identical residuals. Every number in the [direct-solver tables](#direct-solvers-and-refinement) reproduces, in the exact column.
+
+mp-blas also measures on its own matrices, in float:
+
+| row | entries | not correctly rounded: plain / fma / compensated / quire |
+|---|---:|---|
+| `gemm` 24×64·64×24, a cond-1e6 GenDot dot on each diagonal entry | 576 | 429 / 416 / 7 / **0** |
+| `spgemm` 40×60·60×40, density 0.3, cancelling | 1594 | 635 / 502 / — / **0** |
+| `sum`, 20 cancelling 1000-term sums | 20 | 17 / 17 / — / **0** |
+
+The `spgemm` and `sum` inputs differ from MTL5's, so their counts do too. MTL5's `spgemm` row draws from `std::uniform_real_distribution`, whose output is implementation-defined; the peer tests draw from the raw `mt19937_64` stream, so GCC, Clang and MSVC see the same matrices.
+
+### Krylov in posits (mp-iterative)
+
+This is the row that motivated the matrix: the posit + quire CG result of #237 and #238. CG runs in `posit<32,2>` on the scaled 2-D Laplacian `D·L·D`, whose entries spread over a factor `spread`. The values are the true relative residual, computed exactly, and the iteration count, at recurrence tolerance 1e-6 and at most 4000 iterations:
+
+| m×m grid, spread | plain | fma | quire |
+|---|---|---|---|
+| 20, 1 | 8.4e-7, 48 | 8.4e-7, 48 | 8.4e-7, 48 |
+| 20, 1e4 | 3.0e-5, 152 | 2.4e-5, 120 | **1.8e-5, 114** |
+| 30, 1e4 | 1.3e-2, 4000 (stalls) | 3.8e-5, 232 | **3.4e-5, 50** |
+| 20, 3e4 | NaR | 2.2e36 | **4.9e-5, 150** |
+| 30, 1e5 | NaR | 2.2e36 | **2.5e-4, 131** |
+
+- **Well scaled, posit behaves as float does:** no ordering.
+- **Badly scaled, the quire decides convergence.** From spread 3e4, plain posit CG turns NaR and FMA saturates near maxpos, while the quire converges. The entries reach 4e10 at spread 1e5, so the inner products reach magnitudes where a `posit<32,2>` keeps only a few fraction bits. Plain rounds each product there and FMA each partial sum; the quire rounds neither.
+- **Why float never shows this.** A float has the same relative precision at every magnitude, and in float CG is limited by the rounding of its x, r and p updates, not by its reductions (see [Krylov solvers](#krylov-solvers)). A posit's precision tapers away from 1, so the reductions become the limit. That is the tapered-precision effect the #237/#238 result rested on.
+- **In between** (spread 1e3 to 1e4), the quire's residual is lowest or close to it, but the iteration counts do not order, so those rows assert only convergence. The posit residuals stay above the 1e-6 tolerance even with the quire, because the updates of x, in posit, set that limit.
+- **GMRES(20)** on convection–diffusion shows no ordering in either type. **CG with the quire is bit-identical threaded and serial**, in float and in posit; plain float is not.
+
+### What a peer test asserts
+
+- **Where the exact result is correctly rounded** (`dot`, `gemm`, `sum`, `spgemm`, norms), `err(3) ≤ min(err(1), err(2))` is guaranteed, since no representable value is closer. Assert it with the bounds, and never a strict chain such as `err(3) ≤ err(2) ≤ err(1)`.
+- **For solvers**, assert what was measured, with a margin, as the MTL5 rows above do. A solver's output is not one correctly rounded reduction, so there is no guaranteed ordering: Bunch–Kaufman has a case where FMA's residual is below exact's.
 
 ## Which accumulator when
 
@@ -266,6 +300,7 @@ As of this writing those rows are not yet written; they are tracked in #586.
 | mixed-precision iterative refinement with a low-precision factor | exact, in the factor | the one case where it decides whether refinement converges |
 | full-pattern ILU(0), IC(0), ILUT, ILDL | exact | as the direct solvers |
 | stencil-pattern preconditioners, Krylov solvers in float | anything; plain is enough | reductions are short, or the recurrence rounds every iteration |
+| Krylov solvers in posits on badly scaled systems | a quire | the inner products reach magnitudes where the posit has few fraction bits; plain and FMA break down |
 | QR, Bunch–Kaufman, `eigenvalue_symmetric`, SVD | anything; no ordering | the error is in rotations, reflector application or pivoting, not in a reduction |
 | reproducible results across thread counts | exact | associative, so the result is the same for every partition |
 | a product's rounding is the whole error | FMA | removes the product rounding per term; it is no help against cancellation |

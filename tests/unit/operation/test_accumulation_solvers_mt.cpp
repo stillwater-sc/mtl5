@@ -494,7 +494,8 @@ TEST_CASE("[586:refine] float-factor refinement: configuration 3 converges, 1 an
     // Factor in float with each accumulator, refine the residual in double.
     // The rounding accumulators leave a factor too poor for refinement to
     // contract on Hilbert(9..11); the exact one does not. Measured: 1 and 2
-    // stall between 1.2e-4 and 5.3e-4, 3 reaches 1.1e-12 or better.
+    // stall between 1.2e-4 and 5.3e-4, 3 reaches 1.1e-12, 7.3e-12
+    // and 6.8e-13 at n = 9, 10, 11 (mp-ir#12 reproduces them with a quire).
     for (std::size_t n = 9; n <= 11; ++n) {
         const auto A = hilbert<double>(n);
         auto refine = [&](auto tag) {
