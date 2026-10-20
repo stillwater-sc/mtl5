@@ -9,6 +9,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl::itl {
@@ -21,6 +22,8 @@ namespace mtl::itl {
 /// matrix-vector products (see math/accumulator_traits.hpp, #158).
 /// Defaults to void, matching dot()/mult()'s own default -- unspecified
 /// behavior is unchanged.
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -41,7 +44,7 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
     // Initial residual: r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i)
         v(i) = b(i) - Ax(i);
 
@@ -74,7 +77,7 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
         // Lanczos step: w = A * M^{-1} * v (right preconditioned)
         M.solve(z, v);
-        mtl::mult<Accumulator>(A, z, w);
+        apply_operator<Accumulator>(A, z, w);
 
         // alpha = v^T * w
         value_type alpha = mtl::dot<Accumulator, value_type>(v, w);

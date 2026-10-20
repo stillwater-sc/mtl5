@@ -5,6 +5,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 
 namespace mtl::itl {
 
@@ -15,6 +16,8 @@ namespace mtl::itl {
 /// matrix-vector products (see math/accumulator_traits.hpp, #158).
 /// Defaults to void, matching dot()/mult()'s own default -- unspecified
 /// behavior is unchanged.
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -30,7 +33,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
 
     // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i) {
         r(i) = b(i) - Ax(i);
         r_star(i) = r(i);
@@ -66,7 +69,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         M.solve(phat, p);
 
         // v = A * phat
-        mtl::mult<Accumulator>(A, phat, v);
+        apply_operator<Accumulator>(A, phat, v);
 
         // alpha = rho / dot(r_star, v)
         value_type rsv = mtl::dot<Accumulator, value_type>(r_star, v);
@@ -92,7 +95,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         M.solve(shat, s);
 
         // t = A * shat
-        mtl::mult<Accumulator>(A, shat, t);
+        apply_operator<Accumulator>(A, shat, t);
 
         // omega = dot(t, s) / dot(t, t)
         value_type tt = mtl::dot<Accumulator, value_type>(t, t);

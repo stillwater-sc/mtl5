@@ -9,6 +9,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl::itl {
@@ -22,6 +23,8 @@ namespace mtl::itl {
 /// Defaults to void, matching dot()/mult()'s own default -- unspecified
 /// behavior is unchanged. two_norm() calls are NOT routed through
 /// Accumulator, matching the convention set by cg/bicgstab/gmres/idr_s/bicg.
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -46,7 +49,7 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
     bool x_is_zero = (mtl::two_norm(x) == zero);
     if (!x_is_zero) {
         vec::dense_vector<value_type> Ax(n);
-        mtl::mult<Accumulator>(A, x, Ax);
+        apply_operator<Accumulator>(A, x, Ax);
         for (size_type i = 0; i < n; ++i)
             r_hat[0](i) = b(i) - Ax(i);
         for (size_type i = 0; i < n; ++i)
@@ -107,7 +110,7 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
 
             // u_hat[j+1] = A * M^{-1} * u_hat[j]
             M.solve(y, u_hat[j]);
-            mtl::mult<Accumulator>(A, y, u_hat[j + 1]);
+            apply_operator<Accumulator>(A, y, u_hat[j + 1]);
 
             value_type gamma_val = mtl::dot<Accumulator, value_type>(r0_tilde, u_hat[j + 1]);
             if (gamma_val == zero) {
@@ -130,7 +133,7 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
 
             // r_hat[j+1] = A * M^{-1} * r_hat[j]
             M.solve(y, r_hat[j]);
-            mtl::mult<Accumulator>(A, y, r_hat[j + 1]);
+            apply_operator<Accumulator>(A, y, r_hat[j + 1]);
 
             for (size_type k = 0; k < n; ++k)
                 x(k) += alpha * u_hat[0](k);

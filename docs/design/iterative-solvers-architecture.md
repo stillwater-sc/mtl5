@@ -66,31 +66,38 @@ with no change and no virtual-call overhead.
 
 ---
 
-## Decision 2 — the operator is duck-typed: it only needs `mult(A, p, q)`
+## Decision 2 — the operator is duck-typed: it only needs `A * p`
 
-CG never names `A`'s concrete type. It applies `A` through the free function:
+CG never names `A`'s concrete type. It applies `A` through one helper:
 
 ```cpp
-mtl::mult<Accumulator>(A, p, q);   // q = A * p  -- the ONLY thing CG asks of A
+apply_operator<Accumulator>(A, p, q);   // q = A * p  -- the ONLY thing CG asks of A
 ```
 
 Krylov methods, mathematically, need nothing from `A` but the ability to compute
 `A·v` for a vector `v`. The code honors that exactly: `LinearOp` is an unconstrained
-template parameter, and the *only* operation performed on it is `mtl::mult`. The
-consequences are the payoff of the whole abstraction:
+template parameter, and the *only* operation performed on it is `apply_operator`
+(`include/mtl/itl/krylov/apply_operator.hpp`). A `Matrix` goes to
+`mtl::mult<Accumulator>`; anything else must support `A * x`. The consequences are
+the payoff of the whole abstraction:
 
 - **Sparsity is transparent.** A `compressed2D` operator routes `mult` to the CRS
   matvec (O(nnz)); a `dense2D` routes it to BLAS / native-fast. CG is identical for
   both — the [dispatch layer](operation-dispatch-architecture.md) picks the kernel,
   the solver is oblivious.
 - **Matrix-free by construction.** `A` need not be a stored matrix at all. Any type
-  for which `mtl::mult(A, v, w)` is defined — a stencil applied on the fly, an
-  operator that never materializes its entries — is a valid `LinearOp`. This is the
-  headline capability of a Krylov library, and here it costs nothing: it is simply
-  the absence of any requirement beyond `mult`.
+  with `A * x` — a stencil applied on the fly, an operator that never materializes
+  its entries — is a valid `LinearOp`. This is the headline capability of a Krylov
+  library, and here it costs nothing: it is simply the absence of any requirement
+  beyond `A * x`. BiCG and QMR also apply `Aᵀ`; a matrix-free operator provides it
+  as `trans(A)`, found by argument-dependent lookup, through `apply_transpose`.
+  (Between the accumulator rollout, #254, and #278 the solvers called
+  `mtl::mult` directly, which is constrained to `Matrix`, so a matrix-free
+  operator did not compile. `tests/unit/itl/test_krylov_matrix_free.cpp` now
+  runs all ten solvers on one.)
 
-The contract is *structural* (whatever `mtl::mult` accepts), not a hard concept
-bound on the signature — deliberately, so the matrix-free door stays open.
+The contract is *structural* (a `Matrix`, or `A * x`), not a hard concept bound on
+the signature — deliberately, so the matrix-free door stays open.
 
 ---
 
@@ -229,7 +236,7 @@ Every solver carries an optional `Accumulator` template parameter, forwarded to 
 operations it composes:
 
 ```cpp
-mtl::mult<Accumulator>(A, p, q);
+apply_operator<Accumulator>(A, p, q);   // mtl::mult<Accumulator> for a Matrix
 value_type rho = mtl::dot<Accumulator, value_type>(r, z);
 ```
 
@@ -241,6 +248,13 @@ The solver does not implement mixed precision itself; it *passes the request
 through* to `mult`/`dot`, so the library's mixed-precision story extends into the
 iterative methods without the solver knowing how it is honored. `Accumulator = void`
 (the default) leaves the ordinary dispatch untouched.
+
+A matrix-free operator does its own accumulation inside `A * x`, so a non-void
+`Accumulator` cannot reach its matvec. The solvers accept the pair anyway, and the
+accumulator then governs only their dot products. This is option (b) of #278, chosen
+to match the eigensolvers' `ev_matvec` (#591): rejecting the combination at compile
+time would forbid a reasonable request — accurate inner products around an operator
+the caller controls — for the sake of a contract the caller can already read.
 
 ---
 
@@ -269,7 +283,7 @@ over operator and vector, policy objects for control) recur throughout.
   Simpler and overhead-free, at the cost of no polymorphic solver handle — the same
   trade the operation layer makes.
 - **No hard operator concept at the signature.** `LinearOp` is unconstrained; the
-  "must support `mult`" contract is enforced by use, not by a `requires` clause.
+  "a `Matrix`, or `A * x`" contract is enforced by use, not by a `requires` clause.
   This is deliberate — a formal `Matrix` bound would slam the matrix-free door that
   Decision 2 exists to keep open. (A `LinearOperator` concept exists in the library
   for callers who want to assert the contract; the solvers do not force it.)

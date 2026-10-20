@@ -6,6 +6,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 
 namespace mtl::itl {
 
@@ -16,6 +17,8 @@ namespace mtl::itl {
 /// matrix-vector products (see math/accumulator_traits.hpp, #158).
 /// Defaults to void, matching dot()/mult()'s own default -- unspecified
 /// behavior is unchanged.
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -31,7 +34,7 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
     // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i) {
         r(i) = b(i) - Ax(i);
         rtilde(i) = r(i);
@@ -70,7 +73,7 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         M.solve(phat, p);
 
         // vhat = A * phat
-        mtl::mult<Accumulator>(A, phat, vhat);
+        apply_operator<Accumulator>(A, phat, vhat);
 
         // alpha = rho_1 / dot(rtilde, vhat)
         value_type rtv = mtl::dot<Accumulator, value_type>(rtilde, vhat);
@@ -96,7 +99,7 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             x(i) += alpha * uhat(i);
 
         // qhat = A * uhat
-        mtl::mult<Accumulator>(A, uhat, qhat);
+        apply_operator<Accumulator>(A, uhat, qhat);
 
         // r -= alpha * qhat
         for (size_type i = 0; i < n; ++i)

@@ -12,6 +12,7 @@
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>
 
@@ -19,8 +20,10 @@ namespace mtl::itl {
 
 /// IDR(s) solver for non-symmetric systems A*x = b.
 /// s = shadow space dimension (larger s -> faster convergence, more memory).
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
-          Matrix LinearOp, typename VecX, typename VecB,
+          typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
     requires FieldVector<VecX>
 int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
@@ -54,7 +57,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
 
     // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i)
         r(i) = b(i) - Ax(i);
 
@@ -69,7 +72,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
         // v = M^{-1} r
         M.solve(v, r);
         vec::dense_vector<value_type> Av(n);
-        mtl::mult<Accumulator>(A, v, Av);
+        apply_operator<Accumulator>(A, v, Av);
         for (size_type i = 0; i < n; ++i)
             t(i) = Av(i);
 
@@ -171,7 +174,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
 
         // t = A * vhat
         vec::dense_vector<value_type> Avhat(n);
-        mtl::mult<Accumulator>(A, vhat, Avhat);
+        apply_operator<Accumulator>(A, vhat, Avhat);
         for (size_type i = 0; i < n; ++i)
             t(i) = Avhat(i);
 

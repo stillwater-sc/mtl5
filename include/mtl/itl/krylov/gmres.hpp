@@ -10,6 +10,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/givens.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl::itl {
@@ -31,7 +32,7 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
     // r = M^{-1}(b - A*x)
     vec::dense_vector<value_type> r0(n), r(n);
     vec::dense_vector<value_type> Ax(n);
-    mtl::mult<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, Ax);
     for (size_type i = 0; i < n; ++i)
         r0(i) = b(i) - Ax(i);
     M.solve(r, r0);
@@ -61,7 +62,7 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
     for (; k < kmax; ++k) {
         // w = M^{-1}(A * V[k])
         vec::dense_vector<value_type> w_tmp(n), w(n);
-        mtl::mult<Accumulator>(A, V[k], w_tmp);
+        apply_operator<Accumulator>(A, V[k], w_tmp);
         M.solve(w, w_tmp);
 
         // Modified Gram-Schmidt
@@ -130,6 +131,8 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
 /// GMRES with restart.
 /// Solves A*x = b with left preconditioner M.
 /// restart: maximum Krylov subspace dimension before restart (default 30).
+/// A is a Matrix or any LinearOperator (A * x). With a matrix-free A the
+/// Accumulator reaches only the dot products (apply_operator.hpp, #278).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
