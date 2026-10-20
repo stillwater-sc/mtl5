@@ -46,7 +46,7 @@ Every new `Accumulator` parameter defaults to `void`, which runs exactly the cod
 - **Accumulator-typed reductions run on the thread pool** (#584). `dot`, `dot_real`, `two_norm` and `frobenius_norm` with an explicit `Accumulator` split across `thread_pool` when `mergeable_accumulator<Acc, Value>` holds, combining partials with `accumulator_traits::merge` (5.18.0) in chunk order.
   - **Determinism:** an exact accumulator gives the serial bits at every thread count. For a posit⟨32,2⟩ quire over 2²⁰ elements it went from 830 ms on one thread to 125 ms on eight, with identical bits.
   - Accumulators without a `merge`, and non-dense operands, stay serial. The new `detail::parallel_accumulate` and `detail::accumulate` carry it.
-- **`math::exact_accumulator<T>`** (#612, #611), in `include/mtl/math/exact_accumulator.hpp`. The test-only Kulisch accumulator of #589 moves into the library: an exact sum of products of `float` or `double`, rounded once to nearest-even, with subnormals and overflow handled. 80 bytes for float, 536 for double.
+- **`math::exact_accumulator<T>`** (#612, #611), in `include/mtl/math/exact_accumulator.hpp`. The test-only Kulisch accumulator of #589 moves into the library: an exact sum of products of `float` or `double`, rounded once to nearest-even, with subnormals and overflow handled. Each object is 88 bytes for float and 544 for double: 10 or 67 64-bit limbs plus a non-finite flag.
   - **Non-finite inputs follow IEEE**, kept apart from the finite sum.
   - **Operand types:** `V` must be exactly representable in `T`. `long double` is excluded.
   - **Integration:** it plugs in through the ADL hook, so every accumulator-aware operation takes it, and its `merge` is exact.

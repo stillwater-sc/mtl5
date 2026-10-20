@@ -93,8 +93,8 @@ There is a way to raise accumulation precision without a wide accumulator. A Kul
 What this scenario changes in the rest of the document:
 
 - **State size.**
-  - A Dot2 state is 2 words: 16 bytes for `double`. A Kulisch accumulator for `double` is 536 bytes (`math::exact_accumulator<double>`: 67 limbs of 64 bits).
-  - A right-looking factorization that keeps a live accumulator for every trailing entry (§2) therefore needs **2× the matrix** with Dot2, and **67×** with Kulisch-double.
+  - A Dot2 state is 2 words: 16 bytes for `double`. A Kulisch accumulator for `double` is 544 bytes (`math::exact_accumulator<double>`: 67 limbs of 64 bits plus a non-finite flag).
+  - A right-looking factorization that keeps a live accumulator for every trailing entry (§2) therefore needs **2× the matrix** with Dot2, and **68×** with Kulisch-double.
   - So compensated accumulation is the scenario in which a scattering form can keep an accumulator per entry at practical cost. The trade is accuracy beyond `cond ≈ 1/eps`.
 - **Rounding.** It is not exact. Each `two_sum` is exact for its own pair, but `c` accumulates rounding of its own. "Rounded once" becomes "accurate to the K-fold bound". The corollaries above still hold, with "round once" read as "round to K-fold precision": the initial value goes in through `assign`, and nonlinear steps come after the round-out.
 - **Merge.** Two Dot2 states merge with a `two_sum` of the sums plus the sum of the errors (`accumulator_traits.hpp`). That is cheap and stays within the bound. But it is **not associative**, so a threaded or distributed reduction is accurate without being bit-reproducible across partitions (§4).
@@ -161,12 +161,12 @@ A right-looking form *can* use an exact accumulator: keep a live accumulator for
 
 | accumulator | size per entry | n² of them, relative to the matrix |
 |---|---|---|
-| Kulisch, `double` (`math::exact_accumulator<double>`) | 536 bytes | 67× |
-| Kulisch, `float` | 80 bytes | 20× |
+| Kulisch, `double` (`math::exact_accumulator<double>`) | 544 bytes | 68× |
+| Kulisch, `float` | 88 bytes | 22× |
 | posit⟨32,2⟩ quire | 512 bits = 64 bytes | 16× |
 | compensated (Dot2), `double` | 16 bytes | 2× |
 
-At n = 1000, Kulisch-double means 536 MB of accumulators for an 8 MB matrix, and every trailing update reads and writes 536 bytes per entry. This is reasonable when n is small or the work is tiled: a block's own accumulators can live for that block's updates. It is not reasonable for a large dense matrix.
+At n = 1000, Kulisch-double means 544 MB of accumulators for an 8 MB matrix, and every trailing update reads and writes 544 bytes per entry. This is reasonable when n is small or the work is tiled: a block's own accumulators can live for that block's updates. It is not reasonable for a large dense matrix.
 
 The sparse factorizations take a middle road. Gilbert–Peierls LU (`sparse_lu_numeric`) is left-looking over columns, but within a column it scatters, `x −= L(:,j)·x(j)`, into a dense workspace. MTL5 makes that workspace a vector of `Acc`:
 - each entry's whole reduction lives in its own accumulator;
@@ -345,7 +345,7 @@ A distributed dot product or norm ends in `MPI_Allreduce`. The reduction tree de
 | compensated (Dot2) states, custom `MPI_Op` | 2 words | no (the merge is not associative) | twice working precision |
 | DotK states | K words, after a local DotK | no | K-fold |
 | binned summation (ReproBLAS style) | a few words | yes | comparable to or better than the plain sum, independent of order |
-| Kulisch / quire state, custom `MPI_Op` | 536 bytes for `double`, 64 bytes for a posit⟨32,2⟩ quire | yes | exact, one rounding |
+| Kulisch / quire state, custom `MPI_Op` | 544 bytes for `double`, 64 bytes for a posit⟨32,2⟩ quire | yes | exact, one rounding |
 
 The exact merge is the only option that is both reproducible and correctly rounded. Its cost is bandwidth, about 67 times a double per value, which for a scalar reduction is still one small message. Compensated states are the cheap middle: accurate, but not reproducible.
 

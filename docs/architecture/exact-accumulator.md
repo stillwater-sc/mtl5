@@ -58,10 +58,12 @@ struct exact_accumulator {
 
 Bit 0 of `w` has weight `2^lsb`, where `lsb` is the exponent of the smallest product of two subnormals. The top of the array is set by the largest product of two finite values, plus 64 carry bits:
 
-| `T` | `lsb` | bits | limbs | size |
-|---|---|---|---|---|
-| `float` | −298 | 618 | 10 | 80 bytes |
-| `double` | −2148 | 4260 | 67 | 536 bytes |
+| `T` | `lsb` | bits | limbs | limb array | `sizeof` |
+|---|---|---|---|---|---|
+| `float` | −298 | 618 | 10 | 80 bytes | 88 bytes |
+| `double` | −2148 | 4260 | 67 | 536 bytes | 544 bytes |
+
+`sizeof` adds the `special` byte, padded to the limbs' 8-byte alignment. Workspace estimates should use it.
 
 The 64 carry bits mean that up to 2^64 maximal products can be added before the integer could wrap.
 
