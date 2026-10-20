@@ -134,7 +134,7 @@ The test factors and solves Hilbert(n) in float, `x(i) = (1 + (7919·i) mod 13) 
 | dense `inv`, `x = inv(A)·b` | 5 | 1.4e-3 | 3.1e-4 | **2.5e-5** |
 | | 8 | 1.7e-1 | 6.9e-1 | **3.8e-3** |
 
-- **What is asserted.** For n = 5..8, exact is at least 2× below both plain and FMA for LU and Cholesky, and at least 4× for `inv`. The measured margins are larger: 4.3× for dense LU, 2.9× for dense Cholesky, 10× for `inv`, and 2.8× for the sparse factorizations. FMA is worse than plain in two cells (sparse LU at n = 8, `inv` at n = 8), so the finding above holds here as well.
+- **What is asserted.** For n = 5..8, exact is at least 2× below both plain and FMA for LU and Cholesky, and at least 4× for `inv`. The measured margins are larger. The smallest, over n = 5..8 and against the better of plain and FMA, are 4.3× for dense LU, 2.9× for dense Cholesky, 10× for `inv` (n = 6), and 2.8× for the sparse factorizations. FMA is worse than plain in two cells (sparse LU at n = 8, `inv` at n = 8), so the finding above holds here as well.
 - **Hilbert(9).** Its smallest eigenvalue is about 5e-13. Under plain and FMA, sparse and dense Cholesky both stop with *not positive definite*. Under exact, both factor it, with a residual below 1e-7.
 - **Refinement.** This is the strongest result. The factor is in float, and the residual is in double (`supernodal_lu_solve_refined<float, Acc>`, Hilbert(n), n = 9..11). Plain and FMA stall at relative residuals between 1.2e-4 and 5.3e-4. Exact converges to 1.1e-12, 7.3e-12 and 6.8e-13 at n = 9, 10 and 11; the test asserts below 1e-10. Only the accumulator differs between the three runs.
 
