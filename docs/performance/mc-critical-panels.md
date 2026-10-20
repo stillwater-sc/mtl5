@@ -102,24 +102,58 @@ These are the points where the plan changed:
 - **Control:** the 17 points whose plan did not change agree within 2%. That
   includes every T=1 point, since the serial path is untouched.
 
+## Measured: Xeon E5-2420 v2
+
+The run used `benchmarks/machines/xeon-e5-2420-mc.sh`:
+
+- pinned to the six physical cores 0–5;
+- the same protocol as the i7;
+- data in `benchmarks/data/xeon-e5-2420-mc458`.
+
+The governor was `ondemand`, which the sidecar records. The median round-to-round
+spread was still 0.9% (maximum 2.5%).
+
+This is the machine #458's curve was measured on. The table lists every point
+where the plan changed:
+
+| shape | T | `mc` old → new | critical panels | predicted | old GF/s | new GF/s | measured |
+|---|---|---|---|---|---|---|---|
+| 512×8192×1024 | 2 | 32 → 24 | 48 → 44 | ×1.091 | 15.6 | 17.4 | **×1.115** |
+| 512×8192×1024 | 4 | 32 → 18 | 24 → 23 | ×1.043 | 29.5 | 31.9 | **×1.082** |
+| 1000×1000×1000 | 2 | 32 → 24 | 96 → 84 | ×1.143 | 15.9 | 18.4 | **×1.155** |
+| 1000×1000×1000 | 4 | 32 → 18 | 48 → 42 | ×1.143 | 30.7 | 35.5 | **×1.158** |
+| 1000×1000×1000 | 6 | 28 → 24 | 30 → 28 | ×1.071 | 47.2 | 50.7 | **×1.075** |
+| 1024×1024×1024 | 2 | 32 → 30 | 96 → 86 | ×1.116 | 16.2 | 18.2 | **×1.121** |
+| 1024×1024×1024 | 4 | 32 → 24 | 48 → 44 | ×1.091 | 31.0 | 34.3 | **×1.107** |
+| 2048×2048×2048 | 2 | 32 → 18 | 192 → 171 | ×1.123 | 16.3 | 18.6 | **×1.146** |
+| 2048×2048×2048 | 4 | 32 → 30 | 96 → 87 | ×1.103 | 31.6 | 35.5 | **×1.123** |
+| 2048×2048×2048 | 6 | 32 → 18 | 66 → 57 | ×1.158 | 45.3 | 52.6 | **×1.162** |
+| 3000×3000×1000 | 2 | 32 → 30 | 282 → 250 | ×1.128 | 16.4 | 18.6 | **×1.133** |
+| 3000×3000×1000 | 4 | 32 → 30 | 144 → 125 | ×1.152 | 31.4 | 35.6 | **×1.133** |
+| 3000×3000×1000 | 6 | 32 → 24 | 96 → 84 | ×1.143 | 46.4 | 52.5 | **×1.133** |
+| 4096×4096×1024 | 2 | 32 → 18 | 384 → 342 | ×1.123 | 16.3 | 18.6 | **×1.140** |
+| 4096×4096×1024 | 4 | 32 → 18 | 192 → 171 | ×1.123 | 31.5 | 36.0 | **×1.143** |
+| 4096×4096×1024 | 6 | 32 → 18 | 132 → 114 | ×1.158 | 46.1 | 53.3 | **×1.158** |
+
+- **Faster:** all 16 changed plans, by 7.5–16.2%. The issue's own point, 2048³
+  at T=6, went from 45.3 to 52.6 GF/s. That is above the best point of the
+  issue's override sweep, 51.2 GF/s at `mc = 12`, which was measured in a
+  different session.
+- **Slower:** none.
+- **Control:** the 8 unchanged points, including all four T=1 points, agree
+  within 1%.
+- **Per point, the panel model is a prediction rather than just a fit:**
+  - Xeon: r = +0.91 between predicted and measured ratio, and measured gains
+    average ×1.010 of predicted.
+  - i7: the predicted range is narrow compared with the noise, so r is only
+    +0.42, but the calibration is ×1.005.
+
 ## Not yet measured
 
-**Xeon E5-2420 v2.** This is where the curve was found and where the largest
-gain is predicted:
-
-- predicted: ×1.04–1.16 at T=2..6, from the panel count;
-- already in the issue's curve: the shipped `mc = 32` at 2048³ T=6 measured
-  ×0.885 of the best point;
-- to run: `benchmarks/machines/xeon-e5-2420-mc.sh`, writing to
-  `benchmarks/data/xeon-e5-2420-mc458`.
-
-**Ryzen 9 8945HS (Zen 4).** This is #458's third acceptance machine. Run
-`ARMS="default legacymc"` with its existing profile, after giving that profile its
-own `OUTDIR`.
-
-Until both are in, this is a measured improvement on one machine and a
-prediction on the others. It is not yet the "rule that predicts the optimum on
-all three machines" that #458 asks for.
+**Ryzen 9 8945HS (Zen 4)** is the third machine in #458's acceptance criterion.
+Run `ARMS="default legacymc"` with its existing profile, after giving that
+profile its own `OUTDIR`. If its build derives the same `mr = 6` and
+`mc_max = 64` as the i7, the rule changes the same plans there.
 
 ## Reproducing
 

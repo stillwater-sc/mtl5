@@ -58,8 +58,9 @@ the shipped threaded `mc = 32` (`mr = 6`) ran every ic block as 5.33 panels
 padded to 6. The busiest thread's panel count correlates with this curve at
 r = +0.83 (kc = 512) and +0.74 (kc = 256); the block-count balance that
 `balanced_mc` optimised correlates at +0.23 and 0.00. `balanced_mc` now chooses
-by panels, which measured 3–9% faster on 12 of the 13 plans it changed on an
-i7-12700K and slower on none. See
+by panels. On this Xeon that measured 7.5–16.2% faster on all 16 plans it
+changed, including 45.3 → 52.6 GF/s at this curve's 2048³ T=6 point. On an
+i7-12700K it measured 3–9% faster on 12 of 13. Neither machine was slower anywhere. See
 [the threaded ic step, counted in micro-panels](mc-critical-panels.md).
 
 ### 3. Partition arithmetic has produced the largest measured wins
