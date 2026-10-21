@@ -190,9 +190,10 @@ GF/s is the best of 4 rounds; "median" is the ratio of the round medians.
 
 ```bash
 benchmarks/machines/i7-12700k-mc.sh   # or xeon-e5-2420-mc.sh, ryzen-9-8945hs-mc.sh
+machine=i7-12700k                     # or xeon-e5-2420, ryzen-9-8945hs
 python3 benchmarks/analyze_blocking_ab.py \
-    benchmarks/data/<machine>-mc458/blocking_ab_legacymc.csv \
-    benchmarks/data/<machine>-mc458/blocking_ab_default.csv
+    "benchmarks/data/${machine}-mc458/blocking_ab_legacymc.csv" \
+    "benchmarks/data/${machine}-mc458/blocking_ab_default.csv"
 ```
 
 In the analyzer's output, a ratio below 1 means the new rule (`default`) is

@@ -252,6 +252,16 @@ for a in $ARMS; do
     fi
 done
 
+# A header-only CSV is a run that measured nothing. Two of them would compare
+# equal below -- an empty blocking key matches an empty one -- and be offered as
+# a consistency pair, so refuse it here rather than hand the analyzer no data.
+for a in $ARMS; do
+    if [ "$(awk 'END { print NR }' "$(arm_csv "$a")" 2>/dev/null || echo 0)" -lt 2 ]; then
+        echo "error: $(arm_csv "$a") has no data rows; arm '$a' measured nothing" >&2
+        exit 1
+    fi
+done
+
 echo
 echo "wrote (+ .sysinfo sidecars):"
 for a in $ARMS; do echo "  $(arm_csv "$a")"; done
@@ -287,7 +297,8 @@ CHECKS=""
 for a in $ARMS; do
     for b in $ARMS; do
         [ "$a" \< "$b" ] || continue
-        [ "$(blocking_of "$a")" = "$(blocking_of "$b")" ] || continue
+        ka=$(blocking_of "$a")
+        [ -n "$ka" ] && [ "$ka" = "$(blocking_of "$b")" ] || continue
         CHECKS="$CHECKS  benchmarks/analyze_blocking_ab.py $(arm_csv "$a") $(arm_csv "$b")\n"
     done
 done
