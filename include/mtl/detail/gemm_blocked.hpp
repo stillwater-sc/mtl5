@@ -69,14 +69,59 @@ using packed_buffer = std::vector<T, aligned_allocator<T>>;
 /// Default GEMM thread count: the persistent pool's size (env MTL5_NUM_THREADS,
 /// clamped to hardware concurrency; 1 when unset/invalid). Using the pool as the
 /// single source of truth guarantees the GEMM's team never exceeds the pool.
-/// Choose the ic-block size that balances the threaded m-partition (#408).
+/// Micro-panels on the busiest thread of a round-robin ic partition: blocks of
+/// `mc` rows handed to `ic_nt` threads in turn, each block costing
+/// `ceil(rows / mr)` panels because the micro-kernel computes whole `mr`-row
+/// tiles. This, not the block count, is the threaded nest's critical path (#458).
+///
+/// Closed form, so the planner allocates nothing: thread 0 always holds the most
+/// blocks, `ceil(nib / ic_nt)` of them, and the only block shorter than `mc` is
+/// the last, which lands on a thread holding that many. The busiest thread is
+/// shortened by it only when it is the ONLY thread holding that many.
+constexpr std::size_t critical_panels(std::size_t m, std::size_t mc, unsigned ic_nt,
+                                      std::size_t mr) noexcept {
+    if (m == 0 || mc == 0 || ic_nt == 0) return 0;
+    if (mr == 0) mr = 1;
+    const std::size_t nib  = (m + mc - 1) / mc;
+    const std::size_t per  = (nib + ic_nt - 1) / ic_nt;          // blocks on thread 0
+    const std::size_t full = (mc + mr - 1) / mr;                 // panels per full block
+    const std::size_t rem  = m % mc;                             // rows in a short last block
+    const std::size_t at_max = (nib % ic_nt == 0) ? ic_nt : nib % ic_nt;
+    if (rem == 0 || at_max > 1) return per * full;
+    return (per - 1) * full + (rem + mr - 1) / mr;
+}
+
+/// Choose the ic-block size for the threaded m-partition (#408, #458).
 ///
 /// `mc_max` is an UPPER bound set by the L2 budget -- any smaller value is still
-/// cache-legal -- so we are free to trade a little block size for a partition
-/// that divides evenly across the team. The threaded nest hands ic-blocks to the
-/// `ic_nt` members round-robin, so the most-loaded thread gets
-/// `ceil(nib / ic_nt)` blocks and the critical path is minimised when `nib` is a
-/// MULTIPLE of `ic_nt`. This picks the largest `mc <= mc_max` achieving that.
+/// cache-legal -- so we are free to trade a little block size for a shorter
+/// critical path. The threaded nest hands ic-blocks to the `ic_nt` members
+/// round-robin, so the most-loaded thread gets `ceil(nib / ic_nt)` blocks.
+///
+/// THE CRITICAL PATH IS COUNTED IN MICRO-PANELS, NOT BLOCKS (#458). This used to
+/// round `nib` up to a multiple of `ic_nt` and stop there, which is right about
+/// the block count and blind to what a block costs: `ceil(mc / mr)` panels,
+/// whole or not. At the shipped threaded mc = 32 with mr = 6, every block is
+/// 5.33 panels and runs as 6, a ragged panel in EVERY block -- something the
+/// serial path, which rounds mc to whole panels, never does. That is the
+/// T=1-vs-T=6 divergence #458 measured: the two thread counts were not running
+/// the same blocks. Against the Xeon E5-2420 v2 curve that issue reported
+/// (2048^3, T=6), the busiest thread's panel count correlates with throughput at
+/// r = +0.83 (kc = 512) and +0.74 (kc = 256); the block-count balance this
+/// function used to optimise correlates at +0.23 and 0.00. (It did not reliably
+/// reach that balance either: `ceil(m / ceil(m / nib))` is not `nib`.)
+///
+/// So the even partition below is now the INCUMBENT, and a block size in
+/// `[ceil(mc_max / 2), mc_max]` replaces it only when it gives the busiest
+/// thread strictly fewer panels. Ties keep the incumbent, so a plan that was
+/// already panel-optimal -- #408's mc = 64 at m = 1024 on 8 threads, and the
+/// i7-12700K's shipped plans at T = 8 -- does not move.
+///
+/// THE WINDOW IS THE GUARD AGAINST SMALL BLOCKS. Counted in panels alone, a
+/// single-panel block is always optimal, and it is not: every ic block costs a
+/// pass over the shared packed B panel. On an i7-12700K at kc = 1024, mc = 6
+/// ran at x0.61-0.87 of mc = 16 on eight threads. Searching no lower than half
+/// the cache bound limits that to at most twice the blocks.
 ///
 /// Why this is needed at all: `mc` used to be rounded down to a multiple of `mr`
 /// in derive_blocking, which coupled the L2 block size to the register tile. The
@@ -127,8 +172,28 @@ inline std::size_t balanced_mc(std::size_t m, std::size_t mc_max, unsigned ic_nt
     const std::size_t mc = (m + nib - 1) / nib;         // rows per block; <= mc_max
     if (mc == 0) return mc_max;
 
-    // The even partition is tile-legal: take it, exactly as before.
-    if (mr <= 1 || mc >= mr || mc_max < mr) return mc;
+    if (mr <= 1 || mc_max < mr) return mc;
+
+    // The even partition is tile-legal: it is the incumbent, and a block size in
+    // the window replaces it only on strictly fewer critical panels (#458).
+    //
+    // MTL5_GEMM_LEGACY_BALANCED_MC restores the pre-#458 rule -- the incumbent,
+    // unsearched -- for the `legacymc` benchmark arm, so a machine can A/B the
+    // two in one session from one tree. A diagnostic, like the C-strip cap's
+    // macro: nothing ships with it defined.
+#if defined(MTL5_GEMM_LEGACY_BALANCED_MC)
+    if (mc >= mr) return mc;
+#endif
+    if (mc >= mr) {
+        std::size_t best_mc = mc;
+        std::size_t best_p  = critical_panels(m, mc, ic_nt, mr);
+        const std::size_t lo = std::max(mr, (mc_max + 1) / 2);
+        for (std::size_t cand = mc_max; cand >= lo; --cand) {   // larger first: strict < keeps it on ties
+            const std::size_t p = critical_panels(m, cand, ic_nt, mr);
+            if (p < best_p) { best_mc = cand; best_p = p; }
+        }
+        return best_mc;
+    }
 
     // Sub-tile, so no even partition is tile-legal. Choose among the WHOLE-TILE
     // block sizes instead: `mr, 2*mr, ... ` up to the cache bound.

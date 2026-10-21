@@ -69,6 +69,8 @@ fi
 #   mconly     L2    -- mc detected, kc from the default model
 #   ccap       L2    -- mconly PLUS the runtime C-strip bound on mc (#453)
 #   ccap2      L2    -- as ccap, but the bound charges the C strip ALONE
+#   legacymc   none  -- `default` with the pre-#458 balanced_mc: the threaded
+#                       ic step chosen by block count, not by micro-panels
 #
 # kconly/mconly exist because the four-machine result (#430) implicated kc and
 # exonerated mc without ever varying them separately: the Ryzen run happened to
@@ -82,7 +84,7 @@ for a in $ARMS; do
     b="$BUILD_DIR/benchmarks/bench_blocking_ab_$a"
     if [ ! -x "$b" ]; then
         echo "missing $b" >&2
-        echo "known arms: default detected kconly mconly ccap ccap2" >&2
+        echo "known arms: default detected kconly mconly ccap ccap2 legacymc" >&2
         echo "build with:  cmake --preset release && cmake --build $BUILD_DIR --target \\" >&2
         for x in $ARMS; do echo "                 bench_blocking_ab_$x \\" >&2; done
         echo "                 -j4" >&2
@@ -250,6 +252,29 @@ for a in $ARMS; do
     fi
 done
 
+# A CSV with no complete record is a run that measured nothing. Two of them
+# would compare equal below -- an empty blocking key matches an empty one -- and
+# be offered as a consistency pair, so refuse it here rather than hand the
+# analyzer no data. Count RECORDS, not lines: a blank line is not a row, and a
+# row missing a field the key is built from (mc_used, where the header has it)
+# would silently drop out of the comparison.
+csv_records() {
+    awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
+             { if (NF < 2 || $col["kc"] == "" || $col["mc"] == "" || $col["gflops"] == "" ||
+                   (col["mc_used"] && $col["mc_used"] == "")) { bad = 1; exit }
+               n++ }
+             END { print (bad || !(col["kc"] && col["mc"] && col["gflops"])) ? -1 : n + 0 }' \
+        "$1" 2>/dev/null || echo -1
+}
+for a in $ARMS; do
+    n=$(csv_records "$(arm_csv "$a")")
+    if [ "$n" -lt 1 ]; then
+        if [ "$n" -lt 0 ]; then why="a blank or incomplete record"; else why="no data rows"; fi
+        echo "error: $(arm_csv "$a") has $why; arm '$a' did not measure cleanly" >&2
+        exit 1
+    fi
+done
+
 echo
 echo "wrote (+ .sysinfo sidecars):"
 for a in $ARMS; do echo "  $(arm_csv "$a")"; done
@@ -268,16 +293,25 @@ echo "$ARMS" | grep -qw "$BASE" || BASE=$FIRST_ARM
 # read silently returns (mc,nc) for the older layout. It happens to group
 # correctly today, because a session only ever reads files it just wrote, which
 # is exactly the kind of accident that stops being true later.
+#
+# AND BY WHAT THE NEST STEPPED, not only what it was configured with. `legacymc`
+# (#458) derives the same kc/mc as `default` and then chooses a different ic
+# step at run time, so comparing configured blocking alone called a real A/B a
+# consistency check -- and told the operator the arms "must agree". Where the
+# file records mc_used, every row's value joins the key.
 blocking_of() {
     awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
-             NR == 2 { if (col["kc"] && col["mc"]) print $col["kc"] "," $col["mc"]; exit }' \
+             NR == 2 { if (!(col["kc"] && col["mc"])) exit; key = $col["kc"] "," $col["mc"] }
+             col["mc_used"] { key = key ";" $col["mc_used"] }
+             END { if (key != "") print key }' \
         "$(arm_csv "$1")" 2>/dev/null
 }
 CHECKS=""
 for a in $ARMS; do
     for b in $ARMS; do
         [ "$a" \< "$b" ] || continue
-        [ "$(blocking_of "$a")" = "$(blocking_of "$b")" ] || continue
+        ka=$(blocking_of "$a")
+        [ -n "$ka" ] && [ "$ka" = "$(blocking_of "$b")" ] || continue
         CHECKS="$CHECKS  benchmarks/analyze_blocking_ab.py $(arm_csv "$a") $(arm_csv "$b")\n"
     done
 done

@@ -59,7 +59,7 @@ set_target_properties(bench_sparse PROPERTIES FOLDER "Benchmarks")
 # its configuration. It still built and ran, reporting "L2 only" -- a
 # misconfigured arm that looks like a working one, which is the failure this
 # whole benchmark tree exists to make impossible.
-set(_ab_arms default detected kconly mconly ccap ccap2)
+set(_ab_arms default detected kconly mconly ccap ccap2 legacymc)
 foreach(_arm ${_ab_arms})
     if(_arm STREQUAL "default")
         set(_def "")
@@ -77,6 +77,11 @@ foreach(_arm ${_ab_arms})
         # L2, every loss a shape where C already fitted.
         set(_def MTL5_ENABLE_CACHE_DETECTION_L2 MTL5_GEMM_C_STRIP_CAP
                  MTL5_GEMM_C_STRIP_CAP_C_ONLY)
+    elseif(_arm STREQUAL "legacymc")
+        # The pre-#458 balanced_mc: the threaded ic step chosen by block count,
+        # not by the busiest thread's micro-panels. `default` vs `legacymc` is the
+        # #458 before/after, from one tree in one session.
+        set(_def MTL5_GEMM_LEGACY_BALANCED_MC)
     else()
         message(FATAL_ERROR "no defines configured for A/B arm '${_arm}'")
     endif()

@@ -109,6 +109,7 @@ export default defineConfig({
           items: [
             { slug: 'performance/benchmarking-methodology' },
             { slug: 'performance/blocking-and-scheduling-assessment' },
+            { slug: 'performance/mc-critical-panels' },
             { slug: 'performance/hardware-expansion-plan' },
             { slug: 'performance/cache-blocking-ab-study' },
             { slug: 'performance/ikj-gemm-and-crs-dense' },

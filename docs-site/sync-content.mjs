@@ -101,6 +101,7 @@ const FILE_MAP = {
   'performance/cache-blocking-ab-study.md':    'performance/cache-blocking-ab-study.md',
   'performance/ikj-gemm-and-crs-dense.md':     'performance/ikj-gemm-and-crs-dense.md',
   'performance/blocking-and-scheduling-assessment.md': 'performance/blocking-and-scheduling-assessment.md',
+  'performance/mc-critical-panels.md':         'performance/mc-critical-panels.md',
   'performance/hardware-expansion-plan.md':    'performance/hardware-expansion-plan.md',
   'design/mixed-precision-custom-types-SIMD.md': 'design/mixed-precision-custom-types-simd.md',
 
