@@ -1,7 +1,7 @@
 # The threaded ic step, counted in micro-panels (#458)
 
 The multi-threaded `mc` response curve is W-shaped (#458). This page shows what
-causes it, the change that follows, and what has been measured so far.
+causes it, the change that follows, and its measured effect on three machines.
 
 ## The finding
 
@@ -148,16 +148,48 @@ where the plan changed:
   - i7: the predicted range is narrow compared with the noise, so r is only
     +0.42, but the calibration is ×1.005.
 
-## Not yet measured
+## Measured: Ryzen 9 8945HS (Zen 4)
 
-**Ryzen 9 8945HS (Zen 4)** is the third machine in #458's acceptance criterion.
-Run `benchmarks/machines/ryzen-9-8945hs-mc.sh` under WSL. If its build derives the same `mr = 6` and
-`mc_max = 64` as the i7, the rule changes the same plans there.
+The run used `benchmarks/machines/ryzen-9-8945hs-mc.sh`:
+
+- under WSL2, built with Clang 18 for AVX-512 (`build_isa` includes `AVX3_DL`);
+- pinned to one logical CPU per core, 0,2,…,14;
+- the same protocol as the other two machines;
+- data in `benchmarks/data/ryzen-9-8945hs-mc458`.
+
+Its blocking is `mr = 6`, `nr = 16`, `kc = 128` and `mc_max = 128`, not the
+i7's 64, so 128 rows is 21.33 panels per block. The rule moves fewer plans here
+than on the other machines: at T = 6 the old rule's `mc` (84, 86, 114) is
+already panel-optimal, and at T = 8 nothing in the window gives fewer panels.
+
+| shape | T | `mc` old → new | critical panels | predicted | old GF/s | new GF/s | best | median |
+|---|---|---|---|---|---|---|---|---|
+| 1024×1024×1024 | 2 | 128 → 102 | 88 → 86 | ×1.023 | 127.8 | 132.2 | **×1.034** | ×1.031 |
+| 2048×2048×2048 | 2 | 128 → 114 | 176 → 171 | ×1.029 | 114.2 | 119.8 | **×1.049** | ×1.009 |
+| 2048×2048×2048 | 4 | 128 → 102 | 88 → 87 | ×1.011 | 208.4 | 216.0 | **×1.037** | ×1.013 |
+| 4096×4096×1024 | 2 | 128 → 114 | 352 → 342 | ×1.029 | 108.0 | 114.9 | **×1.064** | ×1.038 |
+| 4096×4096×1024 | 4 | 128 → 114 | 176 → 171 | ×1.029 | 193.1 | 202.4 | **×1.048** | ×1.048 |
+
+GF/s is the best of 4 rounds; "median" is the ratio of the round medians.
+
+- **Faster:** all 5 changed plans, on both measures. At 1024² T=2 and at both
+  4096² points, the two arms' round ranges don't overlap. At the two 2048³
+  points they do, so those two are directional rather than resolved.
+- **Slower:** none.
+- **Control, T ≤ 4:** the 13 unchanged points agree within 1.7%, including
+  every T=1 point.
+- **Control, T = 6 and 8:** the unchanged points scatter from ×0.91 to ×1.12
+  between arms that run the same plan. The round-to-round spread there reaches
+  23%, against a median of 2.4% over the whole run. This is the noise floor of
+  a WSL2 guest at high thread counts, where Windows places the virtual CPUs; it
+  is not a property of either rule, and no changed plan sits in that range.
+- **Model:** the gains are small, ×1.01–1.03 predicted, so the per-point
+  correlation is weak (r = +0.66). Measured gains average ×1.021 of predicted.
 
 ## Reproducing
 
 ```bash
-benchmarks/machines/i7-12700k-mc.sh          # or xeon-e5-2420-mc.sh
+benchmarks/machines/i7-12700k-mc.sh   # or xeon-e5-2420-mc.sh, ryzen-9-8945hs-mc.sh
 python3 benchmarks/analyze_blocking_ab.py \
     benchmarks/data/<machine>-mc458/blocking_ab_legacymc.csv \
     benchmarks/data/<machine>-mc458/blocking_ab_default.csv
