@@ -252,12 +252,25 @@ for a in $ARMS; do
     fi
 done
 
-# A header-only CSV is a run that measured nothing. Two of them would compare
-# equal below -- an empty blocking key matches an empty one -- and be offered as
-# a consistency pair, so refuse it here rather than hand the analyzer no data.
+# A CSV with no complete record is a run that measured nothing. Two of them
+# would compare equal below -- an empty blocking key matches an empty one -- and
+# be offered as a consistency pair, so refuse it here rather than hand the
+# analyzer no data. Count RECORDS, not lines: a blank line is not a row, and a
+# row missing a field the key is built from (mc_used, where the header has it)
+# would silently drop out of the comparison.
+csv_records() {
+    awk -F, 'NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
+             { if (NF < 2 || $col["kc"] == "" || $col["mc"] == "" || $col["gflops"] == "" ||
+                   (col["mc_used"] && $col["mc_used"] == "")) { bad = 1; exit }
+               n++ }
+             END { print (bad || !(col["kc"] && col["mc"] && col["gflops"])) ? -1 : n + 0 }' \
+        "$1" 2>/dev/null || echo -1
+}
 for a in $ARMS; do
-    if [ "$(awk 'END { print NR }' "$(arm_csv "$a")" 2>/dev/null || echo 0)" -lt 2 ]; then
-        echo "error: $(arm_csv "$a") has no data rows; arm '$a' measured nothing" >&2
+    n=$(csv_records "$(arm_csv "$a")")
+    if [ "$n" -lt 1 ]; then
+        if [ "$n" -lt 0 ]; then why="a blank or incomplete record"; else why="no data rows"; fi
+        echo "error: $(arm_csv "$a") has $why; arm '$a' did not measure cleanly" >&2
         exit 1
     fi
 done
