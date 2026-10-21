@@ -5,6 +5,20 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The threaded GEMM chooses its ic step by micro-panels** (#458, #626). The serial path rounded `mc` down to whole `mr`-row panels; the threaded path rounded the ic block count up to a multiple of the thread count and kept whatever `mc` came out, so every block carried a padded partial panel. The Xeon's shipped threaded `mc = 32` against `mr = 6` ran 5.33 panels padded to 6. This is what made #458's multi-threaded `mc` curve W-shaped. The busiest thread's panel count fits that curve at r = +0.83; the block-count balance `balanced_mc` optimised fits at +0.23.
+  - **Rule:** in the threaded path, `balanced_mc` keeps the block-count result unless a block size in `[ceil(mc_max/2), mc_max]` gives the busiest thread strictly fewer panels (new `detail::critical_panels`, closed form). Ties keep the old plan; the window stops it shrinking blocks into extra passes over packed B. The serial path, the #488 sub-tile fallback and `mr = 1` callers are unchanged. `MTL5_GEMM_LEGACY_BALANCED_MC` restores the old rule for diagnosis.
+  - **Measured** (pinned, 4 interleaved rounds against the old rule built from the same tree): Xeon E5-2420 v2 all 16 changed plans faster by 7.5–16.2%, 2048³ T=6 45.3 → 52.6 GF/s; i7-12700K 12 of 13 faster by 3.1–9.2%; Ryzen 9 8945HS (Zen 4, WSL2) all 5 faster by 3.4–6.4%. None slower on any machine; T=1 unchanged everywhere. See `docs/performance/mc-critical-panels.md`.
+
+### Added
+
+- **`#458` before/after profiles** `benchmarks/machines/{xeon-e5-2420,i7-12700k,ryzen-9-8945hs}-mc.sh` and a `legacymc` benchmark arm, with the three machines' data under `benchmarks/data/*-mc458`.
+
+### Fixed
+
+- **`run_blocking_ab.sh` called `default` and `legacymc` a consistency pair** (#626). It compared configured kc/mc only; it now also keys on every row's `mc_used`. It also refuses an arm CSV with no complete data record, which previously compared equal to another empty one.
+
 ## [5.19.0] - 2026-10-20
 
 The accumulator policy now reaches every reduction-bearing routine in the library (#585): the dense direct factorizations, Bunch–Kaufman, the four incomplete-factorization preconditioners, `spgemm`, `svd`, `sum` and `trace`, the sparse eigensolvers, and the multigrid transfers and cycle. Accumulator-typed `dot` and norms run on the thread pool through `merge`, and the accumulator GEMM is up to 23× faster. Three new accumulation tools join plain and FMA:
