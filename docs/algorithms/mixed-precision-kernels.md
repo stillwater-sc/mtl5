@@ -328,6 +328,62 @@ is bit-identical across lane counts, unroll factors, backends and thread
 partitions, and a permuting instruction is simply free to use. The tests assert
 exact equality against a closed form and never mention lane order.
 
+### Block-scaled data: many short integer dots
+
+Block-quantized formats (GGML's Q4_0/Q8_0 and Q4_K/Q6_K, OCP MXINT8, the
+16-wide NVIDIA-style blocks) are not one integer vector but many short ones,
+each with its own float scale:
+
+```
+y = Σ_b  s_b · ( Σ_{j ∈ block b}  w_j · a_j )      s_b = scale_w[b] · scale_a[b]
+```
+
+One `reduce_dot_widen` per block is exact, but each call ends in a horizontal
+reduce, and for a 32-element block that reduce is most of the work: the block
+is a single AVX2 iteration, so wider vectors buy nothing.
+`simd::reduce_dot_block_scaled(a, x, scales, n_blocks, block)` (#628) keeps each
+block's integer sum in vector lanes instead, converts the lanes to float
+(`batch<float>::convert`) and fuses the scale in-register:
+
+```
+acc = fma(convert(block_lanes), broadcast(s_b), acc)     // per block, no reduce
+y   = reduce_add(acc)                                    // once per call
+```
+
+This is where the permutation of the previous section stops being free. Each
+block's integer *total* is still exact, but converting lane by lane rounds each
+lane's partial sum, and how the total is split across lanes depends on the
+vector width and, for 16-bit operands, on the ISA. So the result equals the
+per-block loop up to float re-association, not bit for bit. It is reproducible
+run to run on one target, because the float order is fixed by block index, but
+not across targets. For the same reason the overflow rule is a precondition, not
+"the sum wraps": each block needs `Σ |w_j·a_j| < 2³¹` (2³² for the unsigned
+pairs). Within a block, the multiple of the SIMD step runs in lanes and the rest
+is summed as a scalar, so any block length is correct. A block shorter than one
+step is not accelerated: 8-bit operands on AVX-512 have a 64-element step.
+
+Measured on an i7-12700K, single-threaded, with Highway's AVX2 target (8 float
+lanes; the `uint8 × int8` quad dot is decomposed there, not native),
+`benchmarks/bench_block_scaled_dot.cpp`, median of 21–501 runs. Times are ms per
+gemv. The dequantize baseline decodes each weight row to float and runs
+`reduce_dot<float>`:
+
+| shape | pair | block | per-block loop | dequantize | block-scaled |
+|---|---|---|---|---|---|
+| 256 × 2048 (in cache) | `int16 × int16` | 32 | 0.031 | 0.042 | **0.024** |
+| | `uint8 × int8` | 32 | 0.029 | 0.046 | **0.021** |
+| | `int16 × int16` | 256 | 0.015 | 0.035 | 0.015 |
+| | `uint8 × int8` | 256 | 0.013 | 0.043 | 0.012 |
+| 4096 × 4096 (DRAM) | `int16 × int16` | 32 | 1.67 | 2.23 | **1.45** |
+| | `uint8 × int8` | 32 | 1.00 | 1.65 | **0.72** |
+| | `int16 × int16` | 256 | 1.22 | 1.88 | 1.18 |
+| | `uint8 × int8` | 256 | 0.49 | 1.39 | 0.48 |
+
+At block 32 the per-block reduce was the cost, and removing it gains 1.3–1.4×
+in cache and 1.15–1.4× from DRAM, where 4096 × 4096 int16 weights stream at
+about one core's memory bandwidth. At block 256 the reduce is already amortized,
+and the two match.
+
 ---
 
 ## Designing your own mixed-precision algorithm

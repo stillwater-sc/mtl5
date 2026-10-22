@@ -181,6 +181,8 @@ class batch {
     V v_;
     explicit batch(V v) : v_(v) {}
 
+    template <typename> friend class batch;   // convert() reads another lane type's register
+
 public:
     using value_type = T;
     /// Lane count for the compiled target (compile-time constant).
@@ -227,6 +229,22 @@ public:
         return batch(hn::PromoteTo(d_, hn::LoadU(ds, p)));
     }
 
+    /// Lane-wise conversion of 32-bit integer lanes to float (#628): lane i of
+    /// the result is `static_cast<float>(v[i])`, rounded to nearest, ties to
+    /// even. Exact while |v[i]| <= 2^24.
+    ///
+    /// The lane counts agree because both lanes are 32 bits wide, so this is
+    /// one instruction on every target (`vcvtdq2ps` / NEON `scvtf`; the unsigned
+    /// form is native from AVX-512 and NEON, and emulated before that).
+    ///
+    /// It exists for one pattern: keeping per-block integer sums in vector
+    /// lanes and scaling them in-register, rather than reducing each block
+    /// horizontally first. See `reduce_dot_block_scaled` in simd/algorithm.hpp.
+    template <typename I>
+        requires(std::is_same_v<T, float> &&
+                 (std::is_same_v<I, std::int32_t> || std::is_same_v<I, std::uint32_t>))
+    static batch convert(batch<I> v) { return batch(hn::ConvertTo(d_, v.v_)); }
+
     /// Narrow values consumed by one `widen_dot_accumulate` call: a full narrow
     /// vector, which holds twice as many 16-bit lanes as this batch holds 32-bit
     /// ones. Compile-time, like `size`.
@@ -258,6 +276,15 @@ public:
     /// `sum1` MUST start zeroed; Highway leaves it untouched on targets that do
     /// not need it, so a nonzero initial value would silently be counted or not
     /// depending on the ISA.
+    ///
+    /// This is a PUBLIC building block, not only reduce_dot_widen's inner step.
+    /// A caller may keep the partial sums of one segment of the input (a
+    /// quantization block, say) in their own `sum0`/`sum1`, convert `sum0 +
+    /// sum1` to float and scale it in-register (#628). The integer total of the
+    /// segment is exact; what the permutation still decides is how that total
+    /// is split across lanes, and so how converting the lanes rounds. A float
+    /// result built this way is therefore reproducible on one target, not
+    /// across targets.
     template <typename Narrow>
     static void widen_dot_accumulate(const Narrow* a, const Narrow* b,
                                      batch& sum0, batch& sum1) {
@@ -289,6 +316,11 @@ public:
     ///
     /// The two operand types may differ: `(uint8, int8)` is VNNI's native shape
     /// and the reason the instruction exists. See `quad_accumulator`.
+    ///
+    /// Like `widen_dot_accumulate`, this is a public building block: a segment's
+    /// partial sums may be kept in their own `sum` and scaled after `convert`
+    /// (#628). Here the lane of every product IS specified, so the split across
+    /// lanes depends only on the vector width.
     template <typename NA, typename NB>
     static void quad_dot_accumulate(const NA* a, const NB* b, batch& sum) {
         static_assert(is_quad_widenable_v<NA> && is_quad_widenable_v<NB>,
@@ -383,6 +415,8 @@ class batch {
                   "before AVX512DQ.");
     T v_{};
 
+    template <typename> friend class batch;   // convert() reads another lane type's value
+
 public:
     using value_type = T;
     static constexpr std::size_t size = 1;
@@ -408,6 +442,13 @@ public:
                       "load_widen widens; use load_unaligned for equal-width types");
         return batch(static_cast<T>(p[0]));
     }
+
+    /// Integer -> float lane conversion -- scalar fallback; see the Highway
+    /// variant. `static_cast` rounds to nearest, as the SIMD instruction does.
+    template <typename I>
+        requires(std::is_same_v<T, float> &&
+                 (std::is_same_v<I, std::int32_t> || std::is_same_v<I, std::uint32_t>))
+    static batch convert(batch<I> v) { return batch(static_cast<float>(v.v_)); }
 
     /// Narrow values consumed per widen_dot_accumulate call. Two rather than
     /// one, so the fallback drives BOTH accumulators and the loop in

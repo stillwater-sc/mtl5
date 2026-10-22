@@ -11,6 +11,15 @@ target_include_directories(bench_all PRIVATE
 )
 set_target_properties(bench_all PROPERTIES FOLDER "Benchmarks")
 
+# Block-scaled integer gemv (#628): per-block reduce_dot_widen vs dequantize +
+# float dot vs reduce_dot_block_scaled, at block 32 and 256. Native-only; the
+# result is only meaningful with MTL5_WITH_HIGHWAY=ON and a -march that names
+# the target being measured.
+add_executable(bench_block_scaled_dot bench_block_scaled_dot.cpp)
+target_link_libraries(bench_block_scaled_dot PRIVATE MTL5::mtl5)
+target_include_directories(bench_block_scaled_dot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_target_properties(bench_block_scaled_dot PROPERTIES FOLDER "Benchmarks")
+
 # KLU performance scoreboard: native KLU vs SuiteSparse KLU (epic #138, Phase 0).
 # Links MTL5::mtl5, which propagates MTL5_HAS_KLU + the KLU library when the
 # build is configured with -DMTL5_WITH_SUITESPARSE_KLU=ON; otherwise it builds
