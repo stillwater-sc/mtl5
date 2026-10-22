@@ -5,11 +5,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
-### Changed
+## [5.20.0] - 2026-10-22
 
-- **The threaded GEMM chooses its ic step by micro-panels** (#458, #626). The serial path rounded `mc` down to whole `mr`-row panels; the threaded path rounded the ic block count up to a multiple of the thread count and kept whatever `mc` came out, so every block carried a padded partial panel. The Xeon's shipped threaded `mc = 32` against `mr = 6` ran 5.33 panels padded to 6. This is what made #458's multi-threaded `mc` curve W-shaped. The busiest thread's panel count fits that curve at r = +0.83; the block-count balance `balanced_mc` optimised fits at +0.23.
-  - **Rule:** in the threaded path, `balanced_mc` keeps the block-count result unless a block size in `[ceil(mc_max/2), mc_max]` gives the busiest thread strictly fewer panels (new `detail::critical_panels`, closed form). Ties keep the old plan; the window stops it shrinking blocks into extra passes over packed B. The serial path, the #488 sub-tile fallback and `mr = 1` callers are unchanged. `MTL5_GEMM_LEGACY_BALANCED_MC` restores the old rule for diagnosis.
-  - **Measured** (pinned, 4 interleaved rounds against the old rule built from the same tree): Xeon E5-2420 v2 all 16 changed plans faster by 7.5–16.2%, 2048³ T=6 45.3 → 52.6 GF/s; i7-12700K 12 of 13 faster by 3.1–9.2%; Ryzen 9 8945HS (Zen 4, WSL2) all 5 faster by 3.4–6.4%. None slower on any machine; T=1 unchanged everywhere. See `docs/performance/mc-critical-panels.md`.
+Block-quantized data becomes a first-class operand. `mat::block_matrix_view` is a read-only `Matrix` over the encoded bytes of a block-quantized format, parameterized by the new `BlockScheme` concept, with the OCP MXINT8 and MXFP4 schemes in-tree (#629). A scheme can plug in a fused gemv whose working memory the caller supplies. `simd::reduce_dot_block_scaled` is the inner-product kernel such formats need: each block's exact integer sum is scaled in-register, with one horizontal reduce per call (#628). The threaded GEMM now chooses its ic step by micro-panels, 3–16% faster on the configurations it changes, measured on three machines, and slower on none (#458).
+
+Everything new is additive. The GEMM change alters only how rows are split into blocks, not the order of any sum.
 
 ### Added
 
@@ -24,6 +24,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Measured** (i7-12700K, AVX2, single thread, `benchmarks/bench_block_scaled_dot.cpp`): at block 32 it is 1.3–1.4× faster than one `reduce_dot_widen` per block in cache, and 1.15–1.4× faster at 4096×4096; at block 256 the two match. The numbers and their limits are in `docs/algorithms/mixed-precision-kernels.md`.
 
 - **`#458` before/after profiles** `benchmarks/machines/{xeon-e5-2420,i7-12700k,ryzen-9-8945hs}-mc.sh` and a `legacymc` benchmark arm, with the three machines' data under `benchmarks/data/*-mc458`.
+
+### Changed
+
+- **The threaded GEMM chooses its ic step by micro-panels** (#458, #626). The serial path rounded `mc` down to whole `mr`-row panels; the threaded path rounded the ic block count up to a multiple of the thread count and kept whatever `mc` came out, so every block carried a padded partial panel. The Xeon's shipped threaded `mc = 32` against `mr = 6` ran 5.33 panels padded to 6. This is what made #458's multi-threaded `mc` curve W-shaped. The busiest thread's panel count fits that curve at r = +0.83; the block-count balance `balanced_mc` optimised fits at +0.23.
+  - **Rule:** in the threaded path, `balanced_mc` keeps the block-count result unless a block size in `[ceil(mc_max/2), mc_max]` gives the busiest thread strictly fewer panels (new `detail::critical_panels`, closed form). Ties keep the old plan; the window stops it shrinking blocks into extra passes over packed B. The serial path, the #488 sub-tile fallback and `mr = 1` callers are unchanged. `MTL5_GEMM_LEGACY_BALANCED_MC` restores the old rule for diagnosis.
+  - **Measured** (pinned, 4 interleaved rounds against the old rule built from the same tree): Xeon E5-2420 v2 all 16 changed plans faster by 7.5–16.2%, 2048³ T=6 45.3 → 52.6 GF/s; i7-12700K 12 of 13 faster by 3.1–9.2%; Ryzen 9 8945HS (Zen 4, WSL2) all 5 faster by 3.4–6.4%. None slower on any machine; T=1 unchanged everywhere. See `docs/performance/mc-critical-panels.md`.
 
 ### Fixed
 
