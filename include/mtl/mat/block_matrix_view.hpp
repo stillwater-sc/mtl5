@@ -27,12 +27,16 @@
 //   mult(view, x, y)         y = A x: a scheme-supplied fused kernel when there
 //                            is one (block_kernels<S>), otherwise decode each
 //                            row and dot it with x;
+//   mult(view, x, y, scratch) the same, with the fused kernel's working memory
+//                            supplied by the caller;
 //   view * x                 the same, into a new dense_vector.
 
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -159,22 +163,59 @@ namespace mtl {
 /// with simd::reduce_dot_block_scaled) specializes it:
 ///
 ///     template <> struct mtl::block_kernels<my_scheme> {
+///         // y = A x. `scratch` holds at least scratch_bytes(A.num_cols())
+///         // bytes, aligned to scratch_alignment.
 ///         static void gemv(const mtl::mat::block_matrix_view<my_scheme>& A,
-///                          const float* x, float* y);   // y = A x
+///                          const float* x, float* y, std::span<std::byte> scratch);
+///
+///         // Optional: working memory per call (default 0) and its alignment
+///         // (default alignof(std::max_align_t), a power of two).
+///         static std::size_t scratch_bytes(std::size_t cols);
+///         static constexpr std::size_t scratch_alignment = 64;
 ///     };
 ///
-/// mult() calls it for float input and output vectors with contiguous storage
-/// and no explicit Accumulator. The kernel owns its accuracy contract. The
-/// decode-then-dot path stays the reference it is measured against.
+/// The scratch is for what a fused kernel builds from x before it touches A,
+/// typically x quantized per block to the integer format the dots consume. It
+/// is the caller's memory, not the kernel's: mult(A, x, y, scratch) passes it
+/// through, so a runtime that sizes its buffers up front never allocates in
+/// the mat-vec. mult(A, x, y) allocates it for the one call.
+///
+/// mult() calls the kernel for float input and output vectors with contiguous
+/// storage and no explicit Accumulator. The kernel owns its accuracy contract.
+/// The decode-then-dot path stays the reference it is measured against.
 template <typename S>
 struct block_kernels {};
 
 /// Does the scheme supply a fused gemv?
 template <typename S>
 concept BlockGemvScheme = BlockScheme<S> &&
-    requires(const mat::block_matrix_view<S>& A, const float* x, float* y) {
-        block_kernels<S>::gemv(A, x, y);
+    requires(const mat::block_matrix_view<S>& A, const float* x, float* y,
+             std::span<std::byte> scratch) {
+        block_kernels<S>::gemv(A, x, y, scratch);
     };
+
+/// Scratch bytes mult() needs for a block matrix of scheme S with `cols`
+/// columns: the fused kernel's scratch_bytes(cols), or 0 when the scheme has
+/// no fused kernel or its kernel declares none.
+template <BlockScheme S>
+std::size_t block_gemv_scratch_bytes(std::size_t cols) {
+    if constexpr (BlockGemvScheme<S> &&
+                  requires { { block_kernels<S>::scratch_bytes(cols) } -> std::convertible_to<std::size_t>; })
+        return block_kernels<S>::scratch_bytes(cols);
+    else
+        return 0;
+}
+
+/// The alignment that scratch must have: the fused kernel's scratch_alignment,
+/// or alignof(std::max_align_t).
+template <BlockScheme S>
+inline constexpr std::size_t block_gemv_scratch_alignment = [] {
+    if constexpr (BlockGemvScheme<S> &&
+                  requires { { block_kernels<S>::scratch_alignment } -> std::convertible_to<std::size_t>; })
+        return static_cast<std::size_t>(block_kernels<S>::scratch_alignment);
+    else
+        return alignof(std::max_align_t);
+}();
 
 namespace detail {
 
@@ -212,40 +253,87 @@ void block_mult_rows(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y,
     }
 }
 
+/// Does mult(A, x, y) on these types run the scheme's fused kernel?
+template <typename Accumulator, typename S, typename VIn, typename VOut>
+inline constexpr bool block_fused_gemv_v =
+    std::is_void_v<Accumulator> && BlockGemvScheme<S> &&
+    interface::SimdDenseVector<VIn> && interface::SimdDenseVector<VOut> &&
+    std::is_same_v<typename VIn::value_type, float> &&
+    std::is_same_v<typename VOut::value_type, float>;
+
+/// y = A x by decode-then-dot, rows partitioned across the thread pool.
+template <typename Accumulator, typename S, typename VIn, typename VOut>
+void block_mult_decode(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y) {
+    const std::size_t m = A.num_rows();
+    // A row costs its decode plus cols multiply-adds; grain on the latter,
+    // as the dense mat-vec does.
+    const std::size_t grain = interface::row_grain<float>(A.num_cols());
+    thread_pool& pool = thread_pool::instance();
+    if (pool.size() > 1 && m >= grain * 2) {
+        pool.parallel_for(m, grain, [&](std::size_t b, std::size_t e) {
+            std::vector<float> buf;
+            block_mult_rows<Accumulator>(A, x, y, b, e, buf);
+        });
+    } else {
+        std::vector<float> buf;
+        block_mult_rows<Accumulator>(A, x, y, 0, m, buf);
+    }
+}
+
 } // namespace detail
 
-/// y = A x for a block matrix, into a pre-allocated y.
+/// y = A x for a block matrix, into a pre-allocated y, with the fused kernel's
+/// scratch supplied by the caller.
 ///
 /// With the default Accumulator, float contiguous x and y, and a scheme that
-/// specializes block_kernels, the scheme's fused kernel runs. Otherwise each
-/// row is decoded once and dotted with x, with an explicit Accumulator if one
-/// is given. Rows are partitioned across the thread pool like the generic
-/// dense mat-vec. Each y(r) is computed from row r alone, so the result does
-/// not depend on the thread count.
+/// specializes block_kernels, the scheme's fused kernel runs on `scratch`,
+/// which must hold block_gemv_scratch_bytes<S>(A.num_cols()) bytes aligned to
+/// block_gemv_scratch_alignment<S>; otherwise this throws
+/// std::invalid_argument. On every other path `scratch` is unused: each row is
+/// decoded once and dotted with x, with an explicit Accumulator if one is
+/// given. Rows are partitioned across the thread pool like the generic dense
+/// mat-vec. Each y(r) is computed from row r alone, so the result does not
+/// depend on the thread count.
 template <typename Accumulator = void, BlockScheme S, Vector VIn, Vector VOut>
-void mult(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y) {
+void mult(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y,
+          std::span<std::byte> scratch) {
     assert(A.num_cols() == static_cast<std::size_t>(x.size()));
     assert(A.num_rows() == static_cast<std::size_t>(y.size()));
-    if constexpr (std::is_void_v<Accumulator> && BlockGemvScheme<S> &&
-                  interface::SimdDenseVector<VIn> && interface::SimdDenseVector<VOut> &&
-                  std::is_same_v<typename VIn::value_type, float> &&
-                  std::is_same_v<typename VOut::value_type, float>) {
-        block_kernels<S>::gemv(A, x.data(), y.data());
+    if constexpr (detail::block_fused_gemv_v<Accumulator, S, VIn, VOut>) {
+        const std::size_t need = block_gemv_scratch_bytes<S>(A.num_cols());
+        constexpr std::size_t align = block_gemv_scratch_alignment<S>;
+        if (scratch.size() < need)
+            throw std::invalid_argument("mult: scratch of " + std::to_string(scratch.size()) +
+                                        " bytes, the block kernel needs " + std::to_string(need));
+        if (reinterpret_cast<std::uintptr_t>(scratch.data()) % align != 0)
+            throw std::invalid_argument("mult: scratch is not aligned to " + std::to_string(align) +
+                                        " bytes");
+        block_kernels<S>::gemv(A, x.data(), y.data(), scratch);
     } else {
-        const std::size_t m = A.num_rows();
-        // A row costs its decode plus cols multiply-adds; grain on the latter,
-        // as the dense mat-vec does.
-        const std::size_t grain = interface::row_grain<float>(A.num_cols());
-        detail::thread_pool& pool = detail::thread_pool::instance();
-        if (pool.size() > 1 && m >= grain * 2) {
-            pool.parallel_for(m, grain, [&](std::size_t b, std::size_t e) {
-                std::vector<float> buf;
-                detail::block_mult_rows<Accumulator>(A, x, y, b, e, buf);
-            });
-        } else {
-            std::vector<float> buf;
-            detail::block_mult_rows<Accumulator>(A, x, y, 0, m, buf);
+        detail::block_mult_decode<Accumulator>(A, x, y);
+    }
+}
+
+/// y = A x for a block matrix, into a pre-allocated y. As the overload above,
+/// with any scratch the fused kernel needs allocated for this call.
+template <typename Accumulator = void, BlockScheme S, Vector VIn, Vector VOut>
+void mult(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y) {
+    if constexpr (detail::block_fused_gemv_v<Accumulator, S, VIn, VOut>) {
+        const std::size_t need = block_gemv_scratch_bytes<S>(A.num_cols());
+        constexpr std::size_t align = block_gemv_scratch_alignment<S>;
+        static_assert(align != 0 && (align & (align - 1)) == 0,
+                      "block_kernels<S>::scratch_alignment must be a power of two");
+        if (need == 0) {
+            mult(A, x, y, std::span<std::byte>{});
+            return;
         }
+        std::vector<std::byte> raw(need + align - 1);
+        void* p = raw.data();
+        std::size_t space = raw.size();
+        std::align(align, need, p, space);
+        mult(A, x, y, std::span<std::byte>(static_cast<std::byte*>(p), need));
+    } else {
+        mult<Accumulator>(A, x, y, std::span<std::byte>{});
     }
 }
 
