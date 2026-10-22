@@ -13,6 +13,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`simd::reduce_dot_block_scaled`: block-scaled integer dot products** (#628). Computes `Σ_b scales[b] · Σ_{j∈b} a_j·x_j` over consecutive blocks, the inner product of block-quantized formats (GGML Q4_0/Q8_0/Q4_K/Q6_K, OCP MXINT8, 16-wide NVIDIA-style blocks), with the caller supplying decoded float scales. Each block's exact integer sum stays in vector lanes and is converted and scaled in-register, with one horizontal reduce per call instead of one per block. It takes `reduce_dot_widen`'s operand pairs, and blocks of any length; the part that isn't a multiple of the SIMD step is summed as a scalar.
+  - **Contract:** each block's integer total is exact. Lane partial sums are converted and accumulated in float in an order fixed by block index, so the result is reproducible run to run on one target and equals the per-block loop up to float re-association across targets. Overflow is a per-block precondition (`Σ |a_j·x_j| < 2³¹`, or 2³² for the unsigned pairs), not "the sum wraps".
+  - **New primitive:** `batch<float>::convert` from `int32_t` and `uint32_t` lanes, rounding as `static_cast` does. `widen_dot_accumulate` and `quad_dot_accumulate` are now documented as public building blocks for this pattern.
+  - **Measured** (i7-12700K, AVX2, single thread, `benchmarks/bench_block_scaled_dot.cpp`): at block 32 it is 1.3–1.4× faster than one `reduce_dot_widen` per block in cache, and 1.15–1.4× faster at 4096×4096; at block 256 the two match. The numbers and their limits are in `docs/algorithms/mixed-precision-kernels.md`.
+
 - **`#458` before/after profiles** `benchmarks/machines/{xeon-e5-2420,i7-12700k,ryzen-9-8945hs}-mc.sh` and a `legacymc` benchmark arm, with the three machines' data under `benchmarks/data/*-mc458`.
 
 ### Fixed
