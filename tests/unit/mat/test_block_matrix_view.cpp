@@ -62,6 +62,9 @@ struct int8x4_scratch : int8x4_scaled {};
 const std::byte* scratch_seen = nullptr;
 std::size_t scratch_size_seen = 0;
 
+/// A kernel whose declared scratch cannot be padded for alignment in size_t.
+struct int8x4_huge_scratch : int8x4_scaled {};
+
 struct not_a_scheme {
     static constexpr std::size_t block_size = 4;   // no block_bytes, no decode
 };
@@ -124,6 +127,16 @@ struct mtl::block_kernels<int8x4_scratch> {
             for (std::size_t c = 0; c < A.num_cols(); ++c) acc += row[c] * xs[c];
             y[r] = acc;
         }
+    }
+};
+
+template <>
+struct mtl::block_kernels<int8x4_huge_scratch> {
+    static constexpr std::size_t scratch_alignment = 64;
+    static std::size_t scratch_bytes(std::size_t) { return std::numeric_limits<std::size_t>::max(); }
+    static void gemv(const mtl::mat::block_matrix_view<int8x4_huge_scratch>&, const float*, float*,
+                     std::span<std::byte>) {
+        FAIL("the kernel must not run");
     }
 };
 
@@ -414,6 +427,10 @@ TEST_CASE("a fused kernel's scratch comes from the caller, or from mult for one 
         CHECK_THROWS_WITH(mtl::mult(A, x, y, std::span<std::byte>(buf.data() + 1, 64)),
                           Catch::Matchers::ContainsSubstring("not aligned to 64"));
         CHECK(scratch_seen == nullptr);
+    }
+    SECTION("a declared scratch that overflows size_t once aligned is rejected, not wrapped") {
+        const block_matrix_view<int8x4_huge_scratch> H(3, 16, bytes);
+        CHECK_THROWS_AS(mtl::mult(H, x, y), std::length_error);
     }
     SECTION("off the fused path the scratch is unused, so an empty one is fine") {
         mtl::vec::dense_vector<double> xd(16), yd(3);

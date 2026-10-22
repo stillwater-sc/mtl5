@@ -194,28 +194,49 @@ concept BlockGemvScheme = BlockScheme<S> &&
         block_kernels<S>::gemv(A, x, y, scratch);
     };
 
+namespace detail {
+
+// Named concepts and a plain function rather than requires-expressions in a
+// lambda: Apple Clang 15 crashes on the latter.
+template <typename K>
+concept declares_scratch_bytes = requires(std::size_t cols) {
+    { K::scratch_bytes(cols) } -> std::convertible_to<std::size_t>;
+};
+
+template <typename K>
+concept declares_scratch_alignment = requires {
+    { K::scratch_alignment } -> std::convertible_to<std::size_t>;
+};
+
+template <typename S>
+constexpr std::size_t block_scratch_alignment() noexcept {
+    if constexpr (BlockGemvScheme<S> && declares_scratch_alignment<block_kernels<S>>) {
+        constexpr std::size_t align = block_kernels<S>::scratch_alignment;
+        static_assert(align != 0 && (align & (align - 1)) == 0,
+                      "block_kernels<S>::scratch_alignment must be a power of two");
+        return align;
+    } else {
+        return alignof(std::max_align_t);
+    }
+}
+
+} // namespace detail
+
 /// Scratch bytes mult() needs for a block matrix of scheme S with `cols`
 /// columns: the fused kernel's scratch_bytes(cols), or 0 when the scheme has
 /// no fused kernel or its kernel declares none.
 template <BlockScheme S>
 std::size_t block_gemv_scratch_bytes(std::size_t cols) {
-    if constexpr (BlockGemvScheme<S> &&
-                  requires { { block_kernels<S>::scratch_bytes(cols) } -> std::convertible_to<std::size_t>; })
+    if constexpr (BlockGemvScheme<S> && detail::declares_scratch_bytes<block_kernels<S>>)
         return block_kernels<S>::scratch_bytes(cols);
     else
         return 0;
 }
 
 /// The alignment that scratch must have: the fused kernel's scratch_alignment,
-/// or alignof(std::max_align_t).
+/// which must be a power of two, or alignof(std::max_align_t).
 template <BlockScheme S>
-inline constexpr std::size_t block_gemv_scratch_alignment = [] {
-    if constexpr (BlockGemvScheme<S> &&
-                  requires { { block_kernels<S>::scratch_alignment } -> std::convertible_to<std::size_t>; })
-        return static_cast<std::size_t>(block_kernels<S>::scratch_alignment);
-    else
-        return alignof(std::max_align_t);
-}();
+inline constexpr std::size_t block_gemv_scratch_alignment = detail::block_scratch_alignment<S>();
 
 namespace detail {
 
@@ -321,12 +342,13 @@ void mult(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y) {
     if constexpr (detail::block_fused_gemv_v<Accumulator, S, VIn, VOut>) {
         const std::size_t need = block_gemv_scratch_bytes<S>(A.num_cols());
         constexpr std::size_t align = block_gemv_scratch_alignment<S>;
-        static_assert(align != 0 && (align & (align - 1)) == 0,
-                      "block_kernels<S>::scratch_alignment must be a power of two");
         if (need == 0) {
             mult(A, x, y, std::span<std::byte>{});
             return;
         }
+        if (need > std::numeric_limits<std::size_t>::max() - (align - 1))
+            throw std::length_error("mult: block kernel scratch of " + std::to_string(need) +
+                                    " bytes overflows size_t once aligned");
         std::vector<std::byte> raw(need + align - 1);
         void* p = raw.data();
         std::size_t space = raw.size();
