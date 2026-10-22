@@ -27,6 +27,7 @@
 #include <mtl/concepts/linear_operator.hpp>
 #include <mtl/concepts/preconditioner.hpp>
 #include <mtl/concepts/ndarray.hpp>
+#include <mtl/concepts/block_scheme.hpp>
 
 // Tags
 #include <mtl/tag/orientation.hpp>
@@ -72,6 +73,8 @@
 #include <mtl/mat/ell_matrix.hpp>
 #include <mtl/mat/permutation_matrix.hpp>
 #include <mtl/mat/block_diagonal2D.hpp>
+#include <mtl/mat/block_matrix_view.hpp>
+#include <mtl/mat/mx_schemes.hpp>
 #include <mtl/mat/shifted_inserter.hpp>
 #include <mtl/vec/unit_vector.hpp>
 #include <mtl/vec/strided_vector_ref.hpp>

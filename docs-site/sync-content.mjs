@@ -60,6 +60,7 @@ const FILE_MAP = {
   'architecture/containers/sparse-vector-architecture.md':      'architecture/containers/sparse-vector-architecture.md',
   'architecture/containers/strided-vector-ref-architecture.md': 'architecture/containers/strided-vector-ref-architecture.md',
   'architecture/containers/unit-vector-architecture.md':        'architecture/containers/unit-vector-architecture.md',
+  'architecture/containers/block-matrix-view-architecture.md':  'architecture/containers/block-matrix-view-architecture.md',
 
   // ── Linear Algebra Algorithms ───────────────────────────────────
   'algorithms/overview.md':                     'algorithms/overview.md',
