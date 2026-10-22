@@ -21,6 +21,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +55,16 @@ struct int8x4_scaled {
 struct int8x4_fused : int8x4_scaled {};
 int fused_calls = 0;
 
+/// The same format, with a fused kernel that needs scratch: it quantizes x
+/// into the scratch first, as a real integer kernel would, and records what it
+/// was given.
+struct int8x4_scratch : int8x4_scaled {};
+const std::byte* scratch_seen = nullptr;
+std::size_t scratch_size_seen = 0;
+
+/// A kernel whose declared scratch cannot be padded for alignment in size_t.
+struct int8x4_huge_scratch : int8x4_scaled {};
+
 struct not_a_scheme {
     static constexpr std::size_t block_size = 4;   // no block_bytes, no decode
 };
@@ -84,7 +95,8 @@ std::vector<std::byte> random_mxfp4(std::size_t rows, std::size_t cols, unsigned
 
 template <>
 struct mtl::block_kernels<int8x4_fused> {
-    static void gemv(const mtl::mat::block_matrix_view<int8x4_fused>& A, const float* x, float* y) {
+    static void gemv(const mtl::mat::block_matrix_view<int8x4_fused>& A, const float* x, float* y,
+                     std::span<std::byte>) {
         ++fused_calls;
         std::vector<float> row(A.num_cols());
         for (std::size_t r = 0; r < A.num_rows(); ++r) {
@@ -93,6 +105,38 @@ struct mtl::block_kernels<int8x4_fused> {
             for (std::size_t c = 0; c < A.num_cols(); ++c) acc += row[c] * x[c];
             y[r] = acc;
         }
+    }
+};
+
+template <>
+struct mtl::block_kernels<int8x4_scratch> {
+    static constexpr std::size_t scratch_alignment = 64;
+    static std::size_t scratch_bytes(std::size_t cols) { return cols * sizeof(float); }
+    static void gemv(const mtl::mat::block_matrix_view<int8x4_scratch>& A, const float* x, float* y,
+                     std::span<std::byte> scratch) {
+        scratch_seen = scratch.data();
+        scratch_size_seen = scratch.size();
+        REQUIRE(scratch.size() >= scratch_bytes(A.num_cols()));
+        REQUIRE(reinterpret_cast<std::uintptr_t>(scratch.data()) % scratch_alignment == 0);
+        auto* xs = reinterpret_cast<float*>(scratch.data());   // the kernel's own copy of x
+        for (std::size_t c = 0; c < A.num_cols(); ++c) xs[c] = x[c];
+        std::vector<float> row(A.num_cols());
+        for (std::size_t r = 0; r < A.num_rows(); ++r) {
+            A.decode_row(r, row.data());
+            float acc = 0;
+            for (std::size_t c = 0; c < A.num_cols(); ++c) acc += row[c] * xs[c];
+            y[r] = acc;
+        }
+    }
+};
+
+template <>
+struct mtl::block_kernels<int8x4_huge_scratch> {
+    static constexpr std::size_t scratch_alignment = 64;
+    static std::size_t scratch_bytes(std::size_t) { return std::numeric_limits<std::size_t>::max(); }
+    static void gemv(const mtl::mat::block_matrix_view<int8x4_huge_scratch>&, const float*, float*,
+                     std::span<std::byte>) {
+        FAIL("the kernel must not run");
     }
 };
 
@@ -106,6 +150,10 @@ static_assert(mtl::ElementDecodableScheme<mtl::mx::mxint8>);
 static_assert(!mtl::ElementDecodableScheme<int8x4_scaled>);
 static_assert(mtl::BlockGemvScheme<int8x4_fused>);
 static_assert(!mtl::BlockGemvScheme<int8x4_scaled>);
+static_assert(mtl::BlockGemvScheme<int8x4_scratch>);
+static_assert(mtl::block_gemv_scratch_alignment<int8x4_scratch> == 64);
+static_assert(mtl::block_gemv_scratch_alignment<int8x4_fused> == alignof(std::max_align_t));
+static_assert(mtl::block_gemv_scratch_alignment<int8x4_scaled> == alignof(std::max_align_t));
 
 static_assert(mtl::Matrix<block_matrix_view<mtl::mx::mxint8>>);
 static_assert(mtl::Matrix<block_matrix_view<mtl::mx::mxfp4>>);
@@ -334,4 +382,64 @@ TEST_CASE("mult calls a scheme's fused kernel only where it applies", "[block][m
     mtl::mult<double>(A, x, y);   // an explicit accumulator: the caller asked for it
     CHECK(fused_calls == 1);
     CHECK(yd(0) == double(yb(0)));
+}
+
+TEST_CASE("a fused kernel's scratch comes from the caller, or from mult for one call",
+          "[block][mult][scratch]") {
+    std::vector<std::byte> bytes;
+    for (int r = 0; r < 3; ++r)
+        for (int b = 0; b < 4; ++b) {
+            bytes.push_back(std::byte(1 + b));
+            for (int j = 0; j < 4; ++j) bytes.push_back(std::byte(std::uint8_t(r * 7 + j - 5)));
+        }
+    const block_matrix_view<int8x4_scratch> A(3, 16, bytes);
+    const block_matrix_view<int8x4_scaled> B(3, 16, bytes);
+    mtl::vec::dense_vector<float> x(16), y(3), yref(3);
+    for (std::size_t c = 0; c < 16; ++c) x(c) = 0.25f * float(c) - 1.0f;
+    mtl::mult(B, x, yref);
+
+    CHECK(mtl::block_gemv_scratch_bytes<int8x4_scratch>(16) == 64);
+    CHECK(mtl::block_gemv_scratch_bytes<int8x4_fused>(16) == 0);    // a kernel that declares none
+    CHECK(mtl::block_gemv_scratch_bytes<int8x4_scaled>(16) == 0);   // no kernel
+
+    SECTION("caller-owned scratch is passed through as given") {
+        alignas(64) std::array<std::byte, 128> buf{};
+        scratch_seen = nullptr;
+        mtl::mult(A, x, y, std::span<std::byte>(buf));
+        CHECK(scratch_seen == buf.data());
+        CHECK(scratch_size_seen == buf.size());
+        for (std::size_t r = 0; r < 3; ++r) CHECK(y(r) == yref(r));
+    }
+    SECTION("without scratch, mult allocates an aligned block of the declared size") {
+        scratch_seen = nullptr;
+        mtl::mult(A, x, y);
+        CHECK(scratch_seen != nullptr);
+        CHECK(scratch_size_seen == 64);
+        for (std::size_t r = 0; r < 3; ++r) CHECK(y(r) == yref(r));
+        const auto z = A * x;
+        for (std::size_t r = 0; r < 3; ++r) CHECK(z(r) == yref(r));
+    }
+    SECTION("too small or misaligned scratch is rejected before the kernel runs") {
+        alignas(64) std::array<std::byte, 128> buf{};
+        scratch_seen = nullptr;
+        CHECK_THROWS_WITH(mtl::mult(A, x, y, std::span<std::byte>(buf.data(), 63)),
+                          Catch::Matchers::ContainsSubstring("needs 64"));
+        CHECK_THROWS_WITH(mtl::mult(A, x, y, std::span<std::byte>(buf.data() + 1, 64)),
+                          Catch::Matchers::ContainsSubstring("not aligned to 64"));
+        CHECK(scratch_seen == nullptr);
+    }
+    SECTION("a declared scratch that overflows size_t once aligned is rejected, not wrapped") {
+        const block_matrix_view<int8x4_huge_scratch> H(3, 16, bytes);
+        CHECK_THROWS_AS(mtl::mult(H, x, y), std::length_error);
+    }
+    SECTION("off the fused path the scratch is unused, so an empty one is fine") {
+        mtl::vec::dense_vector<double> xd(16), yd(3);
+        for (std::size_t c = 0; c < 16; ++c) xd(c) = x(c);
+        scratch_seen = nullptr;
+        mtl::mult(A, xd, yd, std::span<std::byte>{});           // double vectors
+        mtl::mult<double>(A, x, y, std::span<std::byte>{});     // explicit accumulator
+        mtl::mult(B, x, y, std::span<std::byte>{});             // no kernel
+        CHECK(scratch_seen == nullptr);
+        for (std::size_t r = 0; r < 3; ++r) CHECK(yd(r) == double(yref(r)));
+    }
 }

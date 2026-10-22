@@ -88,6 +88,7 @@ float array.
 | `A(r, c)` | decode one element (or its block) |
 | `convert(A, D)`, `convert<T>(A)` | decode a row at a time into a dense matrix |
 | `mult(A, x, y)` | a scheme's fused kernel, or decode a row and dot it |
+| `mult(A, x, y, scratch)` | the same, with the fused kernel's working memory from the caller |
 | `A * x` | `mult` into a new `dense_vector` |
 
 Each of these is an overload more specialized than the generic `Matrix` version.
@@ -106,8 +107,15 @@ count (`tests/unit/mat/test_block_matrix_view_mt.cpp`).
 
 ```cpp
 template <> struct mtl::block_kernels<my_scheme> {
+    // y = A x. scratch holds at least scratch_bytes(A.num_cols()) bytes,
+    // aligned to scratch_alignment.
     static void gemv(const mtl::mat::block_matrix_view<my_scheme>& A,
-                     const float* x, float* y);   // y = A x
+                     const float* x, float* y, std::span<std::byte> scratch);
+
+    // Optional: working memory per call (default 0) and its alignment
+    // (default alignof(std::max_align_t), a power of two).
+    static std::size_t scratch_bytes(std::size_t cols);
+    static constexpr std::size_t scratch_alignment = 64;
 };
 ```
 
@@ -117,6 +125,27 @@ quantizes `x` per block and runs
 [`simd::reduce_dot_block_scaled`](../../algorithms/mixed-precision-kernels.md)
 on the integer blocks. The kernel owns its accuracy contract; the decode path is
 the reference it is measured against.
+
+**The scratch is the caller's memory.** A fused kernel needs somewhere to put
+`x` once it is quantized, and a runtime that sizes its buffers when it loads a
+model should not have the mat-vec allocate behind its back. So the hook takes
+the scratch as an argument:
+
+- `mult(A, x, y, scratch)` passes it through. It must hold
+  `block_gemv_scratch_bytes<S>(cols)` bytes aligned to
+  `block_gemv_scratch_alignment<S>`, or `mult` throws `std::invalid_argument`
+  before the kernel runs. Off the fused path it is unused, so an empty span is
+  fine.
+- `mult(A, x, y)` and `A * x` allocate it for the one call, when the kernel
+  declares any.
+
+The kernel is called once per `mult`, with the whole matrix, so the scratch is
+built from `x` once and read by every row. A kernel that threads over rows does
+so itself, and shares the scratch read-only.
+
+synapse's GGML schemes (Q4_0, Q8_0, Q4_K, Q6_K) were checked against this hook
+before 5.20.0. Their fused gemv takes caller-owned, aligned scratch for the
+quantized activations, and it plugs in unchanged.
 
 ## The OCP MX schemes
 
@@ -163,7 +192,7 @@ NaN, and INT8's implicit 2^−6.
 | file | contents |
 |---|---|
 | `include/mtl/concepts/block_scheme.hpp` | `BlockScheme`, `ElementDecodableScheme` |
-| `include/mtl/mat/block_matrix_view.hpp` | the view, `block_kernels`, `mult`, `convert`, `operator*` |
+| `include/mtl/mat/block_matrix_view.hpp` | the view, `block_kernels` and its scratch queries, `mult`, `convert`, `operator*` |
 | `include/mtl/mat/mx_schemes.hpp` | `mx::mxint8`, `mx::mxfp4`, `e8m0_to_float`, `e2m1_to_float` |
-| `tests/unit/mat/test_block_matrix_view.cpp` | the encodings, the view, convert, mult and the fused-kernel hook |
+| `tests/unit/mat/test_block_matrix_view.cpp` | the encodings, the view, convert, mult, the fused-kernel hook and its scratch |
 | `tests/unit/mat/test_block_matrix_view_mt.cpp` | threaded mult: bit-identity and that the rows split |
