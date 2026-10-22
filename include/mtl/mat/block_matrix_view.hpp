@@ -32,6 +32,7 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -72,12 +73,24 @@ public:
     /// View `bytes` as a `rows x cols` matrix. Throws std::invalid_argument
     /// unless `cols` is a multiple of the block size and `bytes` holds exactly
     /// `rows * (cols / block_size)` blocks.
+    ///
+    /// The byte count is computed with overflow checks. The shape usually comes
+    /// from a file header, and a product that wrapped would let a huge `rows`
+    /// validate against a small span and every later access read past it. A
+    /// shape whose byte or element count does not fit in size_t is rejected.
     block_matrix_view(size_type rows, size_type cols, std::span<const std::byte> bytes)
         : rows_(rows), cols_(cols), blocks_per_row_(cols / block_size), data_(bytes.data()) {
         if (cols % block_size != 0)
             throw std::invalid_argument("block_matrix_view: cols (" + std::to_string(cols) +
                                         ") is not a multiple of the block size (" +
                                         std::to_string(block_size) + ")");
+        constexpr size_type max = std::numeric_limits<size_type>::max();
+        if (blocks_per_row_ > max / block_bytes ||
+            (rows != 0 && blocks_per_row_ * block_bytes > max / rows) ||
+            (rows != 0 && cols > max / rows))
+            throw std::invalid_argument("block_matrix_view: " + std::to_string(rows) + " x " +
+                                        std::to_string(cols) +
+                                        " overflows size_t in elements or bytes");
         if (bytes.size() != rows * blocks_per_row_ * block_bytes)
             throw std::invalid_argument("block_matrix_view: " + std::to_string(bytes.size()) +
                                         " bytes do not hold " + std::to_string(rows) + " x " +

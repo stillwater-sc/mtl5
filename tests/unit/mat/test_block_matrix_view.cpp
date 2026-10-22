@@ -9,6 +9,7 @@
 // generic headers (mult.hpp, convert.hpp, operators.hpp) are included on
 // purpose, so the block overloads are chosen over them, not merely compiled.
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <mtl/concepts/block_scheme.hpp>
 #include <mtl/concepts/matrix.hpp>
@@ -197,6 +198,33 @@ TEST_CASE("block_matrix_view rejects a malformed shape", "[block][view]") {
     CHECK_THROWS_AS(block_matrix_view<mtl::mx::mxint8>(2, 64, std::span(bytes).first(131)),
                     std::invalid_argument);
     CHECK_NOTHROW(block_matrix_view<mtl::mx::mxint8>(0, 64, std::span<const std::byte>{}));
+}
+
+TEST_CASE("block_matrix_view rejects a shape whose size wraps", "[block][view]") {
+    using Catch::Matchers::ContainsSubstring;
+    constexpr std::size_t max = std::numeric_limits<std::size_t>::max();
+
+    // The review's case: rows * 33 wraps to a handful of bytes. Unchecked, a
+    // span of exactly that many bytes validated, and row(0) read far past it.
+    // The assertion is on the overflow message, so it is the new check that
+    // fires, not the size comparison.
+    const std::size_t rows = max / 33 + 1;
+    const std::size_t wrapped = rows * 33;   // unsigned: wraps, by definition
+    REQUIRE(wrapped < 64);
+    std::vector<std::byte> small(wrapped);
+    CHECK_THROWS_WITH((block_matrix_view<mtl::mx::mxint8>(rows, 32, small)),
+                      ContainsSubstring("overflows"));
+
+    // Bytes per row alone wraps: 33-byte blocks for 32 elements.
+    std::vector<std::byte> one_block(33);
+    CHECK_THROWS_WITH((block_matrix_view<mtl::mx::mxint8>(1, (max / 32) * 32, one_block)),
+                      ContainsSubstring("overflows"));
+
+    // The byte count fits but rows * cols does not: 17-byte blocks hold 32
+    // elements, so N blocks need 17 N bytes but describe 32 N elements.
+    std::vector<std::byte> fp4_block(17);
+    CHECK_THROWS_WITH((block_matrix_view<mtl::mx::mxfp4>(max / 17 / 2, 64, fp4_block)),
+                      ContainsSubstring("overflows"));
 }
 
 TEST_CASE("element access, row decode, block bytes and convert agree", "[block][view]") {
