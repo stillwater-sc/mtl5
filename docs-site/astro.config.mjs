@@ -80,6 +80,7 @@ export default defineConfig({
               label: 'Parallelization',
               items: [
                 { slug: 'design/parallelization-patterns-and-pitfalls' },
+                { slug: 'design/concurrency-runtime-ownership' },
                 { slug: 'design/blas-kernel-architecture' },
               ],
             },

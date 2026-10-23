@@ -96,6 +96,7 @@ const FILE_MAP = {
   'design/blas-kernel-architecture.md':         'design/blas-kernel-architecture.md',
   'performance/multicore-scaling-investigation.md':  'performance/multicore-scaling-investigation.md',
   'design/parallelization-patterns-and-pitfalls.md': 'design/parallelization-patterns-and-pitfalls.md',
+  'design/concurrency-runtime-ownership.md':    'design/concurrency-runtime-ownership.md',
   'performance/issue-297-threading-benchmark-plan.md': 'performance/issue-297-threading-benchmark-plan.md',
   'performance/issue-297-threading-results.md': 'performance/issue-297-threading-results.md',
   'performance/benchmarking-methodology.md':  'performance/benchmarking-methodology.md',
