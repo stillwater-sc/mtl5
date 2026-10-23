@@ -34,12 +34,21 @@ foreach(_module shared_a shared_b local)
     set_target_properties(parallel_shared_pool_${_module} PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON FOLDER "Tests/parallel")
 endforeach()
+# The same two modes again with default visibility, so their inline functions
+# are exported side by side and must not interpose on each other.
+foreach(_module shared_default local_default)
+    add_library(parallel_shared_pool_${_module} SHARED ${_shared_pool_dir}/plugin_${_module}.cpp)
+    target_link_libraries(parallel_shared_pool_${_module} PRIVATE MTL5::mtl5)
+    set_target_properties(parallel_shared_pool_${_module} PROPERTIES FOLDER "Tests/parallel")
+endforeach()
 target_link_libraries(parallel_shared_pool_shared_a PRIVATE parallel_shared_pool_lib)
 target_link_libraries(parallel_shared_pool_shared_b PRIVATE parallel_shared_pool_lib)
+target_link_libraries(parallel_shared_pool_shared_default PRIVATE parallel_shared_pool_lib)
 add_executable(parallel_test_shared_pool_mt ${_shared_pool_dir}/test_shared_pool_mt.cpp)
 target_link_libraries(parallel_test_shared_pool_mt PRIVATE
     parallel_shared_pool_lib parallel_shared_pool_shared_a parallel_shared_pool_shared_b
-    parallel_shared_pool_local Catch2::Catch2WithMain)
+    parallel_shared_pool_local parallel_shared_pool_local_default
+    parallel_shared_pool_shared_default Catch2::Catch2WithMain)
 set_target_properties(parallel_test_shared_pool_mt PROPERTIES FOLDER "Tests/parallel")
 add_test(NAME parallel_test_shared_pool_mt COMMAND parallel_test_shared_pool_mt)
 

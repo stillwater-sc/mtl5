@@ -16,16 +16,17 @@
 
 #include <mtl/parallel/thread_pool.hpp>
 
-namespace mtl::parallel::detail {
+// Qualified definitions, so they land in the shared mode's inline namespace.
+namespace mtl::parallel {
 
-MTL5_SHARED_POOL_API pool_config& shared_pool_config_v1() {
+MTL5_SHARED_POOL_API detail::pool_config& detail::shared_pool_config_v1() {
     static pool_config c;
     return c;
 }
 
-MTL5_SHARED_POOL_API thread_pool& shared_pool_v1() {
+MTL5_SHARED_POOL_API thread_pool& detail::shared_pool_v1() {
     static thread_pool pool(claim_pool_size());
     return pool;
 }
 
-} // namespace mtl::parallel::detail
+} // namespace mtl::parallel

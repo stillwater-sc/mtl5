@@ -67,6 +67,19 @@
 
 namespace mtl::parallel {
 
+// The two modes are different code under the same source names, so each gets
+// its own inline namespace: a process that mixes a module defining
+// MTL5_SHARED_POOL with one that does not, both default-visible, must not let
+// the dynamic linker merge, say, the shared mode's `static pool_config&` with
+// the local mode's `static pool_config` object, or route one mode's
+// configure() to the other's pool. Source code names mtl::parallel::thread_pool
+// either way.
+#if defined(MTL5_SHARED_POOL)
+inline namespace pool_shared {
+#else
+inline namespace pool_local {
+#endif
+
 class thread_pool;
 
 namespace detail {
@@ -406,4 +419,5 @@ inline bool configure(unsigned threads) {
     return true;
 }
 
+} // inline namespace pool_shared / pool_local
 } // namespace mtl::parallel
