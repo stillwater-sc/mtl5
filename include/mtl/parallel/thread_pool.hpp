@@ -28,6 +28,18 @@
 // guarantee.
 //
 // No OpenMP/TBB -- just the C++ standard concurrency runtime, for portability.
+//
+// One pool across shared libraries (#639): the pool and configure()'s state
+// are function-local statics in inline functions, so each shared object built
+// with -fvisibility=hidden (Python extension modules), and each Windows DLL,
+// would hold its own copy. Defining MTL5_SHARED_POOL in every module that
+// includes this header (linking the MTL5::shared_pool CMake target does it)
+// makes them all use the one pool defined by the mtl5_pool library, or by
+// the single translation unit that includes
+// <mtl/parallel/shared_pool_definition.hpp>. Each module looks the pool up
+// once; run() stays inline. Every module must see the same thread_pool
+// layout: a change to the class's data members must bump the _v1 suffix of
+// the two exported functions below, so a stale module fails to link.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -41,7 +53,21 @@
 #include <utility>
 #include <vector>
 
+#if defined(MTL5_SHARED_POOL)
+#  if defined(_WIN32) || defined(__CYGWIN__)
+#    if defined(MTL5_SHARED_POOL_BUILD)
+#      define MTL5_SHARED_POOL_API __declspec(dllexport)
+#    else
+#      define MTL5_SHARED_POOL_API __declspec(dllimport)
+#    endif
+#  else
+#    define MTL5_SHARED_POOL_API __attribute__((visibility("default")))
+#  endif
+#endif
+
 namespace mtl::parallel {
+
+class thread_pool;
 
 namespace detail {
 
@@ -74,8 +100,20 @@ struct pool_config {
     bool created = false;
 };
 
+#if defined(MTL5_SHARED_POOL)
+/// The process's one pool and its configuration, defined once (by the
+/// mtl5_pool library or <mtl/parallel/shared_pool_definition.hpp>) and
+/// exported, so every module that defines MTL5_SHARED_POOL binds to them.
+MTL5_SHARED_POOL_API pool_config& shared_pool_config_v1();
+MTL5_SHARED_POOL_API thread_pool& shared_pool_v1();
+#endif
+
 inline pool_config& config() {
+#if defined(MTL5_SHARED_POOL)
+    static pool_config& c = shared_pool_config_v1();
+#else
     static pool_config c;
+#endif
     return c;
 }
 
@@ -100,7 +138,11 @@ public:
 
     /// Process-wide pool, sized on first use (see configure()).
     static thread_pool& instance() {
+#if defined(MTL5_SHARED_POOL)
+        static thread_pool& pool = detail::shared_pool_v1();
+#else
         static thread_pool pool(detail::claim_pool_size());
+#endif
         return pool;
     }
 

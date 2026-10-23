@@ -17,6 +17,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **`configure(threads)`** sizes the pool from code. It applies only before the pool's first use, overrides `MTL5_NUM_THREADS`, is clamped to the hardware concurrency in the same way, and returns `false` once the pool exists. Before this, an application had to `setenv` before first use.
   - **A per-call team cap.** `parallel_for`, `parallel_reduce` and `parallel_accumulate` take `max_threads` before the body (`0`: the whole pool), so a caller can run below the pool's size without partitioning by hand through `run`. The existing signatures and their behaviour are unchanged.
   - A real-time variant, with mutex-free dispatch and a spin-then-futex wait, is #636.
+- **One thread pool across shared libraries: `MTL5::shared_pool`** (#639). Header-only MTL5 gives each shared object built with `-fvisibility=hidden` and each Windows DLL its own copy of the pool. Python extension modules built with nanobind or pybind11 are built that way, so two such modules in one process started two pools. Each pool was sized from `MTL5_NUM_THREADS`, and `configure()` reached only one of them.
+  - The new CMake option `MTL5_SHARED_POOL_LIBRARY` (default off) builds and installs `mtl5_pool`, a small shared library that holds the process's one pool. Modules that link `MTL5::shared_pool` get `MTL5_SHARED_POOL` defined. Their `pool()` and `configure()` then use that pool, looked up once per module, so `run()` stays inline.
+  - `<mtl/parallel/shared_pool_definition.hpp>` provides the same definition for builds that do not use MTL5's CMake.
+  - The exported functions carry a layout version (`_v1`), so a module built against an incompatible pool header fails to link.
+  - A test loads two hidden-visibility modules, which are DLLs on Windows, and checks that they and the executable share one pool, its configuration and its busy state. A third module, built without the macro, shows that it keeps a pool of its own.
+  - The default header-only build is unchanged.
 
 ### Fixed
 
