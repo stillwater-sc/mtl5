@@ -17,6 +17,7 @@ with the system description here.
 | `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) |
 | `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | pending — #430 |
 | `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | pending — #430 |
+| `arduino-ventuno-q` | Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55 | 4 A78C cores (A55 excluded) | null run (no cache sizes exposed); see its section |
 
 A machine is registered here as soon as it is part of an experiment, which can
 precede its first result page: the bottom two rows exist because #430 needs the
@@ -396,6 +397,73 @@ solution rather than the code.
 Interleave A/B variants **within one session** as on every other machine, and
 treat any run whose end temperature crossed the throttle point as invalid data
 rather than a slow result.
+
+## `arduino-ventuno-q` — Arduino Ventuno Q (Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55)
+
+| | |
+|---|---|
+| Board | Arduino Ventuno Q, host `ventunoq-01`. The device tree names the SoC, not the board: `Qualcomm Technologies, Inc. Monaco Monza addons` |
+| Topology | **big.LITTLE, 8 cores, no SMT.** 4× **Cortex-A78C** r0p2 (MIDR part `0xd4b`) on **CPUs 0–3**; 4× **Cortex-A55** r2p0 (`0xd05`) on CPUs 4–7. The big cores are the *low* ids here — the common "big cores are 4–7" layout would have pinned the run to the little ones |
+| Clocks | A78C 902–**2112 MHz** as configured (`scaling_max_freq`), against a 2361.6 MHz hardware maximum; A55 844.8–1958.4 MHz. Governor **`schedutil`** on the A78C cluster, `ondemand` on the A55 cluster, *not* pinned |
+| Cache | **Not exposed.** The kernel lists L1d, L1i, L2 and L3, but with no sizes (`lscpu -C` prints the levels and blank sizes), so MTL5's sysfs probe reads 0 for every level — see below |
+| ISA | NEON, 128-bit, with dot product (`asimddp`). **No SVE** — like the Orin |
+| OS | Ubuntu 24.04.5 LTS, kernel 6.8.0-1084-qcom |
+| Compilers | GCC 13.3.0, `-O3 -DNDEBUG` (CMake `Release`), `MTL5_NATIVE_ARCH=ON` |
+| Thermal | 35.5 °C before, 35.9 °C after the session; limit 126 °C. The board never came near throttling |
+
+Profile: `benchmarks/machines/arduino-ventuno-q.sh`. It reads the A78C ids from
+`/proc/cpuinfo` by part number rather than assuming them, and its output
+directory follows the A78C cluster's governor, as the Jetson's follows its power
+mode.
+
+### Cache-blocking A/B result — a null run, because there was nothing to detect
+
+All four arms ran with **identical** blocking (`mr,nr,kc,mc,nc = 6,4,512,32,2048`
+and the same `mc` actually used at every point). The detecting arms found no
+cache sizes (`cache_l1d_bytes=0`, `cache_l2_bytes=0` in their sidecars), so
+`derive_blocking` fell back to the compile-time model. Unlike the Xeon's null
+run, this is **not** agreement between the hardware and the model: it says
+nothing about whether detection would help on an A78C. The analyzer now names
+this case from the sidecar instead of reporting that the caches match.
+
+Taken under `schedutil` with clocks unpinned, commit `46ea958`, T ∈ {1, 4} on
+CPUs 0–3, 8 interleaved rounds (5 requested, rounded up to a multiple of the 4
+arms), min of 5. Ratio is detected / default:
+
+| shape | T=1 | T=4 |
+|---|---|---|
+| 64 × 4096 × 1024 | 1.015 | 1.045 |
+| 64 × 6144 × 1024 | 1.008 | 0.989 |
+| 1024³ | 1.010 | 1.012 |
+| 2048³ | 1.013 | 0.987 |
+| 4096³ | 1.012 | 0.997 |
+
+Two things it does measure:
+
+* **The noise floor of this board under `schedutil`.** Every ratio compares a
+  binary against an identical one. Nine of ten are within 1.5% of 1.0; the
+  64 × 4096 × 1024 point at T=4 is off by 4.5%, more than the analyzer's 2%
+  floor. That is the error the structural null-run check exists to catch, and a
+  reason to repeat this run with the `performance` governor before trusting a
+  small effect here.
+* **Throughput.** The default arm reaches 9.1 GFLOP/s fp64 on one A78C, about
+  54% of the 16.9 GFLOP/s NEON peak at 2112 MHz (two 128-bit FMA pipes, 8 flops a
+  cycle), close to the Orin's 56%. Four cores reach 36.6 GFLOP/s at 2048³, a
+  speedup of 4.0.
+
+To make the A/B mean something here, the detecting arm needs cache sizes the
+kernel does not provide. `MTL5_BLOCKING_KC` / `MTL5_BLOCKING_MC` can impose them
+by hand, but only once the A78C configuration is known: its L1d and L2 sizes are
+chosen by the SoC integrator, so the core name alone does not fix them.
+
+### Pinning and clock policy
+
+| Requirement | Why |
+|---|---|
+| Pin to the A78C cores only (CPUs 0–3), read from `/proc/cpuinfo` | the A55 cores are slower and have a different cache hierarchy; a team that includes one runs at its pace |
+| Record the governor, and set `performance` on the A78C policy for a comparable session | there is no `nvpmodel`; the governor is what decides the clocks |
+| Note the 2112 MHz cap | `performance` runs at `scaling_max_freq`, not the 2361.6 MHz hardware maximum |
+| Keep `schedutil` and `performance` runs in separate directories | the profile does this; they must never be averaged together |
 
 ## Cache-blocking A/B — the four-machine result (#430)
 
