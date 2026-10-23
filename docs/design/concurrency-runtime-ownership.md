@@ -219,10 +219,13 @@ Each worker reserves a stack: 8 MB of virtual address space on Linux by default,
 and 1 MB on Windows. Physical use is small, so for `P·N` threads this matters
 mainly on 32-bit or memory-capped targets. **Cache and NUMA locality matter more.**
 A private pool per component evicts the other pools' working sets from shared L2
-and L3 caches each time it runs. A shared pool with a stable tid-to-core mapping
-keeps a component's chunk `t` on the same core from region to region. That
-helps GEMM's packed panels, and the BLIS-style blocking in
-`detail/gemm_blocked.hpp` depends on it. On multi-socket machines, one pool per
+and L3 caches each time it runs. A shared pool with stable worker ids keeps a
+component's chunk `t` on the same *worker* from region to region. Keeping it on
+the same *core* also needs pinned workers. The current `thread_pool` sets no CPU
+affinity, so the OS can migrate a worker, and core reuse is likely but not
+guaranteed. Pinning, which is the application's call (for example `taskset`, as
+in `on-node-threading.md`), would make it hold. That helps the packed panels of
+the BLIS-style blocking in `detail/gemm_blocked.hpp`. On multi-socket machines, one pool per
 NUMA domain, each pinned to its socket, is the established exception (PaRSEC
 and StarPU both bind workers per socket). It is a partition of one runtime's
 cores, not a pool per component.
@@ -238,7 +241,7 @@ cores, not a pool per component.
 | Concurrent callers | run in parallel | **second caller serializes** | can reserve slices so both run | interleaved at task level |
 | Real-time isolation | possible, but not by default | **no**: shares mutex and queue | a separate RT pool on reserved cores | no: a general scheduler has no hard bound |
 | Configuration | one setting per pool | one number | one number plus optional partitions | one number, plus a tile size |
-| Locality | pools evict each other's caches | stable tid-to-core | stable, NUMA partitions possible | depends on the scheduler; locality-aware ones exist |
+| Locality | pools evict each other's caches | stable tid-to-worker; core reuse needs pinning | stable, NUMA partitions possible | depends on the scheduler; locality-aware ones exist |
 | Portability, header-only | yes | yes, but copies multiply across DLLs and hidden-visibility `.so` files (§4.3) | needs one non-inline definition somewhere | heavy: a runtime dependency or a large subsystem |
 | Cost to build | low | done | small | large |
 
@@ -339,8 +342,13 @@ factorizations on it. The lessons that bear on this document:
   tile's tasks on its socket's workers where possible. This partitions one
   runtime by locality. It does not add runtimes.
 - **The MPI threading level is a design input.** A runtime with one
-  communication thread can use `MPI_THREAD_FUNNELED` or `SERIALIZED`, which MPI
-  implementations support better than `MPI_THREAD_MULTIPLE`. When every
+  communication thread needs less than `MPI_THREAD_MULTIPLE`, which MPI
+  implementations support less well. Which level it needs depends on which
+  thread that is. `MPI_THREAD_FUNNELED` allows MPI calls only from the thread
+  that called `MPI_Init_thread`, so it fits only when the communication thread
+  is the initializing thread. A dedicated communication thread started later
+  needs `MPI_THREAD_SERIALIZED`, which is safe because it is the only thread
+  calling MPI. When every
   component in a process may call MPI from its own threads, the process needs
   `MULTIPLE`. Per-component runtimes push toward the weakest-supported mode.
 
@@ -391,16 +399,34 @@ a different latency class, on reserved cores.** In order of value:
    `run()` stays inline. Tracked in
    [#639](https://github.com/stillwater-sc/mtl5/issues/639).
 
-3. **Make foreign runtimes single-threaded under a threaded MTL5 pool (§5.2).**
-   When `MTL5_WITH_BLAS`/`MTL5_WITH_LAPACK` dispatch is active and
-   `pool().size() > 1`, the vendor BLAS should run on one thread. Otherwise MTL5
-   regions and vendor regions compete for the same cores. At minimum this goes in
-   `on-node-threading.md` and the build-options page. Better, MTL5 calls the
-   vendor's set-threads entry point (`openblas_set_num_threads`,
-   `mkl_set_num_threads_local`, or `BLIS_NUM_THREADS` semantics) on a dispatch
-   path, when that symbol is linked. The same applies to CHOLMOD and SPQR built
-   with OpenMP/TBB. mtl5-python can recommend `threadpoolctl` to cap NumPy's
-   BLAS when `mtl5.set_num_threads(n > 1)`. Tracked in
+3. **Keep foreign runtimes single-threaded inside MTL5 regions (§5.2).** A
+   vendor BLAS call made *from a tid of an active MTL5 region* should run on one
+   thread. Otherwise each tid starts a vendor team, the `N²` case of §4.4. The
+   test is whether the call is inside a region, not whether
+   `pool().size() > 1`. A direct `mult(A, x, y)` on BLAS-eligible types calls
+   the vendor without entering the pool, and there the vendor's threads are the
+   only parallelism, so capping them would make the call serial. Knowing that a
+   call is inside a region needs a thread-local "in a region" flag, which
+   `run()` would set on each tid. The pool has no such flag today; it tracks
+   only whether it is busy, which is shared by all threads.
+
+   Each vendor's control has a different scope, and the scope decides whether
+   MTL5 can cap only nested calls:
+
+   | Backend | Control | Scope | Can cap only nested calls? |
+   |---|---|---|---|
+   | MKL | `mkl_set_num_threads_local(n)` | the calling thread; it persists on that thread until reset, and returns the previous value | yes: set on entry to a tid, restore the returned value on exit |
+   | BLIS | per-call `rntm_t` (`bli_rntm_set_num_threads`) passed to the expert `_ex` APIs | that one call | yes, if the dispatch calls the `_ex` APIs |
+   | BLIS | `bli_thread_set_num_threads(n)`, `BLIS_NUM_THREADS` | process-wide | no: it changes direct calls too |
+   | OpenBLAS | `openblas_set_num_threads(n)`, `OPENBLAS_NUM_THREADS` | process-wide | no; with an OpenMP build, OpenBLAS also runs serial inside an active OpenMP region, which MTL5's pool is not |
+   | CHOLMOD, SPQR | OpenMP's `omp_set_num_threads` (a per-thread ICV), or TBB's `task_arena`/`global_control` | per thread for OpenMP; per arena or process-wide for TBB | OpenMP: yes per thread. TBB: by running the call inside a one-thread arena |
+
+   Where the control is only process-wide, the application has to choose which
+   runtime owns the cores. That means a configuration, not something MTL5 sets
+   behind its back: either a serial vendor under a threaded MTL5, or a threaded
+   vendor with MTL5 serial. At minimum all of this goes in `on-node-threading.md`
+   and the build-options page. mtl5-python can recommend `threadpoolctl` to cap
+   NumPy's BLAS when `mtl5.set_num_threads(n > 1)`. Tracked in
    [#640](https://github.com/stillwater-sc/mtl5/issues/640).
 
 4. **A real-time pool on its own cores (#636).** The one legitimate second pool
@@ -426,7 +452,9 @@ a different latency class, on reserved cores.** In order of value:
    serially, which MTL5's nested-serial rule already guarantees. Insertion-order
    dependency resolution keeps the bits fixed (§5.3). For distributed memory, the
    PaRSEC structure applies: compute workers plus one communication thread, per
-   process (`MPI_THREAD_FUNNELED`). The element serialization point proposed in
+   process. That is `MPI_THREAD_FUNNELED` if the communication thread is the one
+   that called `MPI_Init_thread`, and `MPI_THREAD_SERIALIZED` if it is a
+   dedicated thread started later (§5.4). The element serialization point proposed in
    the [Elemental assessment](https://github.com/stillwater-sc/mtl5/blob/main/docs/other/mtl5-elemental-assessment.md) lets MTL5
    keep MPI out of its core.
 
