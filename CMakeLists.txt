@@ -203,7 +203,15 @@ if(MTL5_WITH_HIGHWAY)
             GIT_REPOSITORY https://github.com/google/highway.git
             GIT_TAG        1.4.0
             GIT_SHALLOW    TRUE)
+        # Highway 1.4.0 sets cmake_policy(CMP0111 OLD), a GTest workaround,
+        # which newer CMake reports as a deprecation warning on every
+        # configure. That is Highway's to fix, not ours, so deprecation
+        # warnings are off while it is added. A normal variable, not the cache:
+        # unsetting it afterwards restores whatever the user had (-Wdeprecated
+        # included) for the rest of MTL5.
+        set(CMAKE_WARN_DEPRECATED OFF)
         FetchContent_MakeAvailable(highway)
+        unset(CMAKE_WARN_DEPRECATED)
     endif()
     # BUILD_INTERFACE only: a fetched `hwy` target can't be part of MTL5's
     # install export set. Highway is active for in-tree consumers (tests,
