@@ -388,7 +388,8 @@ a different latency class, on reserved cores.** In order of value:
    provides. Python extension modules and Windows DLLs would then share one set
    of workers. The hot path must not take a virtual call per region (the same
    constraint #636 sets): the provider resolves once to a concrete pool, and
-   `run()` stays inline. Worth an issue.
+   `run()` stays inline. Tracked in
+   [#639](https://github.com/stillwater-sc/mtl5/issues/639).
 
 3. **Make foreign runtimes single-threaded under a threaded MTL5 pool (§5.2).**
    When `MTL5_WITH_BLAS`/`MTL5_WITH_LAPACK` dispatch is active and
@@ -399,7 +400,8 @@ a different latency class, on reserved cores.** In order of value:
    `mkl_set_num_threads_local`, or `BLIS_NUM_THREADS` semantics) on a dispatch
    path, when that symbol is linked. The same applies to CHOLMOD and SPQR built
    with OpenMP/TBB. mtl5-python can recommend `threadpoolctl` to cap NumPy's
-   BLAS when `mtl5.set_num_threads(n > 1)`. Worth an issue.
+   BLAS when `mtl5.set_num_threads(n > 1)`. Tracked in
+   [#640](https://github.com/stillwater-sc/mtl5/issues/640).
 
 4. **A real-time pool on its own cores (#636).** The one legitimate second pool
    (§4.5, §5.4's communication thread). It has the same interface and contract,
@@ -463,6 +465,8 @@ and that should stay true.
   [Elemental assessment](https://github.com/stillwater-sc/mtl5/blob/main/docs/other/mtl5-elemental-assessment.md); issues
   [#221](https://github.com/stillwater-sc/mtl5/issues/221),
   [#630](https://github.com/stillwater-sc/mtl5/issues/630),
-  [#636](https://github.com/stillwater-sc/mtl5/issues/636).
+  [#636](https://github.com/stillwater-sc/mtl5/issues/636),
+  [#639](https://github.com/stillwater-sc/mtl5/issues/639),
+  [#640](https://github.com/stillwater-sc/mtl5/issues/640).
 - kpu-sim: `docs/plans/plasma-tile-algorithms.md` (the PLASMA tile-kernel
   catalog and its mapping to the KPU).
