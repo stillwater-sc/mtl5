@@ -223,8 +223,9 @@ and L3 caches each time it runs. A shared pool with stable worker ids keeps a
 component's chunk `t` on the same *worker* from region to region. Keeping it on
 the same *core* also needs pinned workers. The current `thread_pool` sets no CPU
 affinity, so the OS can migrate a worker, and core reuse is likely but not
-guaranteed. Pinning, which is the application's call (for example `taskset`, as
-in `on-node-threading.md`), would make it hold. That helps the packed panels of
+guaranteed. Pinning each worker to its own core would make it hold. `taskset`
+does not do that: it sets the process's affinity mask, which only confines the
+workers to a set of cores (see `on-node-threading.md`). That helps the packed panels of
 the BLIS-style blocking in `detail/gemm_blocked.hpp`. On multi-socket machines, one pool per
 NUMA domain, each pinned to its socket, is the established exception (PaRSEC
 and StarPU both bind workers per socket). It is a partition of one runtime's
