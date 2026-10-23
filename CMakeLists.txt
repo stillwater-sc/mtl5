@@ -58,6 +58,7 @@ option(MTL5_WITH_SUITESPARSE_SPQR   "Link SuiteSparseQR (SuiteSparse)"       OFF
 option(MTL5_BUILD_BENCHMARKS "Build the benchmark suite" OFF)
 option(MTL5_BUILD_REGRESSION_TESTS "Build large-scale regression tests (slow)" OFF)
 option(MTL5_CMAKE_TRACE    "Trace CMake target creation" OFF)
+option(MTL5_SHARED_POOL_LIBRARY "Build and install mtl5_pool, a shared library holding one thread pool for every module that links MTL5::shared_pool" OFF)
 
 # ── Global settings ─────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 20)
@@ -310,6 +311,24 @@ if(MTL5_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()
 
+# ── One thread pool across shared libraries (#639) ──────────────────────
+# Header-only MTL5 gives each shared object built with hidden visibility, and
+# each Windows DLL, its own copy of the thread pool. Modules that link
+# MTL5::shared_pool get MTL5_SHARED_POOL defined and all use the pool that this
+# library holds. Off by default: the header-only build is unchanged.
+if(MTL5_SHARED_POOL_LIBRARY)
+    add_library(mtl5_pool SHARED src/mtl5_pool.cpp)
+    add_library(MTL5::shared_pool ALIAS mtl5_pool)
+    target_link_libraries(mtl5_pool PUBLIC mtl5)
+    target_compile_definitions(mtl5_pool PUBLIC MTL5_SHARED_POOL PRIVATE MTL5_SHARED_POOL_BUILD)
+    set_target_properties(mtl5_pool PROPERTIES
+        EXPORT_NAME shared_pool
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+        VERSION ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR})
+endif()
+
 # ── Install rules ────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -318,6 +337,15 @@ install(TARGETS mtl5
     EXPORT MTL5Targets
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
+
+if(MTL5_SHARED_POOL_LIBRARY)
+    install(TARGETS mtl5_pool
+        EXPORT MTL5Targets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
 
 install(DIRECTORY include/mtl
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}

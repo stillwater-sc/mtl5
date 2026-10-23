@@ -16,6 +16,42 @@ compile_all("true" "detail" "Tests/detail" "MTL5::mtl5;Catch2::Catch2WithMain" $
 file(GLOB PARALLEL_SRC "parallel/*.cpp")
 compile_all("true" "parallel" "Tests/parallel" "MTL5::mtl5;Catch2::Catch2WithMain" ${PARALLEL_SRC})
 
+# One thread pool across shared libraries (#639). A test-only copy of the
+# mtl5_pool library, two hidden-visibility modules that define
+# MTL5_SHARED_POOL by linking it, and one that does not; the executable checks
+# that the first two and itself share one pool. Every target is in this
+# directory, so on Windows the DLLs land next to the executable.
+set(_shared_pool_dir ${CMAKE_CURRENT_SOURCE_DIR}/parallel/shared_pool)
+add_library(parallel_shared_pool_lib SHARED ${PROJECT_SOURCE_DIR}/src/mtl5_pool.cpp)
+target_link_libraries(parallel_shared_pool_lib PUBLIC MTL5::mtl5)
+target_compile_definitions(parallel_shared_pool_lib
+    PUBLIC MTL5_SHARED_POOL PRIVATE MTL5_SHARED_POOL_BUILD)
+set_target_properties(parallel_shared_pool_lib PROPERTIES
+    CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON FOLDER "Tests/parallel")
+foreach(_module shared_a shared_b local)
+    add_library(parallel_shared_pool_${_module} SHARED ${_shared_pool_dir}/plugin_${_module}.cpp)
+    target_link_libraries(parallel_shared_pool_${_module} PRIVATE MTL5::mtl5)
+    set_target_properties(parallel_shared_pool_${_module} PROPERTIES
+        CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON FOLDER "Tests/parallel")
+endforeach()
+# The same two modes again with default visibility, so their inline functions
+# are exported side by side and must not interpose on each other.
+foreach(_module shared_default local_default)
+    add_library(parallel_shared_pool_${_module} SHARED ${_shared_pool_dir}/plugin_${_module}.cpp)
+    target_link_libraries(parallel_shared_pool_${_module} PRIVATE MTL5::mtl5)
+    set_target_properties(parallel_shared_pool_${_module} PROPERTIES FOLDER "Tests/parallel")
+endforeach()
+target_link_libraries(parallel_shared_pool_shared_a PRIVATE parallel_shared_pool_lib)
+target_link_libraries(parallel_shared_pool_shared_b PRIVATE parallel_shared_pool_lib)
+target_link_libraries(parallel_shared_pool_shared_default PRIVATE parallel_shared_pool_lib)
+add_executable(parallel_test_shared_pool_mt ${_shared_pool_dir}/test_shared_pool_mt.cpp)
+target_link_libraries(parallel_test_shared_pool_mt PRIVATE
+    parallel_shared_pool_lib parallel_shared_pool_shared_a parallel_shared_pool_shared_b
+    parallel_shared_pool_local parallel_shared_pool_local_default
+    parallel_shared_pool_shared_default Catch2::Catch2WithMain)
+set_target_properties(parallel_test_shared_pool_mt PROPERTIES FOLDER "Tests/parallel")
+add_test(NAME parallel_test_shared_pool_mt COMMAND parallel_test_shared_pool_mt)
+
 file(GLOB MAT_SRC "mat/*.cpp")
 compile_all("true" "mat" "Tests/mat" "MTL5::mtl5;Catch2::Catch2WithMain" ${MAT_SRC})
 

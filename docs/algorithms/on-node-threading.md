@@ -67,6 +67,59 @@ Use it to run at a thread count of your own below the pool's. The grain still
 applies under the cap. A capped reduction groups its sum by the capped team, so
 it gives the same bits as an uncapped pool of that size.
 
+## One pool across shared libraries
+
+The pool is a static inside an inline function in a header-only library. A
+program that includes MTL5 from several binaries can end up with **one pool per
+binary**:
+
+- every shared object built with `-fvisibility=hidden` keeps its own copy, and
+  Python extension modules built with nanobind or pybind11 are built that way;
+- every Windows DLL that includes the header has its own copy;
+- on macOS, a single copy can't be relied on.
+
+Each copy is a correct pool, so nothing deadlocks. But each one is sized from
+`MTL5_NUM_THREADS`, so two such modules start twice the threads asked for, and
+`configure(n)` sizes only the copy in the binary that calls it. On Linux with
+default visibility, and in a statically linked program, there is one pool
+already, and none of this is needed.
+
+To give every binary the same pool (#639), let one shared library hold it and
+have each module that uses MTL5 link that library:
+
+```bash
+cmake -B build -DMTL5_SHARED_POOL_LIBRARY=ON   # builds and installs mtl5_pool
+```
+
+```cmake
+find_package(MTL5 REQUIRED)
+target_link_libraries(my_extension PRIVATE MTL5::shared_pool)
+```
+
+Linking `MTL5::shared_pool` defines `MTL5_SHARED_POOL` for the module. Its
+`pool()` and `configure()` then refer to the pool in `mtl5_pool`. The shared
+library is loaded once per process, by every module that depends on it, so
+they share the same pool and the same configuration. That holds even for
+Python extensions loaded with `RTLD_LOCAL`. Each module looks the pool up once,
+so `run()` stays inline, with no extra call per region.
+
+Without MTL5's CMake, compile one translation unit of one shared library with
+`MTL5_SHARED_POOL` and `MTL5_SHARED_POOL_BUILD` defined, and include
+`<mtl/parallel/shared_pool_definition.hpp>` from it. Compile every other module
+with `MTL5_SHARED_POOL` defined, and link that library.
+
+Rules:
+
+- **Define `MTL5_SHARED_POOL` for a whole module, or not at all.** Two
+  translation units of one binary that disagree about it violate the
+  one-definition rule.
+- **Every module must be built against the same MTL5 pool header.** The exported
+  functions carry a layout version (`shared_pool_v1`). It changes when the
+  pool's layout does, so a module built against an incompatible header fails to
+  link rather than misbehaving at run time.
+- The default, header-only build is unchanged. A module that does not link
+  `MTL5::shared_pool` keeps its own pool.
+
 ## What is parallelized
 
 | Kernel | Where | Partition | Bit-identical to serial? |
