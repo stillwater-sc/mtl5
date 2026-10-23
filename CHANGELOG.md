@@ -5,6 +5,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ldlt_factor` no longer reports a zero pivot that `ldlt_bk_factor` and `cholesky_factor` don't see** (#421). Its default path formed each diagonal term as `(L(j,k) * L(j,k)) * D(k)`: the square of an already-rounded multiplier, scaled afterwards. On an SPD float matrix whose Schur complement is under 2 ulps of the diagonal, that landed exactly on `A(j,j)` and returned `j + 1`, while `ldlt_bk_factor` factored the same matrix without an interchange. The default paths of `ldlt_factor` and `ldlt_h_factor` now do what their comment always described: form `v(k) = L(j,k) * D(k)` (conjugated for LDLᴴ) once per column, and subtract `L(·,k) * v(k)`. That is the association `ldlt_bk_factor` and the accumulator kernel already use, and it saves a multiply per inner-loop term.
+  - **Results change in the last bits** for float and double input to the default path, since the products round differently. A matrix that factored before still factors, except possibly one sitting on a pivot that is zero to rounding either way. The accumulator paths (`ldlt_factor<Acc>`) are unchanged, and the default path's `D` now matches `ldlt_factor<T>`'s bit for bit (`L` still sums before subtracting, as before).
+  - The issue's own caveat stands: this changes a one-rounding coin flip on pivots within a couple of ulps of zero. Further into ill-conditioning, no association helps.
+
 ## [5.20.0] - 2026-10-22
 
 Block-quantized data becomes a first-class operand. `mat::block_matrix_view` is a read-only `Matrix` over the encoded bytes of a block-quantized format, parameterized by the new `BlockScheme` concept, with the OCP MXINT8 and MXFP4 schemes in-tree (#629). A scheme can plug in a fused gemv whose working memory the caller supplies. `simd::reduce_dot_block_scaled` is the inner-product kernel such formats need: each block's exact integer sum is scaled in-register, with one horizontal reduce per call (#628). The threaded GEMM now chooses its ic step by micro-panels, 3–16% faster on the configurations it changes, measured on three machines, and slower on none (#458).

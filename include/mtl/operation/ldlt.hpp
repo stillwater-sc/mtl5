@@ -223,14 +223,22 @@ int ldlt_factor(M& A) {
     //   v(k) = L(j,k) * D(k)  for k = 0..j-1
     //   D(j) = A(j,j) - sum_{k<j} L(j,k) * v(k)
     //   L(i,j) = (A(i,j) - sum_{k<j} L(i,k) * v(k)) / D(j)  for i > j
+    //
+    // v is formed first, as in ldlt_factor_acc and ldlt_bk_factor. Writing the
+    // term as (L(j,k) * L(j,k)) * D(k) instead rounds the square of an already
+    // rounded multiplier and then scales it by D(k), one rounding more on the
+    // pivot's path. On an SPD float matrix whose Schur complement is a couple
+    // of ulps of A(j,j), that form can land exactly on A(j,j) and report a zero
+    // pivot that ldlt_bk_factor and cholesky_factor do not see (#421).
 
+    std::vector<value_type> v(n);
     for (std::size_t j = 0; j < n; ++j) {
-        // Compute D(j) = A(j,j) - sum_{k<j} L(j,k)^2 * D(k)
+        for (std::size_t k = 0; k < j; ++k)
+            v[k] = A(j, k) * A(k, k);  // A(k,k) holds D(k)
+
         auto dj = A(j, j);
-        for (std::size_t k = 0; k < j; ++k) {
-            auto ljk = A(j, k);
-            dj -= ljk * ljk * A(k, k);  // A(k,k) holds D(k)
-        }
+        for (std::size_t k = 0; k < j; ++k)
+            dj -= A(j, k) * v[k];
         if (dj == math::zero<value_type>())
             return static_cast<int>(j + 1);
         A(j, j) = dj;  // Store D(j) on diagonal
@@ -239,7 +247,7 @@ int ldlt_factor(M& A) {
         for (std::size_t i = j + 1; i < n; ++i) {
             auto sum = math::zero<value_type>();
             for (std::size_t k = 0; k < j; ++k)
-                sum += A(i, k) * A(j, k) * A(k, k);  // L(i,k) * L(j,k) * D(k)
+                sum += A(i, k) * v[k];
             A(i, j) = (A(i, j) - sum) / dj;
         }
     }
@@ -338,19 +346,22 @@ int ldlt_h_factor(M& A) {
         return detail::ldlt_factor_acc<Accumulator, true>(A);
 
     // For j = 0..n-1:
-    //   D(j)   = Re( A(j,j) - sum_{k<j} |L(j,k)|^2 * D(k) )
-    //   L(i,j) = ( A(i,j) - sum_{k<j} L(i,k) * conj(L(j,k)) * D(k) ) / D(j)
+    //   v(k)   = conj(L(j,k)) * D(k)  for k = 0..j-1
+    //   D(j)   = Re( A(j,j) - sum_{k<j} L(j,k) * v(k) )
+    //   L(i,j) = ( A(i,j) - sum_{k<j} L(i,k) * v(k) ) / D(j)
     //
-    // D is real by construction: |L(j,k)|^2 is real and A(j,j) is real for a
-    // Hermitian A. Taking the real part explicitly keeps a rounding-sized
-    // imaginary residue from accumulating down the diagonal.
+    // v is formed first, for the reason given in ldlt_factor (#421).
+    // D is real by construction: L(j,k) * v(k) = |L(j,k)|^2 * D(k) and A(j,j)
+    // is real for a Hermitian A. Taking the real part explicitly keeps a
+    // rounding-sized imaginary residue from accumulating down the diagonal.
+    std::vector<value_type> v(n);
     for (std::size_t j = 0; j < n; ++j) {
+        for (std::size_t k = 0; k < j; ++k)
+            v[k] = conj_t::apply(A(j, k)) * A(k, k);  // A(k,k) holds D(k)
+
         value_type djv = A(j, j);
-        for (std::size_t k = 0; k < j; ++k) {
-            const value_type ljk = A(j, k);
-            const value_type dk  = A(k, k);
-            djv -= ljk * conj_t::apply(ljk) * dk;
-        }
+        for (std::size_t k = 0; k < j; ++k)
+            djv -= A(j, k) * v[k];
         const mag_t dj_real = functor::scalar::real<value_type>::apply(djv);
         if (dj_real == mag_t(0))
             return static_cast<int>(j + 1);
@@ -360,7 +371,7 @@ int ldlt_h_factor(M& A) {
         for (std::size_t i = j + 1; i < n; ++i) {
             value_type sum = math::zero<value_type>();
             for (std::size_t k = 0; k < j; ++k)
-                sum += A(i, k) * conj_t::apply(A(j, k)) * A(k, k);
+                sum += A(i, k) * v[k];
             A(i, j) = (A(i, j) - sum) / dj;
         }
     }
