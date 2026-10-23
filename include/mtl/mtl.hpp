@@ -54,6 +54,9 @@
 // Detail
 #include <mtl/detail/index.hpp>
 
+// Parallel -- the process-wide thread pool the kernels run on
+#include <mtl/parallel/thread_pool.hpp>
+
 // Matrix and vector parameters/dimensions
 #include <mtl/mat/dimension.hpp>
 #include <mtl/mat/parameter.hpp>
