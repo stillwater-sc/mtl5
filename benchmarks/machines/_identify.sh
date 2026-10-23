@@ -34,7 +34,7 @@ mtl5_machine_id() {
     if [ -z "$dt" ] && [ -z "$cpu" ] && command -v sysctl >/dev/null 2>&1; then
         cpu="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)"
     fi
-    id="$dt${dt:+ / }$cpu"
+    id="$dt${dt:+${cpu:+ / }}$cpu"   # the separator only between two names
     printf '%s' "${id:-unknown}"
 }
 
