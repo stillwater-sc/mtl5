@@ -13,6 +13,9 @@ compile_all("true" "math" "Tests/math" "MTL5::mtl5;Catch2::Catch2WithMain" ${MAT
 file(GLOB DETAIL_SRC "detail/*.cpp")
 compile_all("true" "detail" "Tests/detail" "MTL5::mtl5;Catch2::Catch2WithMain" ${DETAIL_SRC})
 
+file(GLOB PARALLEL_SRC "parallel/*.cpp")
+compile_all("true" "parallel" "Tests/parallel" "MTL5::mtl5;Catch2::Catch2WithMain" ${PARALLEL_SRC})
+
 file(GLOB MAT_SRC "mat/*.cpp")
 compile_all("true" "mat" "Tests/mat" "MTL5::mtl5;Catch2::Catch2WithMain" ${MAT_SRC})
 
