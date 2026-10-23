@@ -478,6 +478,7 @@ rather than in someone's shell history** — and land in the sidecar as
 ```bash
 benchmarks/machines/i7-12700k.sh            # P-cores 0,2,...,14, T in {1,8}
 benchmarks/machines/jetson-orin-nano.sh     # 6 cores, T in {1,6}, OUTDIR follows nvpmodel
+benchmarks/machines/arduino-ventuno-q.sh    # A78C cores only (read from cpuinfo), T in {1,4}, OUTDIR follows the governor
 ```
 
 The integer suite (#451) has its own profile per machine, named `*-int.sh`, since
