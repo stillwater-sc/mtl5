@@ -487,30 +487,41 @@ TEST_CASE("LDL^T does not report a zero pivot that LDL^T-BK and Cholesky do not 
     // SPD; the exact Schur complement c - b^2/a is 0.0289, under 2 ulps of c in
     // float. Forming D(1) as c - (l*l)*a, with l = b/a rounded, landed exactly on
     // c and returned 2. The form c - l*(l*a), which ldlt_bk_factor and the
-    // accumulator kernel use, gives 0.015625.
+    // accumulator kernel use, gives 0.015625 -- or 0.01571 where the compiler
+    // fuses the update into an FMA (ARM64, macOS, -ffp-contract=fast). So the
+    // checks are what the fix guarantees, not one platform's last bit: the
+    // pivot is positive, as an SPD matrix's must be, and within 2 ulps of c of
+    // the exact value.
     const double a = 1291952.73, b = 471599.55, c = 172147.299;
     auto make = [&]<typename T>(T) {
         mat::dense2D<T> A(2, 2);
         A(0,0) = T(a); A(0,1) = T(b); A(1,0) = T(b); A(1,1) = T(c);
         return A;
     };
+    const double exact = c - b * b / a;
+    const double two_ulps = 2.0 * (double(std::nextafter(float(c), 1e30f)) - double(float(c)));
+    auto check_pivot = [&](double d) {
+        CHECK(d > 0.0);
+        CHECK(std::abs(d - exact) <= two_ulps);
+    };
 
     SECTION("ldlt_factor<float>") {
         auto L = make(0.0f);
         REQUIRE(ldlt_factor(L) == 0);
-        CHECK(L(1,1) == 0.015625f);
+        check_pivot(L(1,1));
         CHECK(L(0,0) == float(a));
         CHECK(L(1,0) == float(b) / float(a));
     }
     SECTION("ldlt_h_factor<float>") {
         auto L = make(0.0f);
         REQUIRE(ldlt_h_factor(L) == 0);
-        CHECK(L(1,1) == 0.015625f);
+        check_pivot(L(1,1));
     }
     SECTION("ldlt_h_factor<complex<float>>") {
         auto L = make(std::complex<float>{});
         REQUIRE(ldlt_h_factor(L) == 0);
-        CHECK(L(1,1) == std::complex<float>(0.015625f));
+        check_pivot(L(1,1).real());
+        CHECK(L(1,1).imag() == 0.0f);
     }
     SECTION("D agrees with a same-type accumulator's, over random SPD input") {
         // Both paths now form D(j) as A(j,j) - L(j,k) * v(k), term by term, in
