@@ -111,46 +111,14 @@ public:
     /// header. Does not allocate.
     template <typename Fn>
     void run(unsigned count, Fn&& fn) {
-        if (count == 0) return;
-        if (count > n_) count = n_;
-        if (n_ <= 1 || count <= 1) {                 // serial fast path
-            for (unsigned t = 0; t < count; ++t) fn(t);
-            return;
+        // A function name deduces Fn as a function reference, which has no
+        // object address to type-erase; run it through a pointer object.
+        if constexpr (std::is_function_v<std::remove_reference_t<Fn>>) {
+            auto* fp = std::addressof(fn);
+            run_impl(count, fp);
+        } else {
+            run_impl(count, fn);
         }
-
-        std::unique_lock<std::mutex> lk(mtx_);
-        if (busy_) {                                  // no nesting: run serially
-            lk.unlock();
-            for (unsigned t = 0; t < count; ++t) fn(t);
-            return;
-        }
-        busy_ = true;
-        worker_exc_ = nullptr;
-        // The task is a pointer to fn plus a trampoline, not a copy of fn: run()
-        // does not return until every tid has completed, so fn outlives every
-        // call, and nothing is allocated however large fn's captures are.
-        using F = std::remove_reference_t<Fn>;
-        ctx_ = const_cast<void*>(static_cast<const void*>(std::addressof(fn)));
-        call_ = [](void* ctx, unsigned tid) { (*static_cast<F*>(ctx))(tid); };
-        active_ = count;
-        remaining_ = count - 1;                       // workers 1..count-1
-        ++generation_;
-        lk.unlock();
-        wake_.notify_all();
-
-        std::exception_ptr caller_exc;
-        try { fn(0); } catch (...) { caller_exc = std::current_exception(); }
-
-        lk.lock();
-        done_.wait(lk, [&] { return remaining_ == 0; });
-        ctx_ = nullptr;
-        call_ = nullptr;
-        busy_ = false;
-        std::exception_ptr worker_exc = worker_exc_;
-        lk.unlock();
-
-        if (caller_exc) std::rethrow_exception(caller_exc);
-        if (worker_exc) std::rethrow_exception(worker_exc);
     }
 
     /// Partition [0, n) into contiguous chunks across the pool and run
@@ -277,6 +245,51 @@ public:
     }
 
 private:
+    /// run()'s body, for a task that is an object (a lambda, a functor or a
+    /// function pointer).
+    template <typename F>
+    void run_impl(unsigned count, F& fn) {
+        if (count == 0) return;
+        if (count > n_) count = n_;
+        if (n_ <= 1 || count <= 1) {                 // serial fast path
+            for (unsigned t = 0; t < count; ++t) fn(t);
+            return;
+        }
+
+        std::unique_lock<std::mutex> lk(mtx_);
+        if (busy_) {                                  // no nesting: run serially
+            lk.unlock();
+            for (unsigned t = 0; t < count; ++t) fn(t);
+            return;
+        }
+        busy_ = true;
+        worker_exc_ = nullptr;
+        // The task is a pointer to fn plus a trampoline, not a copy of fn: run()
+        // does not return until every tid has completed, so fn outlives every
+        // call, and nothing is allocated however large fn's captures are.
+        ctx_ = const_cast<void*>(static_cast<const void*>(std::addressof(fn)));
+        call_ = [](void* ctx, unsigned tid) { (*static_cast<F*>(ctx))(tid); };
+        active_ = count;
+        remaining_ = count - 1;                       // workers 1..count-1
+        ++generation_;
+        lk.unlock();
+        wake_.notify_all();
+
+        std::exception_ptr caller_exc;
+        try { fn(0); } catch (...) { caller_exc = std::current_exception(); }
+
+        lk.lock();
+        done_.wait(lk, [&] { return remaining_ == 0; });
+        ctx_ = nullptr;
+        call_ = nullptr;
+        busy_ = false;
+        std::exception_ptr worker_exc = worker_exc_;
+        lk.unlock();
+
+        if (caller_exc) std::rethrow_exception(caller_exc);
+        if (worker_exc) std::rethrow_exception(worker_exc);
+    }
+
     /// Team for a chunked loop over n units: the pool, or max_threads if that is
     /// smaller and nonzero, cut so each chunk holds >= grain units; 1 (serial)
     /// when the pool is serial or n < 2 * grain.

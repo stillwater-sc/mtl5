@@ -113,6 +113,27 @@ TEST_CASE("parallel: parallel_for does not allocate", "[parallel][thread_pool]")
 }
 #endif
 
+namespace {
+std::array<std::atomic<int>, 4> hits{};
+void count_tid(unsigned tid) { hits[tid].fetch_add(1); }
+std::array<std::atomic<std::size_t>, 1> covered{};
+void count_range(std::size_t b, std::size_t e) { covered[0].fetch_add(e - b); }
+} // namespace
+
+TEST_CASE("parallel: a free function is a task", "[parallel][thread_pool]") {
+    // A function name deduces as a function reference, which has no object
+    // address; run() must still accept it, as the std::function pool did.
+    thread_pool pool(4);
+    pool.run(4, count_tid);
+    void (*fp)(unsigned) = count_tid;
+    pool.run(4, fp);
+    for (unsigned t = 0; t < 4; ++t) REQUIRE(hits[t].load() == 2);
+
+    pool.parallel_for(1000, 10, count_range);
+    pool.parallel_for(1000, 10, 2u, count_range);
+    REQUIRE(covered[0].load() == 2000);
+}
+
 TEST_CASE("parallel: a task's writes are visible when run() returns", "[parallel][thread_pool]") {
     // Plain, non-atomic writes from every tid, read by the caller after the
     // join. The contract says these happen-before; a ThreadSanitizer build
