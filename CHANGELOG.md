@@ -5,6 +5,19 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The thread pool is public API: `mtl::parallel::thread_pool`, with `pool()` and `configure()`** (#630). Code built on MTL5, such as synapse's quantized matmul and attention kernels, can run its parallel work on the pool MTL5's own kernels use, and so share one set of workers instead of oversubscribing the cores. The header is `<mtl/parallel/thread_pool.hpp>`, and its contract is documented there and in `docs/algorithms/on-node-threading.md`:
+  - the caller runs tid 0, and `run` blocks until every tid completes;
+  - every task's writes happen-before the caller's next action;
+  - nested or concurrent regions run serially.
+
+  `mtl::detail::thread_pool` and `<mtl/detail/thread_pool.hpp>` remain as aliases, so existing callers compile unchanged.
+  - **`run()` and `parallel_for()` no longer allocate**, whatever the task captures. The task used to be copied into a `std::function`, once by `run` and again by each worker. That was allocation-free only while the wrapping lambda fitted the standard library's small buffer, which the standard does not promise. The pool now holds a pointer to the caller's callable plus a function pointer. A test replaces global `operator new` to check this with a 256-byte capture. `parallel_reduce` and `parallel_accumulate` still allocate their per-chunk partials, and are documented as doing so.
+  - **`configure(threads)`** sizes the pool from code. It applies only before the pool's first use, overrides `MTL5_NUM_THREADS`, is clamped to the hardware concurrency in the same way, and returns `false` once the pool exists. Before this, an application had to `setenv` before first use.
+  - **A per-call team cap.** `parallel_for`, `parallel_reduce` and `parallel_accumulate` take `max_threads` before the body (`0`: the whole pool), so a caller can run below the pool's size without partitioning by hand through `run`. The existing signatures and their behaviour are unchanged.
+  - A real-time variant, with mutex-free dispatch and a spin-then-futex wait, is #636.
+
 ### Fixed
 
 - **`ldlt_factor` no longer reports a zero pivot that `ldlt_bk_factor` and `cholesky_factor` don't see** (#421). Its default path formed each diagonal term as `(L(j,k) * L(j,k)) * D(k)`: the square of an already-rounded multiplier, scaled afterwards. On an SPD float matrix whose Schur complement is under 2 ulps of the diagonal, that landed exactly on `A(j,j)` and returned `j + 1`, while `ldlt_bk_factor` factored the same matrix without an interchange. The default paths of `ldlt_factor` and `ldlt_h_factor` now do what their comment always described: form `v(k) = L(j,k) * D(k)` (conjugated for LDLᴴ) once per column, and subtract `L(·,k) * v(k)`. That is the association `ldlt_bk_factor` and the accumulator kernel already use, and it saves a multiply per inner-loop term.

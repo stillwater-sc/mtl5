@@ -18,6 +18,55 @@ threads are created** and each kernel runs its original serial path (a cheap
 pool-size check is all the threading layer adds), so the default build behaves as
 before.
 
+Or size it from code, before anything uses the pool:
+
+```cpp
+#include <mtl/parallel/thread_pool.hpp>
+
+int main(int argc, char** argv) {
+    mtl::parallel::configure(8);   // overrides MTL5_NUM_THREADS
+    // ...
+}
+```
+
+`configure(n)` is clamped to the hardware concurrency, as the variable is, and
+returns `false` without changing anything once the pool exists: after the first
+`mtl::parallel::pool()` call or the first kernel that runs threaded.
+`pool().size()` is the size in use.
+
+## Running your own work on the pool
+
+The pool is public API, `mtl::parallel::thread_pool`, reached through
+`mtl::parallel::pool()` (#630). Code that runs its parallel work there shares one
+set of workers with MTL5's kernels instead of oversubscribing the cores. The
+older spelling, `mtl::detail::thread_pool::instance()` from
+`<mtl/detail/thread_pool.hpp>`, still works and names the same pool.
+
+`run(count, task)` is the primitive, and its contract is:
+
+- `task(tid)` runs once for each `tid` in `[0, count)`; `count` is clamped to
+  `size()`.
+- The **calling thread runs tid 0**; the pool's workers run `1..count-1`.
+- `run` **blocks** until every tid has completed, and every task's writes
+  **happen-before** the caller's next action after it returns.
+- A region started while another is in progress, nested inside a task or
+  concurrently from another thread, **runs serially** on its caller, every tid
+  in order. It never deadlocks or oversubscribes.
+- The first exception from any tid is rethrown after all tids join.
+- `run` **does not allocate**. It holds the task as a pointer to your callable
+  plus a function pointer, so this holds whatever the callable captures.
+
+`parallel_for` does not allocate either. `parallel_reduce` and
+`parallel_accumulate` do: a threaded call keeps its per-chunk partials in a
+`std::vector`.
+
+Each of the three loops also takes a **team cap**, `max_threads`, before the
+body: `parallel_for(n, grain, max_threads, body)`, and likewise for
+`parallel_reduce<T>` and `parallel_accumulate<Acc>`. `0` means the whole pool.
+Use it to run at a thread count of your own below the pool's. The grain still
+applies under the cap. A capped reduction groups its sum by the capped team, so
+it gives the same bits as an uncapped pool of that size.
+
 ## What is parallelized
 
 | Kernel | Where | Partition | Bit-identical to serial? |
@@ -58,7 +107,7 @@ SpMV/L1 threading with no solver-code changes.
 
 ## How it works
 
-- **`detail::thread_pool`** — a persistent pool of worker threads. `run(count,
+- **`parallel::thread_pool`** — a persistent pool of worker threads. `run(count,
   task)` runs `task(tid)` for `tid ∈ [0,count)` (the caller runs tid 0), blocking
   until all finish. One condition-variable handoff per parallel region — no
   thread is spawned per call.
