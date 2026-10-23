@@ -481,3 +481,74 @@ TEST_CASE("LDL^H equals LDL^T for real symmetric input (#352)",
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE(x1(i) == x2(i));
 }
+
+TEST_CASE("LDL^T does not report a zero pivot that LDL^T-BK and Cholesky do not see (#421)",
+          "[operation][ldlt][regression]") {
+    // SPD; the exact Schur complement c - b^2/a is 0.0289, under 2 ulps of c in
+    // float. Forming D(1) as c - (l*l)*a, with l = b/a rounded, landed exactly on
+    // c and returned 2. The form c - l*(l*a), which ldlt_bk_factor and the
+    // accumulator kernel use, gives 0.015625 -- or 0.01571 where the compiler
+    // fuses the update into an FMA (ARM64, macOS, -ffp-contract=fast). So the
+    // checks are what the fix guarantees, not one platform's last bit: the
+    // pivot is positive, as an SPD matrix's must be, and within 2 ulps of c of
+    // the exact value.
+    const double a = 1291952.73, b = 471599.55, c = 172147.299;
+    auto make = [&]<typename T>(T) {
+        mat::dense2D<T> A(2, 2);
+        A(0,0) = T(a); A(0,1) = T(b); A(1,0) = T(b); A(1,1) = T(c);
+        return A;
+    };
+    const double exact = c - b * b / a;
+    const double two_ulps = 2.0 * (double(std::nextafter(float(c), 1e30f)) - double(float(c)));
+    auto check_pivot = [&](double d) {
+        CHECK(d > 0.0);
+        CHECK(std::abs(d - exact) <= two_ulps);
+    };
+
+    SECTION("ldlt_factor<float>") {
+        auto L = make(0.0f);
+        REQUIRE(ldlt_factor(L) == 0);
+        check_pivot(L(1,1));
+        CHECK(L(0,0) == float(a));
+        CHECK(L(1,0) == float(b) / float(a));
+    }
+    SECTION("ldlt_h_factor<float>") {
+        auto L = make(0.0f);
+        REQUIRE(ldlt_h_factor(L) == 0);
+        check_pivot(L(1,1));
+    }
+    SECTION("ldlt_h_factor<complex<float>>") {
+        auto L = make(std::complex<float>{});
+        REQUIRE(ldlt_h_factor(L) == 0);
+        check_pivot(L(1,1).real());
+        CHECK(L(1,1).imag() == 0.0f);
+    }
+    SECTION("D agrees with a same-type accumulator's, over random SPD input") {
+        // Both paths now form D(j) as A(j,j) - L(j,k) * v(k), term by term, in
+        // the same order. (L's entries still differ in association: the default
+        // path sums before subtracting.)
+        auto L1 = make(0.0f), L2 = make(0.0f);
+        REQUIRE(ldlt_factor(L1) == 0);
+        REQUIRE(ldlt_factor<float>(L2) == 0);
+        CHECK(L1(1,1) == L2(1,1));
+        for (std::size_t n : {5u, 12u}) {
+            mat::dense2D<float> R(n, n);
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j <= i; ++j) {
+                    const float v = std::sin(float(7 * i + 3 * j + 1));
+                    R(i,j) = v; R(j,i) = v;
+                }
+            for (std::size_t i = 0; i < n; ++i) R(i,i) += float(n);
+            mat::dense2D<float> F1(R), F2(R);
+            REQUIRE(ldlt_factor(F1) == 0);
+            REQUIRE(ldlt_factor<float>(F2) == 0);
+            for (std::size_t i = 0; i < n; ++i)
+                CHECK(F1(i,i) == F2(i,i));
+        }
+    }
+    SECTION("float64 is unchanged") {
+        auto L = make(0.0);
+        REQUIRE(ldlt_factor(L) == 0);
+        CHECK_THAT(L(1,1), Catch::Matchers::WithinRel(c - b * b / a, 1e-6));
+    }
+}
