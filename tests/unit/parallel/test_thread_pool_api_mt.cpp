@@ -17,6 +17,23 @@
 #include <utility>
 #include <vector>
 
+// A sanitizer runtime defines operator new itself, so replacing it fails to
+// link (TSan's libclang_rt.tsan_cxx in CI's _mt job). Under one, the allocation
+// tests are compiled out and the rest of this file runs, which is what that
+// job is for: the happens-before test below.
+#define MTL5_TEST_COUNTS_ALLOCATIONS 1
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#  undef MTL5_TEST_COUNTS_ALLOCATIONS
+#  define MTL5_TEST_COUNTS_ALLOCATIONS 0
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || \
+      __has_feature(memory_sanitizer)
+#    undef MTL5_TEST_COUNTS_ALLOCATIONS
+#    define MTL5_TEST_COUNTS_ALLOCATIONS 0
+#  endif
+#endif
+
+#if MTL5_TEST_COUNTS_ALLOCATIONS
 // Every allocation in this test executable goes through these, so a region can
 // be checked for allocating anything at all, on any thread.
 namespace {
@@ -47,6 +64,7 @@ void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+#endif
 
 using mtl::parallel::thread_pool;
 
@@ -55,6 +73,7 @@ TEST_CASE("parallel: the detail names are the public pool", "[parallel][thread_p
     REQUIRE(&mtl::parallel::pool() == &mtl::detail::thread_pool::instance());
 }
 
+#if MTL5_TEST_COUNTS_ALLOCATIONS
 TEST_CASE("parallel: run() does not allocate, whatever the task captures",
           "[parallel][thread_pool]") {
     thread_pool pool(4);
@@ -92,6 +111,7 @@ TEST_CASE("parallel: parallel_for does not allocate", "[parallel][thread_pool]")
     REQUIRE(n == 0);
     for (int x : v) REQUIRE(x == 102);
 }
+#endif
 
 TEST_CASE("parallel: a task's writes are visible when run() returns", "[parallel][thread_pool]") {
     // Plain, non-atomic writes from every tid, read by the caller after the
