@@ -79,8 +79,12 @@ if [ "${CLOCKS#unpinned}" != "$CLOCKS" ]; then
     echo "      makes the first reps of every arm slower than the last." >&2
 fi
 
-export BENCH_PROFILE="jetson-orin-nano-${MODE}"
-export OUTDIR=${OUTDIR:-benchmarks/data/jetson-orin-nano-${MODE}}
+# BENCH_VARIANT names a different experiment in the same power mode (e.g.
+# jetson-orin-nano-tile.sh sets "tile-double"). It goes into both the profile and
+# the directory: the runner deletes the CSVs of the arms it is about to run, and
+# every experiment has a `default` arm.
+export BENCH_PROFILE="jetson-orin-nano-${MODE}${BENCH_VARIANT:+-$BENCH_VARIANT}"
+export OUTDIR=${OUTDIR:-benchmarks/data/jetson-orin-nano-${MODE}${BENCH_VARIANT:+-$BENCH_VARIANT}}
 export BUILD_DIR=${BUILD_DIR:-build-release}
 export BENCH_PCPUS=${BENCH_PCPUS:-0,1,2,3,4,5}   # six physical cores, no SMT
 export THREADS=${THREADS:-"1 6"}                 # 6, NOT the 8 that was asked once
@@ -100,9 +104,17 @@ echo "  thermal now: $(cat /sys/devices/virtual/thermal/thermal_zone*/temp 2>/de
                        awk '{printf "%.1fC ", $1/1000}')"
 echo
 
-if [ ! -x "$BUILD_DIR/benchmarks/bench_blocking_ab_default" ]; then
+# Every requested arm, not just `default`: the runner refuses an arm whose binary
+# is missing rather than building it. FORCE_BUILD=1 rebuilds even when all exist,
+# so an experiment never compares a stale `default`. -B keeps an overridden
+# BUILD_DIR the tree that is both configured and built.
+need_build=${FORCE_BUILD:-0}
+for a in $ARMS; do
+    [ -x "$BUILD_DIR/benchmarks/bench_blocking_ab_$a" ] || need_build=1
+done
+if [ "$need_build" = 1 ]; then
     echo "== configuring and building $BUILD_DIR"
-    cmake --preset release -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON >/dev/null
+    cmake --preset release -B "$BUILD_DIR" -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON >/dev/null
     targets=""
     for a in $ARMS; do targets="$targets bench_blocking_ab_$a"; done
     # shellcheck disable=SC2086

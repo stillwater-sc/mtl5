@@ -133,7 +133,11 @@ TEST_CASE("detected_hw_traits overrides only what was detected",
     // belongs to the compiled micro-kernel.
     REQUIRE(hw.fma_latency   == def.fma_latency);
     REQUIRE(hw.fma_units     == def.fma_units);
-    REQUIRE(hw.vec_registers == def.vec_registers);
+    // The register fields against the TARGET description (#643), which is where
+    // detection starts: they differ from default_hw_traits by ISA (aarch64) or
+    // by MTL5_GEMM_TARGET_REGISTER_FILE, never by detection.
+    REQUIRE(hw.vec_registers == simd::target_hw_traits.vec_registers);
+    REQUIRE(hw.acc_vectors   == simd::target_hw_traits.acc_vectors);
     REQUIRE(hw.page_bytes    == def.page_bytes);
 }
 

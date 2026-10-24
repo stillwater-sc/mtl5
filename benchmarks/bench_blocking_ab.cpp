@@ -355,6 +355,20 @@ int main(int argc, char** argv) {
         si << "detection_enabled=" << (lv != detect_levels::none ? 1 : 0) << "\n"
            << "detection_levels="
            << (l1 && l2 ? "l1+l2" : l1 ? "l1" : l2 ? "l2" : "none") << "\n";
+        // The register tile's provenance (#643). The CSV's mr column says WHAT the
+        // tile was; these say WHY, so a tile sweep arm is never read as the shipped
+        // derivation. vec_registers is the file the derivation assumed,
+        // acc_vectors its accumulator budget (0 = 3/4 of the file), and
+        // mr_override is 0 when mr came from the model.
+#if defined(MTL5_GEMM_MR_OVERRIDE)
+        constexpr std::size_t mr_override = MTL5_GEMM_MR_OVERRIDE;
+#else
+        constexpr std::size_t mr_override = 0;
+#endif
+        si << "vec_registers="          << mtl::simd::target_hw_traits.vec_registers << "\n"
+           << "acc_vectors="            << mtl::simd::target_hw_traits.acc_vectors << "\n"
+           << "target_vec_registers="   << mtl::simd::target_vec_registers() << "\n"
+           << "mr_override="            << mr_override << "\n";
     }
     return 0;
 }
