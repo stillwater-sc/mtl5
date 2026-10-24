@@ -29,9 +29,9 @@ MTL5_SHARED_POOL_API thread_pool& detail::shared_pool_v1() {
     return pool;
 }
 
-MTL5_SHARED_POOL_API bool& detail::shared_region_flag_v1() noexcept {
-    thread_local bool in = false;
-    return in;
+MTL5_SHARED_POOL_API unsigned char& detail::shared_region_state_v1() noexcept {
+    thread_local unsigned char state = outside_region;
+    return state;
 }
 
 } // namespace mtl::parallel

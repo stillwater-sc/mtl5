@@ -46,6 +46,13 @@ TEST_CASE("parallel: in_region() is true on every tid of run() and parallel_for"
     for (unsigned t = 0; t < n; ++t) REQUIRE(seen[t] == 1);
     REQUIRE_FALSE(par::detail::in_region());   // tid 0's flag is restored
 
+    // Only the workers are marked as such: tid 0 is the caller's own thread.
+    std::vector<int> worker(n, -1);
+    p.run(n, [&](unsigned tid) { worker[tid] = par::detail::on_pool_worker() ? 1 : 0; });
+    REQUIRE(worker[0] == 0);
+    for (unsigned t = 1; t < n; ++t) REQUIRE(worker[t] == 1);
+    REQUIRE_FALSE(par::detail::on_pool_worker());
+
     std::atomic<int> outside{0};
     p.parallel_for(std::size_t{4096}, std::size_t{64}, [&](std::size_t, std::size_t) {
         if (!par::detail::in_region()) ++outside;

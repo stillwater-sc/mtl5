@@ -14,12 +14,18 @@
 //   direct    the same batch from the calling thread, outside a region: the
 //             vendor's team is the only parallelism
 //
-// A second table times one ddot of length 256 per call inside a region,
-// direct vs through the wrapper, which is what the cap costs a small call.
+//   ddot      one ddot of length 256 per call inside a region, direct and
+//             through the wrapper: what the cap costs a small call
+//
+// Run each arm in a process of its own (--arms): a vendor's idle team keeps
+// spinning after its last call (Intel OpenMP for 200 ms by default), and an arm
+// that followed `uncapped` in the same process would be timed against it.
 //
 // Usage (one vendor per build tree, MTL5_WITH_BLAS=ON):
 //   MTL5_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 bench_vendor_nested [--csv f]
-//                     [--sizes 128,256,512] [--batch 64] [--reps 7]
+//       [--arms uncapped,capped,process1,direct,ddot] [--sizes 128,256,512]
+//       [--batch 64] [--reps 7]
+// The CSV is appended to, with a header when it is new.
 // benchmarks/run_vendor_nested.sh builds the three vendor trees and runs them.
 
 #include <algorithm>
@@ -90,6 +96,17 @@ double median_seconds(int reps, F&& f) {
     return t[t.size() / 2];
 }
 
+std::vector<std::string> parse_names(const char* s) {
+    std::vector<std::string> v;
+    std::string cur;
+    for (const char* p = s;; ++p) {
+        if (*p == ',' || *p == '\0') { if (!cur.empty()) v.push_back(cur); cur.clear(); }
+        else cur += *p;
+        if (*p == '\0') break;
+    }
+    return v;
+}
+
 std::vector<int> parse_list(const char* s) {
     std::vector<int> v;
     for (const char* p = s; *p;) {
@@ -113,12 +130,15 @@ int main(int argc, char** argv) {
     std::vector<int> sizes{128, 256, 512};
     int count = 64, reps = 7;
     std::string csv;
+    std::vector<std::string> arms{"uncapped", "capped", "process1", "direct", "ddot"};
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--sizes") && i + 1 < argc) sizes = parse_list(argv[++i]);
         else if (!std::strcmp(argv[i], "--batch") && i + 1 < argc) count = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--reps") && i + 1 < argc) reps = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--csv") && i + 1 < argc) csv = argv[++i];
+        else if (!std::strcmp(argv[i], "--arms") && i + 1 < argc) arms = parse_names(argv[++i]);
     }
+    auto want = [&](const char* a) { return std::find(arms.begin(), arms.end(), a) != arms.end(); };
 
     auto& pool = mtl::parallel::pool();
     const unsigned P = pool.size();
@@ -129,8 +149,9 @@ int main(int argc, char** argv) {
 
     std::ofstream out;
     if (!csv.empty()) {
-        out.open(csv);
-        out << "vendor,pool,vendor_env,arm,n,batch,seconds,gflops,checksum\n";
+        const bool fresh = !std::ifstream(csv).good();
+        out.open(csv, std::ios::app);
+        if (fresh) out << "vendor,pool,vendor_env,arm,n,batch,seconds,gflops,checksum\n";
     }
     auto row = [&](const char* arm, int n, double s, double sum) {
         const double gf = 2.0 * n * n * static_cast<double>(n) * count / s * 1e-9;
@@ -149,20 +170,28 @@ int main(int argc, char** argv) {
                     wrapped ? bt.wrapped(b) : bt.raw(b);
             });
         };
-        row("uncapped", n, median_seconds(reps, [&] { region(false); }), bt.checksum());
-        row("capped",   n, median_seconds(reps, [&] { region(true);  }), bt.checksum());
-        row("direct",   n, median_seconds(reps, [&] {
-                for (int b = 0; b < count; ++b) bt.wrapped(b); }), bt.checksum());
+        // The time first, then the checksum: as two arguments of one call
+        // their order is unspecified, and GCC reads C before the arm writes it.
+        auto arm = [&](const char* name, auto&& f) {
+            if (!want(name)) return;
+            const double s = median_seconds(reps, f);
+            row(name, n, s, bt.checksum());
+        };
+        arm("uncapped", [&] { region(false); });
+        arm("capped",   [&] { region(true); });
+        arm("direct",   [&] { for (int b = 0; b < count; ++b) bt.wrapped(b); });
 #if defined(MTL5_BLAS_VENDOR_OPENBLAS)
-        const int keep = openblas_get_num_threads();
-        openblas_set_num_threads(1);
-        row("process1", n, median_seconds(reps, [&] { region(false); }), bt.checksum());
-        openblas_set_num_threads(keep);
+        if (want("process1")) {
+            const int keep = openblas_get_num_threads();
+            openblas_set_num_threads(1);
+            arm("process1", [&] { region(false); });
+            openblas_set_num_threads(keep);
+        }
 #endif
     }
 
     // What the cap costs one small call made inside a region.
-    {
+    if (want("ddot")) {
         const int n = 256, calls = 200000;
         std::vector<double> x(n, 0.5), y(n, 0.25);
         std::vector<double> sink(P, 0.0);

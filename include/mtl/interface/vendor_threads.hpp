@@ -8,7 +8,9 @@
 // caps give a vendor call the same rule:
 //
 //   * inside a region (mtl::parallel::detail::in_region()), the vendor runs on
-//     one thread for the duration of the call, and its setting is restored;
+//     one thread for the duration of the call. Its setting is restored on the
+//     region's calling thread; on a pool worker, which only ever runs region
+//     tids, it stays at one;
 //   * outside a region nothing changes: the vendor's team is the only
 //     parallelism, and capping it would make a direct call serial.
 //
@@ -89,19 +91,25 @@ namespace detail {
 
 /// For the scope of one vendor call: inside an MTL5 region, the vendor runs on
 /// this thread only; outside one, nothing happens beyond a thread-local read.
+///
+/// On the region's calling thread the vendor's previous setting is restored
+/// after the call. On a pool worker it is left at one: a worker makes vendor
+/// calls only inside regions, so restoring would buy nothing, and leaving it
+/// makes every later call on that worker one read of the setting instead of
+/// two writes (with BLIS a set costs more than a small ddot).
 class nested_blas_cap {
 public:
     nested_blas_cap() noexcept {
 #if defined(MTL5_BLAS_VENDOR_MKL)
         if (parallel::detail::in_region()) {
-            active_ = true;
-            prev_ = MKL_Set_Num_Threads_Local(1);   // 0: the global setting
+            const int prev = MKL_Set_Num_Threads_Local(1);   // 0: the global setting
+            if (!parallel::detail::on_pool_worker()) { active_ = true; prev_ = prev; }
         }
 #elif defined(MTL5_BLAS_VENDOR_BLIS)
         if (parallel::detail::in_region()) {
-            active_ = true;
-            prev_ = bli_thread_get_num_threads();
-            bli_thread_set_num_threads(1);
+            const std::int64_t prev = bli_thread_get_num_threads();
+            if (prev != 1) bli_thread_set_num_threads(1);
+            if (prev != 1 && !parallel::detail::on_pool_worker()) { active_ = true; prev_ = prev; }
         }
 #endif
     }

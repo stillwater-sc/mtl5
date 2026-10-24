@@ -75,7 +75,7 @@ TEST_CASE("interface: outside a region the cap leaves the vendor's threads alone
     }
 }
 
-TEST_CASE("interface: inside a region a vendor call runs on one thread, then is restored",
+TEST_CASE("interface: inside a region a vendor call runs on one thread; tid 0 is restored",
           "[interface][blas][threads]") {
     auto& p = pool4();
     if (p.size() < 2) {
@@ -104,7 +104,8 @@ TEST_CASE("interface: inside a region a vendor call runs on one thread, then is 
         INFO("tid " << t);
         REQUIRE(before[t] == static_cast<int>(2 + t));
         REQUIRE(during[t] == 1);
-        REQUIRE(after[t] == static_cast<int>(2 + t));
+        // The caller's setting comes back; a pool worker's stays at one.
+        REQUIRE(after[t] == (t == 0 ? 2 : 1));
     }
 }
 

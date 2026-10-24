@@ -90,17 +90,24 @@ for v in "${BUILT[@]}"; do
     csv=$OUTDIR/vendor_nested_$v.csv
     rm -f "$csv" "$csv.sysinfo"
     echo "== running $v: MTL5 pool $THREADS, vendor team $THREADS"
-    run() {
+    # One process per arm: a vendor's idle team spins on after its last call,
+    # and the next arm in the same process would be timed against it.
+    arms="uncapped capped direct ddot"
+    [ "$v" = openblas ] && arms="uncapped capped process1 direct ddot"
+    run() {   # arm, then VAR=value settings
+        local arm=$1; shift
         env MTL5_NUM_THREADS="$THREADS" "$@" ${PIN[@]+"${PIN[@]}"} \
-            "build-vendor-$v/benchmarks/bench_vendor_nested" \
+            "build-vendor-$v/benchmarks/bench_vendor_nested" --arms "$arm" \
             --sizes "$SIZES" --batch "$BATCH" --reps "$REPS" --csv "$csv"
     }
-    case $v in
-        openblas) run OPENBLAS_NUM_THREADS="$THREADS" ;;
-        blis)     run BLIS_NUM_THREADS="$THREADS" ;;
-        mkl)      ( set +u +e; source "$MKL_SETVARS" >/dev/null 2>&1; set -u -e
-                    run MKL_NUM_THREADS="$THREADS" ) ;;
-    esac
+    for arm in $arms; do
+        case $v in
+            openblas) run "$arm" OPENBLAS_NUM_THREADS="$THREADS" ;;
+            blis)     run "$arm" BLIS_NUM_THREADS="$THREADS" ;;
+            mkl)      ( set +u +e; source "$MKL_SETVARS" >/dev/null 2>&1; set -u -e
+                        run "$arm" MKL_NUM_THREADS="$THREADS" ) ;;
+        esac
+    done
     { printf '%s\n' "$PREFLIGHT"
       "$SCRIPT_DIR/preflight.sh" --phase after --repo "$ROOT" --report-only; } >>"$csv.sysinfo"
 done

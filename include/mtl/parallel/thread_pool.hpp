@@ -45,8 +45,8 @@
 // once; run() stays inline. Every module must see the same thread_pool
 // layout: a change to the class's data members must bump the _v1 suffix of
 // the pool's two exported functions below, so a stale module fails to link.
-// The third, shared_region_flag_v1(), is the per-thread in-region flag (#640),
-// exported so that it too is one per thread for the whole process.
+// The third, shared_region_state_v1(), is the per-thread in-region state
+// (#640), exported so that it too is one per thread for the whole process.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -126,7 +126,7 @@ struct pool_config {
 /// exported, so every module that defines MTL5_SHARED_POOL binds to them.
 MTL5_SHARED_POOL_API pool_config& shared_pool_config_v1();
 MTL5_SHARED_POOL_API thread_pool& shared_pool_v1();
-MTL5_SHARED_POOL_API bool& shared_region_flag_v1() noexcept;
+MTL5_SHARED_POOL_API unsigned char& shared_region_state_v1() noexcept;
 #endif
 
 inline pool_config& config() {
@@ -138,34 +138,45 @@ inline pool_config& config() {
     return c;
 }
 
-/// This thread's "running a tid of a region" flag (#640). Thread-local, and in
-/// the shared mode exported with the pool: a task that one module starts may
-/// call into another module, which must see the flag the first one set.
-inline bool& region_flag() noexcept {
+/// This thread's region state (#640): 0 outside a region, 1 running a tid of
+/// one, 2 a pool worker (which runs nothing but region tids). Thread-local, and
+/// in the shared mode exported with the pool: a task that one module starts
+/// may call into another module, which must see the state the first one set.
+enum : unsigned char { outside_region = 0, inside_region = 1, pool_worker = 2 };
+
+inline unsigned char& region_state() noexcept {
 #if defined(MTL5_SHARED_POOL)
-    return shared_region_flag_v1();
+    return shared_region_state_v1();
 #else
-    thread_local bool in = false;
-    return in;
+    thread_local unsigned char state = outside_region;
+    return state;
 #endif
 }
 
 /// True while this thread runs a tid of an MTL5 region (see the contract at
 /// the top of this header). An external library that runs a thread team of
 /// its own runs it on one thread here: MTL5 already occupies the cores.
-inline bool in_region() noexcept { return region_flag(); }
+inline bool in_region() noexcept { return region_state() != outside_region; }
 
-/// Sets region_flag() for a scope and restores what it was, so a region nested
-/// in another leaves the outer one's flag set.
+/// True on the pool's worker threads, which are inside a region whenever they
+/// run anything at all. A setting made for a region tid can stay in place on
+/// one; on any other thread it is restored when the tid ends.
+inline bool on_pool_worker() noexcept { return region_state() == pool_worker; }
+
+/// Marks the scope of a region tid on a thread that is not a pool worker, and
+/// restores the state after, so a region nested in another leaves the outer
+/// one's state set.
 class region_scope {
 public:
-    region_scope() noexcept : flag_(region_flag()), prev_(flag_) { flag_ = true; }
-    ~region_scope() { flag_ = prev_; }
+    region_scope() noexcept : state_(region_state()), prev_(state_) {
+        if (state_ == outside_region) state_ = inside_region;
+    }
+    ~region_scope() { state_ = prev_; }
     region_scope(const region_scope&) = delete;
     region_scope& operator=(const region_scope&) = delete;
 private:
-    bool& flag_;
-    bool prev_;
+    unsigned char& state_;
+    unsigned char prev_;
 };
 
 inline unsigned claim_pool_size() {
@@ -400,8 +411,8 @@ private:
     }
 
     void worker_loop(unsigned tid) {
-        // A worker runs nothing but region tids, so its flag is set for good.
-        detail::region_flag() = true;
+        // A worker runs nothing but region tids, so its state is set for good.
+        detail::region_state() = detail::pool_worker;
         std::unique_lock<std::mutex> lk(mtx_);
         // Workers are created at generation_ == 0 (which only ever increments),
         // so start "behind" 0: a region dispatched before this worker reached the
