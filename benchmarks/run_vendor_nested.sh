@@ -30,7 +30,6 @@ if [ -z "${OUTDIR:-}" ]; then
     echo "  OUTDIR=benchmarks/data/<machine>-vendor-nested $0" >&2
     exit 2
 fi
-mkdir -p "$OUTDIR"
 
 VENDORS=${VENDORS:-"openblas blis mkl"}
 SIZES=${SIZES:-128,256,512}
@@ -60,12 +59,13 @@ PREFLIGHT=$("$SCRIPT_DIR/preflight.sh" --threads "$THREADS" --repo "$ROOT" \
 configure_build() {   # vendor, then extra cmake arguments
     local v=$1; shift
     local dir=build-vendor-$v
+    mkdir -p "$dir"
     cmake -B "$dir" -DCMAKE_BUILD_TYPE=Release -DMTL5_BUILD_BENCHMARKS=ON \
           -DMTL5_BUILD_TESTS=OFF -DMTL5_BUILD_EXAMPLES=OFF -DMTL5_WITH_BLAS=ON \
-          "$@" >"$OUTDIR/.cmake-$v.log" 2>&1 || return 1
-    grep -q "BLAS/LAPACK vendor: $v" "$OUTDIR/.cmake-$v.log" || {
+          "$@" >"$dir/vendor-nested.cmake.log" 2>&1 || return 1
+    grep -q "BLAS/LAPACK vendor: $v" "$dir/vendor-nested.cmake.log" || {
         echo "== $v: configured, but the vendor detected was not $v:" >&2
-        grep 'BLAS/LAPACK vendor' "$OUTDIR/.cmake-$v.log" >&2 || true
+        grep 'BLAS/LAPACK vendor' "$dir/vendor-nested.cmake.log" >&2 || true
         return 1
     }
     cmake --build "$dir" --target bench_vendor_nested -j4 >/dev/null
@@ -87,7 +87,9 @@ for v in $VENDORS; do
     esac
     printf '%s\n' "${BUILT[@]}" | grep -qx "$v" || echo "== $v: SKIPPED (not found)"
 done
-rm -f "$OUTDIR"/.cmake-*.log
+# Only now: the build records whether the tree was dirty, and untracked files
+# count, so an output directory made before it would mark every binary dirty.
+mkdir -p "$OUTDIR"
 
 for v in "${BUILT[@]}"; do
     csv=$OUTDIR/vendor_nested_$v.csv
