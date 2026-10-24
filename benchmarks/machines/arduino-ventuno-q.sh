@@ -84,8 +84,12 @@ if [ "${CLOCKS#unpinned}" != "$CLOCKS" ]; then
     echo "      reps of every arm slower than the last." >&2
 fi
 
-export BENCH_PROFILE="arduino-ventuno-q-${GOV}"
-export OUTDIR=${OUTDIR:-benchmarks/data/arduino-ventuno-q-${GOV}}
+# BENCH_VARIANT names a different experiment on the same machine and governor
+# (e.g. arduino-ventuno-q-tile.sh sets "tile-double"). It goes into both the
+# profile and the directory: the runner deletes the CSVs of the arms it is about
+# to run, and every experiment has a `default` arm.
+export BENCH_PROFILE="arduino-ventuno-q-${GOV}${BENCH_VARIANT:+-$BENCH_VARIANT}"
+export OUTDIR=${OUTDIR:-benchmarks/data/arduino-ventuno-q-${GOV}${BENCH_VARIANT:+-$BENCH_VARIANT}}
 export BUILD_DIR=${BUILD_DIR:-build-release}
 export THREADS=${THREADS:-"1 4"}                 # 1 and all four A78C cores
 export ROUNDS=${ROUNDS:-5}
@@ -115,7 +119,9 @@ echo
 # Every requested arm, not just `default`: the runner refuses an arm whose binary
 # is missing rather than building it. -B keeps an overridden BUILD_DIR the tree
 # that is both configured and built (the preset alone names build-release).
-need_build=0
+# FORCE_BUILD=1 rebuilds even when every binary exists, so an experiment whose
+# arms differ from `default` by one macro never compares a stale `default`.
+need_build=${FORCE_BUILD:-0}
 for a in $ARMS; do
     [ -x "$BUILD_DIR/benchmarks/bench_blocking_ab_$a" ] || need_build=1
 done

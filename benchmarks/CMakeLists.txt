@@ -68,7 +68,14 @@ set_target_properties(bench_sparse PROPERTIES FOLDER "Benchmarks")
 # its configuration. It still built and ran, reporting "L2 only" -- a
 # misconfigured arm that looks like a working one, which is the failure this
 # whole benchmark tree exists to make impossible.
-set(_ab_arms default detected kconly mconly ccap ccap2 legacymc)
+# `tileN` and `isaregs` are the #643 register-tile arms. `tileN` sets mr = N and
+# nothing else (MTL5_GEMM_MR_OVERRIDE), so N in {8,10,12,14,16} against `default`
+# (mr = 6 on every ISA today) is a tile sweep at fixed nr, kc, mc and nc.
+# `isaregs` is the candidate default: the target ISA's register file
+# (MTL5_GEMM_TARGET_REGISTER_FILE), which is 12xnr on NEON and AVX-512 and
+# identical to `default` on AVX2.
+set(_ab_tile_arms tile8 tile10 tile12 tile14 tile16)
+set(_ab_arms default detected kconly mconly ccap ccap2 legacymc isaregs ${_ab_tile_arms})
 foreach(_arm ${_ab_arms})
     if(_arm STREQUAL "default")
         set(_def "")
@@ -91,6 +98,11 @@ foreach(_arm ${_ab_arms})
         # not by the busiest thread's micro-panels. `default` vs `legacymc` is the
         # #458 before/after, from one tree in one session.
         set(_def MTL5_GEMM_LEGACY_BALANCED_MC)
+    elseif(_arm STREQUAL "isaregs")
+        set(_def MTL5_GEMM_TARGET_REGISTER_FILE)
+    elseif(_arm IN_LIST _ab_tile_arms)
+        string(SUBSTRING "${_arm}" 4 -1 _mr)
+        set(_def MTL5_GEMM_MR_OVERRIDE=${_mr})
     else()
         message(FATAL_ERROR "no defines configured for A/B arm '${_arm}'")
     endif()

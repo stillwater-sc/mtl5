@@ -127,3 +127,79 @@ TEMPLATE_TEST_CASE("default_blocking compiles and is valid for the build's SIMD 
     constexpr blocking_params bp = mtl::simd::default_blocking<TestType>;
     check_valid(bp, mtl::simd::width<TestType>, sizeof(TestType), default_hw_traits);
 }
+
+TEST_CASE("a 32-register file moves mr alone (#643)", "[simd][blocking]") {
+    // NEON (fp64 nvec=2, fp32 nvec=4) and AVX-512 (fp64 nvec=8). At 16 registers
+    // every one of them gets 6 rows: AVX2's 12 accumulator vectors. At 32 the
+    // same 3/4 budget gives 12 rows, 24 accumulators.
+    //
+    // nr is NRVEC vectors whatever the file, kc derives from nr, mc from kc and
+    // nc from kc and nr, so the cache blocks must not move. That is what makes
+    // the tile a one-variable experiment.
+    hw_traits wide = default_hw_traits;
+    wide.vec_registers = 32;
+    for (std::size_t nvec : {std::size_t{2}, std::size_t{4}, std::size_t{8}}) {
+        INFO("nvec=" << nvec);
+        const blocking_params narrow = derive_blocking<double>(nvec);
+        const blocking_params bp     = derive_blocking<double>(nvec, wide);
+        CHECK(narrow.mr == 6);
+        CHECK(bp.mr == 12);
+        CHECK(bp.nr == narrow.nr);
+        CHECK(bp.kc == narrow.kc);
+        CHECK(bp.mc == narrow.mc);
+        CHECK(bp.nc == narrow.nc);
+        // accumulators + B panel + A broadcast fit the file
+        CHECK(bp.mr * (bp.nr / nvec) + 2 + 1 <= wide.vec_registers);
+        check_valid(bp, nvec, sizeof(double), wide);
+    }
+    // The named cases from the issue.
+    hw_traits w = default_hw_traits;
+    w.vec_registers = 32;
+    CHECK(derive_blocking<double>(2, w).nr == 4);    // NEON fp64:    12x4
+    CHECK(derive_blocking<float>(4, w).nr == 8);     // NEON fp32:    12x8
+    CHECK(derive_blocking<double>(8, w).nr == 16);   // AVX-512 fp64: 12x16
+}
+
+TEST_CASE("the target register file follows the compiler's ISA (#643)", "[simd][blocking]") {
+    using mtl::simd::target_vec_registers;
+    using mtl::simd::target_hw_traits;
+#if defined(__aarch64__) || defined(_M_ARM64)
+    STATIC_REQUIRE(target_vec_registers() == 32);
+#elif defined(__AVX512F__) && defined(__AVX512VL__)
+    STATIC_REQUIRE(target_vec_registers() == 32);
+#else
+    STATIC_REQUIRE(target_vec_registers() == 16);
+#endif
+
+    // default_hw_traits stays the Haswell AVX2 description it documents; only
+    // the target description may differ, and only in the register file.
+    STATIC_REQUIRE(default_hw_traits.vec_registers == 16);
+    STATIC_REQUIRE(target_hw_traits.fma_latency == default_hw_traits.fma_latency);
+    STATIC_REQUIRE(target_hw_traits.fma_units   == default_hw_traits.fma_units);
+    STATIC_REQUIRE(target_hw_traits.l1_bytes    == default_hw_traits.l1_bytes);
+    STATIC_REQUIRE(target_hw_traits.l2_bytes    == default_hw_traits.l2_bytes);
+    STATIC_REQUIRE(target_hw_traits.l3_bytes    == default_hw_traits.l3_bytes);
+#if defined(MTL5_GEMM_TARGET_REGISTER_FILE)
+    STATIC_REQUIRE(target_hw_traits.vec_registers == target_vec_registers());
+#else
+    // Opt-in until the #643 sweep measures it: the shipped tile is unchanged.
+    STATIC_REQUIRE(target_hw_traits.vec_registers == default_hw_traits.vec_registers);
+#endif
+}
+
+TEMPLATE_TEST_CASE("default_blocking is the target derivation, or the mr override (#643)",
+                   "[simd][blocking]", float, double) {
+    constexpr blocking_params bp  = mtl::simd::default_blocking<TestType>;
+    constexpr blocking_params der = derive_blocking<TestType>(mtl::simd::width<TestType>,
+                                                              mtl::simd::target_hw_traits);
+#if defined(MTL5_GEMM_MR_OVERRIDE)
+    STATIC_REQUIRE(bp.mr == MTL5_GEMM_MR_OVERRIDE);
+#else
+    STATIC_REQUIRE(bp.mr == der.mr);
+#endif
+    // Only mr: a tile sweep must not move anything else.
+    STATIC_REQUIRE(bp.nr == der.nr);
+    STATIC_REQUIRE(bp.kc == der.kc);
+    STATIC_REQUIRE(bp.mc == der.mc);
+    STATIC_REQUIRE(bp.nc == der.nc);
+}

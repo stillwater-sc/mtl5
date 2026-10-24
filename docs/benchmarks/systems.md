@@ -578,6 +578,24 @@ bash benchmarks/machines/ryzen-9-8945hs-nc-sweep.sh
 bash benchmarks/machines/jetson-orin-nano-nc-sweep.sh
 ```
 
+The register-tile sweep (#643) has its own profile per 32-register machine, named
+`*-tile.sh`. Each runs `default` (mr = 6) against `tile8`, `tile10`, `tile12` and
+`tile14`: the same source with only `mr` changed (`MTL5_GEMM_MR_OVERRIDE`), so nr,
+kc, mc and nc stay fixed. It runs once for fp64 and once for fp32, each into its own
+`...-tile-<dtype>` directory. The ARM profiles reuse their base profile, so the
+pinning and the governor or power-mode label are the same as the A/B's:
+
+```bash
+benchmarks/machines/arduino-ventuno-q-tile.sh       # NEON, A78C cores, T in {1,4}
+benchmarks/machines/jetson-orin-nano-tile.sh        # NEON, 6 cores, T in {1,6}
+bash benchmarks/machines/ryzen-9-8945hs-tile.sh     # AVX-512 under WSL, T in {1,8}
+```
+
+`isaregs` is the candidate default, the target ISA's register file
+(`MTL5_GEMM_TARGET_REGISTER_FILE`). On NEON and AVX-512 it derives the same tile as
+`tile12`, so the sweep leaves it out; each sidecar records `vec_registers` and
+`mr_override`, so the arms can be told apart.
+
 ```powershell
 pwsh benchmarks/machines/ryzen-9-8945hs.ps1  # /arch:AVX512, 8 physical cores
 ```

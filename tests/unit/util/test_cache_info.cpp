@@ -133,7 +133,10 @@ TEST_CASE("detected_hw_traits overrides only what was detected",
     // belongs to the compiled micro-kernel.
     REQUIRE(hw.fma_latency   == def.fma_latency);
     REQUIRE(hw.fma_units     == def.fma_units);
-    REQUIRE(hw.vec_registers == def.vec_registers);
+    // vec_registers against the TARGET description (#643), which is where
+    // detection starts: it differs from default_hw_traits only when
+    // MTL5_GEMM_TARGET_REGISTER_FILE is defined, and never by detection.
+    REQUIRE(hw.vec_registers == simd::target_hw_traits.vec_registers);
     REQUIRE(hw.page_bytes    == def.page_bytes);
 }
 

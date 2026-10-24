@@ -70,6 +70,47 @@ inline constexpr hw_traits default_hw_traits{
     /*vec_registers*/ 16,
 };
 
+/// The architectural vector register file of the build's target ISA (#643).
+///
+/// `default_hw_traits` describes ONE machine, a Haswell-class AVX2 core, and its
+/// 16 is right for AVX2's 16 ymm. It is wrong for the 32-register ISAs: aarch64
+/// (v0-v31, which SVE's z0-z31 alias) and AVX-512 with VL (zmm0-zmm31, and
+/// xmm/ymm16-31 under EVEX). Because the tile is ~3/4 of the file in
+/// accumulators, those builds get AVX2's 12 accumulator vectors out of 32: 6x4
+/// on NEON and 6x16 on AVX-512, where 12x4 and 12x16 fit.
+///
+/// Compile-time only, read from the compiler's target macros: the tile is a
+/// micro-kernel template argument, so it can follow what the compiler was told
+/// to emit and nothing the running machine reports.
+constexpr std::size_t target_vec_registers() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return 32;
+#elif defined(__AVX512F__) && defined(__AVX512VL__)
+    return 32;
+#else
+    return 16;
+#endif
+}
+
+/// The hardware description `default_blocking` and `detected_hw_traits` start
+/// from: `default_hw_traits`, with the register file of the target ISA when
+/// MTL5_GEMM_TARGET_REGISTER_FILE is defined.
+///
+/// OPT-IN until it is measured. A larger file only raises mr (nr is NRVEC
+/// vectors, and kc/mc/nc do not depend on mr), but whether the bigger tile WINS
+/// on NEON is not established: 12 accumulators already cover the Cortex-A78's
+/// FMA latency floor, so what a 12x4 tile buys is fewer loads per FMA, and the
+/// core may not be load-bound at 6x4. #351 also found a loss once the tile fills
+/// the file. The bench_blocking_ab `isaregs` arm is this switch; the `tileN` arms
+/// sweep around it.
+inline constexpr hw_traits target_hw_traits = [] {
+    hw_traits hw = default_hw_traits;
+#if defined(MTL5_GEMM_TARGET_REGISTER_FILE)
+    hw.vec_registers = target_vec_registers();
+#endif
+    return hw;
+}();
+
 /// GEMM blocking parameters: mr x nr register microtile, kc/mc/nc cache blocks.
 struct blocking_params {
     std::size_t mr, nr, kc, mc, nc;
@@ -174,13 +215,33 @@ constexpr blocking_params derive_blocking(std::size_t nvec,
     return {mr, nr, kc, mc, nc};
 }
 
-/// Blocking parameters for `T` using the compiled SIMD width and the default
+/// Blocking parameters for `T` using the compiled SIMD width and the target
 /// hardware traits. Compile-time, and the source of the mr x nr register tile
 /// (a micro-kernel template argument) everywhere.
+///
+/// MTL5_GEMM_MR_OVERRIDE=<n> is a DIAGNOSTIC (#643): it sets mr and nothing
+/// else, so a tile sweep can put 6x4, 8x4, 10x4 and 12x4 side by side from one
+/// source. The model cannot express those directly -- vec_registers moves mr in
+/// steps of 3/4 of the file over NRVEC -- and #351 had to sweep by editing
+/// fma_latency/fma_units, which also moves nr. A macro rather than the
+/// environment because mr is a template argument; the bench sidecar records it
+/// as mr_override, so a run cannot be mistaken for the shipped tile.
+namespace detail {
 template <typename T>
-inline constexpr blocking_params default_blocking = derive_blocking<T>(width<T>);
+constexpr blocking_params default_blocking_for_target() {
+    blocking_params bp = derive_blocking<T>(width<T>, target_hw_traits);
+#if defined(MTL5_GEMM_MR_OVERRIDE)
+    static_assert(MTL5_GEMM_MR_OVERRIDE >= 1, "MTL5_GEMM_MR_OVERRIDE must be a positive integer");
+    bp.mr = static_cast<std::size_t>(MTL5_GEMM_MR_OVERRIDE);
+#endif
+    return bp;
+}
+} // namespace detail
 
-/// `default_hw_traits` with the CACHE fields replaced by what the running machine
+template <typename T>
+inline constexpr blocking_params default_blocking = detail::default_blocking_for_target<T>();
+
+/// `target_hw_traits` with the CACHE fields replaced by what the running machine
 /// reports (#222). Detected once per process; a field the platform could not
 /// report keeps its compile-time default, so an undetectable machine behaves
 /// exactly as it did before this existed.
@@ -350,10 +411,10 @@ constexpr detect_levels configured_detect_levels() {
 /// benchmarks/run_blocking_ab.sh is how that is decided; #430 is the experiment.
 inline const hw_traits& detected_hw_traits() {
     if constexpr (configured_detect_levels() == detect_levels::none) {
-        return default_hw_traits;   // constexpr object: static storage, safe to bind
+        return target_hw_traits;    // constexpr object: static storage, safe to bind
     } else {
         static const hw_traits hw = with_detected_caches(
-            default_hw_traits, util::cached_cache_info(), configured_detect_levels());
+            target_hw_traits, util::cached_cache_info(), configured_detect_levels());
         return hw;
     }
 }
@@ -375,6 +436,12 @@ inline const blocking_params& runtime_blocking() {
         // partition is what must not move (#429), pin the result rather than an
         // input, and leave this struct saying exactly what the nest should use.
         p.nc = default_blocking<T>.nc;
+        // Likewise the register tile. The derivation above already agrees on it
+        // (detection moves no register field), but MTL5_GEMM_MR_OVERRIDE applies
+        // only to default_blocking, and the packed A panels must be cut to the mr
+        // the micro-kernel was instantiated with.
+        p.mr = default_blocking<T>.mr;
+        p.nr = default_blocking<T>.nr;
 
         // DIAGNOSTIC OVERRIDE, compiled out unless a translation unit asks for
         // it. There is no way to measure the kc/mc RESPONSE CURVE without one:
