@@ -48,6 +48,52 @@ def load(path):
     return rows, params, (arm or "test")
 
 
+def sidecar(path):
+    """The key=value pairs of <path>.sysinfo, or {} when it is absent."""
+    out = {}
+    try:
+        with open(path + ".sysinfo") as fh:
+            for line in fh:
+                k, sep, v = line.strip().partition("=")
+                if sep:
+                    out.setdefault(k, v)
+    except OSError:
+        # No sidecar: a CSV from before the run contract (#442), or one copied
+        # without it. The caller treats {} as "provenance unknown".
+        pass
+    return out
+
+
+# The levels each A/B arm detects, from its defines in benchmarks/CMakeLists.txt.
+# Only for sidecars written before `detection_levels` existed, whose
+# detection_enabled tested MTL5_ENABLE_CACHE_DETECTION alone and so read 0 for
+# the single-level arms.
+ARM_LEVELS = {"default": set(), "legacymc": set(), "detected": {"l1", "l2"},
+              "kconly": {"l1"}, "mconly": {"l2"}, "ccap": {"l2"}, "ccap2": {"l2"}}
+
+
+def detect_levels(info, arm):
+    """The cache levels an arm detects ({"l1"}, {"l2"}, both, or none), or None
+    when neither its sidecar nor its name says."""
+    if "detection_levels" in info:
+        v = info["detection_levels"]
+        return set() if v == "none" else set(v.split("+"))
+    if info.get("detection_enabled") == "1":
+        return {"l1", "l2"}
+    if info:
+        return ARM_LEVELS.get(arm)
+    return None
+
+
+def detected_nothing(info, levels):
+    """A detecting arm whose probe came back empty for every level it uses: the
+    kernel exposed no size (an arm64 board whose device tree omits them, as on
+    the Arduino Ventuno Q), so derive_blocking fell back to the compile-time
+    model for those levels."""
+    key = {"l1": "cache_l1d_bytes", "l2": "cache_l2_bytes"}
+    return bool(levels) and all(info.get(key[lv]) == "0" for lv in levels)
+
+
 def main(argv):
     if len(argv) != 3:
         print("usage: analyze_blocking_ab.py <detected.csv> <default.csv>", file=sys.stderr)
@@ -113,9 +159,27 @@ def main(argv):
         null_run = all(det_p.get(dt) == dfl_p.get(dt) for dt in set(det_p) | set(dfl_p))
     if null_run:
         print("\n*** NULL RUN: both arms compiled to identical blocking parameters.")
-        print(f"*** {det_name} and {dfl_name} derive the same kc/mc on this machine")
-        print("*** (its caches already match the compile-time model), so every difference")
-        print("*** below is noise and no point is called. A useful harness self-test.")
+        arms = [(sidecar(p), name) for p, name in ((argv[1], det_name), (argv[2], dfl_name))]
+        levels = [detect_levels(info, name) for info, name in arms]
+        if any(detected_nothing(info, lv) for (info, _), lv in zip(arms, levels)):
+            # Not agreement: there was nothing to agree with. Saying the caches
+            # match the model would record a finding this run cannot make.
+            print("*** Cache detection found NO sizes on this machine (cache_l1d_bytes=0,")
+            print("*** cache_l2_bytes=0 in the sidecar), so the detecting arm fell back to")
+            print("*** the compile-time model. This run says nothing about whether detection")
+            print("*** helps here; every difference below is noise and no point is called.")
+        elif any(levels):
+            print(f"*** {det_name} and {dfl_name} derive the same kc/mc on this machine")
+            print("*** (its caches already match the compile-time model), so every difference")
+            print("*** below is noise and no point is called. A useful harness self-test.")
+        elif all(lv is not None for lv in levels):
+            print(f"*** Neither {det_name} nor {dfl_name} detects caches, so identical blocking")
+            print("*** says nothing about the hardware; every difference below is noise and")
+            print("*** no point is called.")
+        else:
+            print(f"*** {det_name} and {dfl_name} ran identical blocking; without sidecars it is")
+            print("*** unknown whether either detected caches. Every difference below is")
+            print("*** noise and no point is called.")
     print()
 
     # Integrity gate. An A/B is only an A/B if both arms measured the same points
