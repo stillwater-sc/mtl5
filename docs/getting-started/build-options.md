@@ -30,7 +30,7 @@ These options link optional external libraries for hardware-accelerated or speci
 A vendor BLAS/LAPACK, CHOLMOD and SPQR run thread teams of their own. With
 `MTL5_NUM_THREADS > 1`, a vendor call made from inside an MTL5 parallel region
 runs on one thread where the vendor allows a per-thread setting: MKL, and BLIS
-0.9 or later. A call made outside a region keeps the vendor's threads. The
+1.0 or later. A call made outside a region keeps the vendor's threads. The
 configure log names the vendor it found (`BLAS/LAPACK vendor: ...`); select one
 with `BLA_VENDOR`:
 

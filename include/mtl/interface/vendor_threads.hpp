@@ -18,10 +18,13 @@
 // Only a control whose scope is the calling thread can do this. CMake finds
 // which vendor the BLAS/LAPACK libraries are and defines one of
 //   MTL5_BLAS_VENDOR_MKL       MKL_Set_Num_Threads_Local: this thread
-//   MTL5_BLAS_VENDOR_BLIS      bli_thread_set_num_threads: this thread (BLIS >= 0.9)
+//   MTL5_BLAS_VENDOR_BLIS      bli_thread_set_num_threads: this thread from BLIS
+//                              1.0 (MTL5_BLAS_BLIS_PER_THREAD, measured at
+//                              configure time), the whole process in 0.9
 //   MTL5_BLAS_VENDOR_OPENBLAS  openblas_set_num_threads: the whole process
-// OpenBLAS has no per-thread control, so it is never changed here: changing a
-// process-wide setting would also make the application's direct calls serial.
+// OpenBLAS, and BLIS before 1.0, have no per-thread control, so they are never
+// changed here: changing a process-wide setting would also make the
+// application's direct calls serial.
 // docs/algorithms/on-node-threading.md describes the choice the application
 // makes for it. Without a detected vendor every cap is empty.
 
@@ -67,7 +70,7 @@ constexpr const char* blas_vendor() noexcept {
 
 /// Whether a vendor call made inside an MTL5 region runs on one thread.
 constexpr bool blas_capped_in_region() noexcept {
-#if defined(MTL5_BLAS_VENDOR_MKL) || defined(MTL5_BLAS_VENDOR_BLIS)
+#if defined(MTL5_BLAS_VENDOR_MKL) || (defined(MTL5_BLAS_VENDOR_BLIS) && defined(MTL5_BLAS_BLIS_PER_THREAD))
     return true;
 #else
     return false;
@@ -90,7 +93,7 @@ inline int blas_vendor_threads() noexcept {
 
 namespace detail {
 
-#if defined(MTL5_BLAS_VENDOR_MKL) || defined(MTL5_BLAS_VENDOR_BLIS)
+#if defined(MTL5_BLAS_VENDOR_MKL) || (defined(MTL5_BLAS_VENDOR_BLIS) && defined(MTL5_BLAS_BLIS_PER_THREAD))
 /// The vendor setting a region's calling thread had before its first capped
 /// call, restored when that thread leaves the region.
 inline std::int64_t& vendor_threads_before_region() noexcept {
@@ -118,7 +121,7 @@ inline void restore_vendor_threads() noexcept {
 class nested_blas_cap {
 public:
     nested_blas_cap() noexcept {
-#if defined(MTL5_BLAS_VENDOR_MKL) || defined(MTL5_BLAS_VENDOR_BLIS)
+#if defined(MTL5_BLAS_VENDOR_MKL) || (defined(MTL5_BLAS_VENDOR_BLIS) && defined(MTL5_BLAS_BLIS_PER_THREAD))
         if (!parallel::detail::in_region()) return;
         parallel::detail::region_thread& t = parallel::detail::this_region_thread();
         if (t.vendor_capped) return;

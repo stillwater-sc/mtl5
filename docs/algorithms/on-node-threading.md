@@ -148,7 +148,8 @@ task started in one module sees it in another.
 | Backend | Control | Scope | Inside a region |
 |---|---|---|---|
 | MKL | `mkl_set_num_threads_local` | the calling thread | one thread¹ |
-| BLIS ≥ 0.9 | `bli_thread_set_num_threads` | the calling thread; a new thread starts from `BLIS_NUM_THREADS` | one thread¹ |
+| BLIS ≥ 1.0 | `bli_thread_set_num_threads` | the calling thread; a new thread starts from `BLIS_NUM_THREADS` | one thread¹ |
+| BLIS 0.9 | `bli_thread_set_num_threads` | the whole process | **unchanged**, as OpenBLAS |
 | OpenBLAS | `openblas_set_num_threads`, `OPENBLAS_NUM_THREADS` | the whole process | **unchanged**; see below |
 | CHOLMOD, SPQR | `cholmod_common::nthreads_max` (their own OpenMP), and the BLAS they call | that call | one thread, and the BLAS cap above |
 
@@ -162,7 +163,11 @@ setting that a task changes during a region is not capped again.
 
 CMake works out the vendor from the symbol that vendor's thread control exports
 in `BLAS_LIBRARIES`/`LAPACK_LIBRARIES`, and reports it as
-`BLAS/LAPACK vendor: mkl|blis|openblas`. A generic `libblas.so.3` that forwards
+`BLAS/LAPACK vendor: mkl|blis|openblas`. For BLIS it also runs a small
+program that measures whether the setting is per-thread: BLIS 1.0 made it
+thread-local, unless BLIS was built with `BLIS_DISABLE_TLS`. BLIS is capped
+only when that program confirms it. When cross-compiling the program cannot
+run, so BLIS is left uncapped. A generic `libblas.so.3` that forwards
 to a vendor without exporting its control is reported as not identified. The
 Debian/Ubuntu BLIS alternative is one such library. In that case vendor calls are
 not capped; naming the vendor (`-DBLA_VENDOR=FLAME` for BLIS,
@@ -190,8 +195,8 @@ configurations:
 - **A threaded vendor, a serial MTL5.** Leave `MTL5_NUM_THREADS` unset (1), and
   give the cores to OpenBLAS's team.
 
-The same choice applies to BLIS through its process-wide settings and to any
-vendor that MTL5 cannot identify. The variables are `OPENBLAS_NUM_THREADS`,
+The same choice applies to BLIS 0.9, to BLIS's process-wide settings, and to
+any vendor that MTL5 cannot identify. The variables are `OPENBLAS_NUM_THREADS`,
 `BLIS_NUM_THREADS`, `MKL_NUM_THREADS` and `OMP_NUM_THREADS`, the last for
 OpenMP builds of any of them. MTL5 has no switch that sets these for you: each is
 one line of the vendor's own API, and the application is the one that knows

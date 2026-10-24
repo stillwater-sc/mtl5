@@ -208,6 +208,32 @@ if(MTL5_WITH_BLAS OR MTL5_WITH_LAPACK)
     check_cxx_source_compiles([[
         extern "C" void openblas_set_num_threads(int);
         int main() { openblas_set_num_threads(1); return 0; }]] MTL5_BLAS_HAS_OPENBLAS_THREADS)
+    # BLIS made its thread setting thread-local in 1.0 (unless built with
+    # BLIS_DISABLE_TLS); in 0.9 it is one process-wide value, so a cap set on
+    # a worker would make the application's direct calls serial too. Whether
+    # it is per-thread is measured, not read from a version number: a worker
+    # thread sets 1, and the main thread must still read 4. Not when cross-
+    # compiling, where the program cannot run: BLIS is then left uncapped.
+    set(MTL5_BLAS_BLIS_PER_THREAD OFF)
+    if(MTL5_BLAS_HAS_BLIS_THREADS AND NOT CMAKE_CROSSCOMPILING)
+        include(CheckCXXSourceRuns)
+        find_package(Threads REQUIRED)
+        list(APPEND CMAKE_REQUIRED_LIBRARIES Threads::Threads)
+        unset(MTL5_BLAS_BLIS_THREAD_LOCAL CACHE)
+        check_cxx_source_runs([[
+            #include <thread>
+            extern "C" void bli_thread_set_num_threads(long long);
+            extern "C" long long bli_thread_get_num_threads(void);
+            int main() {
+                bli_thread_set_num_threads(4);
+                std::thread t([] { bli_thread_set_num_threads(1); });
+                t.join();
+                return bli_thread_get_num_threads() == 4 ? 0 : 1;
+            }]] MTL5_BLAS_BLIS_THREAD_LOCAL)
+        if(MTL5_BLAS_BLIS_THREAD_LOCAL)
+            set(MTL5_BLAS_BLIS_PER_THREAD ON)
+        endif()
+    endif()
     cmake_pop_check_state()
     if(MTL5_BLAS_HAS_MKL_THREADS)
         set(MTL5_BLAS_VENDOR mkl)
@@ -221,7 +247,14 @@ if(MTL5_WITH_BLAS OR MTL5_WITH_LAPACK)
     if(MTL5_BLAS_VENDOR)
         string(TOUPPER "${MTL5_BLAS_VENDOR}" _vendor)
         target_compile_definitions(mtl5 INTERFACE MTL5_BLAS_VENDOR_${_vendor})
-        message(STATUS "BLAS/LAPACK vendor: ${MTL5_BLAS_VENDOR}")
+        if(MTL5_BLAS_VENDOR STREQUAL "blis" AND MTL5_BLAS_BLIS_PER_THREAD)
+            target_compile_definitions(mtl5 INTERFACE MTL5_BLAS_BLIS_PER_THREAD)
+            message(STATUS "BLAS/LAPACK vendor: blis (per-thread control: capped in MTL5 regions)")
+        elseif(MTL5_BLAS_VENDOR STREQUAL "blis")
+            message(STATUS "BLAS/LAPACK vendor: blis (process-wide control: not capped in MTL5 regions)")
+        else()
+            message(STATUS "BLAS/LAPACK vendor: ${MTL5_BLAS_VENDOR}")
+        endif()
     else()
         message(STATUS "BLAS/LAPACK vendor: not identified (vendor calls are not capped in MTL5 regions)")
     endif()

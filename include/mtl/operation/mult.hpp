@@ -856,17 +856,21 @@ void mult(const MA& A, const MB& B, MC& C) {
         int k = static_cast<int>(A.num_cols());
         T alpha = math::one<T>();
         T beta  = math::zero<T>();
+        // A leading dimension must be >= max(1, rows) even when that operand
+        // is empty: BLIS rejects k == 0 with ld 0 and leaves C untouched,
+        // where OpenBLAS accepts it and zeroes C.
+        auto ld = [](int d) { return d < 1 ? 1 : d; };
         if constexpr (interface::is_row_major_v<MC>) {
             // Row-major: C_row = A_row * B_row
             // C = A*B in row-major = (B^T * A^T)^T in col-major
             // So call gemm with swapped A and B pointers.
             interface::blas::gemm('N', 'N', n, m, k, alpha,
-                                  B.data(), n, A.data(), k,
-                                  beta, C.data(), n);
+                                  B.data(), ld(n), A.data(), ld(k),
+                                  beta, C.data(), ld(n));
         } else {
             interface::blas::gemm('N', 'N', m, n, k, alpha,
-                                  A.data(), m, B.data(), k,
-                                  beta, C.data(), m);
+                                  A.data(), ld(m), B.data(), ld(k),
+                                  beta, C.data(), ld(m));
         }
         return;
     }
