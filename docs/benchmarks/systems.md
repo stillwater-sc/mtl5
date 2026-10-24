@@ -159,6 +159,67 @@ configured with `MTL5_WITH_BLAS=ON` and no `BLA_VENDOR` genuinely links
 OpenBLAS rather than the reference netlib BLAS — the `openblas` label means what
 it says.
 
+### A vendor BLAS inside an MTL5 region (#640)
+
+The test is a batch of 64 independent n×n dgemms, split across the 8 tids of one
+MTL5 region. The vendor's own team is also set to 8 threads. It runs pinned to
+one logical CPU on each P-core (0,2,…,14). Each arm runs in its own process, 3
+rounds, with the median of 15 reps after a 300 ms warm-up. The command is
+`OUTDIR=benchmarks/data/i7-12700k-vendor-nested BENCH_PCPUS=0,2,4,6,8,10,12,14
+benchmarks/run_vendor_nested.sh`; the data is in
+`benchmarks/data/i7-12700k-vendor-nested/`. Vendors: OpenBLAS 0.3.32 (pthreads),
+BLIS 1.1 (OpenMP) and MKL 2026.1 (`Intel10_64lp`, Intel OpenMP). The governor
+is `powersave`, and each run waited for a 1-minute load average below 1.
+
+The arms:
+- `uncapped`: each tid calls `dgemm_` directly, which is what MTL5 did before
+  #640.
+- `capped`: each tid calls through `mtl::interface::blas::gemm`.
+- `direct`: the whole batch is called from one thread outside a region, so the
+  vendor's team is the only parallelism.
+- `process1`: OpenBLAS set to one thread with `openblas_set_num_threads(1)`,
+  the process-wide configuration the threading docs give it.
+
+Median GFLOP/s over the rounds, with the range in brackets where it is wider
+than 10%:
+
+| Vendor | Arm | n = 128 | n = 256 | n = 512 |
+|---|---|---|---|---|
+| BLIS | uncapped | 0.1 | 0.6 | 3.0 |
+| BLIS | **capped** | **405** | **457** | **507** |
+| BLIS | direct | 190 | 331 | 442 |
+| MKL | uncapped | 328 | 338 [305–369] | 381 [308–393] |
+| MKL | **capped** | **499** | **468** | **513** |
+| MKL | direct | 380 | 391 | 473 |
+| OpenBLAS | uncapped | 244 | 163 [108–259] | 289 [284–407] |
+| OpenBLAS | capped (no per-thread control: same code as uncapped) | 249 | 105 [102–253] | 391 [289–401] |
+| OpenBLAS | **process1** | **462** | **430** | **486** |
+| OpenBLAS | direct | 257 | 338 | 429 |
+
+What it shows:
+
+- **BLIS without the cap collapses**, by ×170 to ×3800. Each of the 8 tids starts
+  an 8-thread OpenMP team, so 64 spinning threads share 8 cores. With the cap it
+  runs at 405–507 GFLOP/s, which is also faster than `direct` (×1.15 to ×2.1):
+  8 independent single-thread GEMMs keep every core busier than one 8-thread
+  GEMM of the same size.
+- **MKL degrades without the cap, but less**, and the cap gains ×1.35 to ×1.52.
+  The uncapped arm also varies more between rounds.
+- **OpenBLAS cannot be capped per thread, and with 8 concurrent callers it is
+  erratic.** One arm configuration measured 102 GFLOP/s in one round and 259 in
+  another. `uncapped` and `capped` run the same code, so their difference is
+  that spread, not a result. The documented configuration, OpenBLAS at one
+  thread for the whole process, is both the fastest and the steadiest arm:
+  ×1.7 to ×2.6 over `uncapped`, within 0.5% between rounds.
+- The checksums of every arm agree at each size.
+
+A small vendor call does not measure the cap's per-call cost. Once a region's
+first vendor call has set the vendor to one thread, every later call checks a
+thread-local flag. A 256-element `ddot` timed through the wrapper and directly
+moved by up to 2× between processes in either direction. That included the
+OpenBLAS build, where the cap compiles to nothing at all, so that arm was taken
+out of the benchmark.
+
 ### Pinning policy
 
 This is a **hybrid P/E-core CPU**, which makes pinning mandatory rather than

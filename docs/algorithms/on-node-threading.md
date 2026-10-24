@@ -170,6 +170,13 @@ not capped; naming the vendor (`-DBLA_VENDOR=FLAME` for BLIS,
 control. `mtl::interface::blas_vendor()` and `blas_capped_in_region()` report the
 result to code.
 
+Measured on the i7-12700K: 64 dgemms in one 8-tid region, each vendor set to 8
+threads ([Benchmark systems](../benchmarks/systems.md#a-vendor-blas-inside-an-mtl5-region-640)).
+Uncapped, BLIS ran at 0.1–3 GFLOP/s; capped it ran at 405–507. MKL went from
+328–381 GFLOP/s to 468–513. OpenBLAS cannot be capped per thread: uncapped it
+varied between rounds from 102 to 407 GFLOP/s, and set to one thread for the
+whole process it held 430–486.
+
 ### OpenBLAS: the application decides which runtime owns the cores
 
 OpenBLAS's only control is process-wide, so MTL5 never changes it: doing so
