@@ -69,12 +69,15 @@ set_target_properties(bench_sparse PROPERTIES FOLDER "Benchmarks")
 # misconfigured arm that looks like a working one, which is the failure this
 # whole benchmark tree exists to make impossible.
 # `tileN` and `isaregs` are the #643 register-tile arms. `tileN` sets mr = N and
-# nothing else (MTL5_GEMM_MR_OVERRIDE), so N in {8,10,12,14,16} against `default`
-# (mr = 6 on every ISA today) is a tile sweep at fixed nr, kc, mc and nc.
-# `isaregs` is the candidate default: the target ISA's register file
-# (MTL5_GEMM_TARGET_REGISTER_FILE), which is 12xnr on NEON and AVX-512 and
-# identical to `default` on AVX2.
-set(_ab_tile_arms tile8 tile10 tile12 tile14 tile16)
+# nothing else (MTL5_GEMM_MR_OVERRIDE), so N in {6,8,10,12,14,16} against `default`
+# is a tile sweep at fixed nr, kc, mc and nc.
+# `isaregs` is the rejected candidate, kept measurable: the target ISA's full
+# register file at the 3/4 rule (MTL5_GEMM_TARGET_REGISTER_FILE), which is 12xnr
+# on NEON and AVX-512 and identical to `default` on AVX2. The sweep put NEON's
+# peak at 8xnr, which is what aarch64 now ships; see docs/benchmarks/systems.md.
+# On aarch64, `default` is mr = 8, so `tile8` equals it there and `tile6` is the
+# pre-#643 tile.
+set(_ab_tile_arms tile6 tile8 tile10 tile12 tile14 tile16)
 set(_ab_arms default detected kconly mconly ccap ccap2 legacymc isaregs ${_ab_tile_arms})
 foreach(_arm ${_ab_arms})
     if(_arm STREQUAL "default")

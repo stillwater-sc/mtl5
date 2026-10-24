@@ -225,6 +225,26 @@ MKL is installed from the `mkl-devel` wheel rather than the oneAPI installer
 same version the Linux page used (2026.1); only the packaging differs. It is
 linked through the single-dynamic-library dispatcher `mkl_rt.lib`.
 
+### Register-tile sweep (#643): no tile clears the noise, so AVX-512 keeps 6×16
+
+`bash benchmarks/machines/ryzen-9-8945hs-tile.sh` under WSL, fp64, 5 rotated
+rounds, data in `benchmarks/data/ryzen-9-8945hs-tile-double/`. Only `mr` changes;
+nr = 16, kc = 128, mc = 128 and nc = 8192 are identical across the arms.
+Geometric-mean ratio of the median against `default` (mr = 6):
+
+| Tile | Accumulators (of 32) | T=1 | T=8 |
+|---|---|---|---|
+| 8×16 | 16 | 0.995 | 1.046 |
+| 10×16 | 20 | 0.996 | 1.036 |
+| 12×16 | 24 | 1.032 | 1.021 |
+| 14×16 | 28 | 1.002 | 0.994 |
+
+The default arm's round-to-round spread was 5–41%, as expected inside a VM
+(Windows places the virtual CPUs). No tile wins at both thread counts, and none
+clears that spread, so AVX-512 builds keep the AVX2 description. That is a
+measured reason to keep it, not a measured loss for a larger tile. A bare-metal
+Linux run would be the way to settle it.
+
 ### Pinning policy
 
 This is a **homogeneous** 8-core part (no P/E split), but SMT still makes pinning
@@ -461,6 +481,45 @@ kernel does not provide. `MTL5_BLOCKING_KC` / `MTL5_BLOCKING_MC` can impose them
 by hand, but only once the A78C configuration is known: its L1d and L2 sizes are
 chosen by the SoC integrator, so the core name alone does not fix them.
 
+### Register-tile sweep (#643): 8×4 wins, and 12×4 loses at four threads
+
+`benchmarks/machines/arduino-ventuno-q-tile.sh`, fp64, `schedutil`, 5 rotated
+rounds, data in `benchmarks/data/arduino-ventuno-q-schedutil-tile-double/`. Every
+arm is the same source with only `mr` changed; nr = 4, kc = 512, mc = 32 and nc =
+2048 are identical, and the checksums agree across all arms. The ratios are
+median GFLOP/s against `default` (mr = 6), as a geometric mean over the shapes:
+
+| Tile | Accumulators (of 32) | T=1 | T=4 | Worst shape |
+|---|---|---|---|---|
+| 8×4 | 16 | **1.174** | **1.102** | 1.060 |
+| 10×4 | 20 | 1.156 | 1.045 | 0.967 |
+| 12×4 | 24 | 1.061 | 0.930 | 0.840 |
+| 14×4 | 28 | 1.049 | 0.878 | 0.736 |
+
+* **The peak is at half the register file**, not at the 3/4 that #351 measured on
+  AVX2. 12×4 is what the 3/4 rule would give on 32 registers, and it loses.
+* **The T=4 losses are a divisibility effect, not register pressure.** They fall on
+  the wide 64-row shapes, where each of the four threads gets a 16-row block. 8-row
+  panels tile it exactly; 12-row panels cover it with 24 rows of work and 14-row
+  panels with 28. It is the #408 family again: a register-tile change that moves
+  how a block divides.
+* **Shipped as a result:** aarch64 builds now derive 8×4 fp64 and 8×8 fp32
+  (`target_hw_traits`, 32 registers with a measured budget of 16 accumulators).
+  In this session that took one A78C from 8.3 to 9.7 GFLOP/s, 57% of the
+  16.9 GFLOP/s peak at 2112 MHz, and four cores from 35.5 to 37.6 GFLOP/s at
+  2048³.
+* **Noise.** The clocks were unpinned, so the default arm spread 12–14% between
+  rounds at T=1 (2–3% at T=4 on the squares). The 8×4 gain is consistent across
+  every shape at both thread counts, which noise of that size would not produce.
+  The absolute numbers are lower than the A/B session above (8.3 against
+  9.1 GFLOP/s for the same 6×4 tile, both under `schedutil`). This data does not
+  say why; compare ratios within a session, not GFLOP/s across them.
+
+**Not measured, and covered by the same change:** fp32 (8×8), the Jetson's A78AE,
+and every other aarch64 core (Apple M-series, the Neoverse cores of the CI
+runners). The tile is a compile-time choice per ISA, so all of them moved
+together on one board's fp64 data.
+
 ### Pinning and clock policy
 
 | Requirement | Why |
@@ -580,7 +639,8 @@ bash benchmarks/machines/jetson-orin-nano-nc-sweep.sh
 
 The register-tile sweep (#643) has its own profile per 32-register machine, named
 `*-tile.sh`. Each runs `default` (mr = 6) against `tile8`, `tile10`, `tile12` and
-`tile14`: the same source with only `mr` changed (`MTL5_GEMM_MR_OVERRIDE`), so nr,
+`tile14` (on aarch64, where `default` is now mr = 8, the ARM profiles run `tile6`
+in place of `tile8`): the same source with only `mr` changed (`MTL5_GEMM_MR_OVERRIDE`), so nr,
 kc, mc and nc stay fixed. It runs once for fp64 and once for fp32, each into its own
 `...-tile-<dtype>` directory. The ARM profiles reuse their base profile, so the
 pinning and the governor or power-mode label are the same as the A/B's:
@@ -591,10 +651,12 @@ benchmarks/machines/jetson-orin-nano-tile.sh        # NEON, 6 cores, T in {1,6}
 bash benchmarks/machines/ryzen-9-8945hs-tile.sh     # AVX-512 under WSL, T in {1,8}
 ```
 
-`isaregs` is the candidate default, the target ISA's register file
-(`MTL5_GEMM_TARGET_REGISTER_FILE`). On NEON and AVX-512 it derives the same tile as
-`tile12`, so the sweep leaves it out; each sidecar records `vec_registers` and
-`mr_override`, so the arms can be told apart.
+`isaregs` is the rejected candidate, kept so it stays measurable: the target
+ISA's full register file at #351's 3/4 rule (`MTL5_GEMM_TARGET_REGISTER_FILE`). On
+NEON and AVX-512 it derives the same tile as `tile12`, so the sweep leaves it out.
+Each sidecar records `vec_registers`, `acc_vectors` and `mr_override`, so the arms
+can be told apart. The results are in the Ventuno Q and Ryzen sections above;
+NEON now ships 8×nr.
 
 ```powershell
 pwsh benchmarks/machines/ryzen-9-8945hs.ps1  # /arch:AVX512, 8 physical cores

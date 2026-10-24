@@ -56,6 +56,11 @@ struct hw_traits {
     // which derive_blocking treats as "unknown" and falls back to the
     // latency-floor tile, i.e. the pre-#351 behaviour.
     std::size_t vec_registers; // Nreg: architectural vector registers (0 = unknown)
+    // Appended for the same reason (#643): an older initializer leaves it 0.
+    // The accumulator budget, in vectors, when it is MEASURED rather than taken
+    // as 3/4 of vec_registers. 3/4 is #351's AVX2 optimum and does not carry to
+    // NEON, where the peak sat at half the file; see target_hw_traits.
+    std::size_t acc_vectors;   // accumulator budget (0 = 3/4 of vec_registers)
 };
 
 /// Generic modern-x86 (AVX2-class) default; override per architecture.
@@ -68,6 +73,7 @@ inline constexpr hw_traits default_hw_traits{
     /*l3_bytes*/ 8u * 1024 * 1024,
     /*page_bytes*/ 4096,
     /*vec_registers*/ 16,
+    /*acc_vectors*/ 0,
 };
 
 /// The architectural vector register file of the build's target ISA (#643).
@@ -75,9 +81,8 @@ inline constexpr hw_traits default_hw_traits{
 /// `default_hw_traits` describes ONE machine, a Haswell-class AVX2 core, and its
 /// 16 is right for AVX2's 16 ymm. It is wrong for the 32-register ISAs: aarch64
 /// (v0-v31, which SVE's z0-z31 alias) and AVX-512 with VL (zmm0-zmm31, and
-/// xmm/ymm16-31 under EVEX). Because the tile is ~3/4 of the file in
-/// accumulators, those builds get AVX2's 12 accumulator vectors out of 32: 6x4
-/// on NEON and 6x16 on AVX-512, where 12x4 and 12x16 fit.
+/// xmm/ymm16-31 under EVEX). Sized against 16, those builds got AVX2's 12
+/// accumulator vectors out of 32: 6x4 on NEON and 6x16 on AVX-512.
 ///
 /// Compile-time only, read from the compiler's target macros: the tile is a
 /// micro-kernel template argument, so it can follow what the compiler was told
@@ -93,20 +98,48 @@ constexpr std::size_t target_vec_registers() {
 }
 
 /// The hardware description `default_blocking` and `detected_hw_traits` start
-/// from: `default_hw_traits`, with the register file of the target ISA when
-/// MTL5_GEMM_TARGET_REGISTER_FILE is defined.
+/// from: `default_hw_traits`, with the register file and accumulator budget
+/// MEASURED for the target ISA (#643).
 ///
-/// OPT-IN until it is measured. A larger file only raises mr (nr is NRVEC
-/// vectors, and kc/mc/nc do not depend on mr), but whether the bigger tile WINS
-/// on NEON is not established: 12 accumulators already cover the Cortex-A78's
-/// FMA latency floor, so what a 12x4 tile buys is fewer loads per FMA, and the
-/// core may not be load-bound at 6x4. #351 also found a loss once the tile fills
-/// the file. The bench_blocking_ab `isaregs` arm is this switch; the `tileN` arms
-/// sweep around it.
+///   aarch64 (NEON)  32 registers, 16 accumulators -> 8x4 fp64, 8x8 fp32
+///   AVX-512         unchanged from AVX2: 6x16 fp64
+///   everything else unchanged
+///
+/// The sweep that set these (fp64, default mr = 6 against 8, 10, 12, 14 at fixed
+/// nr/kc/mc/nc; median ratio to mr = 6, geometric mean over the shapes):
+///
+///   Arduino Ventuno Q, 4x Cortex-A78C, T=1 / T=4
+///     8x4   16 acc   1.174 / 1.102   every shape >= 1.06
+///     10x4  20 acc   1.156 / 1.045
+///     12x4  24 acc   1.061 / 0.930   worst 0.840
+///     14x4  28 acc   1.049 / 0.878   worst 0.736
+///
+///   Ryzen 9 8945HS, Zen 4, AVX-512, T=1 / T=8 (WSL, 5-40% round-to-round spread)
+///     8x16  16 acc   0.995 / 1.046
+///     12x16 24 acc   1.032 / 1.021
+///
+/// So the NEON peak is at HALF the file, not #351's 3/4 -- the rule the register
+/// file alone would apply (12x4) loses up to 16% at T=4. That loss is a block
+/// divisibility effect, the #408 family again: on the wide 64-row shapes each of
+/// four threads gets a 16-row block, which 8-row panels tile exactly and 12-row
+/// panels cover with 24 rows of work. Hence an explicit budget instead of a
+/// fraction. On AVX-512 no tile cleared the noise, which is the measured reason
+/// to leave it at the AVX2 description.
+///
+/// NOT MEASURED: other aarch64 cores (Apple M-series, Neoverse), fp32, and the
+/// Jetson's A78AE. docs/benchmarks/systems.md lists the runs.
+///
+/// MTL5_GEMM_TARGET_REGISTER_FILE replaces this with the full register file at
+/// the 3/4 rule, i.e. 12xnr on NEON and AVX-512: the bench_blocking_ab `isaregs`
+/// arm, kept so the rejected candidate stays measurable.
 inline constexpr hw_traits target_hw_traits = [] {
     hw_traits hw = default_hw_traits;
 #if defined(MTL5_GEMM_TARGET_REGISTER_FILE)
     hw.vec_registers = target_vec_registers();
+    hw.acc_vectors   = 0;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    hw.vec_registers = 32;
+    hw.acc_vectors   = 16;
 #endif
     return hw;
 }();
@@ -152,6 +185,9 @@ constexpr blocking_params derive_blocking(std::size_t nvec,
     // which is also where BLIS's hand-written Haswell dgemm kernel sits (6x8),
     // and where its AVX-512 kernel sits (8x24 = 24 of 32).
     //
+    // (That is AVX2. On NEON the peak measured at HALF the file, so a target
+    // can state its budget outright in hw.acc_vectors; see target_hw_traits.)
+    //
     // So: budget 3/4 of the file for accumulators, hold the B micro-panel in
     // NRVEC vector registers, and let the floor raise mr if a narrow file would
     // otherwise put us under it.
@@ -169,8 +205,10 @@ constexpr blocking_params derive_blocking(std::size_t nvec,
     } else {
         nr = nvec * NRVEC;
         if (nr == 0) nr = nvec;
-        // Accumulator budget, leaving room for the B panel and the A broadcast.
-        std::size_t acc_budget = (hw.vec_registers * 3) / 4;
+        // Accumulator budget, leaving room for the B panel and the A broadcast:
+        // measured where hw says so (#643), else 3/4 of the file (#351).
+        std::size_t acc_budget = hw.acc_vectors != 0 ? hw.acc_vectors
+                                                     : (hw.vec_registers * 3) / 4;
         if (acc_budget < NRVEC + 1) acc_budget = NRVEC + 1;
         mr = acc_budget / NRVEC;
         if (mr == 0) mr = 1;

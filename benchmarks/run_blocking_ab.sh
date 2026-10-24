@@ -85,7 +85,7 @@ for a in $ARMS; do
     if [ ! -x "$b" ]; then
         echo "missing $b" >&2
         echo "known arms: default detected kconly mconly ccap ccap2 legacymc isaregs" >&2
-        echo "            tile8 tile10 tile12 tile14 tile16" >&2
+        echo "            tile6 tile8 tile10 tile12 tile14 tile16" >&2
         echo "build with:  cmake --preset release && cmake --build $BUILD_DIR --target \\" >&2
         for x in $ARMS; do echo "                 bench_blocking_ab_$x \\" >&2; done
         echo "                 -j4" >&2

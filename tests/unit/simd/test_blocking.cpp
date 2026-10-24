@@ -115,6 +115,7 @@ TEST_CASE("derivation adapts to a different hardware profile (AVX-512 / bigger c
         /*l3_bytes*/ 16u * 1024 * 1024,
         /*page_bytes*/ 4096,
         /*vec_registers*/ 32,          // AVX-512: 32 zmm
+        /*acc_vectors*/ 0,             // 3/4 of the file
     };
     constexpr blocking_params bp = derive_blocking<double>(8, avx512);   // 8 doubles = AVX-512
     STATIC_REQUIRE(bp.nr % 8 == 0);
@@ -171,19 +172,69 @@ TEST_CASE("the target register file follows the compiler's ISA (#643)", "[simd][
     STATIC_REQUIRE(target_vec_registers() == 16);
 #endif
 
-    // default_hw_traits stays the Haswell AVX2 description it documents; only
-    // the target description may differ, and only in the register file.
+    // default_hw_traits stays the Haswell AVX2 description it documents; the
+    // target description differs from it only in the register fields.
     STATIC_REQUIRE(default_hw_traits.vec_registers == 16);
+    STATIC_REQUIRE(default_hw_traits.acc_vectors == 0);
     STATIC_REQUIRE(target_hw_traits.fma_latency == default_hw_traits.fma_latency);
     STATIC_REQUIRE(target_hw_traits.fma_units   == default_hw_traits.fma_units);
     STATIC_REQUIRE(target_hw_traits.l1_bytes    == default_hw_traits.l1_bytes);
     STATIC_REQUIRE(target_hw_traits.l2_bytes    == default_hw_traits.l2_bytes);
     STATIC_REQUIRE(target_hw_traits.l3_bytes    == default_hw_traits.l3_bytes);
 #if defined(MTL5_GEMM_TARGET_REGISTER_FILE)
+    // The rejected candidate, kept measurable: the full file at the 3/4 rule.
     STATIC_REQUIRE(target_hw_traits.vec_registers == target_vec_registers());
+    STATIC_REQUIRE(target_hw_traits.acc_vectors == 0);
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    // Measured on a Cortex-A78C: 16 accumulators, half the file.
+    STATIC_REQUIRE(target_hw_traits.vec_registers == 32);
+    STATIC_REQUIRE(target_hw_traits.acc_vectors == 16);
 #else
-    // Opt-in until the #643 sweep measures it: the shipped tile is unchanged.
+    // AVX2 and AVX-512: no tile beat the AVX2 description beyond noise.
     STATIC_REQUIRE(target_hw_traits.vec_registers == default_hw_traits.vec_registers);
+    STATIC_REQUIRE(target_hw_traits.acc_vectors == default_hw_traits.acc_vectors);
+#endif
+}
+
+TEST_CASE("a measured accumulator budget overrides the 3/4 rule (#643)", "[simd][blocking]") {
+    // What target_hw_traits ships on aarch64, derived on any host so an x86 CI
+    // leg checks the NEON tile too: 8x4 fp64 (nvec=2), 8x8 fp32 (nvec=4).
+    hw_traits neon = default_hw_traits;
+    neon.vec_registers = 32;
+    neon.acc_vectors   = 16;
+    constexpr auto neon_c = [] {
+        hw_traits h = default_hw_traits;
+        h.vec_registers = 32;
+        h.acc_vectors   = 16;
+        return h;
+    }();
+    STATIC_REQUIRE(derive_blocking<double>(2, neon_c).mr == 8);
+    STATIC_REQUIRE(derive_blocking<double>(2, neon_c).nr == 4);
+    STATIC_REQUIRE(derive_blocking<float>(4, neon_c).mr == 8);
+    STATIC_REQUIRE(derive_blocking<float>(4, neon_c).nr == 8);
+
+    // Only mr moves: against the same file at the 3/4 rule, every cache block
+    // is identical, as it is against the AVX2 description.
+    hw_traits rule = neon;
+    rule.acc_vectors = 0;
+    for (std::size_t nvec : {std::size_t{2}, std::size_t{4}}) {
+        INFO("nvec=" << nvec);
+        const blocking_params bp = derive_blocking<double>(nvec, neon);
+        const blocking_params r  = derive_blocking<double>(nvec, rule);
+        CHECK(r.mr == 12);
+        CHECK(bp.nr == r.nr);
+        CHECK(bp.kc == r.kc);
+        CHECK(bp.mc == r.mc);
+        CHECK(bp.nc == r.nc);
+        CHECK(bp.mr * (bp.nr / nvec) + 2 + 1 <= neon.vec_registers);
+        check_valid(bp, nvec, sizeof(double), neon);
+    }
+
+#if (defined(__aarch64__) || defined(_M_ARM64)) && !defined(MTL5_GEMM_TARGET_REGISTER_FILE) \
+    && !defined(MTL5_GEMM_MR_OVERRIDE)
+    // ...and it is what an aarch64 build actually instantiates.
+    STATIC_REQUIRE(mtl::simd::default_blocking<double>.mr == 8);
+    STATIC_REQUIRE(mtl::simd::default_blocking<float>.mr == 8);
 #endif
 }
 

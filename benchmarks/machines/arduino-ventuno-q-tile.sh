@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 # #643 register-tile sweep on the Arduino Ventuno Q (4x Cortex-A78C).
 #
-# The derivation assumes AVX2's 16 vector registers on every ISA, so a NEON
-# build gets 6x4 (fp64) and 6x8 (fp32): 12 accumulator vectors of the 32 that
-# aarch64 has. This sweeps mr at fixed nr, kc, mc and nc to find out whether
-# a larger tile wins here before the default moves:
+# aarch64 builds now derive mr = 8 (8x4 fp64, 8x8 fp32), from the fp64 sweep on
+# the Ventuno Q; before #643 they derived AVX2's 6. This sweeps mr at fixed nr,
+# kc, mc and nc around it:
 #
-#     default   mr = 6     the shipped tile, and where the shapes come from
-#     tile8     mr = 8     16 accumulators
+#     default   mr = 8     the shipped tile, and where the shapes come from
+#     tile6     mr = 6     the pre-#643 tile, 12 accumulators of 32
 #     tile10    mr = 10    20
-#     tile12    mr = 12    24 = 3/4 of the file, what isaregs derives on NEON
+#     tile12    mr = 12    24 = 3/4 of the file (#351's AVX2 rule, `isaregs`)
 #     tile14    mr = 14    28, plus 2 B vectors and 1 A broadcast = 31 of 32
 #
-# Not established in advance: 12 accumulators already cover the A78's FMA
-# latency floor, so a bigger tile buys fewer loads per FMA, which only helps if
-# the core is load-bound at 6x4. #351 measured the peak at ~3/4 of the file on
-# AVX2 and a loss once the tile filled it; whether NEON agrees is the question.
+# Compare every arm against tile6 for the gain over the old tile, and against
+# default for whether 8 is still the peak.
+#
+# The fp64 Ventuno Q run put the peak at 8 (x1.17 at T=1, x1.10 at T=4) and
+# found 12 losing at T=4. What it did not cover: fp32, and every other aarch64
+# core. docs/benchmarks/systems.md has the table.
 #
 # One run per element type, each into its own directory (`...-tile-double`,
 # `...-tile-float`), at T=1 and on all four A78C cores. Everything else -- pinning,
@@ -29,7 +30,7 @@
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-export ARMS=${ARMS:-"default tile8 tile10 tile12 tile14"}
+export ARMS=${ARMS:-"default tile6 tile10 tile12 tile14"}
 DTYPES=${DTYPES:-"double float"}
 
 force=1
