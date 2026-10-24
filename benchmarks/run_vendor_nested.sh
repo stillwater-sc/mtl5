@@ -16,6 +16,8 @@
 #                defaults to their count
 #   VENDORS      default "openblas blis mkl"; a vendor that cannot be found is skipped
 #   SIZES BATCH REPS   passed to the benchmark (defaults 128,256,512 / 64 / 15)
+#   ROUNDS       default 3: every arm once per round, rounds in turn, so the
+#                CSV shows the spread between processes, not one draw from it
 #   MKL_SETVARS  oneAPI's setvars.sh (default /opt/intel/oneapi/setvars.sh)
 set -euo pipefail
 
@@ -34,6 +36,7 @@ VENDORS=${VENDORS:-"openblas blis mkl"}
 SIZES=${SIZES:-128,256,512}
 BATCH=${BATCH:-64}
 REPS=${REPS:-15}
+ROUNDS=${ROUNDS:-3}
 MKL_SETVARS=${MKL_SETVARS:-/opt/intel/oneapi/setvars.sh}
 
 PIN=()
@@ -92,22 +95,23 @@ for v in "${BUILT[@]}"; do
     echo "== running $v: MTL5 pool $THREADS, vendor team $THREADS"
     # One process per arm: a vendor's idle team spins on after its last call,
     # and the next arm in the same process would be timed against it.
-    arms="uncapped capped direct ddot"
-    [ "$v" = openblas ] && arms="uncapped capped process1 direct ddot"
+    arms="uncapped capped direct"
+    [ "$v" = openblas ] && arms="uncapped capped process1 direct"
     run() {   # arm, then VAR=value settings
         local arm=$1; shift
         env MTL5_NUM_THREADS="$THREADS" "$@" ${PIN[@]+"${PIN[@]}"} \
             "build-vendor-$v/benchmarks/bench_vendor_nested" --arms "$arm" \
-            --sizes "$SIZES" --batch "$BATCH" --reps "$REPS" --csv "$csv"
+            --sizes "$SIZES" --batch "$BATCH" --reps "$REPS" --round "$round" \
+            --csv "$csv"
     }
-    for arm in $arms; do
+    for round in $(seq 1 "$ROUNDS"); do for arm in $arms; do
         case $v in
             openblas) run "$arm" OPENBLAS_NUM_THREADS="$THREADS" ;;
             blis)     run "$arm" BLIS_NUM_THREADS="$THREADS" ;;
             mkl)      ( set +u +e; source "$MKL_SETVARS" >/dev/null 2>&1; set -u -e
                         run "$arm" MKL_NUM_THREADS="$THREADS" ) ;;
         esac
-    done
+    done; done
     { printf '%s\n' "$PREFLIGHT"
       "$SCRIPT_DIR/preflight.sh" --phase after --repo "$ROOT" --report-only; } >>"$csv.sysinfo"
 done

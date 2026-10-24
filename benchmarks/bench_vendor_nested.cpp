@@ -14,9 +14,6 @@
 //   direct    the same batch from the calling thread, outside a region: the
 //             vendor's team is the only parallelism
 //
-//   ddot      one ddot of length 256 per call inside a region, direct and
-//             through the wrapper, interleaved, fastest rep: what the cap
-//             costs a small call
 //
 // Run each arm in a process of its own (--arms): a vendor's idle team keeps
 // spinning after its last call (Intel OpenMP for 200 ms by default), and an arm
@@ -24,8 +21,8 @@
 //
 // Usage (one vendor per build tree, MTL5_WITH_BLAS=ON):
 //   MTL5_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 bench_vendor_nested [--csv f]
-//       [--arms uncapped,capped,process1,direct,ddot] [--sizes 128,256,512]
-//       [--batch 64] [--reps 7]
+//       [--arms uncapped,capped,process1,direct] [--sizes 128,256,512]
+//       [--batch 64] [--reps 7] [--round N]
 // The CSV is appended to, with a header when it is new.
 // benchmarks/run_vendor_nested.sh builds the three vendor trees and runs them.
 
@@ -135,13 +132,15 @@ int main(int argc, char** argv) {
     std::vector<int> sizes{128, 256, 512};
     int count = 64, reps = 7;
     std::string csv;
-    std::vector<std::string> arms{"uncapped", "capped", "process1", "direct", "ddot"};
+    std::vector<std::string> arms{"uncapped", "capped", "process1", "direct"};
+    int round = 1;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--sizes") && i + 1 < argc) sizes = parse_list(argv[++i]);
         else if (!std::strcmp(argv[i], "--batch") && i + 1 < argc) count = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--reps") && i + 1 < argc) reps = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--csv") && i + 1 < argc) csv = argv[++i];
         else if (!std::strcmp(argv[i], "--arms") && i + 1 < argc) arms = parse_names(argv[++i]);
+        else if (!std::strcmp(argv[i], "--round") && i + 1 < argc) round = std::atoi(argv[++i]);
     }
     auto want = [&](const char* a) { return std::find(arms.begin(), arms.end(), a) != arms.end(); };
 
@@ -156,13 +155,14 @@ int main(int argc, char** argv) {
     if (!csv.empty()) {
         const bool fresh = !std::ifstream(csv).good();
         out.open(csv, std::ios::app);
-        if (fresh) out << "vendor,pool,vendor_env,arm,n,batch,seconds,gflops,checksum\n";
+        if (fresh) out << "vendor,pool,vendor_env,round,arm,n,batch,seconds,gflops,checksum\n";
     }
     auto row = [&](const char* arm, int n, double s, double sum) {
         const double gf = 2.0 * n * n * static_cast<double>(n) * count / s * 1e-9;
         std::printf("  %-9s n=%-5d %9.4f s %8.1f GFLOP/s  checksum %.6e\n", arm, n, s, gf, sum);
-        if (out) out << vendor << ',' << P << ',' << vendor_env() << ',' << arm << ','
-                     << n << ',' << count << ',' << s << ',' << gf << ',' << sum << '\n';
+        if (out) out << vendor << ',' << P << ',' << vendor_env() << ',' << round << ','
+                     << arm << ',' << n << ',' << count << ',' << s << ',' << gf << ','
+                     << sum << '\n';
     };
 
     for (int n : sizes) {
@@ -195,48 +195,6 @@ int main(int argc, char** argv) {
 #endif
     }
 
-    // What the cap costs one small call made inside a region.
-    if (want("ddot")) {
-        const int n = 256, calls = 200000;
-        std::vector<double> x(n, 0.5), y(n, 0.25);
-        std::vector<double> sink(P, 0.0);
-        auto once = [&](bool wrapped) {
-            pool.run(P, [&](unsigned tid) {
-                const int one = 1;
-                double acc = 0.0;
-                for (int c = 0; c < calls; ++c)
-                    acc += wrapped ? iface::blas::dot(n, x.data(), 1, y.data(), 1)
-                                   : ddot_(&n, x.data(), &one, y.data(), &one);
-                sink[tid] += acc;
-            });
-        };
-        // Interleaved, raw then wrapped in every rep, and the FASTEST rep of
-        // each: the per-process median moved between two levels about 2x
-        // apart, for raw as well as wrapped and for a BLIS the cap never
-        // writes to -- interference from the machine, not the cap, which the
-        // minimum of interleaved reps sees past.
-        const auto w0 = clk::now();
-        do { once(false); once(true); }
-        while (std::chrono::duration<double>(clk::now() - w0).count() < 0.3);
-        std::vector<double> tr, tw;
-        for (int r = 0; r < reps; ++r) {
-            for (int w = 0; w < 2; ++w) {
-                const auto t0 = clk::now();
-                once(w == 1);
-                (w ? tw : tr).push_back(std::chrono::duration<double>(clk::now() - t0).count());
-            }
-        }
-        const double raw = *std::min_element(tr.begin(), tr.end()) / calls * 1e9;
-        const double wrapped = *std::min_element(tw.begin(), tw.end()) / calls * 1e9;
-        std::printf("  ddot n=%d inside a region, fastest rep: raw %.1f ns/call, wrapped %.1f ns/call\n",
-                    n, raw, wrapped);
-        if (out) {
-            out << vendor << ',' << P << ',' << vendor_env() << ",ddot_raw_ns," << n << ','
-                << calls << ',' << raw << ",0,0\n";
-            out << vendor << ',' << P << ',' << vendor_env() << ",ddot_wrapped_ns," << n << ','
-                << calls << ',' << wrapped << ",0,0\n";
-        }
-    }
     // Provenance (#442): the machine, the build, and which vendor library and
     // thread settings the numbers are for.
     if (!csv.empty()) {
