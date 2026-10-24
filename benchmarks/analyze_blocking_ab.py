@@ -68,7 +68,7 @@ def sidecar(path):
 # Only for sidecars written before `detection_levels` existed, whose
 # detection_enabled tested MTL5_ENABLE_CACHE_DETECTION alone and so read 0 for
 # the single-level arms.
-ARM_LEVELS = {"default": set(), "legacymc": set(), "detected": {"l1", "l2"},
+ARM_LEVELS = {"default": set(), "legacymc": set(), "isaregs": set(), "detected": {"l1", "l2"},
               "kconly": {"l1"}, "mconly": {"l2"}, "ccap": {"l2"}, "ccap2": {"l2"}}
 
 
