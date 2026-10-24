@@ -29,4 +29,9 @@ MTL5_SHARED_POOL_API thread_pool& detail::shared_pool_v1() {
     return pool;
 }
 
+MTL5_SHARED_POOL_API bool& detail::shared_region_flag_v1() noexcept {
+    thread_local bool in = false;
+    return in;
+}
+
 } // namespace mtl::parallel

@@ -17,6 +17,7 @@
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/interface/vendor_threads.hpp>
 
 #include <cholmod.h>
 
@@ -77,10 +78,14 @@ public:
         for (std::size_t i = 0; i < n_; ++i)
             b_data[i] = b(i);
 
-        // Solve
-        cholmod_dense* x_chol = cholmod_solve(
-            CHOLMOD_A, factor_, b_chol,
-            const_cast<cholmod_common*>(&common_));
+        // Solve; one thread inside an MTL5 region (#640)
+        cholmod_dense* x_chol = nullptr;
+        {
+            detail::nested_suitesparse_cap<cholmod_common> cap(
+                const_cast<cholmod_common&>(common_));
+            x_chol = cholmod_solve(CHOLMOD_A, factor_, b_chol,
+                                   const_cast<cholmod_common*>(&common_));
+        }
         cholmod_free_dense(&b_chol, const_cast<cholmod_common*>(&common_));
 
         if (!x_chol) {
@@ -143,7 +148,8 @@ private:
             }
         }
 
-        // Analyze and factorize
+        // Analyze and factorize; one thread inside an MTL5 region (#640)
+        detail::nested_suitesparse_cap<cholmod_common> cap(common_);
         factor_ = cholmod_analyze(sparse_A_, &common_);
         if (!factor_) {
             throw std::runtime_error("CHOLMOD symbolic analysis failed");

@@ -6,6 +6,7 @@
 #ifdef MTL5_HAS_BLAS
 
 #include <cstddef>
+#include <mtl/interface/vendor_threads.hpp>
 
 // -- Fortran BLAS declarations ------------------------------------------
 extern "C" {
@@ -140,37 +141,47 @@ namespace mtl::interface::blas {
 // -- Level 1 ------------------------------------------------------------
 
 inline float dot(int n, const float* x, int incx, const float* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     return sdot_(&n, x, &incx, y, &incy);
 }
 inline double dot(int n, const double* x, int incx, const double* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     return ddot_(&n, x, &incx, y, &incy);
 }
 
 inline void axpy(int n, float alpha, const float* x, int incx, float* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     saxpy_(&n, &alpha, x, &incx, y, &incy);
 }
 inline void axpy(int n, double alpha, const double* x, int incx, double* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     daxpy_(&n, &alpha, x, &incx, y, &incy);
 }
 
 inline void copy(int n, const float* x, int incx, float* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     scopy_(&n, x, &incx, y, &incy);
 }
 inline void copy(int n, const double* x, int incx, double* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dcopy_(&n, x, &incx, y, &incy);
 }
 
 inline void scal(int n, float alpha, float* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     sscal_(&n, &alpha, x, &incx);
 }
 inline void scal(int n, double alpha, double* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dscal_(&n, &alpha, x, &incx);
 }
 
 inline float nrm2(int n, const float* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     return snrm2_(&n, x, &incx);
 }
 inline double nrm2(int n, const double* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     return dnrm2_(&n, x, &incx);
 }
 
@@ -179,47 +190,57 @@ inline double nrm2(int n, const double* x, int incx) {
 inline void gemv(char trans, int m, int n, float alpha,
                  const float* A, int lda, const float* x, int incx,
                  float beta, float* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     sgemv_(&trans, &m, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy);
 }
 inline void gemv(char trans, int m, int n, double alpha,
                  const double* A, int lda, const double* x, int incx,
                  double beta, double* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dgemv_(&trans, &m, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy);
 }
 
 inline void trsv(char uplo, char trans, char diag, int n,
                  const float* A, int lda, float* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     strsv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
 }
 inline void trsv(char uplo, char trans, char diag, int n,
                  const double* A, int lda, double* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dtrsv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
 }
 
 inline void ger(int m, int n, float alpha, const float* x, int incx,
                 const float* y, int incy, float* A, int lda) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     sger_(&m, &n, &alpha, x, &incx, y, &incy, A, &lda);
 }
 inline void ger(int m, int n, double alpha, const double* x, int incx,
                 const double* y, int incy, double* A, int lda) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dger_(&m, &n, &alpha, x, &incx, y, &incy, A, &lda);
 }
 
 inline void symv(char uplo, int n, float alpha, const float* A, int lda,
                  const float* x, int incx, float beta, float* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     ssymv_(&uplo, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy);
 }
 inline void symv(char uplo, int n, double alpha, const double* A, int lda,
                  const double* x, int incx, double beta, double* y, int incy) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dsymv_(&uplo, &n, &alpha, A, &lda, x, &incx, &beta, y, &incy);
 }
 
 inline void trmv(char uplo, char trans, char diag, int n,
                  const float* A, int lda, float* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     strmv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
 }
 inline void trmv(char uplo, char trans, char diag, int n,
                  const double* A, int lda, double* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dtrmv_(&uplo, &trans, &diag, &n, A, &lda, x, &incx);
 }
 
@@ -229,61 +250,73 @@ inline void gemm(char transa, char transb, int m, int n, int k,
                  float alpha, const float* A, int lda,
                  const float* B, int ldb,
                  float beta, float* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     sgemm_(&transa, &transb, &m, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
 inline void gemm(char transa, char transb, int m, int n, int k,
                  double alpha, const double* A, int lda,
                  const double* B, int ldb,
                  double beta, double* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dgemm_(&transa, &transb, &m, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
 
 inline void trmm(char side, char uplo, char transa, char diag, int m, int n,
                  float alpha, const float* A, int lda, float* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     strmm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
 }
 inline void trmm(char side, char uplo, char transa, char diag, int m, int n,
                  double alpha, const double* A, int lda, double* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dtrmm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
 }
 
 inline void trsm(char side, char uplo, char transa, char diag, int m, int n,
                  float alpha, const float* A, int lda, float* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     strsm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
 }
 inline void trsm(char side, char uplo, char transa, char diag, int m, int n,
                  double alpha, const double* A, int lda, double* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dtrsm_(&side, &uplo, &transa, &diag, &m, &n, &alpha, A, &lda, B, &ldb);
 }
 
 inline void symm(char side, char uplo, int m, int n, float alpha,
                  const float* A, int lda, const float* B, int ldb,
                  float beta, float* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     ssymm_(&side, &uplo, &m, &n, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
 inline void symm(char side, char uplo, int m, int n, double alpha,
                  const double* A, int lda, const double* B, int ldb,
                  double beta, double* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dsymm_(&side, &uplo, &m, &n, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
 
 inline void syrk(char uplo, char trans, int n, int k, float alpha,
                  const float* A, int lda, float beta, float* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     ssyrk_(&uplo, &trans, &n, &k, &alpha, A, &lda, &beta, C, &ldc);
 }
 inline void syrk(char uplo, char trans, int n, int k, double alpha,
                  const double* A, int lda, double beta, double* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dsyrk_(&uplo, &trans, &n, &k, &alpha, A, &lda, &beta, C, &ldc);
 }
 
 inline void syr2k(char uplo, char trans, int n, int k, float alpha,
                   const float* A, int lda, const float* B, int ldb,
                   float beta, float* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     ssyr2k_(&uplo, &trans, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
 inline void syr2k(char uplo, char trans, int n, int k, double alpha,
                   const double* A, int lda, const double* B, int ldb,
                   double beta, double* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     dsyr2k_(&uplo, &trans, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
 

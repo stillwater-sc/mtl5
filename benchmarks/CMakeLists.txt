@@ -171,6 +171,15 @@ add_executable(fig_loop_orders fig_loop_orders.cpp)
 target_link_libraries(fig_loop_orders PRIVATE MTL5::mtl5)
 set_target_properties(fig_loop_orders PROPERTIES FOLDER "Benchmarks")
 
+# A vendor BLAS called from inside an MTL5 region (#640): the batched-dgemm
+# region with the vendor uncapped, capped, and called directly. Meaningful only
+# with MTL5_WITH_BLAS=ON; benchmarks/run_vendor_nested.sh builds one tree per
+# vendor.
+add_executable(bench_vendor_nested bench_vendor_nested.cpp)
+target_link_libraries(bench_vendor_nested PRIVATE MTL5::mtl5)
+set_target_properties(bench_vendor_nested PROPERTIES FOLDER "Benchmarks")
+add_dependencies(bench_vendor_nested mtl5_build_info)
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)
