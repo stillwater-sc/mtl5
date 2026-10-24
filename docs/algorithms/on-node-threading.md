@@ -152,10 +152,13 @@ task started in one module sees it in another.
 | OpenBLAS | `openblas_set_num_threads`, `OPENBLAS_NUM_THREADS` | the whole process | **unchanged**; see below |
 | CHOLMOD, SPQR | `cholmod_common::nthreads_max` (their own OpenMP), and the BLAS they call | that call | one thread, and the BLAS cap above |
 
-¹ On the region's calling thread (tid 0) the previous setting is restored after
-the call. A pool worker runs nothing but region tids, so its setting stays at
-one. A later call on that worker then costs one read of the setting rather than
-two writes; with BLIS a write costs more than a small `ddot`.
+¹ The vendor is set to one thread at the first vendor call of a region and
+stays at one for the rest of the region. Later calls then cost a thread-local
+check rather than two writes, and with BLIS a write costs more than a small
+`ddot`. The region's calling thread (tid 0) gets its previous setting back when
+the region ends, including when the region ends with an exception. A pool
+worker runs nothing but region tids, so its setting stays at one. A vendor
+setting that a task changes during a region is not capped again.
 
 CMake works out the vendor from the symbol that vendor's thread control exports
 in `BLAS_LIBRARIES`/`LAPACK_LIBRARIES`, and reports it as

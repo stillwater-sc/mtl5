@@ -15,7 +15,7 @@
 #   BENCH_PCPUS  cores to pin to (one logical cpu per physical core); THREADS
 #                defaults to their count
 #   VENDORS      default "openblas blis mkl"; a vendor that cannot be found is skipped
-#   SIZES BATCH REPS   passed to the benchmark (defaults 128,256,512 / 64 / 7)
+#   SIZES BATCH REPS   passed to the benchmark (defaults 128,256,512 / 64 / 15)
 #   MKL_SETVARS  oneAPI's setvars.sh (default /opt/intel/oneapi/setvars.sh)
 set -euo pipefail
 
@@ -33,7 +33,7 @@ mkdir -p "$OUTDIR"
 VENDORS=${VENDORS:-"openblas blis mkl"}
 SIZES=${SIZES:-128,256,512}
 BATCH=${BATCH:-64}
-REPS=${REPS:-7}
+REPS=${REPS:-15}
 MKL_SETVARS=${MKL_SETVARS:-/opt/intel/oneapi/setvars.sh}
 
 PIN=()

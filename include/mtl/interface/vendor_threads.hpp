@@ -8,9 +8,10 @@
 // caps give a vendor call the same rule:
 //
 //   * inside a region (mtl::parallel::detail::in_region()), the vendor runs on
-//     one thread for the duration of the call. Its setting is restored on the
-//     region's calling thread; on a pool worker, which only ever runs region
-//     tids, it stays at one;
+//     one thread. It is set at the first vendor call of the region and kept
+//     for the rest of it; the region's calling thread gets its previous
+//     setting back when the region ends, and a pool worker, which only ever
+//     runs region tids, keeps one;
 //   * outside a region nothing changes: the vendor's team is the only
 //     parallelism, and capping it would make a direct call serial.
 //
@@ -89,43 +90,53 @@ inline int blas_vendor_threads() noexcept {
 
 namespace detail {
 
-/// For the scope of one vendor call: inside an MTL5 region, the vendor runs on
-/// this thread only; outside one, nothing happens beyond a thread-local read.
+#if defined(MTL5_BLAS_VENDOR_MKL) || defined(MTL5_BLAS_VENDOR_BLIS)
+/// The vendor setting a region's calling thread had before its first capped
+/// call, restored when that thread leaves the region.
+inline std::int64_t& vendor_threads_before_region() noexcept {
+    thread_local std::int64_t prev = 0;
+    return prev;
+}
+
+inline void restore_vendor_threads() noexcept {
+#if defined(MTL5_BLAS_VENDOR_MKL)
+    MKL_Set_Num_Threads_Local(static_cast<int>(vendor_threads_before_region()));
+#else
+    bli_thread_set_num_threads(vendor_threads_before_region());
+#endif
+    parallel::detail::this_region_thread().vendor_capped = false;
+}
+#endif
+
+/// Before a vendor call: inside an MTL5 region, the vendor runs on this thread
+/// only; outside one, nothing happens beyond a thread-local read.
 ///
-/// On the region's calling thread the vendor's previous setting is restored
-/// after the call. On a pool worker it is left at one: a worker makes vendor
-/// calls only inside regions, so restoring would buy nothing, and leaving it
-/// makes every later call on that worker one read of the setting instead of
-/// two writes (with BLIS a set costs more than a small ddot).
+/// The vendor is set once per region, not once per call (with BLIS a set costs
+/// more than a small ddot). On the region's calling thread the previous
+/// setting is restored when the thread leaves the region. On a pool worker,
+/// which only ever runs region tids, it stays at one.
 class nested_blas_cap {
 public:
     nested_blas_cap() noexcept {
-#if defined(MTL5_BLAS_VENDOR_MKL)
-        if (parallel::detail::in_region()) {
-            const int prev = MKL_Set_Num_Threads_Local(1);   // 0: the global setting
-            if (!parallel::detail::on_pool_worker()) { active_ = true; prev_ = prev; }
+#if defined(MTL5_BLAS_VENDOR_MKL) || defined(MTL5_BLAS_VENDOR_BLIS)
+        if (!parallel::detail::in_region()) return;
+        parallel::detail::region_thread& t = parallel::detail::this_region_thread();
+        if (t.vendor_capped) return;
+        t.vendor_capped = true;
+#  if defined(MTL5_BLAS_VENDOR_MKL)
+        const std::int64_t prev = MKL_Set_Num_Threads_Local(1);   // 0: the global setting
+#  else
+        const std::int64_t prev = bli_thread_get_num_threads();
+        if (prev != 1) bli_thread_set_num_threads(1);
+#  endif
+        if (t.state != parallel::detail::pool_worker) {
+            vendor_threads_before_region() = prev;
+            t.on_exit = &restore_vendor_threads;
         }
-#elif defined(MTL5_BLAS_VENDOR_BLIS)
-        if (parallel::detail::in_region()) {
-            const std::int64_t prev = bli_thread_get_num_threads();
-            if (prev != 1) bli_thread_set_num_threads(1);
-            if (prev != 1 && !parallel::detail::on_pool_worker()) { active_ = true; prev_ = prev; }
-        }
-#endif
-    }
-    ~nested_blas_cap() {
-#if defined(MTL5_BLAS_VENDOR_MKL)
-        if (active_) MKL_Set_Num_Threads_Local(static_cast<int>(prev_));
-#elif defined(MTL5_BLAS_VENDOR_BLIS)
-        if (active_) bli_thread_set_num_threads(prev_);
 #endif
     }
     nested_blas_cap(const nested_blas_cap&) = delete;
     nested_blas_cap& operator=(const nested_blas_cap&) = delete;
-
-private:
-    [[maybe_unused]] bool active_ = false;
-    [[maybe_unused]] std::int64_t prev_ = 0;
 };
 
 /// The same for a CHOLMOD/SPQR call: caps CHOLMOD's own OpenMP team through

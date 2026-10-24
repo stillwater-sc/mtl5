@@ -20,6 +20,7 @@
 #endif
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -88,25 +89,36 @@ TEST_CASE("interface: inside a region a vendor call runs on one thread; tid 0 is
         return;
     }
     const unsigned n = p.size();
-    std::vector<int> before(n, -1), during(n, -1), after(n, -1);
+    const int prev = iface::blas_vendor_threads();
+    set_thread_vendor_threads(3);   // the calling thread's own setting
+
+    std::vector<int> during(n, -1), later(n, -1);
     p.run(n, [&](unsigned tid) {
-        const int prev = iface::blas_vendor_threads();
-        set_thread_vendor_threads(static_cast<int>(2 + tid));
-        before[tid] = iface::blas_vendor_threads();
-        {
-            iface::detail::nested_blas_cap cap;
-            during[tid] = iface::blas_vendor_threads();
-        }
-        after[tid] = iface::blas_vendor_threads();
-        set_thread_vendor_threads(prev);
+        { iface::detail::nested_blas_cap cap; during[tid] = iface::blas_vendor_threads(); }
+        // Set once per region: a later call in it finds the vendor at one.
+        { iface::detail::nested_blas_cap cap; later[tid] = iface::blas_vendor_threads(); }
     });
     for (unsigned t = 0; t < n; ++t) {
         INFO("tid " << t);
-        REQUIRE(before[t] == static_cast<int>(2 + t));
         REQUIRE(during[t] == 1);
-        // The caller's setting comes back; a pool worker's stays at one.
-        REQUIRE(after[t] == (t == 0 ? 2 : 1));
+        REQUIRE(later[t] == 1);
     }
+    // Leaving the region gives the calling thread its setting back ...
+    REQUIRE(iface::blas_vendor_threads() == 3);
+
+    // ... while a pool worker, which runs nothing but region tids, keeps one.
+    std::vector<int> next(n, -1);
+    p.run(n, [&](unsigned tid) { next[tid] = iface::blas_vendor_threads(); });
+    REQUIRE(next[0] == 3);
+    for (unsigned t = 1; t < n; ++t) REQUIRE(next[t] == 1);
+
+    // An exception leaving the region restores the caller too.
+    REQUIRE_THROWS(p.run(n, [&](unsigned tid) {
+        iface::detail::nested_blas_cap cap;
+        if (tid == 0) throw std::runtime_error("tid 0");
+    }));
+    REQUIRE(iface::blas_vendor_threads() == 3);
+    set_thread_vendor_threads(prev);
 }
 
 #ifdef MTL5_HAS_BLAS

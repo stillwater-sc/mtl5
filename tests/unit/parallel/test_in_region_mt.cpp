@@ -14,6 +14,9 @@
 namespace {
 namespace par = mtl::parallel;
 
+int exits = 0;
+void count_exit() noexcept { ++exits; }
+
 // A pool of four (or the hardware's size, if smaller), set before first use.
 par::thread_pool& pool4() {
     par::configure(4);
@@ -100,4 +103,21 @@ TEST_CASE("parallel: in_region() is restored when a tid throws", "[parallel][thr
     REQUIRE_THROWS_AS(p.run(p.size(), [](unsigned) { throw std::runtime_error("tid"); }),
                       std::runtime_error);
     REQUIRE_FALSE(par::detail::in_region());
+}
+
+TEST_CASE("parallel: leaving the outermost region runs the exit hook once",
+          "[parallel][thread_pool]") {
+    auto& p = pool4();
+    if (p.size() < 2) return;
+    exits = 0;
+    p.run(2, [&](unsigned tid) {
+        if (tid != 0) return;
+        par::detail::this_region_thread().on_exit = &count_exit;
+        p.run(2, [](unsigned) {});            // nested: runs serially, no exit yet
+        REQUIRE(exits == 0);
+    });
+    REQUIRE(exits == 1);
+    REQUIRE(par::detail::this_region_thread().on_exit == nullptr);
+    p.run(2, [](unsigned) {});
+    REQUIRE(exits == 1);                      // cleared after it ran
 }

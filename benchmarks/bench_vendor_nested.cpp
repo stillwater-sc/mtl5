@@ -85,7 +85,11 @@ struct batch {
 
 template <typename F>
 double median_seconds(int reps, F&& f) {
-    f();                                    // warm-up: first touch, vendor pool start
+    // Warm-up for at least 300 ms, not one call: a serial-vendor arm at small n
+    // otherwise times cores still ramping their clocks, while a threaded
+    // vendor's spinning team keeps them up -- a bias toward the uncapped arm.
+    const auto w0 = clk::now();
+    do f(); while (std::chrono::duration<double>(clk::now() - w0).count() < 0.3);
     std::vector<double> t;
     for (int r = 0; r < reps; ++r) {
         const auto t0 = clk::now();
