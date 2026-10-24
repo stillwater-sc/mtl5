@@ -109,10 +109,14 @@ constexpr std::size_t target_vec_registers() {
 /// nr/kc/mc/nc; median ratio to mr = 6, geometric mean over the shapes):
 ///
 ///   Arduino Ventuno Q, 4x Cortex-A78C, T=1 / T=4
-///     8x4   16 acc   1.174 / 1.102   every shape >= 1.06
-///     10x4  20 acc   1.156 / 1.045
-///     12x4  24 acc   1.061 / 0.930   worst 0.840
-///     14x4  28 acc   1.049 / 0.878   worst 0.736
+///     fp64  8x4   16 acc   1.174 / 1.102   every shape >= 1.06
+///           10x4  20 acc   1.156 / 1.045
+///           12x4  24 acc   1.061 / 0.930   worst 0.840
+///           14x4  28 acc   1.049 / 0.878   worst 0.736
+///     fp32  8x8   16 acc   1.170 / 1.219   every shape >= 1.15
+///           10x8  20 acc   1.171 / 1.160
+///           12x8  24 acc   1.063 / 1.206
+///           14x8  28 acc   1.030 / 1.028   worst 0.930
 ///
 ///   Ryzen 9 8945HS, Zen 4, AVX-512, T=1 / T=8 (WSL, 5-40% round-to-round spread)
 ///     8x16  16 acc   0.995 / 1.046
@@ -126,8 +130,8 @@ constexpr std::size_t target_vec_registers() {
 /// fraction. On AVX-512 no tile cleared the noise, which is the measured reason
 /// to leave it at the AVX2 description.
 ///
-/// NOT MEASURED: other aarch64 cores (Apple M-series, Neoverse), fp32, and the
-/// Jetson's A78AE. docs/benchmarks/systems.md lists the runs.
+/// NOT MEASURED: other aarch64 cores (Apple M-series, Neoverse) and the Jetson's
+/// A78AE. docs/benchmarks/systems.md lists the runs.
 ///
 /// MTL5_GEMM_TARGET_REGISTER_FILE replaces this with the full register file at
 /// the 3/4 rule, i.e. 12xnr on NEON and AVX-512: the bench_blocking_ab `isaregs`

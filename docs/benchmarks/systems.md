@@ -483,21 +483,26 @@ chosen by the SoC integrator, so the core name alone does not fix them.
 
 ### Register-tile sweep (#643): 8×4 wins, and 12×4 loses at four threads
 
-`benchmarks/machines/arduino-ventuno-q-tile.sh`, fp64, `schedutil`, 5 rotated
-rounds, data in `benchmarks/data/arduino-ventuno-q-schedutil-tile-double/`. Every
-arm is the same source with only `mr` changed; nr = 4, kc = 512, mc = 32 and nc =
-2048 are identical, and the checksums agree across all arms. The ratios are
-median GFLOP/s against `default` (mr = 6), as a geometric mean over the shapes:
+`benchmarks/machines/arduino-ventuno-q-tile.sh`, `schedutil`, 5 rotated rounds,
+data in `benchmarks/data/arduino-ventuno-q-schedutil-tile-{double,float}/`. Every
+arm is the same source with only `mr` changed; nr, kc, mc and nc are identical
+across the arms (fp64 nr = 4, kc = 512, mc = 32; fp32 nr = 8, kc = 512, mc = 64),
+and the checksums agree across all arms. The ratios are median GFLOP/s against
+`default` (mr = 6 in both runs, which predate the change), as a geometric mean
+over the shapes:
 
-| Tile | Accumulators (of 32) | T=1 | T=4 | Worst shape |
-|---|---|---|---|---|
-| 8×4 | 16 | **1.174** | **1.102** | 1.060 |
-| 10×4 | 20 | 1.156 | 1.045 | 0.967 |
-| 12×4 | 24 | 1.061 | 0.930 | 0.840 |
-| 14×4 | 28 | 1.049 | 0.878 | 0.736 |
+| Tile (fp64 / fp32) | Accumulators (of 32) | fp64 T=1 | fp64 T=4 | fp32 T=1 | fp32 T=4 | Worst shape (fp64 / fp32) |
+|---|---|---|---|---|---|---|
+| 8×4 / 8×8 | 16 | **1.174** | **1.102** | **1.170** | **1.219** | 1.060 / 1.156 |
+| 10×4 / 10×8 | 20 | 1.156 | 1.045 | 1.171 | 1.160 | 0.967 / 1.064 |
+| 12×4 / 12×8 | 24 | 1.061 | 0.930 | 1.063 | 1.206 | 0.840 / 1.048 |
+| 14×4 / 14×8 | 28 | 1.049 | 0.878 | 1.030 | 1.028 | 0.736 / 0.930 |
 
 * **The peak is at half the register file**, not at the 3/4 that #351 measured on
   AVX2. 12×4 is what the 3/4 rule would give on 32 registers, and it loses.
+* **fp32 agrees on 8.** 8×8 is best at T=4 on every shape and ties 10×8 at T=1.
+  fp32 has no 12-row loss: its wide shapes are 128 rows (mc = 64), so each
+  thread's 32-row block takes 12-row panels at 36 rows of work, not 24 for 16.
 * **The T=4 losses are a divisibility effect, not register pressure.** They fall on
   the wide 64-row shapes, where each of the four threads gets a 16-row block. 8-row
   panels tile it exactly; 12-row panels cover it with 24 rows of work and 14-row
@@ -505,9 +510,10 @@ median GFLOP/s against `default` (mr = 6), as a geometric mean over the shapes:
   how a block divides.
 * **Shipped as a result:** aarch64 builds now derive 8×4 fp64 and 8×8 fp32
   (`target_hw_traits`, 32 registers with a measured budget of 16 accumulators).
-  In this session that took one A78C from 8.3 to 9.7 GFLOP/s, 57% of the
-  16.9 GFLOP/s peak at 2112 MHz, and four cores from 35.5 to 37.6 GFLOP/s at
-  2048³.
+  In these sessions that took one A78C from 8.3 to 9.7 GFLOP/s fp64, 57% of
+  the 16.9 GFLOP/s peak at 2112 MHz, and from 17.1 to 19.9 GFLOP/s fp32, 59% of
+  33.8. Four cores went from 35.5 to 37.6 GFLOP/s fp64 and from 61.9 to
+  77.2 GFLOP/s fp32 at 2048³.
 * **Noise.** The clocks were unpinned, so the default arm spread 12–14% between
   rounds at T=1 (2–3% at T=4 on the squares). The 8×4 gain is consistent across
   every shape at both thread counts, which noise of that size would not produce.
@@ -515,8 +521,8 @@ median GFLOP/s against `default` (mr = 6), as a geometric mean over the shapes:
   9.1 GFLOP/s for the same 6×4 tile, both under `schedutil`). This data does not
   say why; compare ratios within a session, not GFLOP/s across them.
 
-**Not measured, and covered by the same change:** fp32 (8×8), the Jetson's A78AE,
-and every other aarch64 core (Apple M-series, the Neoverse cores of the CI
+**Not measured, and covered by the same change:** the Jetson's A78AE and every
+other aarch64 core (Apple M-series, the Neoverse cores of the CI
 runners). The tile is a compile-time choice per ISA, so all of them moved
 together on one board's fp64 data.
 
