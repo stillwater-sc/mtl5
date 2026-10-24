@@ -15,7 +15,8 @@
 //             vendor's team is the only parallelism
 //
 //   ddot      one ddot of length 256 per call inside a region, direct and
-//             through the wrapper: what the cap costs a small call
+//             through the wrapper, interleaved, fastest rep: what the cap
+//             costs a small call
 //
 // Run each arm in a process of its own (--arms): a vendor's idle team keeps
 // spinning after its last call (Intel OpenMP for 200 ms by default), and an arm
@@ -199,21 +200,35 @@ int main(int argc, char** argv) {
         const int n = 256, calls = 200000;
         std::vector<double> x(n, 0.5), y(n, 0.25);
         std::vector<double> sink(P, 0.0);
-        auto per_call = [&](bool wrapped) {
-            const double s = median_seconds(reps, [&] {
-                pool.run(P, [&](unsigned tid) {
-                    const int one = 1;
-                    double acc = 0.0;
-                    for (int c = 0; c < calls; ++c)
-                        acc += wrapped ? iface::blas::dot(n, x.data(), 1, y.data(), 1)
-                                       : ddot_(&n, x.data(), &one, y.data(), &one);
-                    sink[tid] += acc;
-                });
+        auto once = [&](bool wrapped) {
+            pool.run(P, [&](unsigned tid) {
+                const int one = 1;
+                double acc = 0.0;
+                for (int c = 0; c < calls; ++c)
+                    acc += wrapped ? iface::blas::dot(n, x.data(), 1, y.data(), 1)
+                                   : ddot_(&n, x.data(), &one, y.data(), &one);
+                sink[tid] += acc;
             });
-            return s / calls * 1e9;
         };
-        const double raw = per_call(false), wrapped = per_call(true);
-        std::printf("  ddot n=%d inside a region: raw %.1f ns/call, wrapped %.1f ns/call\n",
+        // Interleaved, raw then wrapped in every rep, and the FASTEST rep of
+        // each: the per-process median moved between two levels about 2x
+        // apart, for raw as well as wrapped and for a BLIS the cap never
+        // writes to -- interference from the machine, not the cap, which the
+        // minimum of interleaved reps sees past.
+        const auto w0 = clk::now();
+        do { once(false); once(true); }
+        while (std::chrono::duration<double>(clk::now() - w0).count() < 0.3);
+        std::vector<double> tr, tw;
+        for (int r = 0; r < reps; ++r) {
+            for (int w = 0; w < 2; ++w) {
+                const auto t0 = clk::now();
+                once(w == 1);
+                (w ? tw : tr).push_back(std::chrono::duration<double>(clk::now() - t0).count());
+            }
+        }
+        const double raw = *std::min_element(tr.begin(), tr.end()) / calls * 1e9;
+        const double wrapped = *std::min_element(tw.begin(), tw.end()) / calls * 1e9;
+        std::printf("  ddot n=%d inside a region, fastest rep: raw %.1f ns/call, wrapped %.1f ns/call\n",
                     n, raw, wrapped);
         if (out) {
             out << vendor << ',' << P << ',' << vendor_env() << ",ddot_raw_ns," << n << ','
