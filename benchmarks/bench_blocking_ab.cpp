@@ -343,13 +343,18 @@ int main(int argc, char** argv) {
            << "git_dirty="   << mtl::build_git_dirty   << "\n"
            << "cxx_flags="   << mtl::build_cxx_flags   << "\n"
            << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-           << "pool_size="   << mtl::detail::thread_pool::instance().size() << "\n"
-           << "detection_enabled="
-#if defined(MTL5_ENABLE_CACHE_DETECTION)
-           << "1\n";
-#else
-           << "0\n";
-#endif
+           << "pool_size="   << mtl::detail::thread_pool::instance().size() << "\n";
+        // The LEVELS this arm detects, as the console banner reports them. This
+        // once tested MTL5_ENABLE_CACHE_DETECTION alone, so the kconly and mconly
+        // arms recorded detection_enabled=0 while detecting L1 or L2 -- and an
+        // analyzer reading it could not tell a detecting arm from the default.
+        using mtl::simd::detect_levels;
+        constexpr auto lv = mtl::simd::configured_detect_levels();
+        const bool l1 = mtl::simd::has_level(lv, detect_levels::l1);
+        const bool l2 = mtl::simd::has_level(lv, detect_levels::l2);
+        si << "detection_enabled=" << (lv != detect_levels::none ? 1 : 0) << "\n"
+           << "detection_levels="
+           << (l1 && l2 ? "l1+l2" : l1 ? "l1" : l2 ? "l2" : "none") << "\n";
     }
     return 0;
 }

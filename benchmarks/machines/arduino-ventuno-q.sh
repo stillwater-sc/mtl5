@@ -112,9 +112,16 @@ echo
 # baseline and the blocking under test is for the wrong vector length. Both core
 # classes report the same ISA flags, so the binary is the same whichever cluster
 # the compiler runs on.
-if [ ! -x "$BUILD_DIR/benchmarks/bench_blocking_ab_default" ]; then
+# Every requested arm, not just `default`: the runner refuses an arm whose binary
+# is missing rather than building it. -B keeps an overridden BUILD_DIR the tree
+# that is both configured and built (the preset alone names build-release).
+need_build=0
+for a in $ARMS; do
+    [ -x "$BUILD_DIR/benchmarks/bench_blocking_ab_$a" ] || need_build=1
+done
+if [ "$need_build" = 1 ]; then
     echo "== configuring and building $BUILD_DIR"
-    cmake --preset release -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON >/dev/null
+    cmake --preset release -B "$BUILD_DIR" -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON >/dev/null
     targets=""
     for a in $ARMS; do targets="$targets bench_blocking_ab_$a"; done
     # shellcheck disable=SC2086

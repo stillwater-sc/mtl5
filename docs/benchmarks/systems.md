@@ -424,7 +424,10 @@ cache sizes (`cache_l1d_bytes=0`, `cache_l2_bytes=0` in their sidecars), so
 `derive_blocking` fell back to the compile-time model. Unlike the Xeon's null
 run, this is **not** agreement between the hardware and the model: it says
 nothing about whether detection would help on an A78C. The analyzer now names
-this case from the sidecar instead of reporting that the caches match.
+this case from the sidecar instead of reporting that the caches match. (The
+kconly and mconly sidecars from this run say `detection_enabled=0`: the benchmark
+then recorded only the both-levels macro. It now writes `detection_levels`, and
+the analyzer infers the levels from the arm name for older sidecars.)
 
 Taken under `schedutil` with clocks unpinned, commit `46ea958`, T ∈ {1, 4} on
 CPUs 0–3, 8 interleaved rounds (5 requested, rounded up to a multiple of the 4
@@ -440,10 +443,12 @@ arms), min of 5. Ratio is detected / default:
 
 Two things it does measure:
 
-* **The noise floor of this board under `schedutil`.** Every ratio compares a
-  binary against an identical one. Nine of ten are within 1.5% of 1.0; the
-  64 × 4096 × 1024 point at T=4 is off by 4.5%, more than the analyzer's 2%
-  floor. That is the error the structural null-run check exists to catch, and a
+* **The noise floor of this board under `schedutil`.** Every ratio compares two
+  separately built binaries that ran identical blocking (the arms differ only in
+  their detection macros, which here changed nothing). Nine of ten are within
+  1.5% of 1.0; the 64 × 4096 × 1024 point at T=4 is off by 4.5%, more than the
+  analyzer's 2% floor. Some of that may be build-to-build difference (code
+  layout, alignment) rather than run-to-run noise; this run cannot separate them. That is the error the structural null-run check exists to catch, and a
   reason to repeat this run with the `performance` governor before trusting a
   small effect here.
 * **Throughput.** The default arm reaches 9.1 GFLOP/s fp64 on one A78C, about
