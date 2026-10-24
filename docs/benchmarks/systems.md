@@ -240,8 +240,9 @@ Geometric-mean ratio of the median against `default` (mr = 6):
 | 14×16 | 28 | 1.002 | 0.994 |
 
 The default arm's round-to-round spread was 5–41%, as expected inside a VM
-(Windows places the virtual CPUs). No tile wins at both thread counts, and none
-clears that spread, so AVX-512 builds keep the AVX2 description. That is a
+(Windows places the virtual CPUs). 12×16 is nominally ahead at both thread counts
+(×1.032 and ×1.021), but neither gain, nor any other tile's, clears that spread,
+so AVX-512 builds keep the AVX2 description. That is a
 measured reason to keep it, not a measured loss for a larger tile. A bare-metal
 Linux run would be the way to settle it.
 
@@ -660,8 +661,11 @@ bash benchmarks/machines/ryzen-9-8945hs-tile.sh     # AVX-512 under WSL, T in {1
 `isaregs` is the rejected candidate, kept so it stays measurable: the target
 ISA's full register file at #351's 3/4 rule (`MTL5_GEMM_TARGET_REGISTER_FILE`). On
 NEON and AVX-512 it derives the same tile as `tile12`, so the sweep leaves it out.
-Each sidecar records `vec_registers`, `acc_vectors` and `mr_override`, so the arms
-can be told apart. The results are in the Ventuno Q and Ryzen sections above;
+Each sidecar records `vec_registers`, `target_vec_registers` and `mr_override`, so
+the arms can be told apart; sidecars written from this change on also record
+`acc_vectors`. The committed sweeps were built before the field existed, when
+every target derived its tile from the 3/4 rule; in them `mr_override` alone
+tells the arms apart. The results are in the Ventuno Q and Ryzen sections above;
 NEON now ships 8×nr.
 
 ```powershell
