@@ -27,8 +27,8 @@ The session had four parts:
 
 ## The through-line
 
-#640 rested on one assumption: that each vendor has a thread setting a region
-thread can change for itself. The design used that setting on region threads and
+#640 rested on one assumption: that each vendor has a per-thread setting, one a
+region thread can change without affecting other threads. The design used that setting on region threads and
 left every other call alone. The assumption held for MKL, but only through its
 C entry point. It held for BLIS 1.x, did not hold for BLIS 0.9, and has never
 held for OpenBLAS. Each time it failed, the evidence came from running the code
@@ -125,14 +125,14 @@ forms `L(j,k)·D(k)` once per column, as its comment always said, and as
   region's cap leaking to the caller. The fix measures the behaviour at configure
   time, and CodeRabbit then caught the one test that still assumed it.
 - **The first cap set and restored the vendor on every call.** It now caps once per
-  region and restores through the exit hook.
+  region thread and restores through the exit hook.
 - **The first benchmark numbers were contaminated** in three ways:
   - a checksum was read one iteration late;
   - arms ran in one process, so one arm's vendor state carried into the next;
   - a build that was in fact clean was recorded as dirty, because the output
     directory was created before the builds.
 
-  Shared host load, with the load average above 22, made it worse. The rerun used
+  A load average above 22 on the shared host made it worse. The rerun used
   one process per arm, in rounds, gated on a quiet machine.
 - **The small-call overhead could not be measured.** A ddot arm varied 2× even on
   OpenBLAS, where the cap compiles to nothing, so the arm was dropped rather than
