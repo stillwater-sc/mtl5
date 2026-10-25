@@ -16,7 +16,9 @@ down rather than implied.
 
 ## The through-line
 
-A lock-free handoff can't block, but it can still be wrong. The first design
+A handoff without a mutex can't block on a preempted lock holder, though
+`run()` still sleeps once its spin runs out and waits for the slowest worker.
+It can also simply be wrong. The first design
 packed a 16-bit generation and a 16-bit team size into one 32-bit word. A
 comment argued that a wrapped generation was harmless: a word equal to the one a
 worker last saw also has the same team, so a worker that takes it for "no
@@ -39,7 +41,7 @@ before and 9.6–15.6 µs after.
 - **`include/mtl/parallel/spin_pool.hpp`** has `thread_pool`'s interface and
   contract. Dispatch is one store, a waiting worker spins then sleeps on the
   word, the join is an atomic countdown, and the busy flag and first-exception
-  slot are atomics. A notify system call is made only when someone is asleep.
+  slot are atomics. A thread notifies only when another is asleep.
 - **Selection.** `-DMTL5_POOL_SPIN` makes `parallel::pool()` return the process
   spin pool. The 17 kernel headers now call `pool()` instead of
   `thread_pool::instance()`.
