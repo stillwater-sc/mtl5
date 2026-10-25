@@ -18,10 +18,12 @@
 //     reads that word.
 //   * A worker spins on the word for `spin` iterations, each a CPU pause
 //     instruction except every 64th, a yield, then blocks in
-//     std::atomic::wait (a futex on Linux, WaitOnAddress on Windows). The
-//     yield matters when the scheduler has put two of the pool's threads on
-//     one core: without it, a spinner holds that core for its whole spin. The caller makes the notify system call only
-//     if some worker has gone to sleep.
+//     std::atomic::wait (on Linux a futex, for this 8-byte word one in the
+//     standard library's shared table; WaitOnAddress on Windows). The yield
+//     matters when the scheduler has put two of the pool's threads on one
+//     core: without it, a spinner holds that core for its whole spin. The
+//     caller makes the notify system call only if some worker has gone to
+//     sleep.
 //   * The join is an atomic countdown. The caller spins on it, then waits on
 //     it; the last worker to finish notifies only a caller that is asleep.
 //   * The busy flag and the first-exception slot are atomics too.

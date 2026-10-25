@@ -140,8 +140,9 @@ differs:
 - **Dispatch** is one store to an atomic word that holds a generation and the
   region's team size.
 - **A waiting worker spins on that word**, `spin` iterations of a CPU pause
-  with a yield every 64th, and then sleeps in `std::atomic::wait`, which is a
-  futex on Linux and `WaitOnAddress` on Windows.
+  with a yield every 64th, and then sleeps in `std::atomic::wait`: on Linux a
+  futex (for this 8-byte word, one in libstdc++'s or libc++'s shared table),
+  and `WaitOnAddress` on Windows.
 - **The join is an atomic countdown.** The caller spins on it, then sleeps on
   it.
 - **No notify system call while everyone is spinning.** Each side keeps a
@@ -189,8 +190,8 @@ Per `run()` on a pool of n:
   finishes. Nothing else blocks. While every worker is spinning, the common path
   makes no system call.
 - **Dispatch while every worker is spinning:** one store, then one cache-line
-  transfer of the word to each worker. Measured at 0.1–0.3 µs to the last
-  worker at p50, and 0.2–0.4 µs at p99, for 2–8 threads on an i7-12700K.
+  transfer of the word to each worker. Measured at 0.1–0.2 µs to the last
+  worker at p50, and 0.1–0.3 µs at p99, for 2–8 threads on an i7-12700K.
 - **A sleeping worker** is woken through the kernel's scheduler, and MTL5 cannot
   bound that. On the same machine under `powersave`, it measured about 10 µs at
   p50 and about 100 µs at p99, with rare millisecond outliers. To stay off this
@@ -210,9 +211,9 @@ Measured region latency, back to back and in a 1 kHz loop:
 
 | Pool | Back to back, p50 / p99 | 1 kHz loop, p50 / p99 |
 |---|---|---|
-| `thread_pool` | 3.1–6.0 / 4.2–8.0 µs | 21–42 / 107–117 µs |
-| `spin_pool`, default spin | 0.26–0.62 / 0.38–0.71 µs | 11–17 / 71–117 µs (workers asleep) |
-| `spin_pool`, spin outlasting the gap | 0.26–0.55 / 0.36–0.73 µs | 0.7–1.1 / 1.1–3.7 µs |
+| `thread_pool` | 3.0–6.1 / 3.6–8.0 µs | 20–41 / 58–118 µs |
+| `spin_pool`, default spin | 0.23–0.48 / 0.25–0.57 µs | 11–16 / 61–110 µs (workers asleep) |
+| `spin_pool`, spin outlasting the gap | 0.24–0.51 / 0.25–0.60 µs | 0.7–1.1 / 1.0–1.4 µs |
 
 Ranges are over T = 2, 4 and 8 on an i7-12700K's P-cores. The method, maxima
 and caveats are in
