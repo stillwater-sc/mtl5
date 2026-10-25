@@ -47,6 +47,14 @@
 // the pool's two exported functions below, so a stale module fails to link.
 // The third, shared_region_thread_v1(), is the per-thread region state (#640),
 // exported so that it too is one per thread for the whole process.
+//
+// A second pool type with the same interface and contract, spin_pool
+// (<mtl/parallel/spin_pool.hpp>, #636), dispatches and joins without a mutex
+// for callers in a real-time loop. Defining MTL5_POOL_SPIN makes pool(), and
+// so MTL5's kernels, use it instead of this one; it must be defined, or not,
+// in every translation unit alike. The chunked loops (parallel_for,
+// parallel_reduce, parallel_accumulate) are the detail:: templates below,
+// shared by both pools, so a kernel's partition is the same on either.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -204,6 +212,82 @@ inline unsigned claim_pool_size() {
     return c.requested != 0 ? c.requested : resolve_pool_threads();
 }
 
+// The chunked loops of both pool types. Each takes the pool and needs only its
+// size() and run(), so the partition -- which kernels rely on for results that
+// are bit-identical across thread counts -- is written once.
+
+/// Team for a chunked loop over n units on a pool of `pool_size`: the pool, or
+/// max_threads if that is smaller and nonzero, cut so each chunk holds >= grain
+/// units; 1 (serial) when the pool is serial or n < 2 * grain.
+inline unsigned team_for(std::size_t n, std::size_t grain, unsigned max_threads,
+                         unsigned pool_size) noexcept {
+    unsigned team = (max_threads != 0 && max_threads < pool_size) ? max_threads : pool_size;
+    if (team <= 1 || grain == 0 || n < grain * 2) return 1;
+    const std::size_t max_chunks = n / grain;
+    if (static_cast<std::size_t>(team) > max_chunks)
+        team = static_cast<unsigned>(max_chunks);
+    return team;
+}
+
+/// parallel_for on `pool`; see thread_pool::parallel_for.
+template <typename Pool, typename Body>
+void chunked_for(Pool& pool, std::size_t n, std::size_t grain, unsigned max_threads,
+                 Body&& body) {
+    if (n == 0) return;
+    const unsigned team = team_for(n, grain, max_threads, pool.size());
+    if (team <= 1) { body(std::size_t{0}, n); return; }
+    const std::size_t chunk = (n + team - 1) / team;
+    pool.run(team, [&](unsigned tid) {
+        const std::size_t b = static_cast<std::size_t>(tid) * chunk;
+        if (b >= n) return;
+        body(b, (n < b + chunk) ? n : b + chunk);
+    });
+}
+
+/// parallel_reduce on `pool`; see thread_pool::parallel_reduce.
+template <typename T, typename Pool, typename MapFn>
+T chunked_reduce(Pool& pool, std::size_t n, std::size_t grain, unsigned max_threads,
+                 MapFn&& map) {
+    if (n == 0) return T{};
+    const unsigned team = team_for(n, grain, max_threads, pool.size());
+    if (team <= 1) return map(std::size_t{0}, n);
+    const std::size_t chunk = (n + team - 1) / team;
+    std::vector<T> partials(team, T{});
+    pool.run(team, [&](unsigned tid) {
+        const std::size_t b = static_cast<std::size_t>(tid) * chunk;
+        if (b >= n) return;
+        partials[tid] = map(b, (n < b + chunk) ? n : b + chunk);
+    });
+    T acc = T{};
+    // Combine with operator+ only (not +=), honoring the documented contract
+    // so plus-only result types work. Deterministic tid order.
+    for (unsigned t = 0; t < team; ++t) acc = acc + partials[t];
+    return acc;
+}
+
+/// parallel_accumulate on `pool`; see thread_pool::parallel_accumulate.
+template <typename Acc, typename Pool, typename InitFn, typename MapFn, typename CombineFn>
+Acc chunked_accumulate(Pool& pool, std::size_t n, std::size_t grain, unsigned max_threads,
+                       InitFn&& init, MapFn&& map, CombineFn&& combine) {
+    const unsigned team = team_for(n, grain, max_threads, pool.size());
+    if (team <= 1) {
+        Acc acc = init();
+        map(acc, std::size_t{0}, n);
+        return acc;
+    }
+    const std::size_t chunk = (n + team - 1) / team;
+    std::vector<Acc> partials;
+    partials.reserve(team);
+    for (unsigned t = 0; t < team; ++t) partials.push_back(init());
+    pool.run(team, [&](unsigned tid) {
+        const std::size_t b = static_cast<std::size_t>(tid) * chunk;
+        if (b >= n) return;
+        map(partials[tid], b, (n < b + chunk) ? n : b + chunk);
+    });
+    for (unsigned t = 1; t < team; ++t) combine(partials[0], partials[t]);
+    return std::move(partials[0]);
+}
+
 } // namespace detail
 
 class thread_pool {
@@ -259,15 +343,7 @@ public:
     /// pool), for a caller that runs at a thread count of its own below size().
     template <typename Body>
     void parallel_for(std::size_t n, std::size_t grain, unsigned max_threads, Body&& body) {
-        if (n == 0) return;
-        const unsigned team = team_for(n, grain, max_threads);
-        if (team <= 1) { body(std::size_t{0}, n); return; }
-        const std::size_t chunk = (n + team - 1) / team;
-        run(team, [&](unsigned tid) {
-            const std::size_t b = static_cast<std::size_t>(tid) * chunk;
-            if (b >= n) return;
-            body(b, (n < b + chunk) ? n : b + chunk);
-        });
+        detail::chunked_for(*this, n, grain, max_threads, std::forward<Body>(body));
     }
 
     /// Reduce over [0, n): map(begin, end) returns a partial T; partials are
@@ -288,21 +364,7 @@ public:
     /// result depends on the team, so it is deterministic for a fixed cap.
     template <typename T, typename MapFn>
     T parallel_reduce(std::size_t n, std::size_t grain, unsigned max_threads, MapFn&& map) {
-        if (n == 0) return T{};
-        const unsigned team = team_for(n, grain, max_threads);
-        if (team <= 1) return map(std::size_t{0}, n);
-        const std::size_t chunk = (n + team - 1) / team;
-        std::vector<T> partials(team, T{});
-        run(team, [&](unsigned tid) {
-            const std::size_t b = static_cast<std::size_t>(tid) * chunk;
-            if (b >= n) return;
-            partials[tid] = map(b, (n < b + chunk) ? n : b + chunk);
-        });
-        T acc = T{};
-        // Combine with operator+ only (not +=), honoring the documented contract
-        // so plus-only result types work. Deterministic tid order.
-        for (unsigned t = 0; t < team; ++t) acc = acc + partials[t];
-        return acc;
+        return detail::chunked_reduce<T>(*this, n, grain, max_threads, std::forward<MapFn>(map));
     }
 
     /// Reduce over [0, n) into accumulator partials that are combined by the
@@ -334,23 +396,10 @@ public:
     template <typename Acc, typename InitFn, typename MapFn, typename CombineFn>
     Acc parallel_accumulate(std::size_t n, std::size_t grain, unsigned max_threads,
                             InitFn&& init, MapFn&& map, CombineFn&& combine) {
-        const unsigned team = team_for(n, grain, max_threads);
-        if (team <= 1) {
-            Acc acc = init();
-            map(acc, std::size_t{0}, n);
-            return acc;
-        }
-        const std::size_t chunk = (n + team - 1) / team;
-        std::vector<Acc> partials;
-        partials.reserve(team);
-        for (unsigned t = 0; t < team; ++t) partials.push_back(init());
-        run(team, [&](unsigned tid) {
-            const std::size_t b = static_cast<std::size_t>(tid) * chunk;
-            if (b >= n) return;
-            map(partials[tid], b, (n < b + chunk) ? n : b + chunk);
-        });
-        for (unsigned t = 1; t < team; ++t) combine(partials[0], partials[t]);
-        return std::move(partials[0]);
+        return detail::chunked_accumulate<Acc>(*this, n, grain, max_threads,
+                                               std::forward<InitFn>(init),
+                                               std::forward<MapFn>(map),
+                                               std::forward<CombineFn>(combine));
     }
 
     thread_pool(const thread_pool&) = delete;
@@ -416,18 +465,6 @@ private:
         if (worker_exc) std::rethrow_exception(worker_exc);
     }
 
-    /// Team for a chunked loop over n units: the pool, or max_threads if that is
-    /// smaller and nonzero, cut so each chunk holds >= grain units; 1 (serial)
-    /// when the pool is serial or n < 2 * grain.
-    unsigned team_for(std::size_t n, std::size_t grain, unsigned max_threads) const noexcept {
-        unsigned team = (max_threads != 0 && max_threads < n_) ? max_threads : n_;
-        if (team <= 1 || grain == 0 || n < grain * 2) return 1;
-        const std::size_t max_chunks = n / grain;
-        if (static_cast<std::size_t>(team) > max_chunks)
-            team = static_cast<unsigned>(max_chunks);
-        return team;
-    }
-
     void worker_loop(unsigned tid) {
         // A worker runs nothing but region tids, so its state is set for good.
         detail::this_region_thread().state = detail::pool_worker;
@@ -473,8 +510,21 @@ private:
     std::exception_ptr worker_exc_;
 };
 
+#if !defined(MTL5_POOL_SPIN)
+// The selection is part of the name, as the shared mode is: a module that
+// defines MTL5_POOL_SPIN and one that does not cannot have their pool()
+// merged. Under MTL5_POOL_SPIN, <mtl/parallel/spin_pool.hpp> defines them.
+inline namespace pool_select_thread {
+
+/// The pool type MTL5's kernels run on: thread_pool, or spin_pool under
+/// MTL5_POOL_SPIN.
+using default_pool = thread_pool;
+
 /// The process-wide pool that MTL5's kernels run on.
-inline thread_pool& pool() { return thread_pool::instance(); }
+inline default_pool& pool() { return thread_pool::instance(); }
+
+} // inline namespace pool_select_thread
+#endif
 
 /// Size the process-wide pool from code, instead of MTL5_NUM_THREADS.
 ///
@@ -494,3 +544,7 @@ inline bool configure(unsigned threads) {
 
 } // inline namespace pool_shared / pool_local
 } // namespace mtl::parallel
+
+#if defined(MTL5_POOL_SPIN)
+#  include <mtl/parallel/spin_pool.hpp>
+#endif

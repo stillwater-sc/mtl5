@@ -27,7 +27,7 @@ template <typename Body>
 inline void parallel_ewise(std::size_t n, std::size_t work_per_elem, Body&& body) {
     const std::size_t w = work_per_elem < 1 ? 1 : work_per_elem;
     const std::size_t grain = std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / w);
-    thread_pool::instance().parallel_for(n, grain, [&](std::size_t b, std::size_t e) {
+    ::mtl::parallel::pool().parallel_for(n, grain, [&](std::size_t b, std::size_t e) {
         for (std::size_t i = b; i < e; ++i) body(i);
     });
 }
@@ -55,7 +55,7 @@ inline void parallel_ewise_2d(std::size_t rows, std::size_t cols,
     if (rows == 0 || cols == 0) return;   // nothing to sweep; keeps the % below safe
     const std::size_t w = work_per_elem < 1 ? 1 : work_per_elem;
     const std::size_t grain = std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / w);
-    thread_pool::instance().parallel_for(
+    ::mtl::parallel::pool().parallel_for(
         rows * cols, grain, [&](std::size_t b, std::size_t e) {
             std::size_t r = b / cols, c = b % cols;
             for (std::size_t t = b; t < e; ++t) {

@@ -168,7 +168,7 @@ int ldlt_bk_factor_acc(M& A, bk_pivot_info& pivots) {
     auto column = [&](std::vector<value_type>& c, std::size_t j, std::size_t k) {
         const std::size_t grain =
             std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / (k == 0 ? 1 : k));
-        detail::thread_pool::instance().parallel_for(n - k, grain,
+        ::mtl::parallel::pool().parallel_for(n - k, grain,
             [&](std::size_t b, std::size_t e) {
                 for (std::size_t t = b; t < e; ++t) c[k + t] = schur(k + t, j, k);
             });

@@ -165,7 +165,7 @@ void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
         const std::size_t le = s.level_ptr[l + 1];
         const std::size_t count = le - lb;
         if (count == 0) continue;
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             count, s.grain,
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
@@ -275,7 +275,7 @@ void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeTyp
         const std::size_t le = s.level_ptr[l + 1];
         const std::size_t count = le - lb;
         if (count == 0) continue;
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             count, s.grain,
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
@@ -418,7 +418,7 @@ void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
         const std::size_t le = s.level_ptr[l + 1];
         const std::size_t count = le - lb;
         if (count == 0) continue;
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             count, s.grain,
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
@@ -527,7 +527,7 @@ void level_scheduled_unit_lower_solve(const util::csc_matrix<Value, SizeType>& L
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l], le = s.level_ptr[l + 1];
         if (le == lb) continue;
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             le - lb, s.grain,
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
@@ -606,7 +606,7 @@ void level_scheduled_unit_lower_transpose_solve(const util::csc_matrix<Value, Si
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l], le = s.level_ptr[l + 1];
         if (le == lb) continue;
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             le - lb, s.grain,
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {

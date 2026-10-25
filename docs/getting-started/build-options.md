@@ -106,6 +106,13 @@ hardware concurrency); unset or `1` keeps the single-thread path unchanged.
 MTL5_NUM_THREADS=8 ./your_program   # use up to 8 threads for native GEMM
 ```
 
+For a caller in a real-time loop, define `MTL5_POOL_SPIN` (the same in every
+translation unit). MTL5's kernels then run on `mtl::parallel::spin_pool`, which
+dispatches and joins without a mutex: its workers spin, then sleep on a futex.
+The environment variable `MTL5_POOL_SPIN` sets how many iterations they spin
+(default 4096; `0` sleeps at once). See
+[On-node threading](../algorithms/on-node-threading.md#a-real-time-pool-spin_pool).
+
 ## Build Presets
 
 The project includes CMake presets for common configurations:

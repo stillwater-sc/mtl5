@@ -220,6 +220,80 @@ moved by up to 2× between processes in either direction. That included the
 OpenBLAS build, where the cap compiles to nothing at all, so that arm was taken
 out of the benchmark.
 
+
+### Pool dispatch and join latency (#636)
+
+Many near-empty regions run on a pool of T threads, and each one is timed with
+`steady_clock` (the invariant TSC here). Three latencies are recorded:
+- **dispatch**: from the caller's last timestamp before `run()` to the latest
+  worker's entry into the task;
+- **join**: from the latest tid's exit from the task to the caller's return;
+- **region**: the whole `run()`.
+
+The arms are:
+- `thread`: `thread_pool`.
+- `spin`: `spin_pool` with its default spin of 4096 iterations, about 140 µs on
+  a P-core.
+- `sleep`: `spin_pool` with spin 0, so every wait sleeps at once.
+- `hold`: `spin_pool` with a spin of 40000 iterations, about 1.4 ms, which
+  outlasts the gap.
+
+The gap between regions is either 0 (back to back) or 1000 µs (a 1 kHz loop).
+Runs are pinned to one logical CPU per P-core (0,2,…,14). Each arm runs in its
+own process, for 4 rounds with the arm order rotated each round, so every arm
+runs in every position once: 20000 regions at gap 0 and 2000 at gap 1000. The
+command is `OUTDIR=benchmarks/data/i7-12700k-pool-latency
+BENCH_PCPUS=0,2,4,6,8,10,12,14 benchmarks/run_pool_latency.sh`, and the data is
+in `benchmarks/data/i7-12700k-pool-latency/`. The governor is `powersave`, and
+the 1-minute load average was 1.4 at the start.
+
+Region latency in µs, as p50 / p99 / max, each the median over the rounds:
+
+| Gap | Arm | T = 2 | T = 4 | T = 8 |
+|---|---|---|---|---|
+| 0 | thread | 3.03 / 3.57 / 39.6 | 3.32 / 5.23 / 73.5 | 6.08 / 7.99 / 39.6 |
+| 0 | **spin** | **0.23 / 0.25 / 4.6** | **0.31 / 0.38 / 6.1** | **0.48 / 0.57 / 7.4** |
+| 0 | sleep | 0.27 / 0.44 / 5.9 | 0.55 / 0.70 / 12.9 | 0.79 / 2.41 / 12.4 |
+| 0 | hold | 0.24 / 0.25 / 3.3 | 0.34 / 0.39 / 6.4 | 0.51 / 0.60 / 7.9 |
+| 1000 | thread | 20.4 / 102 / 573 | 24.9 / 118 / 223 | 41.4 / 58.4 / 1478 |
+| 1000 | spin | 10.6 / 98.0 / 172 | 12.4 / 110 / 129 | 16.3 / 61.1 / 1368 |
+| 1000 | sleep | 15.5 / 98.6 / 137 | 13.0 / 109 / 196 | 16.7 / 72.5 / 579 |
+| 1000 | **hold** | **0.68 / 0.98 / 5.4** | **0.83 / 1.18 / 6.0** | **1.06 / 1.37 / 608** |
+
+What it shows:
+
+- **Back to back, `spin_pool` is about 10× faster than `thread_pool`** at
+  every percentile up to p99: 0.23–0.48 µs per region at the median against
+  3.0–6.1 µs. Most of `thread_pool`'s time is the condition-variable wake on
+  dispatch (1.4–4.1 µs p50) and the matching wake of the caller on join
+  (1.5–1.6 µs).
+- **`spin_pool` with spin 0 is still faster than `thread_pool`**, 0.27–0.79 µs at
+  the median. libstdc++'s `std::atomic::wait` itself spins 16 times (12 pauses,
+  then 4 yields) before it calls the futex. Back to back, the next region often
+  arrives within that window, and no mutex is taken.
+- **At 1 kHz with the default spin, every pool pays the kernel's wake-up.** The
+  gap outlasts the spin, so the workers are asleep when the region arrives:
+  10–17 µs at the median, about 100 µs at p99, and maxima up to 1.5 ms. These
+  are wake-ups from idle cores under `powersave`, not costs of the pool.
+  `spin_pool`'s join stays fast even then (0.5 µs p50 against 9–11 µs), because
+  the caller is awake and spinning.
+- **`hold`, a spin longer than the gap, keeps a 1 kHz loop at about 1 µs**:
+  p99 1.0–1.4 µs, max 6 µs at T ≤ 4. At T = 8 the pool fills all 8 pinned
+  cores, so anything else the OS runs there preempts a spinner, and the max
+  rises to 608 µs. A real-time deployment gives the pool cores of its own, as
+  the threading docs say. The cost is 8 cores spinning continuously.
+- **A yield in the spin loop matters when the pool fills its cores.** Before
+  every 64th spin iteration became a yield, `spin` at T = 8 and gap 1000 had a
+  dispatch median of 155 µs in all three rounds of that run, while `sleep` stayed at
+  20 µs. The scheduler had placed two of the pool's threads on one core, and
+  the spinner held it. With the yield the median is 16 µs.
+- **Widening the dispatch word to 64 bits cost nothing measurable.** The word
+  was 32 bits, with a generation that could wrap, and libstdc++ waits on a
+  4-byte atomic with a futex directly but on an 8-byte one through a shared
+  table. With the workers asleep at 1 kHz, the dispatch median was
+  10.1–15.9 µs with the 32-bit word (3ace550) and 9.6–15.6 µs with the 64-bit
+  one (1e32af6).
+
 ### Pinning policy
 
 This is a **hybrid P/E-core CPU**, which makes pinning mandatory rather than

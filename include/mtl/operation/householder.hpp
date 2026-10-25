@@ -252,7 +252,7 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T beta,
     if constexpr (std::is_void_v<Accumulator>) {
         const std::size_t grain = std::max<std::size_t>(
             std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             static_cast<std::size_t>(ncols), grain,
             [&](std::size_t b, std::size_t e) {
                 for (std::size_t t = b; t < e; ++t) {
@@ -309,7 +309,7 @@ void apply_householder_left(M& A, const vec::dense_vector<T>& v, T vtv,
     const size_type ncols = n - col;
     const std::size_t grain = std::max<std::size_t>(
         std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
-    detail::thread_pool::instance().parallel_for(
+    ::mtl::parallel::pool().parallel_for(
         static_cast<std::size_t>(ncols), grain,
         [&](std::size_t b, std::size_t e) {
             for (std::size_t t = b; t < e; ++t) {
@@ -348,7 +348,7 @@ void apply_householder_right(M& A, const vec::dense_vector<T>& v, T beta,
     if constexpr (std::is_void_v<Accumulator>) {
         const std::size_t grain = std::max<std::size_t>(
             std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             static_cast<std::size_t>(nrows), grain,
             [&](std::size_t b, std::size_t e) {
                 for (std::size_t t = b; t < e; ++t) {
@@ -407,7 +407,7 @@ void apply_householder_right(M& A, const vec::dense_vector<T>& v, T vtv,
     const size_type nrows = m - row;
     const std::size_t grain = std::max<std::size_t>(
         std::size_t{1}, std::size_t{65536} / (vlen ? static_cast<std::size_t>(vlen) : std::size_t{1}));
-    detail::thread_pool::instance().parallel_for(
+    ::mtl::parallel::pool().parallel_for(
         static_cast<std::size_t>(nrows), grain,
         [&](std::size_t b, std::size_t e) {
             for (std::size_t t = b; t < e; ++t) {

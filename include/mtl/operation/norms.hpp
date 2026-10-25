@@ -110,7 +110,7 @@ auto two_norm(const V& v) {
         // count, not serial-bit-identical). Serial by default.
         using T = typename V::value_type;
         const T* d = v.data();
-        const T ss = detail::thread_pool::instance().parallel_reduce<T>(
+        const T ss = ::mtl::parallel::pool().parallel_reduce<T>(
             v.size(), /*grain=*/std::size_t{65536},
             [&](std::size_t lo, std::size_t hi) { return simd::reduce_sum_squares<T>(d + lo, hi - lo); });
         return sqrt(ss);

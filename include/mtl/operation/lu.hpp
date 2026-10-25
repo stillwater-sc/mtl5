@@ -62,7 +62,7 @@ int lu_factor_acc(M& A, std::vector<typename M::size_type>& pivot) {
             std::max<std::size_t>(std::size_t{1},
                                   std::size_t{65536} / static_cast<std::size_t>(k == 0 ? 1 : k));
         // Column k, rows i >= k: A(i,k) - sum_{p<k} L(i,p) U(p,k).
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             static_cast<std::size_t>(n - k), grain,
             [&](std::size_t b, std::size_t e) {
                 for (std::size_t t = b; t < e; ++t) {
@@ -98,7 +98,7 @@ int lu_factor_acc(M& A, std::vector<typename M::size_type>& pivot) {
             return static_cast<int>(k + 1);
 
         // Row k of U, columns j > k: A(k,j) - sum_{p<k} L(k,p) U(p,j).
-        detail::thread_pool::instance().parallel_for(
+        ::mtl::parallel::pool().parallel_for(
             static_cast<std::size_t>(n - k - 1), grain,
             [&](std::size_t b, std::size_t e) {
                 for (std::size_t t = b; t < e; ++t) {
@@ -212,7 +212,7 @@ int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
             const std::size_t grain =
                 std::max<std::size_t>(std::size_t{1},
                                       std::size_t{65536} / static_cast<std::size_t>(trailing));
-            detail::thread_pool::instance().parallel_for(
+            ::mtl::parallel::pool().parallel_for(
                 static_cast<std::size_t>(trailing), grain,
                 [&](std::size_t b, std::size_t e) {
                     for (std::size_t t = b; t < e; ++t) {

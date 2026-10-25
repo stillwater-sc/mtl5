@@ -289,7 +289,7 @@ void block_mult_decode(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y
     // A row costs its decode plus cols multiply-adds; grain on the latter,
     // as the dense mat-vec does.
     const std::size_t grain = interface::row_grain<float>(A.num_cols());
-    thread_pool& pool = thread_pool::instance();
+    auto& pool = ::mtl::parallel::pool();
     if (pool.size() > 1 && m >= grain * 2) {
         pool.parallel_for(m, grain, [&](std::size_t b, std::size_t e) {
             std::vector<float> buf;

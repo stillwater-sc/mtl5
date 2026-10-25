@@ -157,7 +157,7 @@ auto dot(const V1& v1, const V2& v2) {
         using T = typename V1::value_type;
         const T* a = v1.data();
         const T* b = v2.data();
-        return detail::thread_pool::instance().parallel_reduce<T>(
+        return ::mtl::parallel::pool().parallel_reduce<T>(
             v1.size(), /*grain=*/std::size_t{65536},
             [&](std::size_t lo, std::size_t hi) { return simd::reduce_dot<T>(a + lo, b + lo, hi - lo); });
     } else if constexpr (interface::SimdDenseVector<V1> && interface::SimdDenseVector<V2> &&

@@ -176,7 +176,7 @@ auto operator*(const compressed2D<V, P>& A,
     const std::size_t nnz   = data.size();
     const std::size_t avg   = nrows ? std::max<std::size_t>(std::size_t{1}, nnz / nrows) : std::size_t{1};
     const std::size_t grain = interface::row_grain<result_t>(avg);
-    detail::thread_pool::instance().parallel_for(nrows, grain,
+    ::mtl::parallel::pool().parallel_for(nrows, grain,
         [&](std::size_t rb, std::size_t re) {
             for (std::size_t r = rb; r < re; ++r) {
                 auto acc = math::zero<result_t>();

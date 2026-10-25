@@ -414,7 +414,7 @@ constexpr gemm_grid plan_gemm_grid(std::size_t m, std::size_t n,
 }
 
 inline unsigned gemm_default_threads() {
-    return thread_pool::instance().size();
+    return ::mtl::parallel::pool().size();
 }
 
 /// The jc block size this nest will step by, under `model` (#479's harness arm).
@@ -541,7 +541,7 @@ inline gemm_plan gemm_plan_for(std::size_t m, std::size_t n, unsigned nthreads,
     const std::size_t MC = rbp.mc, MR = bp.mr;
 
     const unsigned budget = (nthreads <= 1)
-        ? 1u : std::min(nthreads, thread_pool::instance().size());
+        ? 1u : std::min(nthreads, ::mtl::parallel::pool().size());
     const std::size_t NC = nc_for_plan<TC, TB, KGroup>(m, n, budget, model);
 
     auto finish = [&](std::size_t mc, unsigned ic_nt, unsigned jc_nt) {
@@ -800,7 +800,7 @@ void gemm_blocked(std::size_t m, std::size_t n, std::size_t k,
     // clamps its worker count to the pool size, so a grid sized past the pool
     // would leave team members that never run, and their barrier would wait
     // forever (deadlock).
-    thread_pool& pool = thread_pool::instance();
+    auto& pool = ::mtl::parallel::pool();
 
     // `plan` was computed once at the top -- it decides everything: the budget
     // (never past the pool -- pool.run() clamps its worker count, so a grid sized

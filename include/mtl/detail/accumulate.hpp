@@ -49,7 +49,7 @@ Acc accumulate(std::size_t n, std::size_t grain, MapFn&& map) {
         return a;
     };
     if constexpr (Threadable && math::mergeable_accumulator<Acc, Value>) {
-        return thread_pool::instance().parallel_accumulate<Acc>(
+        return ::mtl::parallel::pool().parallel_accumulate<Acc>(
             n, grain, init, map, [](Acc& into, const Acc& from) { AT::merge(into, from); });
     } else {
         Acc acc = init();
