@@ -220,6 +220,73 @@ moved by up to 2× between processes in either direction. That included the
 OpenBLAS build, where the cap compiles to nothing at all, so that arm was taken
 out of the benchmark.
 
+
+### Pool dispatch and join latency (#636)
+
+Many near-empty regions run on a pool of T threads, and each one is timed with
+`steady_clock` (the invariant TSC here). Three latencies are recorded:
+- **dispatch**: from the caller's last timestamp before `run()` to the latest
+  worker's entry into the task;
+- **join**: from the latest tid's exit from the task to the caller's return;
+- **region**: the whole `run()`.
+
+The arms are:
+- `thread`: `thread_pool`.
+- `spin`: `spin_pool` with its default spin of 4096 iterations, about 140 µs on
+  a P-core.
+- `sleep`: `spin_pool` with spin 0, so every wait sleeps at once.
+- `hold`: `spin_pool` with a spin of 40000 iterations, about 1.4 ms, which
+  outlasts the gap.
+
+The gap between regions is either 0 (back to back) or 1000 µs (a 1 kHz loop).
+Runs are pinned to one logical CPU per P-core (0,2,…,14). Each arm runs in its
+own process, for 3 rounds: 20000 regions at gap 0 and 2000 at gap 1000. The
+command is `OUTDIR=benchmarks/data/i7-12700k-pool-latency
+BENCH_PCPUS=0,2,4,6,8,10,12,14 benchmarks/run_pool_latency.sh`, and the data is
+in `benchmarks/data/i7-12700k-pool-latency/`. The governor is `powersave`, and
+the run waited for a 1-minute load average below 1.
+
+Region latency in µs, as p50 / p99 / max, each the median over the rounds:
+
+| Gap | Arm | T = 2 | T = 4 | T = 8 |
+|---|---|---|---|---|
+| 0 | thread | 3.09 / 4.24 / 109 | 3.37 / 5.36 / 117 | 5.98 / 7.96 / 28.4 |
+| 0 | **spin** | **0.26 / 0.38 / 10.9** | **0.38 / 0.51 / 3.0** | **0.62 / 0.71 / 4.3** |
+| 0 | sleep | 0.29 / 0.46 / 5.0 | 0.49 / 0.70 / 14.8 | 0.92 / 2.53 / 8.3 |
+| 0 | hold | 0.26 / 0.36 / 7.7 | 0.38 / 0.51 / 6.5 | 0.55 / 0.73 / 8.0 |
+| 1000 | thread | 21.0 / 107 / 154 | 25.2 / 117 / 213 | 42.1 / 114 / 2445 |
+| 1000 | spin | 11.0 / 107 / 156 | 12.9 / 117 / 1490 | 16.6 / 70.6 / 1066 |
+| 1000 | sleep | 19.4 / 102 / 176 | 13.2 / 106 / 216 | 16.7 / 96.2 / 795 |
+| 1000 | **hold** | **0.72 / 1.05 / 9.7** | **0.82 / 1.21 / 10.6** | **1.07 / 3.68 / 155** |
+
+What it shows:
+
+- **Back to back, `spin_pool` is about 10× faster than `thread_pool`** at
+  every percentile up to p99: 0.26–0.62 µs per region at the median against
+  3.1–6.0 µs. Most of `thread_pool`'s time is the condition-variable wake on
+  dispatch (1.4–4.1 µs p50) and the matching wake of the caller on join
+  (1.5–1.6 µs).
+- **`spin_pool` with spin 0 is still faster than `thread_pool`**, 0.29–0.92 µs at
+  the median. libstdc++'s `std::atomic::wait` itself spins 16 times (12 pauses,
+  then 4 yields) before it calls the futex. Back to back, the next region often
+  arrives within that window, and no mutex is taken.
+- **At 1 kHz with the default spin, every pool pays the kernel's wake-up.** The
+  gap outlasts the spin, so the workers are asleep when the region arrives:
+  10–16 µs at the median, about 100 µs at p99, and maxima up to 2.4 ms. These
+  are wake-ups from idle cores under `powersave`, not costs of the pool.
+  `spin_pool`'s join stays fast even then (0.5 µs p50 against 9–11 µs), because
+  the caller is awake and spinning.
+- **`hold`, a spin longer than the gap, keeps a 1 kHz loop at about 1 µs**:
+  p99 1.1–3.7 µs, max 10 µs at T ≤ 4. At T = 8 the pool fills all 8 pinned
+  cores, so anything else the OS runs there preempts a spinner, and the max
+  rises to 155 µs. A real-time deployment gives the pool cores of its own, as
+  the threading docs say. The cost is 8 cores spinning continuously.
+- **A yield in the spin loop matters when the pool fills its cores.** Before
+  every 64th spin iteration became a yield, `spin` at T = 8 and gap 1000 had a
+  dispatch median of 155 µs in all three rounds, while `sleep` stayed at
+  20 µs. The scheduler had placed two of the pool's threads on one core, and
+  the spinner held it. With the yield the median is 16 µs.
+
 ### Pinning policy
 
 This is a **hybrid P/E-core CPU**, which makes pinning mandatory rather than

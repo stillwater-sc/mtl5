@@ -40,7 +40,9 @@ The pool is public API, `mtl::parallel::thread_pool`, reached through
 `mtl::parallel::pool()` (#630). Code that runs its parallel work there shares one
 set of workers with MTL5's kernels instead of oversubscribing the cores. The
 older spelling, `mtl::detail::thread_pool::instance()` from
-`<mtl/detail/thread_pool.hpp>`, still works and names the same pool.
+`<mtl/detail/thread_pool.hpp>`, still works and names the same pool, unless
+`MTL5_POOL_SPIN` selects the spin pool for the kernels (see
+[below](#a-real-time-pool-spin_pool)).
 
 `run(count, task)` is the primitive, and its contract is:
 
@@ -119,6 +121,102 @@ Rules:
   link rather than misbehaving at run time.
 - The default, header-only build is unchanged. A module that does not link
   `MTL5::shared_pool` keeps its own pool.
+
+## A real-time pool: `spin_pool`
+
+`thread_pool` hands each region to its workers under a mutex and wakes them
+through a condition variable. That is cheap for throughput work, but a caller in
+a hard real-time loop gets three problems from it:
+- a worker preempted while it holds the mutex blocks the caller (priority
+  inversion);
+- every wake-up goes through the scheduler;
+- nothing states what one `run()` costs at worst.
+
+`mtl::parallel::spin_pool`, in `<mtl/parallel/spin_pool.hpp>` (#636), has the
+same members and the same contract as `thread_pool`: `size()`, `run`,
+`parallel_for`, `parallel_reduce` and `parallel_accumulate`. Only the handoff
+differs:
+
+- **Dispatch** is one store to an atomic word that holds a generation and the
+  region's team size.
+- **A waiting worker spins on that word**, `spin` iterations of a CPU pause
+  with a yield every 64th, and then sleeps in `std::atomic::wait`, which is a
+  futex on Linux and `WaitOnAddress` on Windows.
+- **The join is an atomic countdown.** The caller spins on it, then sleeps on
+  it.
+- **No notify system call while everyone is spinning.** Each side keeps a
+  count of sleepers, so the side that publishes calls notify only if a thread
+  is actually asleep.
+- **Nothing in the pool takes a lock.** The busy flag and the first-exception
+  slot are atomics too, so a preempted worker holds nothing the caller needs.
+
+```cpp
+#include <mtl/parallel/spin_pool.hpp>
+
+mtl::parallel::spin_pool rt(4, /*spin=*/40000);   // 4 threads, spin ~1.4 ms
+rt.run(4, [&](unsigned tid) { step(tid); });       // same contract as thread_pool
+```
+
+### Making it the pool MTL5's kernels use
+
+Define `MTL5_POOL_SPIN` in every translation unit alike, as with
+`MTL5_HAS_BLAS`. `mtl::parallel::pool()` then returns the process-wide
+`spin_pool`, and `mtl::parallel::default_pool` names its type. The pool is sized
+by `configure()` or `MTL5_NUM_THREADS`, as the default pool is, and its spin is
+read from `MTL5_POOL_SPIN` (default `spin_pool::default_spin`, 4096; `0` sleeps
+at once). Kernels reach their pool through `pool()`, a direct call with no
+virtual dispatch.
+
+The selection is part of `pool()`'s mangled name, so if two modules disagree on
+it, the link fails rather than mixing the two at run time. Under
+`MTL5_SHARED_POOL` the spin pool is shared across modules the same way the
+thread pool is.
+
+Under `MTL5_POOL_SPIN`, a direct call to `thread_pool::instance()` starts a
+second pool beside the kernels' pool, and the two oversubscribe the cores.
+Reach the pool through `pool()`.
+
+The chunked loops are one set of templates used by both pool types, so a
+kernel partitions its work identically on either. GEMM's and LU's results are
+bit-identical across the two pools as well as across thread counts.
+
+### Worst case
+
+Per `run()` on a pool of n:
+
+- **What can block:** a worker, in `std::atomic::wait`, once its spin runs out;
+  and the caller, in its join, once its own spin runs out, until the slowest tid
+  finishes. Nothing else blocks. While every worker is spinning, the common path
+  makes no system call.
+- **Dispatch while every worker is spinning:** one store, then one cache-line
+  transfer of the word to each worker. Measured at 0.1–0.3 µs to the last
+  worker at p50, and 0.2–0.4 µs at p99, for 2–8 threads on an i7-12700K.
+- **A sleeping worker** is woken through the kernel's scheduler, and MTL5 cannot
+  bound that. On the same machine under `powersave`, it measured about 10 µs at
+  p50 and about 100 µs at p99, with rare millisecond outliers. To stay off this
+  path, make the spin longer than the gap between regions.
+- **A worker preempted mid-region** delays the join by as long as the scheduler
+  keeps it off a core. The caller spins, then sleeps, and that worker wakes it
+  when it finishes. The pool cannot bound this, but the deployment can:
+  - pin the pool's threads to cores reserved for them;
+  - give them a real-time scheduling class;
+  - keep the pool no larger than the reserved cores, leaving the OS a core of
+    its own.
+- **Cost:** after every region, each worker spins a full core for the spin. The
+  default spin is about 140 µs on an Alder Lake P-core. A spin longer than the
+  gap means the cores never idle.
+
+Measured region latency, back to back and in a 1 kHz loop:
+
+| Pool | Back to back, p50 / p99 | 1 kHz loop, p50 / p99 |
+|---|---|---|
+| `thread_pool` | 3.1–6.0 / 4.2–8.0 µs | 21–42 / 107–117 µs |
+| `spin_pool`, default spin | 0.26–0.62 / 0.38–0.71 µs | 11–17 / 71–117 µs (workers asleep) |
+| `spin_pool`, spin outlasting the gap | 0.26–0.55 / 0.36–0.73 µs | 0.7–1.1 / 1.1–3.7 µs |
+
+Ranges are over T = 2, 4 and 8 on an i7-12700K's P-cores. The method, maxima
+and caveats are in
+[the systems page](../benchmarks/systems.md#pool-dispatch-and-join-latency-636).
 
 ## Vendor libraries inside a region
 
