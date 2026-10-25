@@ -120,6 +120,88 @@ Rules:
 - The default, header-only build is unchanged. A module that does not link
   `MTL5::shared_pool` keeps its own pool.
 
+## Vendor libraries inside a region
+
+With `MTL5_WITH_BLAS`/`MTL5_WITH_LAPACK`, `dense2D<float/double>` operations
+call the vendor library, and with the SuiteSparse options CHOLMOD and SPQR are
+called. These libraries run thread teams of their own. A call made from a tid of
+an MTL5 region would start one team per tid: a region over 8 workers, each
+calling an 8-thread vendor GEMM, puts 64 runnable threads on 8 cores. MTL5's own
+kernels avoid this by running a nested region serially. Vendor calls follow the
+same rule (#640):
+
+- **Inside a region**, a vendor call runs on one thread where the vendor
+  offers a control scoped to the calling thread. MTL5 sets it for the duration
+  of the call and then restores the previous value.
+- **Outside a region**, nothing changes. A direct `mult(A, B, C)` on BLAS types
+  never enters the pool, so the vendor's team is the only parallelism there,
+  and capping it would make the call serial.
+
+"Inside a region" is `mtl::parallel::detail::in_region()`, a thread-local flag.
+It is true on every tid of a region that the pool runs on more than one thread,
+and on every tid of a region that runs serially because another region is in
+progress. The serial fast path (a pool of one, or a region of one tid) leaves
+the flag unchanged: such a region has no MTL5 parallelism for the vendor to
+compete with. Under `MTL5_SHARED_POOL` the flag is exported with the pool, so a
+task started in one module sees it in another.
+
+| Backend | Control | Scope | Inside a region |
+|---|---|---|---|
+| MKL | `mkl_set_num_threads_local` | the calling thread | one thread¹ |
+| BLIS ≥ 1.0 | `bli_thread_set_num_threads` | the calling thread; a new thread starts from `BLIS_NUM_THREADS` | one thread¹ |
+| BLIS 0.9 | `bli_thread_set_num_threads` | the whole process | **unchanged**, as OpenBLAS |
+| OpenBLAS | `openblas_set_num_threads`, `OPENBLAS_NUM_THREADS` | the whole process | **unchanged**; see below |
+| CHOLMOD, SPQR | `cholmod_common::nthreads_max` (their own OpenMP), and the BLAS they call | that call | one thread, and the BLAS cap above |
+
+¹ The vendor is set to one thread at the first vendor call of a region and
+stays at one for the rest of the region. Later calls then cost a thread-local
+check rather than two writes, and with BLIS a write costs more than a small
+`ddot`. The region's calling thread (tid 0) gets its previous setting back when
+the region ends, including when the region ends with an exception. A pool
+worker runs nothing but region tids, so its setting stays at one. A vendor
+setting that a task changes during a region is not capped again.
+
+CMake works out the vendor from the symbol that vendor's thread control exports
+in `BLAS_LIBRARIES`/`LAPACK_LIBRARIES`, and reports it as
+`BLAS/LAPACK vendor: mkl|blis|openblas`. For BLIS it also runs a small
+program that measures whether the setting is per-thread: BLIS 1.0 made it
+thread-local, unless BLIS was built with `BLIS_DISABLE_TLS`. BLIS is capped
+only when that program confirms it. When cross-compiling the program cannot
+run, so BLIS is left uncapped. A generic `libblas.so.3` that forwards
+to a vendor without exporting its control is reported as not identified. The
+Debian/Ubuntu BLIS alternative is one such library. In that case vendor calls are
+not capped; naming the vendor (`-DBLA_VENDOR=FLAME` for BLIS,
+`-DBLA_VENDOR=Intel10_64lp` for threaded MKL) links the library that has the
+control. `mtl::interface::blas_vendor()` and `blas_capped_in_region()` report the
+result to code.
+
+Measured on the i7-12700K: 64 dgemms in one 8-tid region, each vendor set to 8
+threads ([Benchmark systems](../benchmarks/systems.md#a-vendor-blas-inside-an-mtl5-region-640)).
+Uncapped, BLIS ran at 0.1–3 GFLOP/s; capped it ran at 405–507. MKL went from
+328–381 GFLOP/s to 468–513. OpenBLAS cannot be capped per thread: uncapped it
+varied between rounds from 102 to 407 GFLOP/s, and set to one thread for the
+whole process it held 430–486.
+
+### OpenBLAS: the application decides which runtime owns the cores
+
+OpenBLAS's only control is process-wide, so MTL5 never changes it: doing so
+would also make the application's direct calls serial. Choose one of two
+configurations:
+
+- **A threaded MTL5, a serial vendor.** Set `OPENBLAS_NUM_THREADS=1`, or call
+  `openblas_set_num_threads(1)` once at startup. Vendor calls made inside
+  regions then run serially, as they do under MKL and BLIS. Vendor calls made
+  outside regions also run serially.
+- **A threaded vendor, a serial MTL5.** Leave `MTL5_NUM_THREADS` unset (1), and
+  give the cores to OpenBLAS's team.
+
+The same choice applies to BLIS 0.9, to BLIS's process-wide settings, and to
+any vendor that MTL5 cannot identify. The variables are `OPENBLAS_NUM_THREADS`,
+`BLIS_NUM_THREADS`, `MKL_NUM_THREADS` and `OMP_NUM_THREADS`, the last for
+OpenMP builds of any of them. MTL5 has no switch that sets these for you: each is
+one line of the vendor's own API, and the application is the one that knows
+which configuration it wants.
+
 ## What is parallelized
 
 | Kernel | Where | Partition | Bit-identical to serial? |

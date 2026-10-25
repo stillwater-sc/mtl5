@@ -17,6 +17,7 @@
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/interface/vendor_threads.hpp>
 
 #include <cholmod.h>
 #include <SuiteSparseQR_C.h>
@@ -78,11 +79,17 @@ public:
         for (std::size_t i = 0; i < nrows_; ++i)
             b_data[i] = b(i);
 
-        // SPQR_ORDERING_DEFAULT = 0, tol = -1 means default
-        cholmod_dense* x_chol = SuiteSparseQR_C_backslash(
-            SPQR_ORDERING_DEFAULT, SPQR_DEFAULT_TOL,
-            sparse_A_, b_chol,
-            const_cast<cholmod_common*>(&common_));
+        // SPQR_ORDERING_DEFAULT = 0, tol = -1 means default. One thread
+        // inside an MTL5 region (#640).
+        cholmod_dense* x_chol = nullptr;
+        {
+            detail::nested_suitesparse_cap<cholmod_common> cap(
+                const_cast<cholmod_common&>(common_));
+            x_chol = SuiteSparseQR_C_backslash(
+                SPQR_ORDERING_DEFAULT, SPQR_DEFAULT_TOL,
+                sparse_A_, b_chol,
+                const_cast<cholmod_common*>(&common_));
+        }
 
         cholmod_free_dense(&b_chol, const_cast<cholmod_common*>(&common_));
 

@@ -21,7 +21,8 @@
     PLUGIN_IMPORT bool p##_configure(unsigned threads);    \
     PLUGIN_IMPORT unsigned p##_size();                     \
     PLUGIN_IMPORT unsigned p##_distinct_threads();         \
-    PLUGIN_IMPORT bool p##_region_ran_serially();
+    PLUGIN_IMPORT bool p##_region_ran_serially();       \
+    PLUGIN_IMPORT bool p##_in_region();
 
 #if defined(PLUGIN)
 
@@ -51,5 +52,8 @@ PLUGIN_EXPORT bool PLUGIN(region_ran_serially)() {
     mtl::parallel::pool().run(2, [&](unsigned tid) { ran[tid] = std::this_thread::get_id(); });
     return ran[0] == me && ran[1] == me;
 }
+
+/// This module's view of the calling thread's in-region flag (#640).
+PLUGIN_EXPORT bool PLUGIN(in_region)() { return mtl::parallel::detail::in_region(); }
 
 #endif

@@ -237,17 +237,33 @@ jobs:
   # Linux GCC + Clang with -DMTL5_WITH_LAPACK=ON so the external-library
   # dispatch paths (general geev, symmetric syev) are compiled and run; the
   # default matrix above builds without LAPACK and takes the in-house paths.
+  # The BLIS entry links BLIS (BLAS only: LAPACK would come from libflame) with
+  # the pool threaded, so a vendor call inside an MTL5 region is run, and
+  # checked, on one thread (#640); OpenBLAS has no per-thread control to check.
+  # It runs on Ubuntu 26.04 for BLIS 1.x: 24.04's BLIS 0.9 has only a
+  # process-wide setting, which MTL5 does not cap.
   lapack:
-    name: Linux x64 LAPACK (${{ matrix.cxx }})
-    runs-on: ubuntu-24.04
+    name: Linux x64 LAPACK (${{ matrix.cxx }}${{ matrix.vendor && format(', {0}', matrix.vendor) || '' }})
+    runs-on: ${{ matrix.os || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - cc: gcc-13
             cxx: g++-13
+            packages: liblapack-dev libopenblas-dev
+            cmake_extra: -DMTL5_WITH_LAPACK=ON
           - cc: clang-18
             cxx: clang++-18
+            packages: liblapack-dev libopenblas-dev
+            cmake_extra: -DMTL5_WITH_LAPACK=ON
+          - cc: gcc
+            cxx: g++
+            os: ubuntu-26.04
+            vendor: BLIS
+            packages: libblis-openmp-dev
+            cmake_extra: -DBLA_VENDOR=FLAME
+            threads: 4
 
     # Same trusted-run gate as the build job: forked PRs skip sccache so they
     # cannot poison the shared GHA cache.
@@ -266,7 +282,7 @@ jobs:
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: Install LAPACK/BLAS
-        run: sudo apt-get update && sudo apt-get install -y liblapack-dev libopenblas-dev
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.packages }}
 
       - name: Configure
         run: >
@@ -277,13 +293,16 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
           -DCMAKE_BUILD_TYPE=Release
-          -DMTL5_WITH_LAPACK=ON
           -DMTL5_WITH_BLAS=ON
+          ${{ matrix.cmake_extra }}
 
       - name: Build
         run: cmake --build build --parallel 2
 
       - name: Test
+        env:
+          MTL5_NUM_THREADS: ${{ matrix.threads || '' }}
+          BLIS_NUM_THREADS: ${{ matrix.threads || '' }}
         run: ctest --test-dir build --output-on-failure
 
   # -- Threaded lane: run the suite with the pool actually multithreaded ----

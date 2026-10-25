@@ -20,6 +20,11 @@
 //     concurrently from another thread -- runs serially on its caller, all tids
 //     in order. It never deadlocks and never oversubscribes.
 //   * The first exception thrown by any tid is rethrown after all tids join.
+//   * detail::in_region() is true on every tid of a region the pool runs on
+//     more than one thread, and on every tid of a region that runs serially
+//     because another is in progress (#640). It is false outside a region, and
+//     the serial fast path (a pool of one, or count <= 1) leaves it as it was:
+//     that path has no MTL5 parallelism for a vendor library to compete with.
 //   * run() does not allocate. The task is held as a pointer to the caller's
 //     callable plus a function pointer, never copied into a std::function, so
 //     this holds whatever the callable captures.
@@ -39,7 +44,9 @@
 // <mtl/parallel/shared_pool_definition.hpp>. Each module looks the pool up
 // once; run() stays inline. Every module must see the same thread_pool
 // layout: a change to the class's data members must bump the _v1 suffix of
-// the two exported functions below, so a stale module fails to link.
+// the pool's two exported functions below, so a stale module fails to link.
+// The third, shared_region_thread_v1(), is the per-thread region state (#640),
+// exported so that it too is one per thread for the whole process.
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -119,6 +126,8 @@ struct pool_config {
 /// exported, so every module that defines MTL5_SHARED_POOL binds to them.
 MTL5_SHARED_POOL_API pool_config& shared_pool_config_v1();
 MTL5_SHARED_POOL_API thread_pool& shared_pool_v1();
+struct region_thread;
+MTL5_SHARED_POOL_API region_thread& shared_region_thread_v1() noexcept;
 #endif
 
 inline pool_config& config() {
@@ -129,6 +138,64 @@ inline pool_config& config() {
 #endif
     return c;
 }
+
+enum : unsigned char { outside_region = 0, inside_region = 1, pool_worker = 2 };
+
+/// This thread's region state (#640). Thread-local, and in the shared mode
+/// exported with the pool: a task that one module starts may call into another
+/// module, which must see the state the first one set.
+struct region_thread {
+    /// outside_region, inside_region (running a tid of a region), or
+    /// pool_worker (a worker runs nothing but region tids).
+    unsigned char state;
+    /// An external library's thread team was set to one for this region; on a
+    /// pool worker, for good. Lets every later call skip setting it again.
+    bool vendor_capped;
+    /// Run, then cleared, when a thread that is not a pool worker leaves its
+    /// outermost region: the vendor cap's restore. One slot, MTL5-internal.
+    void (*on_exit)() noexcept;
+};
+
+inline region_thread& this_region_thread() noexcept {
+#if defined(MTL5_SHARED_POOL)
+    return shared_region_thread_v1();
+#else
+    thread_local region_thread t{};
+    return t;
+#endif
+}
+
+/// True while this thread runs a tid of an MTL5 region (see the contract at
+/// the top of this header). An external library that runs a thread team of
+/// its own runs it on one thread here: MTL5 already occupies the cores.
+inline bool in_region() noexcept { return this_region_thread().state != outside_region; }
+
+/// True on the pool's worker threads, which are inside a region whenever they
+/// run anything at all.
+inline bool on_pool_worker() noexcept { return this_region_thread().state == pool_worker; }
+
+/// Marks the scope of a region tid on a thread that is not a pool worker, and
+/// restores the state after, so a region nested in another leaves the outer
+/// one's state set. Leaving the outermost region runs on_exit.
+class region_scope {
+public:
+    region_scope() noexcept : t_(this_region_thread()), prev_(t_.state) {
+        if (prev_ == outside_region) t_.state = inside_region;
+    }
+    ~region_scope() {
+        t_.state = prev_;
+        if (prev_ == outside_region && t_.on_exit) {
+            void (*f)() noexcept = t_.on_exit;
+            t_.on_exit = nullptr;
+            f();
+        }
+    }
+    region_scope(const region_scope&) = delete;
+    region_scope& operator=(const region_scope&) = delete;
+private:
+    region_thread& t_;
+    unsigned char prev_;
+};
 
 inline unsigned claim_pool_size() {
     pool_config& c = config();
@@ -314,6 +381,7 @@ private:
         std::unique_lock<std::mutex> lk(mtx_);
         if (busy_) {                                  // no nesting: run serially
             lk.unlock();
+            detail::region_scope in_region;
             for (unsigned t = 0; t < count; ++t) fn(t);
             return;
         }
@@ -331,7 +399,10 @@ private:
         wake_.notify_all();
 
         std::exception_ptr caller_exc;
-        try { fn(0); } catch (...) { caller_exc = std::current_exception(); }
+        try {
+            detail::region_scope in_region;
+            fn(0);
+        } catch (...) { caller_exc = std::current_exception(); }
 
         lk.lock();
         done_.wait(lk, [&] { return remaining_ == 0; });
@@ -358,6 +429,8 @@ private:
     }
 
     void worker_loop(unsigned tid) {
+        // A worker runs nothing but region tids, so its state is set for good.
+        detail::this_region_thread().state = detail::pool_worker;
         std::unique_lock<std::mutex> lk(mtx_);
         // Workers are created at generation_ == 0 (which only ever increments),
         // so start "behind" 0: a region dispatched before this worker reached the

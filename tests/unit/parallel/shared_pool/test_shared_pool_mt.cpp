@@ -45,6 +45,17 @@ TEST_CASE("parallel: modules that define MTL5_SHARED_POOL share one pool",
             if (tid == 1) serial = shared_b_region_ran_serially();
         });
         REQUIRE(serial);
+
+        // The in-region flag is the process's too (#640): a task this
+        // executable runs sees it set through module b, while a module with a
+        // pool of its own reads its own, unset, flag.
+        bool b_in = false, local_in = true;
+        mtl::parallel::pool().run(2, [&](unsigned tid) {
+            if (tid == 1) { b_in = shared_b_in_region(); local_in = local_in_region(); }
+        });
+        REQUIRE(b_in);
+        REQUIRE_FALSE(local_in);
+        REQUIRE_FALSE(shared_a_in_region());
     } else {
         WARN("one hardware thread: the busy-pool check is skipped");
     }

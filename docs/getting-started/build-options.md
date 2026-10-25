@@ -25,6 +25,27 @@ These options link optional external libraries for hardware-accelerated or speci
 | `MTL5_WITH_SUITESPARSE_CHOLMOD` | OFF | Link CHOLMOD Cholesky (SuiteSparse) |
 | `MTL5_WITH_SUITESPARSE_SPQR` | OFF | Link SuiteSparseQR (SuiteSparse) |
 
+### Vendor threads inside MTL5 regions
+
+A vendor BLAS/LAPACK, CHOLMOD and SPQR run thread teams of their own. With
+`MTL5_NUM_THREADS > 1`, a vendor call made from inside an MTL5 parallel region
+runs on one thread where the vendor allows a per-thread setting: MKL, and BLIS
+1.0 or later. A call made outside a region keeps the vendor's threads. The
+configure log names the vendor it found (`BLAS/LAPACK vendor: ...`); select one
+with `BLA_VENDOR`:
+
+```bash
+cmake -B build -DMTL5_WITH_BLAS=ON -DBLA_VENDOR=FLAME          # BLIS
+cmake -B build -DMTL5_WITH_BLAS=ON -DBLA_VENDOR=Intel10_64lp   # threaded MKL
+cmake -B build -DMTL5_WITH_BLAS=ON -DBLA_VENDOR=OpenBLAS
+```
+
+OpenBLAS's thread count can only be set for the whole process, so MTL5 leaves
+it alone. With a threaded MTL5, set `OPENBLAS_NUM_THREADS=1`; with a threaded
+OpenBLAS, leave `MTL5_NUM_THREADS` at 1. The other variables are
+`BLIS_NUM_THREADS`, `MKL_NUM_THREADS` and `OMP_NUM_THREADS`. See
+[On-node threading](../algorithms/on-node-threading.md#vendor-libraries-inside-a-region).
+
 ### Matrix Market I/O: gzip and large files
 
 `mtl::io::mm_read` / `mm_read_dense` read SuiteSparse `.mtx` files. Two features

@@ -6,6 +6,7 @@
 #ifdef MTL5_HAS_LAPACK
 
 #include <cstddef>
+#include <mtl/interface/vendor_threads.hpp>
 #include <complex>
 
 // -- Fortran LAPACK declarations ----------------------------------------
@@ -107,11 +108,13 @@ namespace mtl::interface::lapack {
 // -- Cholesky -----------------------------------------------------------
 
 inline int potrf(char uplo, int n, float* A, int lda) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     spotrf_(&uplo, &n, A, &lda, &info);
     return info;
 }
 inline int potrf(char uplo, int n, double* A, int lda) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dpotrf_(&uplo, &n, A, &lda, &info);
     return info;
@@ -120,11 +123,13 @@ inline int potrf(char uplo, int n, double* A, int lda) {
 // -- LU -----------------------------------------------------------------
 
 inline int getrf(int m, int n, float* A, int lda, int* ipiv) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     sgetrf_(&m, &n, A, &lda, ipiv, &info);
     return info;
 }
 inline int getrf(int m, int n, double* A, int lda, int* ipiv) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dgetrf_(&m, &n, A, &lda, ipiv, &info);
     return info;
@@ -134,12 +139,14 @@ inline int getrf(int m, int n, double* A, int lda, int* ipiv) {
 
 inline int geqrf(int m, int n, float* A, int lda, float* tau,
                  float* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     sgeqrf_(&m, &n, A, &lda, tau, work, &lwork, &info);
     return info;
 }
 inline int geqrf(int m, int n, double* A, int lda, double* tau,
                  double* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dgeqrf_(&m, &n, A, &lda, tau, work, &lwork, &info);
     return info;
@@ -150,6 +157,7 @@ inline int geqrf(int m, int n, double* A, int lda, double* tau,
 inline int gesdd(char jobz, int m, int n, float* A, int lda,
                  float* S, float* U, int ldu, float* VT, int ldvt,
                  float* work, int lwork, int* iwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     sgesdd_(&jobz, &m, &n, A, &lda, S, U, &ldu, VT, &ldvt,
             work, &lwork, iwork, &info);
@@ -158,6 +166,7 @@ inline int gesdd(char jobz, int m, int n, float* A, int lda,
 inline int gesdd(char jobz, int m, int n, double* A, int lda,
                  double* S, double* U, int ldu, double* VT, int ldvt,
                  double* work, int lwork, int* iwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dgesdd_(&jobz, &m, &n, A, &lda, S, U, &ldu, VT, &ldvt,
             work, &lwork, iwork, &info);
@@ -168,12 +177,14 @@ inline int gesdd(char jobz, int m, int n, double* A, int lda,
 
 inline int syev(char jobz, char uplo, int n, float* A, int lda,
                 float* W, float* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     ssyev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, &info);
     return info;
 }
 inline int syev(char jobz, char uplo, int n, double* A, int lda,
                 double* W, double* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dsyev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, &info);
     return info;
@@ -183,12 +194,14 @@ inline int syev(char jobz, char uplo, int n, double* A, int lda,
 
 inline int heev(char jobz, char uplo, int n, std::complex<float>* A, int lda,
                 float* W, std::complex<float>* work, int lwork, float* rwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     cheev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, rwork, &info);
     return info;
 }
 inline int heev(char jobz, char uplo, int n, std::complex<double>* A, int lda,
                 double* W, std::complex<double>* work, int lwork, double* rwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     zheev_(&jobz, &uplo, &n, A, &lda, W, work, &lwork, rwork, &info);
     return info;
@@ -199,6 +212,7 @@ inline int heev(char jobz, char uplo, int n, std::complex<double>* A, int lda,
 inline int geev(char jobvl, char jobvr, int n, float* A, int lda,
                 float* wr, float* wi, float* vl, int ldvl,
                 float* vr, int ldvr, float* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     sgeev_(&jobvl, &jobvr, &n, A, &lda, wr, wi, vl, &ldvl, vr, &ldvr,
            work, &lwork, &info);
@@ -207,6 +221,7 @@ inline int geev(char jobvl, char jobvr, int n, float* A, int lda,
 inline int geev(char jobvl, char jobvr, int n, double* A, int lda,
                 double* wr, double* wi, double* vl, int ldvl,
                 double* vr, int ldvr, double* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dgeev_(&jobvl, &jobvr, &n, A, &lda, wr, wi, vl, &ldvl, vr, &ldvr,
            work, &lwork, &info);
@@ -217,12 +232,14 @@ inline int geev(char jobvl, char jobvr, int n, double* A, int lda,
 
 inline int getrs(char trans, int n, int nrhs, const float* A, int lda,
                  const int* ipiv, float* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     sgetrs_(&trans, &n, &nrhs, A, &lda, ipiv, B, &ldb, &info);
     return info;
 }
 inline int getrs(char trans, int n, int nrhs, const double* A, int lda,
                  const int* ipiv, double* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dgetrs_(&trans, &n, &nrhs, A, &lda, ipiv, B, &ldb, &info);
     return info;
@@ -232,12 +249,14 @@ inline int getrs(char trans, int n, int nrhs, const double* A, int lda,
 
 inline int potrs(char uplo, int n, int nrhs, const float* A, int lda,
                  float* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     spotrs_(&uplo, &n, &nrhs, A, &lda, B, &ldb, &info);
     return info;
 }
 inline int potrs(char uplo, int n, int nrhs, const double* A, int lda,
                  double* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dpotrs_(&uplo, &n, &nrhs, A, &lda, B, &ldb, &info);
     return info;
@@ -247,12 +266,14 @@ inline int potrs(char uplo, int n, int nrhs, const double* A, int lda,
 
 inline int orgqr(int m, int n, int k, float* A, int lda, const float* tau,
                  float* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     sorgqr_(&m, &n, &k, A, &lda, tau, work, &lwork, &info);
     return info;
 }
 inline int orgqr(int m, int n, int k, double* A, int lda, const double* tau,
                  double* work, int lwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dorgqr_(&m, &n, &k, A, &lda, tau, work, &lwork, &info);
     return info;
@@ -262,12 +283,14 @@ inline int orgqr(int m, int n, int k, double* A, int lda, const double* tau,
 
 inline int trtrs(char uplo, char trans, char diag, int n, int nrhs,
                  const float* A, int lda, float* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     strtrs_(&uplo, &trans, &diag, &n, &nrhs, A, &lda, B, &ldb, &info);
     return info;
 }
 inline int trtrs(char uplo, char trans, char diag, int n, int nrhs,
                  const double* A, int lda, double* B, int ldb) {
+    ::mtl::interface::detail::nested_blas_cap cap;
     int info = 0;
     dtrtrs_(&uplo, &trans, &diag, &n, &nrhs, A, &lda, B, &ldb, &info);
     return info;
