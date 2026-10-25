@@ -54,7 +54,14 @@ TEST_CASE("interface: the detected BLAS vendor is reported consistently",
     const std::string v = iface::blas_vendor();
     INFO("vendor: '" << v << "'");
     REQUIRE((v.empty() || v == "mkl" || v == "blis" || v == "openblas"));
-    REQUIRE(iface::blas_capped_in_region() == (v == "mkl" || v == "blis"));
+    // BLIS is capped only where configure measured a per-thread setting
+    // (BLIS 1.0+); BLIS 0.9's setting is process-wide.
+#if defined(MTL5_BLAS_BLIS_PER_THREAD)
+    constexpr bool blis_per_thread = true;
+#else
+    constexpr bool blis_per_thread = false;
+#endif
+    REQUIRE(iface::blas_capped_in_region() == (v == "mkl" || (v == "blis" && blis_per_thread)));
     REQUIRE((v.empty() == (iface::blas_vendor_threads() == 0)));
 }
 
@@ -147,29 +154,40 @@ TEST_CASE("interface: a vendor GEMM gives the same result inside and outside a r
 
 namespace {
 /// Stands in for cholmod_common: the cap reads and writes only nthreads_max.
-struct fake_common { int nthreads_max; };
+struct fake_common { int nthreads_max; int SPQR_nthreads; };
+// SuiteSparse before CHOLMOD 5 has no nthreads_max.
+struct fake_old_common { int SPQR_nthreads; };
 } // namespace
 
-TEST_CASE("interface: the SuiteSparse cap sets nthreads_max to 1 only inside a region",
+TEST_CASE("interface: the SuiteSparse cap sets its thread limits to 1 only inside a region",
           "[interface][suitesparse][threads]") {
     auto& p = pool4();
-    fake_common c{6};
+    fake_common c{6, 0};
     {
         iface::detail::nested_suitesparse_cap<fake_common> cap(c);
         REQUIRE(c.nthreads_max == 6);       // outside a region: unchanged
+        REQUIRE(c.SPQR_nthreads == 0);
     }
     REQUIRE(c.nthreads_max == 6);
     if (p.size() < 2) return;
 
-    std::vector<fake_common> per(p.size(), fake_common{6});
-    std::vector<int> during(p.size(), -1);
+    std::vector<fake_common> per(p.size(), fake_common{6, 0});
+    std::vector<fake_old_common> old(p.size(), fake_old_common{0});
+    std::vector<int> during(p.size(), -1), during_spqr(p.size(), -1), during_old(p.size(), -1);
     p.run(p.size(), [&](unsigned tid) {
         iface::detail::nested_suitesparse_cap<fake_common> cap(per[tid]);
+        iface::detail::nested_suitesparse_cap<fake_old_common> cap_old(old[tid]);
         during[tid] = per[tid].nthreads_max;
+        during_spqr[tid] = per[tid].SPQR_nthreads;
+        during_old[tid] = old[tid].SPQR_nthreads;
     });
     for (unsigned t = 0; t < p.size(); ++t) {
         REQUIRE(during[t] == 1);
+        REQUIRE(during_spqr[t] == 1);
+        REQUIRE(during_old[t] == 1);
         REQUIRE(per[t].nthreads_max == 6);  // restored
+        REQUIRE(per[t].SPQR_nthreads == 0);
+        REQUIRE(old[t].SPQR_nthreads == 0);
     }
 }
 

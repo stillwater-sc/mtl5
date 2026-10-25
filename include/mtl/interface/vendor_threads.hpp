@@ -143,23 +143,40 @@ public:
 };
 
 /// The same for a CHOLMOD/SPQR call: caps CHOLMOD's own OpenMP team through
-/// cholmod_common::nthreads_max, and the BLAS it calls, inside a region.
-/// Common is cholmod_common, a template parameter so this header does not
-/// need cholmod.h.
+/// cholmod_common::nthreads_max, SPQR's TBB team (in SPQR builds with TBB)
+/// through SPQR_nthreads, and the BLAS they call, inside a region. Common is
+/// cholmod_common, a template parameter so this header does not need
+/// cholmod.h; a member an older SuiteSparse lacks (nthreads_max arrived in
+/// CHOLMOD 5) is left alone.
 template <typename Common>
 class nested_suitesparse_cap {
 public:
-    explicit nested_suitesparse_cap(Common& c) noexcept : c_(c), prev_(c.nthreads_max) {
-        if (parallel::detail::in_region()) c_.nthreads_max = 1;
+    explicit nested_suitesparse_cap(Common& c) noexcept : c_(c) {
+        if (!parallel::detail::in_region()) return;
+        capped_ = true;
+        if constexpr (requires { c.nthreads_max; }) {
+            prev_nthreads_ = c_.nthreads_max;
+            c_.nthreads_max = 1;
+        }
+        if constexpr (requires { c.SPQR_nthreads; }) {
+            prev_spqr_ = c_.SPQR_nthreads;
+            c_.SPQR_nthreads = 1;
+        }
     }
-    ~nested_suitesparse_cap() { c_.nthreads_max = prev_; }
+    ~nested_suitesparse_cap() {
+        if (!capped_) return;
+        if constexpr (requires { c_.nthreads_max; }) c_.nthreads_max = prev_nthreads_;
+        if constexpr (requires { c_.SPQR_nthreads; }) c_.SPQR_nthreads = prev_spqr_;
+    }
     nested_suitesparse_cap(const nested_suitesparse_cap&) = delete;
     nested_suitesparse_cap& operator=(const nested_suitesparse_cap&) = delete;
 
 private:
     nested_blas_cap blas_;
     Common& c_;
-    int prev_;
+    bool capped_ = false;
+    int prev_nthreads_ = 0;
+    int prev_spqr_ = 0;
 };
 
 } // namespace detail
