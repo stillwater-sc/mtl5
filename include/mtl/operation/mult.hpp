@@ -218,7 +218,7 @@ void mult_sparse_crs_par(const mat::compressed2D<V, P>& A, const VIn& x, VOut& y
         const std::size_t nnz   = A.ref_data().size();
         const std::size_t avg   = nrows ? std::max(std::size_t{1}, nnz / nrows) : std::size_t{1};
         const std::size_t grain = interface::row_grain<V>(avg);
-        thread_pool& pool = thread_pool::instance();
+        auto& pool = ::mtl::parallel::pool();
         if (pool.size() > 1 && nrows >= grain * 2) {
             pool.parallel_for(nrows, grain,
                 [&](std::size_t b, std::size_t e) {
@@ -270,7 +270,7 @@ void mult_sparse_crs_dense_par(const mat::compressed2D<V, P>& A, const MB& B, MC
         const std::size_t nnz   = A.ref_data().size();
         const std::size_t avg   = nrows ? std::max(std::size_t{1}, nnz / nrows) : std::size_t{1};
         const std::size_t grain = interface::row_grain<V>(avg * static_cast<std::size_t>(C.num_cols()));
-        thread_pool& pool = thread_pool::instance();
+        auto& pool = ::mtl::parallel::pool();
         if (pool.size() > 1 && nrows >= grain * 2) {
             pool.parallel_for(nrows, grain,
                 [&](std::size_t b, std::size_t e) {
@@ -519,7 +519,7 @@ void mult_generic_par(const M& A, const VIn& x, VOut& y) {
         const std::size_t nn = static_cast<std::size_t>(A.num_cols());
         // One output row costs nn multiply-adds.
         const std::size_t grain = interface::row_grain<typename M::value_type>(nn);
-        thread_pool& pool = thread_pool::instance();
+        auto& pool = ::mtl::parallel::pool();
         if (pool.size() > 1 && mm >= grain * 2) {
             pool.parallel_for(mm, grain,
                 [&](std::size_t b, std::size_t e) {
@@ -544,7 +544,7 @@ void mult_generic_par(const MA& A, const MB& B, MC& C) {
         const std::size_t kk = static_cast<std::size_t>(A.num_cols());
         // One output row of C costs N*K multiply-adds.
         const std::size_t grain = interface::row_grain<typename MC::value_type>(nn * kk);
-        thread_pool& pool = thread_pool::instance();
+        auto& pool = ::mtl::parallel::pool();
         if (pool.size() > 1 && mm >= grain * 2) {
             pool.parallel_for(mm, grain,
                 [&](std::size_t b, std::size_t e) {
@@ -695,7 +695,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
             const T* Ap = A.data();
             const T* xp = x.data();
             T* yp = y.data();
-            detail::thread_pool::instance().parallel_for(mm, grain,
+            ::mtl::parallel::pool().parallel_for(mm, grain,
                 [&](std::size_t b, std::size_t e) {
                     detail::gemv_rowmajor<T>(e - b, nn, Ap + b * nn, nn, xp, yp + b);
                 });
@@ -708,7 +708,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
             const T* Ap = A.data();
             const T* xp = x.data();
             T* yp = y.data();
-            detail::thread_pool::instance().parallel_for(mm, grain,
+            ::mtl::parallel::pool().parallel_for(mm, grain,
                 [&](std::size_t b, std::size_t e) {
                     detail::gemv_colmajor<T>(e - b, nn, Ap + b, mm, xp, yp + b);
                 });

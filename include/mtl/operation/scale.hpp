@@ -79,7 +79,7 @@ void scale(const S& alpha, C& c) {
         // Element-wise: chunk the range across the pool (bit-identical).
         const T a = static_cast<T>(alpha);
         T* cp = c.data();
-        detail::thread_pool::instance().parallel_for(n, /*grain=*/std::size_t{65536},
+        ::mtl::parallel::pool().parallel_for(n, /*grain=*/std::size_t{65536},
             [&](std::size_t b, std::size_t e) { simd::scal<T>(a, cp + b, e - b); });
     } else {
         // Wrapping when the element type is integral (#461). `*it *= alpha` is

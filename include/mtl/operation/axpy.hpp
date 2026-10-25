@@ -106,7 +106,7 @@ void axpy(const S& alpha, const VX& x, VY& y) {
         const T a = static_cast<T>(alpha);
         const T* xp = x.data();
         T* yp = y.data();
-        detail::thread_pool::instance().parallel_for(n, /*grain=*/std::size_t{65536},
+        ::mtl::parallel::pool().parallel_for(n, /*grain=*/std::size_t{65536},
             [&](std::size_t b, std::size_t e) { simd::axpy<T>(a, xp + b, yp + b, e - b); });
     } else {
         // Wrapping when the element type is integral, the plain expression

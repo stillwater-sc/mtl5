@@ -15,6 +15,7 @@
 #endif
 
 #include <mtl/parallel/thread_pool.hpp>
+#include <mtl/parallel/spin_pool.hpp>
 
 // Qualified definitions, so they land in the shared mode's inline namespace.
 namespace mtl::parallel {
@@ -26,6 +27,13 @@ MTL5_SHARED_POOL_API detail::pool_config& detail::shared_pool_config_v1() {
 
 MTL5_SHARED_POOL_API thread_pool& detail::shared_pool_v1() {
     static thread_pool pool(claim_pool_size());
+    return pool;
+}
+
+// Constructed only if a module uses it: under MTL5_POOL_SPIN, or by calling
+// spin_pool::instance() (#636).
+MTL5_SHARED_POOL_API spin_pool& detail::shared_spin_pool_v1() {
+    static spin_pool pool(claim_pool_size(), resolve_pool_spin(spin_pool::default_spin));
     return pool;
 }
 

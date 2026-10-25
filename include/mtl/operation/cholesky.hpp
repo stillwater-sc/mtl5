@@ -130,7 +130,7 @@ int cholesky_factor_generic(M& A) {
             const std::size_t inner = static_cast<std::size_t>(j == 0 ? 1 : j);
             const std::size_t grain =
                 std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / inner);
-            detail::thread_pool::instance().parallel_for(
+            ::mtl::parallel::pool().parallel_for(
                 static_cast<std::size_t>(rows), grain,
                 [&](std::size_t b, std::size_t e) {
                     for (std::size_t t = b; t < e; ++t) {
@@ -185,7 +185,7 @@ int cholesky_factor_acc(M& A) {
             const std::size_t inner = static_cast<std::size_t>(j == 0 ? 1 : j);
             const std::size_t grain =
                 std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / inner);
-            detail::thread_pool::instance().parallel_for(
+            ::mtl::parallel::pool().parallel_for(
                 static_cast<std::size_t>(rows), grain,
                 [&](std::size_t b, std::size_t e) {
                     for (std::size_t t = b; t < e; ++t) {
@@ -448,7 +448,7 @@ int cholesky_h_factor(M& A) {
             const std::size_t inner = static_cast<std::size_t>(j == 0 ? 1 : j);
             const std::size_t grain =
                 std::max<std::size_t>(std::size_t{1}, std::size_t{65536} / inner);
-            detail::thread_pool::instance().parallel_for(
+            ::mtl::parallel::pool().parallel_for(
                 static_cast<std::size_t>(rows), grain,
                 [&](std::size_t b, std::size_t e) {
                     for (std::size_t t = b; t < e; ++t) {

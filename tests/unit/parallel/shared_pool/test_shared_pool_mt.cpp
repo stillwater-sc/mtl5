@@ -62,6 +62,15 @@ TEST_CASE("parallel: modules that define MTL5_SHARED_POOL share one pool",
 
     // Without MTL5_SHARED_POOL, a hidden-visibility module has its own pool.
     REQUIRE(local_pool() != pool);
+
+    // The spin_pool is shared the same way (#636), and sized by the same
+    // configuration.
+    const void* const spin = &mtl::parallel::spin_pool::instance();
+    REQUIRE(spin != pool);
+    REQUIRE(shared_a_spin_pool() == spin);
+    REQUIRE(shared_b_spin_pool() == spin);
+    REQUIRE(local_spin_pool() != spin);
+    REQUIRE(mtl::parallel::spin_pool::instance().size() == want);
 }
 
 TEST_CASE("parallel: default-visible modules of both modes keep apart",

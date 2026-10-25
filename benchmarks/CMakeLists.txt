@@ -180,6 +180,13 @@ target_link_libraries(bench_vendor_nested PRIVATE MTL5::mtl5)
 set_target_properties(bench_vendor_nested PROPERTIES FOLDER "Benchmarks")
 add_dependencies(bench_vendor_nested mtl5_build_info)
 
+# Dispatch and join latency of thread_pool and spin_pool (#636), as
+# percentiles; benchmarks/run_pool_latency.sh runs every arm in its own process.
+add_executable(bench_pool_latency bench_pool_latency.cpp)
+target_link_libraries(bench_pool_latency PRIVATE MTL5::mtl5)
+set_target_properties(bench_pool_latency PROPERTIES FOLDER "Benchmarks")
+add_dependencies(bench_pool_latency mtl5_build_info)
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)

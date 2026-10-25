@@ -16,6 +16,18 @@ compile_all("true" "detail" "Tests/detail" "MTL5::mtl5;Catch2::Catch2WithMain" $
 file(GLOB PARALLEL_SRC "parallel/*.cpp")
 compile_all("true" "parallel" "Tests/parallel" "MTL5::mtl5;Catch2::Catch2WithMain" ${PARALLEL_SRC})
 
+# The spin_pool as the kernels' pool (#636): the selection test, and the
+# threaded factorization and GEMM tests built a second time with
+# MTL5_POOL_SPIN, so their bit-identical checks run on it.
+target_compile_definitions(parallel_test_pool_select_spin_mt PRIVATE MTL5_POOL_SPIN)
+foreach(_spin_src factorization gemm)
+    add_executable(op_test_${_spin_src}_spin_mt operation/test_${_spin_src}_mt.cpp)
+    target_link_libraries(op_test_${_spin_src}_spin_mt PRIVATE MTL5::mtl5 Catch2::Catch2WithMain)
+    target_compile_definitions(op_test_${_spin_src}_spin_mt PRIVATE MTL5_POOL_SPIN)
+    set_target_properties(op_test_${_spin_src}_spin_mt PROPERTIES FOLDER "Tests/operation")
+    add_test(NAME op_test_${_spin_src}_spin_mt COMMAND op_test_${_spin_src}_spin_mt)
+endforeach()
+
 # One thread pool across shared libraries (#639). A test-only copy of the
 # mtl5_pool library, two hidden-visibility modules that define
 # MTL5_SHARED_POOL by linking it, and one that does not; the executable checks

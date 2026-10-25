@@ -3,6 +3,7 @@
 // PLUGIN(name), the prefix of its exports, and includes this; the test
 // executable includes it without PLUGIN to declare the exports it calls.
 #include <mtl/parallel/thread_pool.hpp>
+#include <mtl/parallel/spin_pool.hpp>
 
 #include <algorithm>
 #include <thread>
@@ -22,7 +23,8 @@
     PLUGIN_IMPORT unsigned p##_size();                     \
     PLUGIN_IMPORT unsigned p##_distinct_threads();         \
     PLUGIN_IMPORT bool p##_region_ran_serially();       \
-    PLUGIN_IMPORT bool p##_in_region();
+    PLUGIN_IMPORT bool p##_in_region();                 \
+    PLUGIN_IMPORT const void* p##_spin_pool();
 
 #if defined(PLUGIN)
 
@@ -55,5 +57,8 @@ PLUGIN_EXPORT bool PLUGIN(region_ran_serially)() {
 
 /// This module's view of the calling thread's in-region flag (#640).
 PLUGIN_EXPORT bool PLUGIN(in_region)() { return mtl::parallel::detail::in_region(); }
+
+/// The process spin_pool this module sees (#636).
+PLUGIN_EXPORT const void* PLUGIN(spin_pool)() { return &mtl::parallel::spin_pool::instance(); }
 
 #endif
