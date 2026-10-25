@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Dispatch and join latency of thread_pool and spin_pool (#636).
 #
-# Builds bench_pool_latency once, then runs every arm (thread, spin, sleep) in
+# Builds bench_pool_latency once, then runs every arm (thread, spin, sleep, hold) in
 # a process of its own, at each gap, for ROUNDS rounds, so the CSV shows the
 # spread between processes as well as the percentiles within one.
 #
@@ -68,7 +68,7 @@ rm -f "$csv" "$csv.sysinfo"
 for round in $(seq 1 "$ROUNDS"); do
     for gap in $GAPS; do
         regions=${REGIONS:-$([ "$gap" = 0 ] && echo 20000 || echo 2000)}
-        for arm in thread spin sleep; do
+        for arm in thread spin sleep hold; do
             echo "== round $round, gap ${gap}us, $arm"
             ${PIN[@]+"${PIN[@]}"} "$dir/benchmarks/bench_pool_latency" --arm "$arm" \
                 --threads "$THREADS" --gap-us "$gap" --regions "$regions" \

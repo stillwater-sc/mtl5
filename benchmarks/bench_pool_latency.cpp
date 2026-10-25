@@ -15,6 +15,10 @@
 //   spin      mtl::parallel::spin_pool with its default spin
 //   sleep     mtl::parallel::spin_pool with spin 0: no spinning, every wait
 //             sleeps on the futex at once
+//   hold      mtl::parallel::spin_pool with --spin iterations (default 40000,
+//             about 1.4 ms on a 12700K P-core): a spin longer than the gap, so
+//             the workers are still spinning when the next region arrives --
+//             the configuration for a fixed-rate loop on cores of its own
 //
 // --gap-us puts that much idle time between regions (a sleep), as a control
 // loop at a fixed rate does; a gap longer than the spin means the spin_pool's
@@ -24,8 +28,8 @@
 // Linux that is the invariant TSC, synchronized across cores.
 //
 // Usage:
-//   bench_pool_latency --arm thread|spin|sleep [--threads 2,4,8] [--gap-us 0]
-//       [--regions 20000] [--round N] [--csv f]
+//   bench_pool_latency --arm thread|spin|sleep|hold [--threads 2,4,8] [--gap-us 0]
+//       [--regions 20000] [--spin 40000] [--round N] [--csv f]
 // The CSV is appended to, with a header when it is new. Run each arm in a
 // process of its own; benchmarks/run_pool_latency.sh does.
 
@@ -122,6 +126,7 @@ int main(int argc, char** argv) {
     std::string arm = "thread", csv;
     std::vector<int> threads{2, 4, 8};
     int gap_us = 0, regions = 20000, round = 1;
+    unsigned hold_spin = 40000;
     for (int i = 1; i < argc; ++i) {
         auto next = [&] { return i + 1 < argc ? argv[++i] : ""; };
         if (!std::strcmp(argv[i], "--arm")) arm = next();
@@ -129,11 +134,12 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--gap-us")) gap_us = std::atoi(next());
         else if (!std::strcmp(argv[i], "--regions")) regions = std::atoi(next());
         else if (!std::strcmp(argv[i], "--round")) round = std::atoi(next());
+        else if (!std::strcmp(argv[i], "--spin")) hold_spin = static_cast<unsigned>(std::atol(next()));
         else if (!std::strcmp(argv[i], "--csv")) csv = next();
         else { std::fprintf(stderr, "unknown argument %s\n", argv[i]); return 2; }
     }
-    if (arm != "thread" && arm != "spin" && arm != "sleep") {
-        std::fprintf(stderr, "--arm must be thread, spin or sleep\n");
+    if (arm != "thread" && arm != "spin" && arm != "sleep" && arm != "hold") {
+        std::fprintf(stderr, "--arm must be thread, spin, sleep or hold\n");
         return 2;
     }
     const int warmup = std::max(50, regions / 20);
@@ -151,7 +157,8 @@ int main(int argc, char** argv) {
             mtl::parallel::thread_pool pool(static_cast<unsigned>(T));
             s = measure(pool, regions, warmup, gap_us);
         } else {
-            spin = arm == "spin" ? mtl::parallel::spin_pool::default_spin : 0u;
+            spin = arm == "spin" ? mtl::parallel::spin_pool::default_spin
+                 : arm == "hold" ? hold_spin : 0u;
             mtl::parallel::spin_pool pool(static_cast<unsigned>(T), spin);
             s = measure(pool, regions, warmup, gap_us);
         }

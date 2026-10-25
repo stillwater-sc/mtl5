@@ -17,8 +17,10 @@
 //     region's team size. A worker that is not part of the region only ever
 //     reads that word.
 //   * A worker spins on the word for `spin` iterations, each a CPU pause
-//     instruction, then blocks in std::atomic::wait (a futex on Linux,
-//     WaitOnAddress on Windows). The caller makes the notify system call only
+//     instruction except every 64th, a yield, then blocks in
+//     std::atomic::wait (a futex on Linux, WaitOnAddress on Windows). The
+//     yield matters when the scheduler has put two of the pool's threads on
+//     one core: without it, a spinner holds that core for its whole spin. The caller makes the notify system call only
 //     if some worker has gone to sleep.
 //   * The join is an atomic countdown. The caller spins on it, then waits on
 //     it; the last worker to finish notifies only a caller that is asleep.
@@ -43,7 +45,9 @@
 //     reserved for it can. The caller then spins, then sleeps, and is woken
 //     by that worker when it finishes.
 //   * Cost: a worker spins a full core for `spin` iterations after every
-//     region before it sleeps.
+//     region before it sleeps; default_spin is about 140 us on an Alder Lake
+//     P-core, where a pause takes about 35 ns, and less on cores with a
+//     shorter pause.
 // The measured dispatch and join latency is in
 // docs/algorithms/on-node-threading.md.
 //
@@ -97,6 +101,14 @@ inline void cpu_relax() noexcept {
 #elif defined(__aarch64__) || defined(__arm__)
     __asm__ __volatile__("yield" ::: "memory");
 #endif
+}
+
+/// One iteration of a spin wait: a pause, and every 64th iteration a yield,
+/// so a thread the scheduler has queued on this core behind the spinner runs
+/// within a few microseconds instead of after the whole spin.
+inline void spin_step(unsigned i) noexcept {
+    if ((i & 63u) == 63u) std::this_thread::yield();
+    else cpu_relax();
 }
 
 /// Spin iterations from MTL5_POOL_SPIN; `fallback` when unset or invalid.
@@ -271,7 +283,7 @@ private:
     void join() noexcept {
         for (unsigned i = 0; i < spin_; ++i) {
             if (remaining_.load(std::memory_order_acquire) == 0) return;
-            detail::cpu_relax();
+            detail::spin_step(i);
         }
         // The same seq_cst pairing as dispatch, mirrored: the caller announces
         // itself, then reads remaining_; the last worker decrements, then reads
@@ -290,7 +302,7 @@ private:
         for (unsigned i = 0; i < spin_; ++i) {
             const std::uint32_t w = word_.load(std::memory_order_acquire);
             if (w != seen) return w;
-            detail::cpu_relax();
+            detail::spin_step(i);
         }
         sleepers_.fetch_add(1, std::memory_order_seq_cst);
         std::uint32_t w;
