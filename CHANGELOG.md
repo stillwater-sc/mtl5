@@ -24,11 +24,29 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - A test loads two hidden-visibility modules, which are DLLs on Windows, and checks that they and the executable share one pool, its configuration and its busy state. A third module, built without the macro, shows that it keeps a pool of its own.
   - The default header-only build is unchanged.
 
+- **A vendor BLAS called inside an MTL5 parallel region runs on one thread** (#640, #645). A region thread that calls MKL or BLIS used to have that library start a full team of its own, so an 8-thread region ran 64 threads on 8 cores. The BLAS and LAPACK wrappers and the CHOLMOD/SPQR calls now limit the vendor to one thread on region threads, once per region thread, and restore the caller's setting when the region ends. Calls made outside a region keep the vendor's threads.
+  - **Which vendors:** configure identifies the linked vendor from its exported symbols. MKL is capped with its thread-local `MKL_Set_Num_Threads_Local`. BLIS is capped only where configure measures its thread setting to be per-thread (BLIS 1.0 and later; BLIS 0.9's setting is process-wide), and the status line says which. CHOLMOD's `nthreads_max` and SPQR's `SPQR_nthreads` are capped where `cholmod_common` has them.
+  - **OpenBLAS is not capped**: its only setting is process-wide, so capping it in a region would also serialize direct calls. `docs/algorithms/on-node-threading.md` describes the two working setups, either MTL5 threaded with `OPENBLAS_NUM_THREADS=1` or OpenBLAS threaded with MTL5 at one thread.
+  - **Measured** (i7-12700K, 64 dgemms in an 8-thread region, vendor team 8, median of 3 rounds, `benchmarks/bench_vendor_nested.cpp`): BLIS 1.1 goes from 0.1 / 0.6 / 3.0 to 405 / 457 / 507 GFLOP/s at n = 128 / 256 / 512, and MKL 2026.1 goes from 328 / 338 / 381 to 499 / 468 / 513. OpenBLAS uncapped is erratic (102–407 across rounds); at one process-wide thread it holds 462 / 430 / 486.
+  - New in `<mtl/parallel/thread_pool.hpp>`: `detail::in_region()` and `detail::on_pool_worker()`, shared across modules under `MTL5::shared_pool`.
+
+- **Arduino Ventuno Q benchmark profiles** (#642, #644): a blocking A/B profile pinned to the board's Cortex-A78C cores (found from `/proc/cpuinfo` rather than assumed), and register-tile sweep profiles for the Ventuno Q, the Jetson Orin Nano and the Ryzen 9 8945HS. `MTL5_GEMM_MR_OVERRIDE=<n>` sets `mr` alone so a sweep holds the cache blocks fixed.
+
+### Changed
+
+- **The NEON GEMM register tile grows from 6 × nr to 8 × nr** (#643, #644): 8×4 for fp64 and 8×8 for fp32 on aarch64. AVX-512 keeps 6×16. The tile derivation had assumed AVX2's 16 vector registers on every ISA; `hw_traits` gains `acc_vectors`, and aarch64 now gets 32 registers with a 16-accumulator budget.
+  - **Measured** on the Ventuno Q (4× Cortex-A78C, `mr` swept at fixed nr/kc/mc/nc, geomean ratio to `mr = 6`): fp64 8×4 is 1.174× at T=1 and 1.102× at T=4, and no shape is below 1.06. fp32 8×8 is 1.170× and 1.219×. Single-core fp64 goes from 8.3 to 9.7 GFLOP/s, 57% of peak.
+  - **Why not 3/4 of the register file:** 12×4 would have regressed T=4 by up to 16%. On the 64-row shapes, each of four threads gets a 16-row block, which 8-row panels tile exactly and 12-row panels cover with 24 rows of work.
+  - **AVX-512 is unchanged** because no tile cleared a 5–40% round-to-round spread on Zen 4 under WSL2. The Jetson and other aarch64 cores also move with this change and are not yet measured. `MTL5_GEMM_TARGET_REGISTER_FILE` (the rejected 3/4 candidate) and a `tile6` arm remain measurable.
+
 ### Fixed
 
 - **`ldlt_factor` no longer reports a zero pivot that `ldlt_bk_factor` and `cholesky_factor` don't see** (#421). Its default path formed each diagonal term as `(L(j,k) * L(j,k)) * D(k)`: the square of an already-rounded multiplier, scaled afterwards. On an SPD float matrix whose Schur complement is under 2 ulps of the diagonal, that landed exactly on `A(j,j)` and returned `j + 1`, while `ldlt_bk_factor` factored the same matrix without an interchange. The default paths of `ldlt_factor` and `ldlt_h_factor` now do what their comment always described: form `v(k) = L(j,k) * D(k)` (conjugated for LDLᴴ) once per column, and subtract `L(·,k) * v(k)`. That is the association `ldlt_bk_factor` and the accumulator kernel already use, and it saves a multiply per inner-loop term.
   - **Results change in the last bits** for float and double input to the default path, since the products round differently. A matrix that factored before still factors, except possibly one sitting on a pivot that is zero to rounding either way. The accumulator paths (`ldlt_factor<Acc>`) are unchanged, and the default path's `D` now matches `ldlt_factor<T>`'s bit for bit (`L` still sums before subtracting, as before).
   - The issue's own caveat stands: this changes a one-rounding coin flip on pivots within a couple of ulps of zero. Further into ill-conditioning, no association helps.
+- **GEMM with an empty dimension passed a leading dimension of 0 to BLAS** (#645). BLIS rejects that ("parameter number 10 had an illegal value") and leaves C untouched, so `mult` with k = 0 did not zero C under BLIS. Every leading dimension is now at least 1.
+- **`analyze_blocking_ab.py` called a null run a match** (#642). On a board whose kernel lists cache levels without sizes, every detecting arm fell back to the compile-time model, and the analyzer reported "its caches already match the compile-time model". It now says that detection found nothing.
+- **Highway's CMP0111 deprecation warning** no longer prints on every configure with `MTL5_WITH_HIGHWAY=ON` (#642).
 
 ## [5.20.0] - 2026-10-22
 
