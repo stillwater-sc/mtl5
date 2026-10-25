@@ -135,8 +135,13 @@ public:
     explicit spin_pool(unsigned n, unsigned spin = default_spin)
         : n_(n < 1 ? 1 : (n > max_pool_threads ? max_pool_threads : n)), spin_(spin) {
         workers_.reserve(n_ - 1);
-        for (unsigned i = 1; i < n_; ++i)
-            workers_.emplace_back([this, i] { worker_loop(i); });
+        try {
+            for (unsigned i = 1; i < n_; ++i)
+                workers_.emplace_back([this, i] { worker_loop(i); });
+        } catch (...) {
+            shutdown();   // a joinable std::thread left behind would terminate
+            throw;
+        }
     }
 
     /// Process-wide spin_pool, sized on first use as thread_pool's is
@@ -211,27 +216,35 @@ public:
     spin_pool(const spin_pool&) = delete;
     spin_pool& operator=(const spin_pool&) = delete;
 
-    ~spin_pool() {
+    ~spin_pool() { shutdown(); }
+
+private:
+    // word_ is the generation in the high 48 bits and the region's team size
+    // in the low 16, so a pool holds at most 65535 threads. A worker compares
+    // the whole word with the one it last saw, so the generation must not
+    // wrap while a worker is off a core: a team member preempted after its
+    // countdown, while the caller runs smaller teams, would take a wrapped
+    // word equal to the one it saw for no change, and the join would wait for
+    // it forever. 2^48 regions is years even back to back.
+    using word_type = std::uint64_t;
+    static constexpr unsigned max_pool_threads = 0xFFFFu;
+    static constexpr word_type team_mask = 0xFFFFu;
+    static_assert(std::atomic<word_type>::is_always_lock_free,
+                  "spin_pool's dispatch word must be a lock-free atomic");
+
+    word_type next_word(unsigned team) const noexcept {
+        const word_type gen = (word_.load(std::memory_order_relaxed) >> 16) + 1u;
+        return (gen << 16) | (static_cast<word_type>(team) & team_mask);
+    }
+
+    /// Stop and join the workers started so far.
+    void shutdown() noexcept {
         stop_.store(true, std::memory_order_relaxed);
         // The new generation publishes stop_ (release) and wakes every worker,
         // spinning or asleep; a team of 0 runs nothing.
         word_.store(next_word(0), std::memory_order_seq_cst);
         word_.notify_all();
         for (auto& w : workers_) if (w.joinable()) w.join();
-    }
-
-private:
-    // word_ is the generation in the high 16 bits and the region's team size
-    // in the low 16, so a pool holds at most 65535 threads. A worker compares
-    // the whole word with the one it last saw. When the 16-bit generation
-    // wraps, a word equal to the one a worker saw also has the same team, so
-    // a worker that takes it for no change was not part of that region either.
-    static constexpr unsigned max_pool_threads = 0xFFFFu;
-    static constexpr std::uint32_t team_mask = 0xFFFFu;
-
-    std::uint32_t next_word(unsigned team) const noexcept {
-        const std::uint32_t gen = (word_.load(std::memory_order_relaxed) >> 16) + 1u;
-        return (gen << 16) | (static_cast<std::uint32_t>(team) & team_mask);
     }
 
     template <typename F>
@@ -298,14 +311,14 @@ private:
     }
 
     /// A worker's wait for a word other than `seen`: spin, then sleep on it.
-    std::uint32_t await_region(std::uint32_t seen) noexcept {
+    word_type await_region(word_type seen) noexcept {
         for (unsigned i = 0; i < spin_; ++i) {
-            const std::uint32_t w = word_.load(std::memory_order_acquire);
+            const word_type w = word_.load(std::memory_order_acquire);
             if (w != seen) return w;
             detail::spin_step(i);
         }
         sleepers_.fetch_add(1, std::memory_order_seq_cst);
-        std::uint32_t w;
+        word_type w;
         for (;;) {
             w = word_.load(std::memory_order_seq_cst);
             if (w != seen) break;
@@ -320,7 +333,7 @@ private:
         detail::this_region_thread().state = detail::pool_worker;
         // Workers start at word 0, before any region: a region published before
         // this worker reaches its first wait still differs from it.
-        std::uint32_t seen = 0;
+        word_type seen = 0;
         for (;;) {
             seen = await_region(seen);
             if (stop_.load(std::memory_order_relaxed)) return;
@@ -342,7 +355,7 @@ private:
 
     // The word every worker reads, the countdown every worker writes, and the
     // rest each on a cache line of their own.
-    alignas(64) std::atomic<std::uint32_t> word_{0};
+    alignas(64) std::atomic<word_type> word_{0};
     alignas(64) std::atomic<unsigned> remaining_{0};
     alignas(64) std::atomic<unsigned> sleepers_{0};   // workers asleep in word_.wait
     std::atomic<bool> caller_sleeping_{false};       // the caller is asleep in join()

@@ -16,7 +16,8 @@
 #   GAPS         idle microseconds between regions, default "0 1000": back to
 #                back, and a 1 kHz loop (past the spin, so workers sleep)
 #   REGIONS      default 20000 at gap 0, 2000 at a nonzero gap
-#   ROUNDS       default 3
+#   ROUNDS       default 4, and a multiple of 4: the arm order rotates by one
+#                each round, so every arm runs in every position equally often
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +32,12 @@ fi
 
 THREADS=${THREADS:-2,4,8}
 GAPS=${GAPS:-"0 1000"}
-ROUNDS=${ROUNDS:-3}
+ROUNDS=${ROUNDS:-4}
+ARMS=(thread spin sleep hold)
+if ! [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] || [ $((ROUNDS % ${#ARMS[@]})) -ne 0 ]; then
+    echo "ROUNDS must be a positive multiple of ${#ARMS[@]}, got '$ROUNDS'" >&2
+    exit 2
+fi
 MAXT=$(printf '%s' "$THREADS" | tr ',' '\n' | sort -n | tail -1)
 
 PIN=()
@@ -68,7 +74,8 @@ rm -f "$csv" "$csv.sysinfo"
 for round in $(seq 1 "$ROUNDS"); do
     for gap in $GAPS; do
         regions=${REGIONS:-$([ "$gap" = 0 ] && echo 20000 || echo 2000)}
-        for arm in thread spin sleep hold; do
+        for k in "${!ARMS[@]}"; do
+            arm=${ARMS[$(( (k + round - 1) % ${#ARMS[@]} ))]}
             echo "== round $round, gap ${gap}us, $arm"
             ${PIN[@]+"${PIN[@]}"} "$dir/benchmarks/bench_pool_latency" --arm "$arm" \
                 --threads "$THREADS" --gap-us "$gap" --regions "$regions" \

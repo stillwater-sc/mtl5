@@ -142,11 +142,19 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "--arm must be thread, spin, sleep or hold\n");
         return 2;
     }
+    if (regions < 1) {
+        std::fprintf(stderr, "--regions must be at least 1\n");
+        return 2;
+    }
     const int warmup = std::max(50, regions / 20);
 
     bool new_csv = false;
     if (!csv.empty()) { std::ifstream probe(csv); new_csv = !probe.good(); }
     std::FILE* out = csv.empty() ? nullptr : std::fopen(csv.c_str(), "a");
+    if (!csv.empty() && !out) {
+        std::fprintf(stderr, "cannot open %s for appending\n", csv.c_str());
+        return 1;
+    }
     if (out && new_csv)
         std::fputs("arm,threads,gap_us,round,spin,metric,regions,p50_ns,p90_ns,p99_ns,p999_ns,max_ns\n", out);
 
@@ -186,8 +194,7 @@ int main(int argc, char** argv) {
                << "git_dirty="   << mtl::build_git_dirty   << "\n"
                << "cxx_flags="   << mtl::build_cxx_flags   << "\n"
                << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-               << "default_spin=" << mtl::parallel::spin_pool::default_spin << "\n"
-               << "regions=" << regions << "\n";
+               << "default_spin=" << mtl::parallel::spin_pool::default_spin << "\n";
             for (const char* name : {"MTL5_NUM_THREADS", "MTL5_POOL_SPIN", "BENCH_PCPUS"})
                 if (const char* v = std::getenv(name)) si << "env_" << name << '=' << v << "\n";
         }
