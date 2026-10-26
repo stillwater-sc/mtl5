@@ -125,6 +125,57 @@ TEST_CASE("Matrix Market: sparse read assembles sorted CRS (#125)", "[io][matrix
     std::remove(fname.c_str());
 }
 
+// Duplicate coordinates sum, in the dense reader as in the sparse one and SciPy.
+// mm_read_dense used to keep only the last value.
+TEST_CASE("Matrix Market: duplicate entries accumulate in both readers", "[io][matrix_market]") {
+    struct dup_case {
+        const char* name;
+        const char* body;
+        double expected[3][3];
+    };
+    const dup_case cases[] = {
+        {"dup_general",
+         "%%MatrixMarket matrix coordinate real general\n"
+         "3 3 4\n"
+         "1 1 2.0\n"
+         "1 1 3.0\n"      // (0,0) = 2 + 3
+         "3 2 1.5\n"
+         "2 3 4.0\n",
+         {{5.0, 0.0, 0.0}, {0.0, 0.0, 4.0}, {0.0, 1.5, 0.0}}},
+        {"dup_symmetric",
+         "%%MatrixMarket matrix coordinate real symmetric\n"
+         "3 3 4\n"
+         "2 1 2.0\n"
+         "2 1 3.0\n"      // (1,0) and mirror (0,1) = 2 + 3
+         "3 3 1.0\n"
+         "3 3 6.0\n",     // diagonal duplicate, no mirror: 1 + 6
+         {{0.0, 5.0, 0.0}, {5.0, 0.0, 0.0}, {0.0, 0.0, 7.0}}},
+        {"dup_cancel",
+         "%%MatrixMarket matrix coordinate real symmetric\n"
+         "3 3 3\n"
+         "3 1 4.0\n"
+         "3 1 -4.0\n"     // cancels to zero, mirror included
+         "2 2 1.0\n",
+         {{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 0.0}}},
+    };
+    for (const auto& tc : cases) {
+        INFO(tc.name);
+        auto fname = temp_file(tc.name);
+        { std::ofstream out(fname); out << tc.body; }
+        auto D = io::mm_read_dense(fname);
+        auto S = io::mm_read(fname);
+        REQUIRE(D.num_rows() == 3);
+        REQUIRE(D.num_cols() == 3);
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 3; ++j) {
+                INFO("(" << i << ", " << j << ")");
+                REQUIRE(D(i, j) == tc.expected[i][j]);
+                REQUIRE(S(i, j) == tc.expected[i][j]);
+            }
+        std::remove(fname.c_str());
+    }
+}
+
 #ifdef MTL5_HAS_ZLIB
 #include <zlib.h>
 // Transparent gzip reading: a .mtx.gz must read identically to the plain .mtx.

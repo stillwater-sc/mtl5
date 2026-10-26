@@ -305,8 +305,9 @@ mat::dense2D<Value> mm_read_dense(const std::string& filename) {
             if (r1 == 0 || r1 > nrows || c1 == 0 || c1 > ncols)
                 throw std::runtime_error("mm_read_dense: coordinate index out of range: '" + line + "'");
             const std::size_t r = r1 - 1, c = c1 - 1;
-            A(r, c) = v;
-            if (is_symmetric && r != c) A(c, r) = v;
+            // Duplicate coordinates sum, as in mm_read and SciPy; A starts at zero.
+            A(r, c) += v;
+            if (is_symmetric && r != c) A(c, r) += v;
         }
     } else {
         // Column-major dense: one value per line.
