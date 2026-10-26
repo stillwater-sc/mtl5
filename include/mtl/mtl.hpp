@@ -200,6 +200,7 @@
 #include <mtl/operation/ldlt_bk.hpp>
 #include <mtl/operation/factorization_properties.hpp>
 #include <mtl/operation/inv.hpp>
+#include <mtl/operation/expm.hpp>
 #include <mtl/operation/backward_error.hpp>
 #include <mtl/operation/lu_iterative_refine.hpp>
 #include <mtl/operation/hessenberg.hpp>

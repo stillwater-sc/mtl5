@@ -17,6 +17,7 @@
 #include <mtl/functor/scalar/real.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/detail/unit_roundoff.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
 #include <mtl/interface/lapack.hpp>
@@ -49,21 +50,10 @@ bool tridiagonal_negligible(const Real& e, const Real& d0, const Real& d1, const
 /// gets epsilon() == Real{}, i.e. zero, and a zero tolerance only deflates
 /// subdiagonal entries that are exactly zero -- the iteration can then run out
 /// of max_iter and return unconverged eigenvalues without saying so. For such a
-/// type the epsilon is measured instead: the spacing of the type's values at 1,
-/// found by halving until 1 + eps/2 rounds to 1. The halving is capped so an
-/// exact-arithmetic type cannot loop forever.
+/// type machine_epsilon measures the epsilon instead (detail/unit_roundoff.hpp).
 template <typename Real>
 Real default_eigen_tolerance() {
-    if constexpr (std::numeric_limits<Real>::is_specialized) {
-        return std::numeric_limits<Real>::epsilon();
-    } else {
-        const Real one = math::one<Real>();
-        const Real two = one + one;
-        Real eps = one;
-        for (int i = 0; i < 1024 && one + eps / two > one; ++i)
-            eps = eps / two;
-        return eps;
-    }
+    return machine_epsilon<Real>();
 }
 
 } // namespace detail

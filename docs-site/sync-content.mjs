@@ -75,6 +75,7 @@ const FILE_MAP = {
   'numerical/summation-order-in-cholesky.md':   'numerical/summation-order-in-cholesky.md',
   'numerical/householder-reflector-forms.md':   'numerical/householder-reflector-forms.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
+  'algorithms/matrix-functions.md':             'algorithms/matrix-functions.md',
   'algorithms/supernodal-ldlt.md':              'algorithms/supernodal-ldlt.md',
 
   // ── Benchmarking ────────────────────────────────────────────────
