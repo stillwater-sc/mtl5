@@ -34,6 +34,10 @@ effort tracking its performance, but the characterization stands on its own.
 - **[Measuring Solver Accuracy](measuring-solver-accuracy.md)** — the residual,
   norms, absolute vs relative error, and backward vs forward error linked by the
   condition number. The foundation for how every solver's correctness is judged.
+- **[Matrix Functions and the Matrix Exponential](matrix-functions.md)** — what
+  `f(A)` means, why `expm` matters, how scaling and squaring computes it
+  (Higham 2005; Al-Mohy & Higham 2009) with the Padé degree chosen for each
+  element type's unit roundoff, and the history from Cayley to MATLAB and SciPy.
 - **[KLU](klu.md)** — sparse LU for circuit-simulation matrices: BTF +
   block-wise Gilbert–Peierls LU with partial pivoting. A scalar, non-supernodal
   solver, and a case study in where sparse-LU implementations lose performance.

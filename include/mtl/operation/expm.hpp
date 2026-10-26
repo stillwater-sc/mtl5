@@ -1,0 +1,563 @@
+#pragma once
+// MTL5 -- Matrix exponential: expm(A) = I + A + A^2/2! + A^3/3! + ...
+//
+// Not to be confused with mtl::exp(A) (operation/exp.hpp), which applies the
+// scalar exponential to each element. expm is the function of the matrix; the
+// name follows MATLAB and SciPy.
+//
+// Method: scaling and squaring with diagonal Pade approximants,
+//
+//     exp(A) = (exp(2^-s A))^(2^s) ~ r_m(2^-s A)^(2^s),   r_m = p_m / q_m,
+//
+// with the degree m in {3, 5, 7, 9, 13} and the scaling s chosen so that
+// r_m(2^-s A) is exp(2^-s A + E) for a backward error E with
+// ||E|| <= u ||2^-s A||, u the unit roundoff of the element type.
+//
+//  * Higham (2005) bounds that backward error by a power series in ||A|| and
+//    tabulates theta_m, the largest norm for which r_m meets it in IEEE double.
+//  * Al-Mohy & Higham (2009) bound the same series by
+//    alpha_p(A) = max(||A^p||^(1/p), ||A^(p+1)||^(1/(p+1))) instead of ||A||.
+//    For a nonnormal matrix alpha_p can be far below ||A||, and choosing s from
+//    ||A|| then squares more often than needed: "overscaling", which loses
+//    accuracy. They also add ell(A, m) squarings when the leading term of the
+//    error series, measured on |A|, says the bound is optimistic, and for a
+//    triangular A recompute the diagonal and first superdiagonal exactly
+//    during the squaring phase.
+//
+// This implementation follows Al-Mohy & Higham (2009), Algorithm 6.1 (their
+// Algorithm 5.1 without its a posteriori tests of the p_m(|A|) evaluation),
+// with two differences, both conservative:
+//  * The norms of the powers MTL5 forms anyway (A^2, A^4, A^6) are exact
+//    1-norms. The powers it does not form (A^8, A^10) are bounded by
+//    submultiplicativity, ||A^8|| <= min(||A^4||^2, ||A^2|| ||A^6||), where
+//    Algorithm 6.1 estimates them with normest1. An estimate is a lower bound
+//    on the norm; an upper bound can only make s larger, so the
+//    backward-error guarantee holds. ||(|A|)^k||_1 for ell is exact as well:
+//    e^T |A|^k is k vector-matrix products, O(k n^2).
+//  * theta_m depends on the element type's unit roundoff, from the tables
+//    below, rather than being fixed at double's values.
+//
+// Precision. tools/expm_theta.py solves Higham's equation for theta_m at the
+// unit roundoffs listed in theta_table, and reproduces his double values to
+// the 16 digits he prints (Higham 2005, Table 2.3; Al-Mohy & Higham 2009,
+// Table 3.1). expm uses the table with the largest u that does
+// not exceed the element type's own unit roundoff, which is conservative for a
+// type between two tables. Two consequences:
+//  * A type whose u is below the last table (2^-237) uses that table, and its
+//    backward error is then bounded by 2^-237 rather than by its own u.
+//  * For large u the equation allows theta_m far above double's, where the
+//    denominator q_m(A) becomes ill-conditioned: at u = 2^-24 the bound on
+//    kappa(q_13(A)) is 2.7e7. Al-Mohy & Higham already lower double's
+//    theta_13 from Higham's 5.37 to 4.25 to condition q_13 better. The tables
+//    make that a rule for every u: theta_m is capped where its bound on
+//    kappa(q_m(A)) reaches the bound at theta_13 = 4.25. For double this
+//    changes theta_13 alone, to 4.25; it also binds for u >= 2^-24
+//    (bfloat16, binary16, and float's m = 9 and 13).
+//
+// Element types: real and std::complex, and custom scalars. The degree
+// selection is done in magnitude_t<T>, and a type without a numeric_limits
+// specialization has its unit roundoff measured (detail/unit_roundoff.hpp).
+// The triangular refinement needs exp and sinh of T, found by ADL; without
+// them a triangular A takes the general path.
+//
+// Cost: up to 6 matrix products for the powers and the Pade numerator and
+// denominator, one LU factorization, n triangular solves, and s products for
+// the squarings.
+//
+// References:
+//   N. J. Higham, "The scaling and squaring method for the matrix exponential
+//     revisited", SIAM J. Matrix Anal. Appl. 26(4), 1179-1193, 2005.
+//   A. H. Al-Mohy and N. J. Higham, "A new scaling and squaring algorithm for
+//     the matrix exponential", SIAM J. Matrix Anal. Appl. 31(3), 970-989, 2009.
+//   N. J. Higham, Functions of Matrices: Theory and Computation, SIAM, 2008.
+#include <array>
+#include <cmath>
+#include <complex>
+#include <concepts>
+#include <cstddef>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+#include <mtl/concepts/matrix.hpp>
+#include <mtl/concepts/magnitude.hpp>
+#include <mtl/mat/dense2D.hpp>
+#include <mtl/vec/dense_vector.hpp>
+#include <mtl/math/identity.hpp>
+#include <mtl/detail/unit_roundoff.hpp>
+#include <mtl/detail/wrapping_arithmetic.hpp>
+#include <mtl/operation/lu.hpp>
+#include <mtl/operation/mult.hpp>
+#include <mtl/operation/norms.hpp>
+
+namespace mtl {
+
+namespace detail::expm_impl {
+
+inline constexpr std::array<int, 5> degrees{3, 5, 7, 9, 13};
+
+/// theta_m for m = 3, 5, 7, 9, 13 at unit roundoff u = 2^-t, generated by
+/// tools/expm_theta.py and rounded toward zero. Ordered by increasing t.
+struct theta_row {
+    int t;
+    std::array<double, 5> theta;
+};
+
+inline constexpr theta_row theta_table[] = {
+    {  8, {2.5932449418675693e+00, 4.0657321953694477e+00, 4.1855480655496386e+00, 4.2277287712893754e+00, 4.2500000000000000e+00}},  // bfloat16
+    { 11, {1.8719815976505649e+00, 4.0657321953694477e+00, 4.1855480655496386e+00, 4.2277287712893754e+00, 4.2500000000000000e+00}},  // binary16
+    { 24, {4.2587300348979311e-01, 1.8801526985337688e+00, 3.9257248464332841e+00, 4.2277287712893754e+00, 4.2500000000000000e+00}},  // binary32
+    { 53, {1.4955852179582915e-02, 2.5393983300632320e-01, 9.5041789961629318e-01, 2.0978479612570674e+00, 4.2500000000000000e+00}},  // binary64
+    { 64, {4.1968497232266989e-03, 1.1848116734693823e-01, 5.5170388480686700e-01, 1.3759868875587845e+00, 4.0246098906697353e+00}},  // x87 extended
+    {106, {3.2787892205607026e-05, 6.4467025060072760e-03, 6.8988028496595374e-02, 2.7339737518502231e-01, 1.3203382096514474e+00}},  // double-double
+    {113, {1.4605345568331036e-05, 3.9684111281412623e-03, 4.8782043467113475e-02, 2.0880318491357325e-01, 1.0957790341272287e+00}},  // binary128
+    {212, {1.5758573750235053e-10, 4.1535526298923909e-06, 3.6270131419308295e-04, 4.6140907478251408e-03, 7.8285103094845854e-02}},  // quad-double
+    {237, {8.7745582211277553e-12, 7.3425130765306081e-07, 1.0519511326393828e-04, 1.7619311000486504e-03, 4.0200171948642080e-02}},  // binary256
+};
+
+/// |c_{2m+1}|, the leading coefficient of the backward-error series
+/// h_{2m+1}(x) = log(e^-x r_m(x)), rounded up: (m!)^2 / ((2m)! (2m+1)!).
+inline constexpr std::array<double, 5> leading_coefficient{
+    9.9206349206349207e-06, 9.9413128513657615e-11, 2.2281945605535596e-16,
+    1.6907929343118737e-22, 8.8299616020186780e-36};
+
+// Loop bound for every halving/doubling loop below, so a type with an
+// unbounded or saturating exponent cannot loop forever.
+inline constexpr int loop_cap = 1 << 14;
+
+/// Index into theta_table of the table expm uses for magnitude type R: the
+/// first (largest u) whose u = 2^-t does not exceed R's unit roundoff.
+template <typename R>
+std::size_t table_index() {
+    const R u = unit_roundoff<R>();
+    const R one = math::one<R>();
+    const R two = one + one;
+    constexpr std::size_t rows = sizeof(theta_table) / sizeof(theta_table[0]);
+    R u_row = one;
+    int t = 0;
+    for (std::size_t i = 0; i < rows; ++i) {
+        for (; t < theta_table[i].t; ++t) u_row = u_row / two;
+        if (u_row <= u) return i;
+    }
+    return rows - 1;
+}
+
+/// x = mant * 2^e with mant in [1, 2), for x > 0. Leaves a non-finite x alone.
+template <typename R>
+void split_pow2(R& x, long& e) {
+    const R one = math::one<R>();
+    const R two = one + one;
+    for (int i = 0; i < loop_cap && x >= two; ++i) { x = x / two; ++e; }
+    for (int i = 0; i < loop_cap && x < one; ++i) { x = x * two; --e; }
+}
+
+/// 2^k in R, by repeated doubling or halving.
+template <typename R>
+R pow2(long k) {
+    const R one = math::one<R>();
+    const R two = one + one;
+    R x = one;
+    for (long i = 0; i < k && i < loop_cap; ++i) x = x * two;
+    for (long i = 0; i < -k && i < loop_cap; ++i) x = x / two;
+    return x;
+}
+
+/// For each degree m: the smallest integer L with
+/// 2^L >= |c_{2m+1}| ||(|A|)^(2m+1)||_1 / (||A||_1 u), or a large negative
+/// number when that quantity is zero. This is the logarithm behind Al-Mohy &
+/// Higham's ell(A, m): once A is scaled by 2^-s the quantity shrinks by
+/// 2^-(2m s), so ell(2^-s A, m) = max(0, ceil((L - 2m s) / (2m))).
+///
+/// One sweep of row vectors e^T |A|^k, k = 1 .. 27, serves all five degrees.
+/// The vector is renormalized to [1, 2) after every product and its scale kept
+/// as a power of two, so a large ||A|| cannot overflow it.
+template <typename R, typename T>
+std::array<long, 5> ell_log2(const mat::dense2D<T>& A, R normA, R u) {
+    using size_type = typename mat::dense2D<T>::size_type;
+    const size_type n = A.num_rows();
+    constexpr long none = -(1L << 30);
+    std::array<long, 5> L;
+    L.fill(none);
+    std::vector<R> v(n, math::one<R>()), w(n);
+    long E = 0;
+    R vmax = math::one<R>();
+    std::size_t next = 0;
+    for (int k = 1; next < degrees.size(); ++k) {
+        vmax = math::zero<R>();
+        for (size_type j = 0; j < n; ++j) {
+            R acc = math::zero<R>();
+            for (size_type i = 0; i < n; ++i)
+                acc = acc + v[i] * detail::generic_abs(A(i, j));
+            w[j] = acc;
+            if (acc > vmax) vmax = acc;
+        }
+        if (!(vmax > math::zero<R>())) return L;  // |A| nilpotent: no error term
+        R mant = vmax;
+        long e = 0;
+        split_pow2(mant, e);
+        const R f = pow2<R>(-e);
+        for (size_type j = 0; j < n; ++j) v[j] = w[j] * f;
+        vmax = mant;
+        E += e;
+        if (k != 2 * degrees[next] + 1) continue;
+
+        int ce = 0;
+        R cm = static_cast<R>(std::frexp(leading_coefficient[next], &ce));  // cm in [0.5, 1)
+        long Ec = ce;
+        split_pow2(cm, Ec);
+        R nm = normA;
+        long En = 0;
+        split_pow2(nm, En);
+        R um = u;
+        long Eu = 0;
+        split_pow2(um, Eu);
+        R r = cm * vmax / (nm * um);              // in [1/4, 4)
+        long Er = 0;
+        split_pow2(r, Er);
+        const long EQ = E + Ec - En - Eu + Er;
+        L[next] = (r == math::one<R>()) ? EQ : EQ + 1;
+        ++next;
+    }
+    return L;
+}
+
+inline int ell(long L, int m, int s) {
+    const long need = L - 2L * m * s;
+    if (need <= 0) return 0;
+    return static_cast<int>((need + 2L * m - 1) / (2L * m));
+}
+
+/// Coefficients of p_m(x) = sum_j b_j x^j, normalized to b_0 = 1:
+/// b_j = b_{j-1} (m - j + 1) / (j (2m - j + 1)).
+template <typename T, typename R>
+std::vector<T> pade_coefficients(int m) {
+    std::vector<T> b(static_cast<std::size_t>(m) + 1);
+    R bj = math::one<R>();
+    b[0] = T(bj);
+    for (int j = 1; j <= m; ++j) {
+        bj = bj * static_cast<R>(static_cast<double>(m - j + 1))
+                / static_cast<R>(static_cast<double>(j * (2 * m - j + 1)));
+        b[static_cast<std::size_t>(j)] = T(bj);
+    }
+    return b;
+}
+
+/// Y = c0 I + sum_i c[i] M[i].
+template <typename T>
+void combine(mat::dense2D<T>& Y, const T& c0,
+             std::initializer_list<std::pair<T, const mat::dense2D<T>*>> terms) {
+    using size_type = typename mat::dense2D<T>::size_type;
+    const size_type n = Y.num_rows();
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j) {
+            T acc = (i == j) ? c0 : math::zero<T>();
+            for (const auto& [c, M] : terms) acc = acc + c * (*M)(i, j);
+            Y(i, j) = acc;
+        }
+}
+
+/// Y = Y * f, repeated k times (f a power of two, so each step is exact unless
+/// it underflows; applying it k times keeps f itself in range).
+template <typename T, typename R>
+void scale_by(mat::dense2D<T>& Y, const R& f, int k) {
+    using size_type = typename mat::dense2D<T>::size_type;
+    const T tf = T(f);
+    for (int r = 0; r < k; ++r)
+        for (size_type i = 0; i < Y.num_rows(); ++i)
+            for (size_type j = 0; j < Y.num_cols(); ++j)
+                Y(i, j) = Y(i, j) * tf;
+}
+
+namespace adl {
+using std::exp;
+using std::sinh;
+
+template <typename T>
+concept has_exp_sinh = requires(const T& x) {
+    { exp(x) } -> std::convertible_to<T>;
+    { sinh(x) } -> std::convertible_to<T>;
+};
+
+/// exp of the 2x2 upper triangular block [a t; 0 b]: its (1,2) entry,
+/// t (e^b - e^a) / (b - a) = t e^((a+b)/2) sinh(d) / d, d = (b - a)/2,
+/// which does not cancel when a and b are close (Higham 2008, (10.42)).
+template <typename T>
+T superdiagonal_exp(const T& a, const T& b, const T& t) {
+    const T two = math::one<T>() + math::one<T>();
+    const T d = (b - a) / two;
+    const T sinch = (d == math::zero<T>()) ? math::one<T>() : T(sinh(d)) / d;
+    return t * T(exp((a + b) / two)) * sinch;
+}
+
+template <typename T>
+T call_exp(const T& x) { return T(exp(x)); }
+} // namespace adl
+
+/// Al-Mohy & Higham (2009), Code Fragment 2.1: overwrite the diagonal and
+/// first superdiagonal of X with exp of those of the upper triangular 2^-j A,
+/// where d and t hold 2^-j times A's diagonal and superdiagonal.
+template <typename T>
+void set_triangular_exact(mat::dense2D<T>& X, const std::vector<T>& d, const std::vector<T>& t) {
+    const std::size_t n = d.size();
+    for (std::size_t i = 0; i < n; ++i) X(i, i) = adl::call_exp(d[i]);
+    for (std::size_t i = 0; i + 1 < n; ++i)
+        X(i, i + 1) = adl::superdiagonal_exp(d[i], d[i + 1], t[i]);
+}
+
+} // namespace detail::expm_impl
+
+/// The matrix exponential exp(A) of a square matrix A, as a dense2D.
+///
+/// Scaling and squaring with Pade approximants (Higham 2005), with the
+/// scaling chosen from ||A^k||^(1/k) rather than ||A|| (Al-Mohy & Higham
+/// 2009), and the degree selected for the element type's unit roundoff. See
+/// the top of this file for the algorithm and its precision handling.
+///
+/// `Accumulator` (leading, default void) is forwarded to every matrix product
+/// and to the LU factorization and solves; void keeps their BLAS/LAPACK
+/// dispatch.
+///
+/// Throws std::invalid_argument if A is not square, and std::runtime_error if
+/// the Pade denominator is singular (not expected for a finite A). A matrix
+/// with a NaN or infinite entry gives a matrix of NaN.
+template <typename Accumulator = void, FieldMatrix M>
+auto expm(const M& A_in) {
+    namespace ex = detail::expm_impl;
+    using T = typename M::value_type;
+    using R = magnitude_t<T>;
+    using size_type = typename mat::dense2D<T>::size_type;
+
+    const size_type n = A_in.num_rows();
+    if (A_in.num_cols() != n)
+        throw std::invalid_argument("expm: matrix must be square (" + std::to_string(n) +
+                                    " x " + std::to_string(A_in.num_cols()) + ")");
+
+    const R zero = math::zero<R>();
+    const R one = math::one<R>();
+    const R two = one + one;
+
+    // Copy A, watching for a NaN or infinite entry: x - x is zero for finite x
+    // only. (one_norm cannot be used to detect one: its max skips a NaN.)
+    mat::dense2D<T> A(n, n);
+    bool finite = true;
+    R bad = zero;
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j) {
+            A(i, j) = A_in(i, j);
+            const R a = detail::generic_abs(A(i, j));
+            if (!(a - a == zero)) { finite = false; bad = a - a; }
+        }
+    if (n == 0) return A;
+    if (!finite) {
+        const T nan = T(bad);
+        for (size_type i = 0; i < n; ++i)
+            for (size_type j = 0; j < n; ++j) A(i, j) = nan;
+        return A;
+    }
+
+    const R normA = one_norm(A);
+    if (normA == zero) {                           // exp(0) = I
+        for (size_type i = 0; i < n; ++i) A(i, i) = math::one<T>();
+        return A;
+    }
+
+    const auto& row = ex::theta_table[ex::table_index<R>()];
+    std::array<R, 5> theta;
+    for (std::size_t k = 0; k < 5; ++k) theta[k] = static_cast<R>(row.theta[k]);
+    const R u = detail::unit_roundoff<R>();
+
+    // Smallest s with ||A|| <= theta_13 2^s: the scaling chosen from the norm
+    // alone, as in Higham (2005), and an upper bound on the one chosen below
+    // (every alpha_p is at most ||A||).
+    auto s_by_norm = [&](R norm) {
+        int s = 0;
+        for (R x = theta[4]; norm > x && s < ex::loop_cap; x = x * two) ++s;
+        return s;
+    };
+
+    // Pre-scaling. The powers up to A^8, and products of their norms up to
+    // ||A||^10, are formed before the scaling is applied, as in Algorithm 6.1.
+    // For a large ||A|| in a type with a narrow exponent range (float: A^10
+    // overflows at ||A|| ~ 7e3) that overflows, so A is first scaled by 2^-s_pre to
+    // bring ||A|| within theta_13 2^K, K = max_exponent / 10 - 4. This only
+    // limits how far the alpha_p refinement can lower s, to K steps below
+    // the norm-based choice. A type without numeric_limits is not pre-scaled.
+    int s_pre = 0;
+    if constexpr (std::numeric_limits<R>::is_specialized && std::numeric_limits<R>::radix == 2) {
+        const int K = std::max(0, std::numeric_limits<R>::max_exponent / 10 - 4);
+        const int s_norm = s_by_norm(normA);
+        if (s_norm > K) s_pre = s_norm - K;
+    }
+
+    // Upper triangular A: the squaring phase recomputes the diagonal and first
+    // superdiagonal exactly (Al-Mohy & Higham 2009, Code Fragment 2.1). Keep
+    // them from A before any scaling; they are scaled to match below.
+    bool triangular = false;
+    std::vector<T> tri_d, tri_t;
+    if constexpr (ex::adl::has_exp_sinh<T>) {
+        triangular = true;
+        for (size_type i = 1; i < n && triangular; ++i)
+            for (size_type j = 0; j < i; ++j)
+                if (!(A(i, j) == math::zero<T>())) { triangular = false; break; }
+        if (triangular) {
+            tri_d.resize(n);
+            tri_t.resize(n > 0 ? n - 1 : 0);
+            for (size_type i = 0; i < n; ++i) tri_d[i] = A(i, i);
+            for (size_type i = 0; i + 1 < n; ++i) tri_t[i] = A(i, i + 1);
+        }
+    }
+
+    if (s_pre > 0) ex::scale_by(A, ex::pow2<R>(-1), s_pre);
+    const R normB = s_pre > 0 ? one_norm(A) : normA;
+
+    // ---- Degree and scaling (Al-Mohy & Higham 2009, Algorithm 6.1) ----------
+    //
+    // The backward error of r_m(X) is bounded by the series sum_k |c_k| over
+    // even powers j >= 2m of X, so any beta with ||X^j|| <= beta^j for every
+    // even j >= 2m bounds it as theta_m bounds ||X||. Exact norms n2, n4, n6
+    // of A^2, A^4, A^6 give such betas:
+    //   every even j >= 4 is 4a + 6b:       beta = max(d4, d6)    m = 3, 5
+    //   every even j >= 12 is 6a + 8b:      beta = max(d6, d8)    m = 7, 9, 13
+    //   every even j >= 24 is 8a + 10b:     beta = max(d8, d10)   m = 13
+    // with d_k = ||A^k||^(1/k), and d8, d10 replaced by the submultiplicative
+    // bounds ||A^8|| <= min(n4^2, n2 n6), ||A^10|| <= min(n4 n6, n2 n4^2, n2^2 n6).
+    // "beta <= x" is tested as ||A^k|| <= x^k, with no k-th roots.
+    const std::array<long, 5> L = ex::ell_log2(A, normB, u);
+
+    auto pw = [](R x, int k) { R y = x; for (int i = 1; i < k; ++i) y = y * x; return y; };
+
+    mat::dense2D<T> A2(n, n), A4(n, n), A6(n, n), A8;
+    mult<Accumulator>(A, A, A2);
+    const R n2 = one_norm(A2);
+
+    int mi = -1;                                   // index into degrees
+    int s = 0;
+
+    // A^2 alone: every even j is 2a, beta = d2.
+    if (n2 <= pw(theta[0], 2) && ex::ell(L[0], 3, 0) == 0) mi = 0;
+
+    if (mi < 0) {
+        mult<Accumulator>(A2, A2, A4);
+        const R n4 = one_norm(A4);
+        // d6 bounded by (n2 n4)^(1/6) until A^6 is formed.
+        auto eta1_ub = [&](R x) { return n4 <= pw(x, 4) && n2 * n4 <= pw(x, 6); };
+        for (int k = 0; k < 2 && mi < 0; ++k)
+            if (eta1_ub(theta[k]) && ex::ell(L[k], ex::degrees[k], 0) == 0) mi = k;
+
+        if (mi < 0) {
+            mult<Accumulator>(A2, A4, A6);
+            const R n6 = one_norm(A6);
+            const R n8 = std::min(n4 * n4, n2 * n6);
+            const R n10 = std::min(std::min(n4 * n6, n2 * n4 * n4), n2 * n2 * n6);
+            auto eta1 = [&](R x) { return n4 <= pw(x, 4) && n6 <= pw(x, 6); };
+            auto eta3 = [&](R x) { return n6 <= pw(x, 6) && n8 <= pw(x, 8); };
+            auto eta4 = [&](R x) { return n8 <= pw(x, 8) && n10 <= pw(x, 10); };
+            for (int k = 0; k < 2 && mi < 0; ++k)
+                if (eta1(theta[k]) && ex::ell(L[k], ex::degrees[k], 0) == 0) mi = k;
+            for (int k = 2; k < 4 && mi < 0; ++k)
+                if (eta3(theta[k]) && ex::ell(L[k], ex::degrees[k], 0) == 0) mi = k;
+            if (mi < 0) {
+                mi = 4;
+                const int s_max = s_by_norm(normB);
+                R x = theta[4];
+                while (s < s_max && !(eta3(x) || eta4(x))) { x = x * two; ++s; }
+                s += ex::ell(L[4], 13, s);
+            }
+        }
+    }
+    const int m = ex::degrees[static_cast<std::size_t>(mi)];
+
+    // ---- Pade approximant r_m(2^-s A) ---------------------------------------
+    if (s > 0) {
+        // f = 2^-s is in range whenever s is, since s <= s_by_norm(||A||); its
+        // powers need not be, so A^k is scaled by f k times.
+        const R f = ex::pow2<R>(-s);
+        ex::scale_by(A, f, 1);
+        ex::scale_by(A2, f, 2);
+        ex::scale_by(A4, f, 4);
+        ex::scale_by(A6, f, 6);
+    }
+    if (m == 9) {
+        A8 = mat::dense2D<T>(n, n);
+        mult<Accumulator>(A4, A4, A8);
+    }
+
+    const std::vector<T> b = ex::pade_coefficients<T, R>(m);
+    mat::dense2D<T> U(n, n), V(n, n), W(n, n);
+    switch (m) {
+    case 3:
+        ex::combine(W, b[1], {{b[3], &A2}});
+        ex::combine(V, b[0], {{b[2], &A2}});
+        break;
+    case 5:
+        ex::combine(W, b[1], {{b[3], &A2}, {b[5], &A4}});
+        ex::combine(V, b[0], {{b[2], &A2}, {b[4], &A4}});
+        break;
+    case 7:
+        ex::combine(W, b[1], {{b[3], &A2}, {b[5], &A4}, {b[7], &A6}});
+        ex::combine(V, b[0], {{b[2], &A2}, {b[4], &A4}, {b[6], &A6}});
+        break;
+    case 9:
+        ex::combine(W, b[1], {{b[3], &A2}, {b[5], &A4}, {b[7], &A6}, {b[9], &A8}});
+        ex::combine(V, b[0], {{b[2], &A2}, {b[4], &A4}, {b[6], &A6}, {b[8], &A8}});
+        break;
+    default: {                                     // 13
+        // W = A6 (b13 A6 + b11 A4 + b9 A2) + b7 A6 + b5 A4 + b3 A2 + b1 I
+        // V = A6 (b12 A6 + b10 A4 + b8 A2) + b6 A6 + b4 A4 + b2 A2 + b0 I
+        mat::dense2D<T> Z(n, n), P(n, n);
+        ex::combine(Z, math::zero<T>(), {{b[13], &A6}, {b[11], &A4}, {b[9], &A2}});
+        mult<Accumulator>(A6, Z, P);
+        ex::combine(W, b[1], {{math::one<T>(), &P}, {b[7], &A6}, {b[5], &A4}, {b[3], &A2}});
+        ex::combine(Z, math::zero<T>(), {{b[12], &A6}, {b[10], &A4}, {b[8], &A2}});
+        mult<Accumulator>(A6, Z, P);
+        ex::combine(V, b[0], {{math::one<T>(), &P}, {b[6], &A6}, {b[4], &A4}, {b[2], &A2}});
+        break;
+    }
+    }
+    mult<Accumulator>(A, W, U);                    // U: the odd part of p_m
+
+    // q_m(X) = V - U, p_m(X) = V + U; X = q_m^-1 p_m, one column at a time.
+    mat::dense2D<T> Q(n, n), X(n, n);
+    const T minus_one = math::zero<T>() - math::one<T>();
+    ex::combine(Q, math::zero<T>(), {{math::one<T>(), &V}, {minus_one, &U}});
+    std::vector<size_type> pivot;
+    if (lu_factor<Accumulator>(Q, pivot) != 0)
+        throw std::runtime_error("expm: Pade denominator is singular");
+    vec::dense_vector<T> rhs(n), col(n);
+    for (size_type j = 0; j < n; ++j) {
+        for (size_type i = 0; i < n; ++i) rhs(i) = V(i, j) + U(i, j);
+        lu_solve<Accumulator>(Q, pivot, col, rhs);
+        for (size_type i = 0; i < n; ++i) X(i, j) = col(i);
+    }
+
+    // ---- Squaring: X <- X^2, s + s_pre times --------------------------------
+    const int squarings = s + s_pre;
+    if constexpr (ex::adl::has_exp_sinh<T>) {
+        if (triangular) {
+            // 2^-squarings A's diagonal and superdiagonal, doubled each step.
+            const T half_t = T(ex::pow2<R>(-1));
+            for (int r = 0; r < squarings; ++r) {
+                for (auto& v : tri_d) v = v * half_t;
+                for (auto& v : tri_t) v = v * half_t;
+            }
+            ex::set_triangular_exact(X, tri_d, tri_t);
+        }
+    }
+    mat::dense2D<T> Y(n, n);
+    for (int r = 0; r < squarings; ++r) {
+        mult<Accumulator>(X, X, Y);
+        std::swap(X, Y);
+        if constexpr (ex::adl::has_exp_sinh<T>) {
+            if (triangular) {
+                const T two_t = T(two);
+                for (auto& v : tri_d) v = v * two_t;
+                for (auto& v : tri_t) v = v * two_t;
+                ex::set_triangular_exact(X, tri_d, tri_t);
+            }
+        }
+    }
+    return X;
+}
+
+} // namespace mtl
