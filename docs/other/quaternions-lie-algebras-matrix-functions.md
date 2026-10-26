@@ -1,7 +1,7 @@
 # Quaternions, Lie Algebras and Matrix Functions in MTL5
 
 **Date**: 2026-10-25
-**Status**: Assessment. The recommended work, `expm`/`logm`/`sqrtm`, is drafted as an issue.
+**Status**: Assessment. The recommended work, `expm`/`logm`/`sqrtm`, is #650.
 
 The question was whether MTL5 should have, or know about, quaternions and Lie
 algebras. Neither belongs in MTL5 as a type of its own. Both point to something
@@ -92,12 +92,13 @@ apart from the element-wise `exp`, `log` and `sqrt`.
 
 How accurate scaling and squaring is depends on the Padé degree `m` and the
 scaling `s`. Both are chosen against tables of `θ_m`, which are derived from
-the unit roundoff, and the published tables cover IEEE single and double. MTL5
+the unit roundoff; Higham (2005) derives them for IEEE double precision. MTL5
 runs on float, double, double-double, posits and other custom types, so the
 degree selection has to follow `numeric_limits<T>::epsilon()` rather than a
 fixed table. Fasi & Higham (2019) give an arbitrary-precision scaling and
-squaring algorithm. Choosing precisions within the computation is the kind of
-mixed-precision algorithm design MTL5 exists for.
+squaring algorithm that takes the unit roundoff as input. Choosing precisions
+within the computation is the kind of mixed-precision algorithm design MTL5
+exists for.
 
 ## Recommendation
 
@@ -116,12 +117,14 @@ mixed-precision algorithm design MTL5 exists for.
 
 - N. J. Higham, *Functions of Matrices: Theory and Computation*, SIAM, 2008.
 - N. J. Higham, "The scaling and squaring method for the matrix exponential
-  revisited", SIAM J. Matrix Anal. Appl., 2005.
+  revisited", SIAM J. Matrix Anal. Appl. 26(4), 1179–1193, 2005.
 - A. H. Al-Mohy and N. J. Higham, "A new scaling and squaring algorithm for the
-  matrix exponential", SIAM J. Matrix Anal. Appl., 2009.
+  matrix exponential", SIAM J. Matrix Anal. Appl. 31(3), 970–989, 2009.
 - A. H. Al-Mohy and N. J. Higham, "Improved inverse scaling and squaring
-  algorithms for the matrix logarithm", SIAM J. Sci. Comput., 2012.
+  algorithms for the matrix logarithm", SIAM J. Sci. Comput. 34(4), C152–C169,
+  2012.
 - Å. Björck and S. Hammarling, "A Schur method for the square root of a
-  matrix", Linear Algebra Appl., 1983.
+  matrix", Linear Algebra Appl. 52/53, 127–140, 1983.
 - M. Fasi and N. J. Higham, "An arbitrary precision scaling and squaring
-  algorithm for the matrix exponential", SIAM J. Matrix Anal. Appl., 2019.
+  algorithm for the matrix exponential", SIAM J. Matrix Anal. Appl. 40(4),
+  1233–1256, 2019.
