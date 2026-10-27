@@ -207,6 +207,7 @@
 #include <mtl/operation/eigenvalue_symmetric.hpp>
 #include <mtl/operation/eigenvalue_symmetric_jacobi.hpp>
 #include <mtl/operation/eigenvalue.hpp>
+#include <mtl/operation/schur.hpp>
 #include <mtl/operation/svd.hpp>
 #include <mtl/operation/spectral_properties.hpp>
 #include <mtl/operation/kron.hpp>

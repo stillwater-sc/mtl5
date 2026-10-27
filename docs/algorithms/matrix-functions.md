@@ -328,8 +328,10 @@ where double's θ_m table is the wrong one.
 
 Issue #650 has four phases. `expm` is phase 1.
 
-- **Phase 2:** `schur(A)`, which returns `Q` and the quasi-triangular `T`, and a
-  triangular Sylvester solver.
+- **Phase 2:** `schur(A)`, which returns `Q` and the quasi-triangular `T`, is
+  done, with `rsf2csf` for the complex triangular form; see
+  [Schur decomposition](eigenvalues.md#schur-decomposition). A triangular
+  Sylvester solver and the complex Schur form of a complex matrix follow.
 - **Phase 3:** `sqrtm`, by the Schur method (Björck & Hammarling 1983; Higham
   1987 for real matrices), and `logm`, by inverse scaling and squaring (Al-Mohy &
   Higham 2012).

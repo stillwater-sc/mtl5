@@ -65,6 +65,18 @@ void dgeev_(const char* jobvl, const char* jobvr, const int* n,
             double* vl, const int* ldvl, double* vr, const int* ldvr,
             double* work, const int* lwork, int* info);
 
+// Real Schur decomposition with Schur vectors (no eigenvalue ordering here)
+using gees_select_s = int (*)(const float*, const float*);
+using gees_select_d = int (*)(const double*, const double*);
+void sgees_(const char* jobvs, const char* sort, gees_select_s select, const int* n,
+            float* A, const int* lda, int* sdim, float* wr, float* wi,
+            float* vs, const int* ldvs, float* work, const int* lwork,
+            int* bwork, int* info);
+void dgees_(const char* jobvs, const char* sort, gees_select_d select, const int* n,
+            double* A, const int* lda, int* sdim, double* wr, double* wi,
+            double* vs, const int* ldvs, double* work, const int* lwork,
+            int* bwork, int* info);
+
 // Solve using LU factorization (after getrf)
 void sgetrs_(const char* trans, const int* n, const int* nrhs,
              const float* A, const int* lda, const int* ipiv,
@@ -225,6 +237,27 @@ inline int geev(char jobvl, char jobvr, int n, double* A, int lda,
     int info = 0;
     dgeev_(&jobvl, &jobvr, &n, A, &lda, wr, wi, vl, &ldvl, vr, &ldvr,
            work, &lwork, &info);
+    return info;
+}
+
+// -- Real Schur decomposition (gees, unsorted) ---------------------------
+
+inline int gees(char jobvs, int n, float* A, int lda, float* wr, float* wi,
+                float* vs, int ldvs, float* work, int lwork, int* bwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    const char sort = 'N';
+    int sdim = 0, info = 0;
+    sgees_(&jobvs, &sort, nullptr, &n, A, &lda, &sdim, wr, wi, vs, &ldvs,
+           work, &lwork, bwork, &info);
+    return info;
+}
+inline int gees(char jobvs, int n, double* A, int lda, double* wr, double* wi,
+                double* vs, int ldvs, double* work, int lwork, int* bwork) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    const char sort = 'N';
+    int sdim = 0, info = 0;
+    dgees_(&jobvs, &sort, nullptr, &n, A, &lda, &sdim, wr, wi, vs, &ldvs,
+           work, &lwork, bwork, &info);
     return info;
 }
 
