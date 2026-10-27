@@ -9,16 +9,29 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <vector>
+#include <string_view>
+#include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/detail/unit_roundoff.hpp>
 
 namespace mtl::detail {
 
 /// Constants for lanv2(): the relative precision and the power-of-two scale
-/// window of LAPACK's dlanv2. `have_range` is false for a type without
-/// numeric_limits, which then skips the rescaling loop (it only guards against
-/// overflow and underflow in tau).
+/// window of LAPACK's dlanv2. The field names are dlanv2's, so the port can be
+/// read side by side with the Fortran:
+///
+/// - `eps`: the machine epsilon of T (dlanv2's EPS, from dlamch('P')).
+/// - `safmn2`: a "safe minimum". LAPACK's SAFMIN, dlamch('S'), is the safe
+///   minimum, the smallest positive number whose reciprocal does not overflow.
+///   SAFMN2 (the 2 sets it apart from SAFMIN) is derived from it: the power of
+///   two nearest sqrt(SAFMIN / EPS) from below. Its square is still a normal
+///   number, with a margin of 1/EPS, so entries that small can be multiplied
+///   without underflow. dlanv2 rescales a block whose entries fall below it.
+/// - `safmx2`: the matching "safe maximum", 1 / safmn2. dlanv2 rescales a
+///   block whose entries rise above it.
+/// - `have_range`: false for a type without numeric_limits. That type then
+///   skips the rescaling loop, which only guards against overflow and
+///   underflow in tau.
 template <typename T>
 struct lanv2_constants {
     T eps{};
@@ -46,7 +59,11 @@ lanv2_constants<T> make_lanv2_constants() {
     return c;
 }
 
-/// sqrt(x^2 + y^2) without avoidable overflow or underflow (LAPACK dlapy2).
+/// sqrt(x^2 + y^2) without avoidable overflow or underflow. This is LAPACK's
+/// dlapy2: "la" marks a LAPACK auxiliary routine, "py" Pythagoras, and "2" the
+/// two arguments (dlapy3 takes three). std::hypot computes the same thing but
+/// only for the built-in floating-point types, so this generic version is
+/// used for user-defined types too.
 template <typename T>
 T lapy2(T x, T y) {
     using std::abs;
@@ -59,27 +76,59 @@ T lapy2(T x, T y) {
     return w * sqrt(T(1) + q * q);
 }
 
-/// Fortran SIGN(a, b): |a| with the sign of b.
+/// |a| with the sign of b, where b == 0 counts as positive. This is Fortran's
+/// intrinsic SIGN(a, b), which the EISPACK and LAPACK code ported here uses.
+/// It is not std::copysign. That function exists only for the built-in
+/// floating-point types, and it gives -0.0 its negative sign: copysign(1, -0.0)
+/// is -1, while with_sign_of(1, -0.0) is 1. eigenvalue() has always treated
+/// zero as positive, and keeping that keeps its results bit-identical.
 template <typename T>
-T fsign(T a, T b) {
+T with_sign_of(T a, T b) {
     using std::abs;
     return (b >= T(0)) ? abs(a) : -abs(a);
 }
 
-/// LAPACK dlanv2: the Schur factorization of a real 2x2 block in standard form,
+/// The Schur factorization of a real 2x2 block in standard form,
 ///
 ///   [a b]   [cs -sn] [aa bb] [ cs sn]
 ///   [c d] = [sn  cs] [cc dd] [-sn cs]
 ///
-/// On return (a, b, c, d) holds (aa, bb, cc, dd). Either cc == 0, so the
-/// eigenvalues aa and dd are real, or aa == dd and bb*cc < 0, so they are the
-/// complex pair aa +- sqrt(bb*cc). (rt1r, rt1i) and (rt2r, rt2i) are the
-/// eigenvalues.
+/// where cs and sn are the cosine and sine of a plane rotation. On return
+/// (a, b, c, d) holds (aa, bb, cc, dd), in one of two forms:
+///
+/// - cc == 0: the block is upper triangular, and its real eigenvalues are
+///   aa and dd.
+/// - aa == dd and bb*cc < 0: the eigenvalues are the complex pair
+///   aa +- i sqrt(-bb*cc).
+///
+/// That is the form LAPACK's gees returns for each 2x2 block, and the form
+/// Higham's real square root (sqrtm) relies on.
+///
+/// The eigenvalues are returned as roots of the block's characteristic
+/// polynomial, under LAPACK's names: rt1r and rt1i are the real and imaginary
+/// parts of root 1, and rt2r and rt2i those of root 2. For a complex pair,
+/// rt1i > 0 and rt2i = -rt1i.
+///
+/// **Name and origin.** This is a port of LAPACK's dlanv2. In LAPACK's naming,
+/// the first letter is the arithmetic: s for float, d for double, and c or z
+/// for the complex types. "la" marks an auxiliary routine. LAPACK does not
+/// expand the remaining letters; the routine handles the nonsymmetric 2x2
+/// case. Here the arithmetic is the template parameter T instead of a letter,
+/// so the routine is named lanv2: lanv2<float> is slanv2, lanv2<double> is
+/// dlanv2, and lanv2<posit<32,2>> is the same algorithm in posit arithmetic.
+/// The local names follow dlanv2 so the two can be compared line by line.
+/// They are explained where they are defined.
+///
+/// One change from dlanv2: the scale window comes from lanv2_constants, so a
+/// type without numeric_limits skips the rescaling. Fortran's SIGN is
+/// with_sign_of().
 template <typename T>
 void lanv2(T& a, T& b, T& c, T& d, T& rt1r, T& rt1i, T& rt2r, T& rt2i,
            T& cs, T& sn, const lanv2_constants<T>& k) {
     using std::abs;
     using std::sqrt;
+    // multpl: dlanv2's MULTPL, the multiple of eps below which the
+    // discriminant is treated as zero.
     const T zero(0), one(1), half(0.5), multpl(4);
     if (c == zero) {
         cs = one; sn = zero;
@@ -89,18 +138,21 @@ void lanv2(T& a, T& b, T& c, T& d, T& rt1r, T& rt1i, T& rt2r, T& rt2i,
         const T temp = d;
         d = a; a = temp;
         b = -c; c = zero;
-    } else if ((a - d) == zero && fsign(one, b) != fsign(one, c)) {
+    } else if ((a - d) == zero && with_sign_of(one, b) != with_sign_of(one, c)) {
         cs = one; sn = zero;
     } else {
         T temp = a - d;
         T p = half * temp;
+        // b*c enters only as (bcmax / scale) * bcmis, so it is never formed
+        // unscaled and cannot overflow. bcmax = max(|b|, |c|), and bcmis
+        // (read as "min with sign") is min(|b|, |c|) carrying the sign of b*c.
         const T bcmax = abs(b) < abs(c) ? abs(c) : abs(b);
-        const T bcmis = (abs(b) < abs(c) ? abs(b) : abs(c)) * fsign(one, b) * fsign(one, c);
+        const T bcmis = (abs(b) < abs(c) ? abs(b) : abs(c)) * with_sign_of(one, b) * with_sign_of(one, c);
         T scale = abs(p) < bcmax ? bcmax : abs(p);
         T z = (p / scale) * p + (bcmax / scale) * bcmis;
         if (z >= multpl * k.eps) {
             // Real eigenvalues: compute a and d.
-            z = p + fsign(sqrt(scale) * sqrt(z), p);
+            z = p + with_sign_of(sqrt(scale) * sqrt(z), p);
             a = d + z;
             d = d - (bcmax / z) * bcmis;
             const T tau = lapy2(c, z);
@@ -125,7 +177,7 @@ void lanv2(T& a, T& b, T& c, T& d, T& rt1r, T& rt1i, T& rt2r, T& rt2i,
             p = half * temp;
             T tau = lapy2(sigma, temp);
             cs = sqrt(half * (one + abs(sigma) / tau));
-            sn = -(p / (tau * cs)) * fsign(one, sigma);
+            sn = -(p / (tau * cs)) * with_sign_of(one, sigma);
 
             // [aa bb; cc dd] = [a b; c d] [cs -sn; sn cs]
             const T aa =  a * cs + b * sn;
@@ -143,16 +195,20 @@ void lanv2(T& a, T& b, T& c, T& d, T& rt1r, T& rt1i, T& rt2r, T& rt2i,
             d = temp;
             if (c != zero) {
                 if (b != zero) {
-                    if (fsign(one, b) == fsign(one, c)) {
+                    if (with_sign_of(one, b) == with_sign_of(one, c)) {
                         // Real eigenvalues: reduce to upper triangular form.
-                        const T sab = sqrt(abs(b));
-                        const T sac = sqrt(abs(c));
-                        p = fsign(sab * sac, c);
+                        const T sab = sqrt(abs(b));   // sab = sqrt of absolute b
+                        const T sac = sqrt(abs(c));   // sac = sqrt of absolute c
+                        p = with_sign_of(sab * sac, c);
                         tau = one / sqrt(abs(b + c));
                         a = temp + p;
                         d = temp - p;
                         b = b - c;
                         c = zero;
+                        // (cs1, sn1): cosine and sine of a second rotation,
+                        // the one that makes this block upper triangular. It
+                        // is folded into the first, (cs, sn), so the caller
+                        // applies a single rotation.
                         const T cs1 = sab * tau;
                         const T sn1 = sac * tau;
                         temp = cs * cs1 - sn * sn1;
@@ -180,25 +236,31 @@ void lanv2(T& a, T& b, T& c, T& d, T& rt1r, T& rt1i, T& rt2r, T& rt2i,
     }
 }
 
-/// Options for francis_qr(). `deflation_floor` and `lanv2` are used only when
-/// the Schur form is wanted.
+/// What francis_qr() computes.
+enum class francis_output {
+    eigenvalues,    ///< eigenvalues only (EISPACK hqr); H is left as working storage
+    schur_form      ///< the real Schur form T, and its Schur vectors when asked (EISPACK hqr2)
+};
+
+/// Options for francis_qr(). `deflation_floor` and `lanv2` are used only for
+/// francis_output::schur_form.
 template <typename T>
 struct francis_options {
     T tol{};                    ///< relative deflation tolerance
     int max_its = 100;          ///< sweeps per eigenvalue before giving up
     T deflation_floor{};        ///< absolute floor for a negligible subdiagonal
     lanv2_constants<T> lanv2{};
-    const char* who = "mtl::eigenvalue";
+    std::string_view who = "mtl::eigenvalue";  ///< prefix of the error message
 };
 
 /// Francis implicit double-shift QR on the upper Hessenberg H (EISPACK hqr /
 /// hqr2). Fills wr, wi (size n) with the eigenvalues.
 ///
-/// WantT == false: eigenvalues only. Each sweep touches only the active block,
+/// francis_output::eigenvalues: eigenvalues only. Each sweep touches only the active block,
 /// and H is left as working storage. This is the loop eigenvalue() has always
 /// run, operation for operation.
 ///
-/// WantT == true: H is reduced to the real Schur form T. Every transformation
+/// francis_output::schur_form: H is reduced to the real Schur form T. Every transformation
 /// is applied to the whole of T and, when Z != nullptr, accumulated into Z's
 /// columns, so A = Z T Z^T holds for the Z and H that came in as A = Z H Z^T.
 /// Each 2x2 block is put into standard form by lanv2(), the exceptional shift is
@@ -207,10 +269,11 @@ struct francis_options {
 /// the caller to clear.
 ///
 /// Throws std::runtime_error when an eigenvalue takes more than max_its sweeps.
-template <bool WantT, typename T>
+template <francis_output Output, typename T>
 void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
-                std::vector<T>& wr, std::vector<T>& wi,
+                vec::dense_vector<T>& wr, vec::dense_vector<T>& wi,
                 const francis_options<T>& opt) {
+    constexpr bool want_schur = Output == francis_output::schur_form;
     using size_type = typename mat::dense2D<T>::size_type;
     using std::abs;
     using std::sqrt;
@@ -220,14 +283,9 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
     const idx last = static_cast<idx>(n) - 1;
     const value_type tol = opt.tol;
     const int max_its = opt.max_its;
-    wr.assign(n, value_type(0));
-    wi.assign(n, value_type(0));
+    wr = vec::dense_vector<value_type>(n, value_type(0));
+    wi = vec::dense_vector<value_type>(n, value_type(0));
     if (n == 0) return;
-
-    // sign(a,b): magnitude of a with the sign of b.
-    auto sign = [](value_type a, value_type b) {
-        return (b >= value_type(0)) ? abs(a) : -abs(a);
-    };
 
     // Rotation [cs sn; -sn cs] of rows/columns k, k+1 that lanv2 computed for
     // the block at k: the rest of T, then Z.
@@ -267,7 +325,7 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
             for (l = nn; l >= 1; --l) {
                 value_type s = abs(H(l - 1, l - 1)) + abs(H(l, l));
                 if (s == value_type(0)) s = anorm;
-                if constexpr (WantT) {
+                if constexpr (want_schur) {
                     const value_type h = abs(H(l, l - 1));
                     if (h <= tol * s || h <= opt.deflation_floor) { H(l, l - 1) = value_type(0); break; }
                 } else {
@@ -281,13 +339,13 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
                 // One real root.
                 wr[static_cast<size_type>(nn)] = x + t;
                 wi[static_cast<size_type>(nn)] = value_type(0);
-                if constexpr (WantT) H(nn, nn) = x + t;
+                if constexpr (want_schur) H(nn, nn) = x + t;
                 nn -= 1;
             } else {
                 value_type y = H(nn - 1, nn - 1);
                 value_type w = H(nn, nn - 1) * H(nn - 1, nn);
                 if (l == nn - 1) {
-                    if constexpr (WantT) {
+                    if constexpr (want_schur) {
                         // Two roots: restore the shift, then put the block in
                         // standard form and carry its rotation through T and Z.
                         const idx k = nn - 1;
@@ -308,7 +366,7 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
                         value_type z = sqrt(abs(q));
                         x += t;
                         if (q >= value_type(0)) {
-                            z = p + sign(z, p);
+                            z = p + with_sign_of(z, p);
                             wr[static_cast<size_type>(nn - 1)] = wr[static_cast<size_type>(nn)] = x + z;
                             if (z != value_type(0)) wr[static_cast<size_type>(nn)] = x - w / z;
                             wi[static_cast<size_type>(nn - 1)] = wi[static_cast<size_type>(nn)] = value_type(0);
@@ -327,7 +385,7 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
                     value_type p = value_type(0), q = value_type(0), r = value_type(0);
                     value_type z = value_type(0);
                     bool exceptional;
-                    if constexpr (WantT) exceptional = its > 0 && its % 10 == 0;
+                    if constexpr (want_schur) exceptional = its > 0 && its % 10 == 0;
                     else                 exceptional = its == 10 || its == 20;
                     if (exceptional) {
                         // Exceptional (ad-hoc Wilkinson) shift to break stagnation.
@@ -363,8 +421,8 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
 
                     // The Schur form updates the whole of T; eigenvalues alone
                     // need only the active block l..nn.
-                    const idx jlast  = WantT ? last : nn;
-                    const idx ifirst = WantT ? idx(0) : l;
+                    const idx jlast  = want_schur ? last : nn;
+                    const idx ifirst = want_schur ? idx(0) : l;
 
                     // Chase the bulge with Householder(3)/(2) transforms.
                     for (idx k = m; k <= nn - 1; ++k) {
@@ -376,7 +434,7 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
                             x = abs(p) + abs(q) + abs(r);
                             if (x != value_type(0)) { p /= x; q /= x; r /= x; }
                         }
-                        value_type s = sign(sqrt(p * p + q * q + r * r), p);
+                        value_type s = with_sign_of(sqrt(p * p + q * q + r * r), p);
                         if (s != value_type(0)) {
                             if (k == m) {
                                 if (l != m) H(k, k - 1) = -H(k, k - 1);
@@ -408,7 +466,7 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
                                 H(i, k)     -= p;
                             }
                             // Accumulate the transformation into Z.
-                            if constexpr (WantT) {
+                            if constexpr (want_schur) {
                                 if (Z != nullptr)
                                     for (size_type i = 0; i < n; ++i) {
                                         p = x * (*Z)(i, k) + y * (*Z)(i, k + 1);

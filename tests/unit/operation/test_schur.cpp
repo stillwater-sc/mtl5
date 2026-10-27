@@ -358,11 +358,17 @@ TEST_CASE("schur: hessenberg_extract_Q, real and complex", "[operation][schur]")
 TEST_CASE("rsf2csf: complex triangular Schur form", "[operation][schur]") {
     using C = std::complex<double>;
     std::mt19937_64 g(11);
+    // The scaled cases hold 2x2 blocks whose off-diagonal product overflows
+    // (1e200) or underflows (1e-200) unless rsf2csf scales it. Residuals are
+    // formed on the entries divided by the scale, so their squares stay finite.
+    for (double scale : {1.0, 1e200, 1e-200})
     for (family f : {dense_random, cyclic, skew_tridiagonal, companion}) {
         auto A = make<double>(f, 9, g);
+        const std::size_t n = A.num_rows();
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j) A(i, j) = A(i, j) * scale;
         auto [Q, R] = schur(A);
         auto [U, S] = rsf2csf(Q, R);
-        const std::size_t n = A.num_rows();
         const double eps = std::numeric_limits<double>::epsilon();
         double back = 0, orth = 0, na = 0;
         for (std::size_t i = 0; i < n; ++i)
@@ -370,26 +376,32 @@ TEST_CASE("rsf2csf: complex triangular Schur form", "[operation][schur]") {
                 if (i > j) CHECK(S(i, j) == C(0));
                 C s(0), o(0);
                 for (std::size_t k = 0; k < n; ++k) {
-                    for (std::size_t l = 0; l < n; ++l) s += U(i, k) * S(k, l) * std::conj(U(j, l));
+                    for (std::size_t l = 0; l < n; ++l) s += U(i, k) * (S(k, l) / scale) * std::conj(U(j, l));
                     o += std::conj(U(k, i)) * U(k, j);
                 }
-                back += std::norm(C(A(i, j)) - s);
-                na += std::norm(C(A(i, j)));
+                back += std::norm(C(A(i, j) / scale) - s);
+                na += std::norm(C(A(i, j) / scale));
                 orth += std::norm(o - C(i == j ? 1.0 : 0.0));
             }
-        INFO("family " << int(f));
+        INFO("family " << int(f) << ", scale " << scale);
         CHECK(std::sqrt(back / na) <= 10 * n * eps);
         CHECK(std::sqrt(orth) <= 10 * n * eps);
 
         // S's diagonal holds the eigenvalues, the positive imaginary part first
         // in each pair that came from a 2x2 block.
+        // Compared unscaled, where sort_eigs's tie tolerance applies.
         auto e = block_eigenvalues(R);
+        for (auto& x : e) x /= static_cast<long double>(scale);
+        sort_eigs(e);
         std::vector<std::complex<long double>> d;
-        for (std::size_t k = 0; k < n; ++k) d.emplace_back(S(k, k).real(), S(k, k).imag());
+        for (std::size_t k = 0; k < n; ++k) {
+            const C sk = S(k, k) / scale;
+            d.emplace_back(sk.real(), sk.imag());
+        }
         for (std::size_t k = 0; k + 1 < n; ++k)
             if (R(k + 1, k) != 0.0) {
                 CHECK(S(k, k).imag() > 0);
-                CHECK(std::abs(S(k + 1, k + 1) - std::conj(S(k, k))) <= 10 * eps);
+                CHECK(std::abs(S(k + 1, k + 1) / scale - std::conj(S(k, k)) / scale) <= 10 * eps);
             }
         sort_eigs(d);
         for (std::size_t k = 0; k < n; ++k) CHECK(std::abs(d[k] - e[k]) <= 1e-13L);

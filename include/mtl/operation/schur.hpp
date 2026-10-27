@@ -12,6 +12,7 @@
 // comparisons, and abs and sqrt by ADL, so it runs for posits, cfloats, LNS,
 // double-double and the other user-defined real types. dense2D<float/double>
 // dispatch to LAPACK gees when MTL5_HAS_LAPACK is defined.
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <concepts>
@@ -185,8 +186,8 @@ auto schur(const M& A) {
             std::numeric_limits<value_type>::min() * (value_type(double(n)) / opt.tol);
         if (floor > value_type(0) && floor < opt.tol) opt.deflation_floor = floor;
     }
-    std::vector<value_type> wr, wi;
-    detail::francis_qr<true>(r.T, &r.Q, wr, wi, opt);
+    vec::dense_vector<value_type> wr, wi;
+    detail::francis_qr<detail::francis_output::schur_form>(r.T, &r.Q, wr, wi, opt);
 
     // The bulge chase leaves stale entries below the subdiagonal.
     for (size_type i = 2; i < n; ++i)
@@ -226,7 +227,12 @@ schur_result<std::complex<Value>> rsf2csf(const mat::dense2D<Value>& Q, const ma
         // imaginary part, which the rotation moves to position m - 1.
         const C a = r.T(m - 1, m - 1), b = r.T(m - 1, m), c = r.T(m, m - 1), d = r.T(m, m);
         const C half_diff = (a - d) / Value(2);
-        C disc = std::sqrt(half_diff * half_diff + b * c);
+        // Form the discriminant from entries scaled by the block's largest
+        // magnitude: schur() supports T with entries near 1e200 or 1e-200,
+        // where b * c would overflow or underflow. c != 0, so s > 0.
+        const Value s = std::max({std::abs(half_diff), std::abs(b), std::abs(c)});
+        const C half_diff_s = half_diff / s, b_s = b / s, c_s = c / s;
+        C disc = s * std::sqrt(half_diff_s * half_diff_s + b_s * c_s);
         if (disc.imag() < Value(0)) disc = -disc;
         const C mu = half_diff + disc;
         const Value rr = detail::lapy2(std::abs(mu), std::abs(c));

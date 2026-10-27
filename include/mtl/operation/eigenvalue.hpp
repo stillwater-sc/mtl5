@@ -234,8 +234,8 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     opt.tol = tol;
     // Per-block iteration cap before an exceptional shift / bailout.
     opt.max_its = (max_iter > 0) ? static_cast<int>(max_iter) : 100;
-    std::vector<value_type> wr, wi;
-    detail::francis_qr<false>(H, static_cast<mat::dense2D<value_type>*>(nullptr), wr, wi, opt);
+    vec::dense_vector<value_type> wr, wi;
+    detail::francis_qr<detail::francis_output::eigenvalues>(H, static_cast<mat::dense2D<value_type>*>(nullptr), wr, wi, opt);
 
     for (size_type i = 0; i < n; ++i)
         eigs(i) = complex_type(wr[i], wi[i]);
