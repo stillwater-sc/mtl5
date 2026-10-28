@@ -77,6 +77,21 @@ void dgees_(const char* jobvs, const char* sort, gees_select_d select, const int
             double* vs, const int* ldvs, double* work, const int* lwork,
             int* bwork, int* info);
 
+// Triangular Sylvester equation op(A) X + isgn X op(B) = scale C, with A and B
+// upper quasi-triangular (real) or upper triangular (complex)
+void strsyl_(const char* trana, const char* tranb, const int* isgn, const int* m, const int* n,
+             const float* A, const int* lda, const float* B, const int* ldb,
+             float* C, const int* ldc, float* scale, int* info);
+void dtrsyl_(const char* trana, const char* tranb, const int* isgn, const int* m, const int* n,
+             const double* A, const int* lda, const double* B, const int* ldb,
+             double* C, const int* ldc, double* scale, int* info);
+void ctrsyl_(const char* trana, const char* tranb, const int* isgn, const int* m, const int* n,
+             const std::complex<float>* A, const int* lda, const std::complex<float>* B, const int* ldb,
+             std::complex<float>* C, const int* ldc, float* scale, int* info);
+void ztrsyl_(const char* trana, const char* tranb, const int* isgn, const int* m, const int* n,
+             const std::complex<double>* A, const int* lda, const std::complex<double>* B, const int* ldb,
+             std::complex<double>* C, const int* ldc, double* scale, int* info);
+
 // Solve using LU factorization (after getrf)
 void sgetrs_(const char* trans, const int* n, const int* nrhs,
              const float* A, const int* lda, const int* ipiv,
@@ -258,6 +273,39 @@ inline int gees(char jobvs, int n, double* A, int lda, double* wr, double* wi,
     int sdim = 0, info = 0;
     dgees_(&jobvs, &sort, nullptr, &n, A, &lda, &sdim, wr, wi, vs, &ldvs,
            work, &lwork, bwork, &info);
+    return info;
+}
+
+// -- Triangular Sylvester equation (trsyl) ---------------------------------
+
+inline int trsyl(char trana, char tranb, int isgn, int m, int n, const float* A, int lda,
+                 const float* B, int ldb, float* C, int ldc, float* scale) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    int info = 0;
+    strsyl_(&trana, &tranb, &isgn, &m, &n, A, &lda, B, &ldb, C, &ldc, scale, &info);
+    return info;
+}
+inline int trsyl(char trana, char tranb, int isgn, int m, int n, const double* A, int lda,
+                 const double* B, int ldb, double* C, int ldc, double* scale) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    int info = 0;
+    dtrsyl_(&trana, &tranb, &isgn, &m, &n, A, &lda, B, &ldb, C, &ldc, scale, &info);
+    return info;
+}
+inline int trsyl(char trana, char tranb, int isgn, int m, int n, const std::complex<float>* A,
+                 int lda, const std::complex<float>* B, int ldb, std::complex<float>* C, int ldc,
+                 float* scale) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    int info = 0;
+    ctrsyl_(&trana, &tranb, &isgn, &m, &n, A, &lda, B, &ldb, C, &ldc, scale, &info);
+    return info;
+}
+inline int trsyl(char trana, char tranb, int isgn, int m, int n, const std::complex<double>* A,
+                 int lda, const std::complex<double>* B, int ldb, std::complex<double>* C, int ldc,
+                 double* scale) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    int info = 0;
+    ztrsyl_(&trana, &tranb, &isgn, &m, &n, A, &lda, B, &ldb, C, &ldc, scale, &info);
     return info;
 }
 

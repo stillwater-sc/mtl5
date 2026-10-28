@@ -76,6 +76,7 @@ const FILE_MAP = {
   'numerical/householder-reflector-forms.md':   'numerical/householder-reflector-forms.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
   'algorithms/matrix-functions.md':             'algorithms/matrix-functions.md',
+  'algorithms/sylvester.md':                    'algorithms/sylvester.md',
   'algorithms/supernodal-ldlt.md':              'algorithms/supernodal-ldlt.md',
 
   // ── Benchmarking ────────────────────────────────────────────────
