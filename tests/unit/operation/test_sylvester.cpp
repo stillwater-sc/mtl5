@@ -278,6 +278,14 @@ TEST_CASE("sylvester_triangular: shapes and errors", "[operation][sylvester]") {
     REQUIRE_THROWS_AS(sylvester_triangular(I3, adjacent, C3), std::invalid_argument);
     REQUIRE_THROWS_AS(sylvester_triangular(I3, I3, mat::dense2D<double>(3, 2)), std::invalid_argument);
     REQUIRE_THROWS_AS(sylvester_triangular(mat::dense2D<double>(2, 3), I3, C3), std::invalid_argument);
+    mat::dense2D<double> Cnan(3, 3), Ainf(I3);
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 3; ++j) Cnan(i, j) = 1.0;
+    Cnan(1, 2) = std::numeric_limits<double>::quiet_NaN();
+    Ainf(0, 2) = std::numeric_limits<double>::infinity();
+    REQUIRE_THROWS_AS(sylvester_triangular(I3, I3, Cnan), std::invalid_argument);
+    REQUIRE_THROWS_AS(sylvester_triangular_scaled(I3, I3, Cnan), std::invalid_argument);
+    REQUIRE_THROWS_AS(sylvester_triangular(Ainf, I3, C3), std::invalid_argument);
 }
 
 TEST_CASE("sylvester: general real A and B (Bartels-Stewart)", "[operation][sylvester]") {
@@ -331,4 +339,60 @@ TEST_CASE("sylvester: general real A and B (Bartels-Stewart)", "[operation][sylv
                       std::invalid_argument);
     auto e = sylvester(mat::dense2D<double>(0, 0), mat::dense2D<double>(2, 2), mat::dense2D<double>(0, 2));
     CHECK(e.X.num_rows() == 0);
+}
+
+TEST_CASE("sylvester_triangular_scaled: solutions beyond the range", "[operation][sylvester]") {
+    // X = C / (a + b) with a + b = 1e-20 and C = 1e300 is 1e320, beyond
+    // double's range: the scaled solve returns scale < 1 with
+    // A X + X B = scale * C, and the unscaled one throws. Cases: 1x1 blocks,
+    // a 2x2 block of A (eigenvalues 1e-20 +- 1e-20 i) against a 1x1 B, and a
+    // 2x2 block against a 2x2 block.
+    const mat::dense2D<double> A1{{1e-20}};
+    const mat::dense2D<double> B1{{0.0}};
+    const mat::dense2D<double> A2{{1e-20, 1e-20}, {-1e-20, 1e-20}};
+    const mat::dense2D<double> B2{{0.0, 1e-20}, {-1e-20, 0.0}};
+    struct problem { const mat::dense2D<double>* A; const mat::dense2D<double>* B; };
+    for (auto [A, B] : {problem{&A1, &B1}, problem{&A2, &B1}, problem{&A2, &B2}}) {
+        mat::dense2D<double> C(A->num_rows(), B->num_rows());
+        for (std::size_t i = 0; i < C.num_rows(); ++i)
+            for (std::size_t j = 0; j < C.num_cols(); ++j) C(i, j) = 1e300 * double(1 + i + 2 * j);
+        for (bool inhouse : {false, true}) {
+            INFO(A->num_rows() << "x" << B->num_rows() << (inhouse ? " in-house" : ""));
+            auto [X, scale, perturbed] = inhouse ? sylvester_triangular_scaled<double>(*A, *B, C)
+                                                 : sylvester_triangular_scaled(*A, *B, C);
+            CHECK(scale < 1.0);
+            CHECK(scale > 0.0);
+            CHECK_FALSE(perturbed);
+            mat::dense2D<double> Cs(C.num_rows(), C.num_cols());
+            for (std::size_t i = 0; i < C.num_rows(); ++i)
+                for (std::size_t j = 0; j < C.num_cols(); ++j) {
+                    CHECK(std::isfinite(X(i, j)));
+                    Cs(i, j) = C(i, j) * scale;
+                }
+            CHECK(residual(*A, *B, Cs, X, sylvester_sign::plus) <= 10.0L);
+            if (inhouse) REQUIRE_THROWS_AS(sylvester_triangular<double>(*A, *B, C), std::overflow_error);
+            else         REQUIRE_THROWS_AS(sylvester_triangular(*A, *B, C), std::overflow_error);
+        }
+    }
+    // The general solver reports the same.
+    const mat::dense2D<double> Ag{{1e-20, 0.0}, {0.0, 2e-20}};
+    const mat::dense2D<double> Bg(2, 2);
+    const mat::dense2D<double> Cg{{1e300, 1e300}, {1e300, 1e300}};
+    REQUIRE_THROWS_AS(sylvester(Ag, Bg, Cg), std::overflow_error);
+
+    // X = 1e300 is representable but above LAPACK's bignum (~1e292 / (m n)):
+    // the scaled solve scales, and the unscaled one divides back and returns it.
+    const mat::dense2D<double> C1{{1e280}};
+    for (bool inhouse : {false, true}) {
+        auto sc = inhouse ? sylvester_triangular_scaled<double>(A1, B1, C1)
+                          : sylvester_triangular_scaled(A1, B1, C1);
+        CHECK(sc.scale < 1.0);
+        auto x = inhouse ? sylvester_triangular<double>(A1, B1, C1) : sylvester_triangular(A1, B1, C1);
+        CHECK(std::abs(x.X(0, 0) - 1e280 / 1e-20) <= 4 * std::numeric_limits<double>::epsilon() * 1e300);
+    }
+    // Well within range: scale stays exactly 1.
+    const mat::dense2D<double> C2{{1e200}};
+    CHECK(sylvester_triangular_scaled<double>(A1, B1, C2).scale == 1.0);
+    CHECK(sylvester_triangular_scaled(A1, B1, C2).scale == 1.0);
+    CHECK(sylvester_triangular<double>(A1, B1, C2).X(0, 0) == 1e200 / 1e-20);
 }

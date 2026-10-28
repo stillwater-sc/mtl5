@@ -8,6 +8,9 @@ auto [Y, p2] = mtl::sylvester(A, B, C, mtl::sylvester_sign::minus);  // A X - X 
 
 // A and B already in Schur form: quasi-triangular (schur) or triangular (rsf2csf)
 auto [Z, p3] = mtl::sylvester_triangular(TA, TB, F);
+
+// Scaled against overflow, as LAPACK trsyl: TA W + W TB = scale * F, scale <= 1
+auto [W, scale, p4] = mtl::sylvester_triangular_scaled(TA, TB, F);
 ```
 
 The **Sylvester equation** `A X + X B = C` asks for the `m × n` matrix `X`, given
@@ -73,6 +76,36 @@ nearby equation; it is finite, but it may be large and has no accuracy guarantee
 `trsyl` reports the same condition as `info = 1`. `smlnum` is LAPACK's
 safe-minimum floor, used only when `numeric_limits` gives one below ε, as in
 `schur`.
+
+## Overflow
+
+A solution can be too large for the element type even when the inputs are
+not: `X = C / (a + b)` with `a + b` near roundoff, or a nearly singular
+equation in half precision, where `X ≈ C · 10³` overflows once `C` is
+about 100. An IEEE type would return infinities, and a posit, which does not
+overflow, would saturate at maxpos and return a wrong finite value with no sign
+of it.
+
+- **`sylvester_triangular` and `sylvester`** return the true `X` or throw
+  `std::overflow_error`. They reject NaN and infinite input with
+  `std::invalid_argument`. Overflow then shows in `X` itself, as an infinite or
+  NaN entry or an entry at the type's largest value, and is reported. The
+  in-house path does not scale, so the small entries of an `X` with a wide
+  range are kept.
+- **`sylvester_triangular_scaled`** is LAPACK `trsyl`'s contract: it returns
+  `{X, scale, perturbed}` with `A X + sgn X B = scale · C` and `0 < scale ≤ 1`.
+  The solve scales the right-hand side by powers of two once a block's solution
+  would exceed `max · ε / (m n)`. For double and for posits that is trsyl's
+  `ε / (safmin m n)`, and it also suits half, whose safe minimum is far from
+  `1 / max`. It is for callers that need only the direction or relative size of
+  `X`, such as condition estimators, which solve many nearly singular
+  equations. A type without `numeric_limits` has no threshold and always gets
+  `scale = 1`. Scaling can push entries of `X` much smaller than its largest
+  into the subnormals or to zero.
+
+With LAPACK, `trsyl` scales by its own rule in both calls.
+`sylvester_triangular` divides its `X` by `scale` when the result is
+representable, and throws otherwise.
 
 ## Accumulator
 
@@ -145,9 +178,9 @@ half equation is at most 1.6 ε.
 
 - **`op(A)` and `op(B)` are `A` and `B`.** The transposed forms of `trsyl`
   (`Aᵀ X + X B = C` and so on) are not offered yet.
-- **No overflow guard.** LAPACK's `trsyl` returns a scale factor `≤ 1` and
-  solves for `scale · X` when `X` would overflow. Here `X` is returned unscaled,
-  so a solution beyond the type's range overflows.
+- **Saturation in an intermediate sum.** For a posit, a sum of products can
+  saturate at maxpos while every entry of `X` stays below it. The overflow check
+  sees only `X`. It takes products `|a_ij| · |x_jl|` near maxpos.
 - **`sylvester` takes real matrices.** For complex `A` and `B` it needs the
   complex Schur form of a complex matrix (issue #650); until then, reduce them
   yourself and call `sylvester_triangular` on the triangular factors.
