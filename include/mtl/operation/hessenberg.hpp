@@ -74,6 +74,36 @@ auto hessenberg_extract_H(const M& A) {
     return H;
 }
 
+/// Form the unitary Q of A = Q H Q^H from the reflectors hessenberg_factor()
+/// left in the strict lower triangle of A and in tau (LAPACK orghr).
+/// hessenberg_factor computes H = P A P^H with P = H_{k-1} ... H_0, so
+/// Q = P^H = H_0^H ... H_{k-1}^H, accumulated here from the right end.
+/// `Accumulator` (leading, default void) is forwarded to
+/// apply_householder_left().
+template <typename Accumulator = void, Matrix M>
+auto hessenberg_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& tau) {
+    using value_type = typename M::value_type;
+    using size_type  = typename M::size_type;
+    const size_type n = A.num_rows();
+
+    mat::dense2D<value_type> Q(n, n);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j)
+            Q(i, j) = (i == j) ? math::one<value_type>() : math::zero<value_type>();
+
+    for (size_type j = tau.size(); j-- > 0; ) {
+        const size_type len = n - j - 1;
+        vec::dense_vector<value_type> v(len);
+        v(0) = math::one<value_type>();
+        for (size_type i = 1; i < len; ++i)
+            v(i) = A(j + 1 + i, j);
+        // Columns 0..j of rows j+1.. are still zero, so start at column j+1.
+        apply_householder_left<Accumulator>(Q, v, functor::scalar::conj<value_type>::apply(tau(j)),
+                                            j + 1, j + 1);
+    }
+    return Q;
+}
+
 /// Reduce A to upper Hessenberg form and return H directly.
 template <typename Accumulator = void, Matrix M>
 auto hessenberg(const M& A) {

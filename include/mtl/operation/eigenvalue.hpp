@@ -12,6 +12,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/hessenberg.hpp>
+#include <mtl/detail/francis_qr.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
@@ -222,156 +223,19 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     if (n == 1) { eigs(0) = complex_type(H(0, 0)); return eigs; }
 
     // Francis implicit double-shift QR on the real Hessenberg form (EISPACK
-    // hqr). Converges to real Schur form and reads 1x1 (real) and 2x2 (complex
-    // conjugate) diagonal blocks. Unlike a single real shift, the double shift
-    // uses the trailing 2x2 block's complex-conjugate pair, so complex spectra
-    // of strongly non-normal matrices are handled without stalling. Exceptional
-    // shifts break stagnation; non-convergence is reported, never returned as a
+    // hqr, in detail/francis_qr.hpp, shared with schur()). Converges to real
+    // Schur form and reads 1x1 (real) and 2x2 (complex conjugate) diagonal
+    // blocks. Unlike a single real shift, the double shift uses the trailing
+    // 2x2 block's complex-conjugate pair, so complex spectra of strongly
+    // non-normal matrices are handled without stalling. Exceptional shifts
+    // break stagnation; non-convergence is reported, never returned as a
     // silently-wrong diagonal read.
-    using idx = long long;
+    detail::francis_options<value_type> opt;
+    opt.tol = tol;
     // Per-block iteration cap before an exceptional shift / bailout.
-    const int max_its = (max_iter > 0) ? static_cast<int>(max_iter) : 100;
-
-    // sign(a,b): magnitude of a with the sign of b.
-    auto sign = [](value_type a, value_type b) {
-        return (b >= value_type(0)) ? abs(a) : -abs(a);
-    };
-
-    std::vector<value_type> wr(n), wi(n);
-
-    // Norm of the Hessenberg matrix (fallback scale for the deflation test).
-    value_type anorm = value_type(0);
-    for (size_type i = 0; i < n; ++i)
-        for (size_type j = (i >= 1 ? i - 1 : size_type(0)); j < n; ++j)
-            anorm += abs(H(i, j));
-
-    idx nn = static_cast<idx>(n) - 1;  // bottom index of the active block
-    value_type t = value_type(0);      // accumulated exceptional shift
-
-    while (nn >= 0) {
-        int its = 0;
-        idx l;
-        do {
-            // Look for a single small subdiagonal element.
-            for (l = nn; l >= 1; --l) {
-                value_type s = abs(H(l - 1, l - 1)) + abs(H(l, l));
-                if (s == value_type(0)) s = anorm;
-                if (abs(H(l, l - 1)) <= tol * s) { H(l, l - 1) = value_type(0); break; }
-            }
-            if (l < 0) l = 0;
-
-            value_type x = H(nn, nn);
-            if (l == nn) {
-                // One real root.
-                wr[static_cast<size_type>(nn)] = x + t;
-                wi[static_cast<size_type>(nn)] = value_type(0);
-                nn -= 1;
-            } else {
-                value_type y = H(nn - 1, nn - 1);
-                value_type w = H(nn, nn - 1) * H(nn - 1, nn);
-                if (l == nn - 1) {
-                    // Two roots: eigenvalues of the trailing 2x2 block.
-                    value_type p = value_type(0.5) * (y - x);
-                    value_type q = p * p + w;
-                    value_type z = sqrt(abs(q));
-                    x += t;
-                    if (q >= value_type(0)) {
-                        z = p + sign(z, p);
-                        wr[static_cast<size_type>(nn - 1)] = wr[static_cast<size_type>(nn)] = x + z;
-                        if (z != value_type(0)) wr[static_cast<size_type>(nn)] = x - w / z;
-                        wi[static_cast<size_type>(nn - 1)] = wi[static_cast<size_type>(nn)] = value_type(0);
-                    } else {
-                        wr[static_cast<size_type>(nn - 1)] = wr[static_cast<size_type>(nn)] = x + p;
-                        wi[static_cast<size_type>(nn)]     = z;
-                        wi[static_cast<size_type>(nn - 1)] = -z;
-                    }
-                    nn -= 2;
-                } else {
-                    // No root yet: perform a Francis double-shift QR sweep.
-                    if (its == max_its)
-                        throw std::runtime_error(
-                            "mtl::eigenvalue: QR iteration failed to converge");
-                    value_type p = value_type(0), q = value_type(0), r = value_type(0);
-                    value_type z = value_type(0);
-                    if (its == 10 || its == 20) {
-                        // Exceptional (ad-hoc Wilkinson) shift to break stagnation.
-                        t += x;
-                        for (idx i = 0; i <= nn; ++i) H(i, i) -= x;
-                        value_type s = abs(H(nn, nn - 1)) + abs(H(nn - 1, nn - 2));
-                        y = x = value_type(0.75) * s;
-                        w = value_type(-0.4375) * s * s;
-                    }
-                    ++its;
-
-                    // Look for two consecutive small subdiagonal elements.
-                    idx m;
-                    for (m = nn - 2; m >= l; --m) {
-                        z = H(m, m);
-                        r = x - z;
-                        value_type s = y - z;
-                        p = (r * s - w) / H(m + 1, m) + H(m, m + 1);
-                        q = H(m + 1, m + 1) - z - r - s;
-                        r = H(m + 2, m + 1);
-                        s = abs(p) + abs(q) + abs(r);
-                        p /= s; q /= s; r /= s;
-                        if (m == l) break;
-                        value_type u = abs(H(m, m - 1)) * (abs(q) + abs(r));
-                        value_type v = abs(p) * (abs(H(m - 1, m - 1)) + abs(z) + abs(H(m + 1, m + 1)));
-                        if (u <= tol * v) break;
-                    }
-
-                    for (idx i = m + 2; i <= nn; ++i) {
-                        H(i, i - 2) = value_type(0);
-                        if (i != m + 2) H(i, i - 3) = value_type(0);
-                    }
-
-                    // Chase the bulge with Householder(3)/(2) transforms.
-                    for (idx k = m; k <= nn - 1; ++k) {
-                        if (k != m) {
-                            p = H(k, k - 1);
-                            q = H(k + 1, k - 1);
-                            r = value_type(0);
-                            if (k != nn - 1) r = H(k + 2, k - 1);
-                            x = abs(p) + abs(q) + abs(r);
-                            if (x != value_type(0)) { p /= x; q /= x; r /= x; }
-                        }
-                        value_type s = sign(sqrt(p * p + q * q + r * r), p);
-                        if (s != value_type(0)) {
-                            if (k == m) {
-                                if (l != m) H(k, k - 1) = -H(k, k - 1);
-                            } else {
-                                H(k, k - 1) = -s * x;
-                            }
-                            p += s;
-                            x = p / s; y = q / s; z = r / s;
-                            q /= p; r /= p;
-                            // Row transformation.
-                            for (idx j = k; j <= nn; ++j) {
-                                p = H(k, j) + q * H(k + 1, j);
-                                if (k != nn - 1) {
-                                    p += r * H(k + 2, j);
-                                    H(k + 2, j) -= p * z;
-                                }
-                                H(k + 1, j) -= p * y;
-                                H(k, j)     -= p * x;
-                            }
-                            idx mmin = (nn < k + 3) ? nn : k + 3;
-                            // Column transformation.
-                            for (idx i = l; i <= mmin; ++i) {
-                                p = x * H(i, k) + y * H(i, k + 1);
-                                if (k != nn - 1) {
-                                    p += z * H(i, k + 2);
-                                    H(i, k + 2) -= p * r;
-                                }
-                                H(i, k + 1) -= p * q;
-                                H(i, k)     -= p;
-                            }
-                        }
-                    }
-                }
-            }
-        } while (l < nn - 1);
-    }
+    opt.max_its = (max_iter > 0) ? static_cast<int>(max_iter) : 100;
+    vec::dense_vector<value_type> wr, wi;
+    detail::francis_qr<detail::francis_output::eigenvalues>(H, static_cast<mat::dense2D<value_type>*>(nullptr), wr, wi, opt);
 
     for (size_type i = 0; i < n; ++i)
         eigs(i) = complex_type(wr[i], wi[i]);

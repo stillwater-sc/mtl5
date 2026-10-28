@@ -32,6 +32,8 @@ Answer four questions:
 |---|---|---|---|
 | `eigenvalue(A)` | general (non-symmetric) | eigenvalues only, `dense_vector<complex>` | LAPACK `geev` if available, else C++ Francis QR |
 | `eigen(A)` | general (non-symmetric) | eigenvalues **and** right eigenvectors (`complex`) | LAPACK `geev` if available, else C++ QR + inverse iteration |
+| `schur(A)` | general, real | `{Q, T}`: A = Q T Qᵀ, T quasi-triangular | LAPACK `gees` if available, else C++ Francis QR |
+| `rsf2csf(Q, T)` | a real Schur form | `{U, R}`: A = U R Uᴴ, R upper triangular (`complex`) | pure C++ |
 | `eigenvalue_symmetric(A)` | symmetric | eigenvalues, ascending | LAPACK `syev` if available, else C++ |
 | `eigenvalue_symmetric_generic(A)` | symmetric | eigenvalues, ascending | pure C++ |
 | `eigen_symmetric(A)` | symmetric | eigenvalues **and** eigenvectors | pure C++ |
@@ -101,6 +103,98 @@ spectra of strongly non-normal matrices (e.g. companion / Forsythe matrices) are
 resolved accurately, and the eigenvectors follow to near machine precision. When
 LAPACK is available and the matrix qualifies, both routines dispatch to `geev`
 instead (see the table above).
+
+## Schur decomposition
+
+```cpp
+#include <mtl/operation/schur.hpp>
+
+auto [Q, T] = mtl::schur(A);        // A = Q T Q^T, Q orthogonal
+auto [U, R] = mtl::rsf2csf(Q, T);   // A = U R U^H, R upper triangular, complex
+```
+
+Every square matrix is unitarily similar to an upper triangular one, whose
+diagonal holds the eigenvalues (Schur, 1909). For a real matrix with complex
+eigenvalues that form is complex. The **real Schur form** keeps real arithmetic
+instead: `T` is block upper triangular, a 1×1 block for each real eigenvalue and
+a 2×2 block for each complex-conjugate pair. A defective matrix has no full set of
+eigenvectors, and a nearly defective one has an ill-conditioned set; the Schur
+vectors are always an orthonormal basis, computed stably. That is why the Schur form,
+not the eigendecomposition, is what algorithms for matrix functions (`sqrtm`,
+`logm`; issue #650), Sylvester and Lyapunov equations and invariant subspaces
+are built on.
+
+The 2×2 blocks are in LAPACK's **standard form**, `[a b; c a]` with `b·c < 0`,
+whose eigenvalues are `a ± i·sqrt(-b·c)`. A 2×2 block with real eigenvalues is
+always split into two 1×1 blocks, so a nonzero subdiagonal entry of `T` means a
+complex pair. `rsf2csf` (named after MATLAB's function) turns the real form
+into the complex triangular one by a complex rotation of each block, with the
+eigenvalue of positive imaginary part first.
+
+### Algorithm
+
+`schur` reduces `A` to Hessenberg form by Householder reflections, forms their
+product `Q` (`hessenberg_extract_Q`, LAPACK's `orghr`), and runs the same
+Francis double-shift QR iteration as `eigenvalue`, but in its EISPACK `hqr2`
+form: every transformation is applied to all of `T` and accumulated into `Q`,
+not only to the block still being reduced. Each 2×2 block is put into standard
+form by a port of LAPACK `dlanv2`. The iteration is shared with `eigenvalue`
+(`detail/francis_qr.hpp`), whose results are unchanged by the sharing.
+
+Two choices differ from `eigenvalue`:
+
+- **Deflation at the element type's own epsilon**, `machine_epsilon<T>()`, with
+  LAPACK's safe-minimum floor when `numeric_limits` gives a meaningful one.
+  `eigenvalue`'s default `tol` of 1e-10 is kept for compatibility.
+- **Power-of-two scaling** of `A` to max |aᵢⱼ| in [½, 1] before the iteration,
+  undone on `T` at the end. The EISPACK iteration forms products of two matrix
+  entries, which overflow or underflow for entries near 1e200 or 1e-200; scaled,
+  such matrices converge with the same accuracy as unscaled ones. In a binary
+  floating-point type the scaling is exact.
+
+The result is backward stable: on the test families (random, nonnormal, graded,
+companion, cyclic permutation, Jordan, triangular, diagonal; n ≤ 16), the
+measured ‖A − Q T Qᵀ‖_F / ‖A‖_F and ‖QᵀQ − I‖_F are at most 3.2 n ε for
+`float`, `double` and `long double`, at any scale.
+
+With `-DMTL5_WITH_LAPACK=ON`, `dense2D<float>` and `dense2D<double>` (either
+orientation) dispatch to `gees`. A non-void `Accumulator` (`schur<double>(A)`)
+forces the in-house path, and is forwarded to the Hessenberg reduction and the
+formation of `Q`.
+
+### User-defined number types
+
+The in-house path uses only `+ − × ÷`, comparisons, and `abs` and `sqrt` found
+by argument-dependent lookup, and measures epsilon for a type without
+`numeric_limits`. Measured against Universal's number systems on the same
+families (worst case, in units of n ε of each type; Universal is not an MTL5
+dependency, so this was a one-off run, not part of MTL5's test suite):
+
+| Type | ‖A − Q T Qᵀ‖ / ‖A‖ | ‖QᵀQ − I‖ | Note |
+|---|---|---|---|
+| `bfloat16` | 1.3 | 2.2 | |
+| `cfloat<16,5>` (half) | 1.6 | 2.1 | entries beyond 65504 are rejected as infinite |
+| `cfloat<32,8>` | 2.1 | 2.9 | |
+| `posit<16,1>` | 2.1 | 3.3 | |
+| `posit<32,2>` | 7.4 | 6.5 | |
+| `posit<64,3>` | 61 | 66 | Universal's `sqrt` here is accurate to double, about 39 ε |
+| `takum<32>` | 2.7 | 4.3 | |
+| `lns<32,22>` | 3.6 | 3.6 | |
+| `dd` | 4.1 | 5.2 | |
+| `qd` | 0.06 | 0.08 | below 1: Universal's `epsilon()` for `qd` is conservative |
+| `fixpnt<32,16>` | up to 3·10⁴ | up to 2·10⁴ | some matrices do not converge |
+
+A posit's precision is greatest near 1, which the scaling to [½, 1] exploits.
+The scaled-back `T` has the precision of its own magnitude, so a posit matrix
+whose entries are far from 1 sees a larger relative error (62 n ε for
+`posit<32,2>` on graded matrices scaled by 10⁶). **Fixed-point types are not
+supported**: their precision is absolute, not relative, so the deflation test
+and the normalized reflectors lose their meaning for small entries.
+
+`schur` takes a real element type. The complex Schur form of a complex matrix,
+and `rsf2csf` for types other than `float`, `double` and `long double` (which
+needs a complex type for them, such as Universal's `complex<T>`), are later work
+in issue #650.
 
 ## Symmetric problems
 
@@ -358,7 +452,7 @@ The `examples/phase06_eigenvalue_svd/` directory has runnable programs:
 
 ## Custom number types
 
-Every pure-C++ path (`eigenvalue`, `eigen`, `eigenvalue_symmetric_generic`,
+Every pure-C++ path (`eigenvalue`, `eigen`, `schur`, `eigenvalue_symmetric_generic`,
 `eigen_symmetric`, and the iterative solvers) works with custom scalar types
 such as posits and LNS — they depend only on standard arithmetic and `mtl`
 primitives, not on LAPACK. LAPACK dispatch is a `float`/`double`-only
