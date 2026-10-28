@@ -111,17 +111,39 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     const T x0 = x(0) / scale;
 
     if constexpr (!is_complex_v<T>) {
-        // Real path, arithmetic UNCHANGED. Kept verbatim rather than folded
-        // into the general formulation so that the existing results stay
-        // bit-identical -- see the agreement test in test_householder.cpp.
+        // Real path. Kept apart from the complex formulation below, which it
+        // predates; with v = [1; x(1:)/v0] it reflects x onto norm_x * e_1.
         const T norm_x = sqrt(x0 * x0 + sigma);
         T v0;
-        if (x0 <= math::zero<T>())
+        if (x0 <= math::zero<T>()) {
             v0 = x0 - norm_x;
-        else
+        } else {
+            // A tail below half an ulp of x0 is negligible: x is along e_1 to
+            // working precision, and H = I is backward stable. Reflecting it
+            // anyway needs v0 ~ sigma / 2 and tail entries x(i) / v0 of size
+            // 2 / |tail|, which overflow later products for no gain. The old
+            // squared beta reached the same identity by underflowing, but only
+            // for tails below about 1e-77 (double), and with an inaccurate
+            // beta just above that.
+            if (x0 + sqrt(sigma) == x0)
+                return {v, math::zero<T>()};
             v0 = -sigma / (x0 + norm_x);
+        }
 
-        const T beta = T(2) * v0 * v0 / (sigma + v0 * v0);
+        // beta = 2 / (v^T v) = 2 v0^2 / (sigma + v0^2). Since v0 = x0 - norm_x
+        // and norm_x^2 = x0^2 + sigma, the denominator is exactly
+        // -2 norm_x v0, so beta = -v0 / norm_x (LAPACK dlarfg's
+        // tau = (beta - alpha) / beta, with its sign convention). That form
+        // never squares v0. The squared form did, and when the tail of x is
+        // small against x(0), v0 ~ sigma / 2 and v0^2 ~ sigma^2 / 4 is far
+        // below sigma: in a type with little range below 1 that square
+        // underflows or keeps only a few bits. Half precision with a tail 2%
+        // of x(0) has v0^2 near 2^-24, its smallest subnormal, and gave a beta
+        // wrong by percents, so the reflector was not orthogonal and the
+        // Hessenberg reduction of such a matrix had a backward error near
+        // 100 n eps (posit<16,1>: near 400 n eps) where it should be ~1 n eps.
+        // In float and double, beta changes only in its last bits.
+        const T beta = -v0 / norm_x;
 
         // beta == 0 means the reflection is the identity, so v carries no
         // information -- and computing it would divide by a v0 small enough to
