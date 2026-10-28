@@ -147,32 +147,30 @@ suite.
 
 | Type | `sylvester_triangular` | `sylvester` | Note |
 |---|---|---|---|
-| `float`, `double` | ≤ 0.41 | ≤ 2.1 | |
-| `bfloat16` | 0.45 | 1.6 | |
-| `cfloat<16,5>` (half) | 0.37 | 57 | one equation; see below |
-| `cfloat<32,8>` | 0.31 | 1.7 | |
-| `posit<16,1>` | 0.41 | 215 | two equations; see below |
-| `posit<32,2>` | 0.30 | 6.1 | see below |
-| `posit<64,3>` | 0.28 | 24 | `sqrt` is accurate only to double (stillwater-sc/universal#1846) |
-| `takum<32>` | 0.44 | 2.7 | |
-| `lns<32,22>` | 0.35 | 2.6 | |
-| `dd` | 0.10 | 2.7 | |
+| `float`, `double` | ≤ 0.41 | ≤ 2.7 | |
+| `bfloat16` | 0.45 | 1.8 | |
+| `cfloat<16,5>` (half) | 0.39 | 1.6 | |
+| `cfloat<32,8>` | 0.33 | 2.7 | |
+| `posit<16,1>` | 0.38 | 4.7 | one equation; the next worst is 1.8 |
+| `posit<32,2>` | 0.26 | 2.1 | |
+| `posit<64,3>` | 0.37 | 29 | `sqrt` is accurate only to double (stillwater-sc/universal#1846) |
+| `takum<32>` | 0.75 | 4.0 | |
+| `lns<32,22>` | 0.35 | 2.2 | |
+| `dd` | 0.11 | 3.2 | |
 | `qd` | 0.00 | 0.08 | Universal's `qd` epsilon is conservative |
 
-The triangular solver is below half an ε for every type. The larger numbers in
+The triangular solver stays below one ε for every type. The larger numbers in
 the `sylvester` column come from the Schur decompositions it calls.
 
-The half and `posit<16,1>` outliers come from the Householder reflectors of the
-Hessenberg reduction, which `householder()` builds for QR and the SVD as well.
-The worst case is a 3×3 `A` whose first column has a subdiagonal tail 2% the
-size of its leading entry. The reflector's scalar is then formed from the square
-of a value near 2⁻¹², about 2⁻²⁴. That is the bottom of half's subnormal range,
-and `posit<16,1>` has only a few fraction bits there, so the scalar is wrong by
-several percent and `Q` is not orthogonal. Computing the same scalar as
-`−v₀ / ‖x‖`, which is equal in exact arithmetic and squares nothing small,
-brings them to 1.6 ε for half, 4.7 ε for `posit<16,1>` (whose second-worst
-equation, at 40 ε, has the same cause) and 2.1 ε for `posit<32,2>`. Every other
-half equation is at most 1.6 ε.
+The Hessenberg reduction inside `schur` uses the Householder reflectors that
+`householder()` also builds for QR and the SVD. Their scalar used to be formed
+from the square of the leading entry of `v`. When the subdiagonal tail is small,
+for instance 2% of the leading entry in a 3×3 half matrix, that square is about
+2⁻²⁴: the bottom of half's subnormal range, and a region where `posit<16,1>`
+has only a few fraction bits. The scalar was then wrong by several percent and
+`Q` was not orthogonal, which put half at 57 ε and `posit<16,1>` at 215 ε.
+The scalar is now computed as `−v₀ / ‖x‖`, which is equal in exact arithmetic
+and squares nothing small (#658); the table above was measured with it.
 
 ## Limits
 
