@@ -42,9 +42,14 @@ $$
 ### Why this structure matters
 
 - **It holds for any gain.** The Joseph form is the covariance of the
-  updated error for any $K_k$, not just the optimal one. An error in $K_k$
-  therefore enters $P_{k\vert k}$ only to second order, where in the short
-  forms it enters to first order.
+  updated error for any $K_k$, not just the optimal one. The short forms are
+  that covariance only at the optimal gain $K_k^\star$; with any other gain
+  they report a covariance the filter does not have, wrong to first order in
+  $K_k - K_k^\star$. The Joseph covariance itself is
+  $P_{k\vert k}^\star + (K_k - K_k^\star)\, S_k\, (K_k - K_k^\star)^T$, so near the
+  optimum a gain error, such as one from rounding, changes it only to second
+  order. Far from the optimum the change is first order, but it is then the
+  true covariance of a suboptimal filter.
 - **Each term is a congruence.** Both terms have the shape $A M A^T$ with
   $M$ symmetric positive semi-definite: $A = I - K_k H_k$, $M = P_{k\vert k-1}$
   in the first, and $A = K_k$, $M = R_k$ in the second. In exact arithmetic a
@@ -60,8 +65,9 @@ $$
   by never forming $P$ at all.
 - **$R_k$ is often diagonal.** In sensor fusion, robotics and navigation, the
   measurement channels are commonly modelled as independent, which makes
-  $R_k$ diagonal or block-diagonal. The second term is then
-  $K_k \operatorname{diag}(r) K_k^T$.
+  $R_k$ diagonal, and the second term is then
+  $K_k \operatorname{diag}(r) K_k^T$. A block-diagonal $R_k$, whose blocks
+  correlate the channels of one sensor, is a general symmetric middle term.
 
 ## 2. The gap in classical BLAS
 
@@ -158,8 +164,12 @@ mtl::congruence(1.0, K, r, 1.0, C);          // add the second
 ```
 
 The second call reads $C$ with $\beta = 1$, which requires $C$ to be
-symmetric; the first call leaves it so. With `MTL5_BLAS_HAS_GEMMT` the second
-product of each call goes to the vendor's `?gemmt`; without it, to MTL5's
-generic loop, which rounds the formed triangle exactly as `mult` does. A
+symmetric; the first call leaves it so. A block-diagonal $R$ takes the
+dense-middle form, `congruence(1.0, K, R, 1.0, C)`, instead of the second line.
+With `MTL5_BLAS_HAS_GEMMT`, dense `float` or `double` operands and an
+accumulator that allows BLAS, the second product of each call goes to the
+vendor's `?gemmt` (the full conditions are in
+[gemmt.md](gemmt.md#blas-dispatch)); otherwise it runs MTL5's generic loop,
+which rounds the formed triangle exactly as `mult` does. A
 fused, packing-level diagonal scaling would be a kernel of MTL5's own and is
 not implemented.
