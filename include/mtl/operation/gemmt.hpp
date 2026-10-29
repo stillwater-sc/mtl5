@@ -345,6 +345,8 @@ void congruence_second(const S& alpha, const MT& T, const MA& A, const S& beta, 
 /// mult, then gemmt(T, A^T), so C is exactly symmetric and its lower
 /// triangle rounds as mult(mult(A, P), trans(A)) does on the generic path.
 /// P's symmetry is the caller's promise; it is not checked or exploited.
+/// With beta != 0, C must be symmetric too: only its lower triangle is read,
+/// and the result's upper triangle is the mirror of the lower one.
 template <typename Accumulator = void, Scalar S, Matrix MA, Matrix MP, Matrix MC>
 void congruence(const S& alpha, const MA& A, const MP& P, const S& beta, MC& C) {
     assert(P.num_rows() == A.num_cols() && P.num_cols() == A.num_cols());
@@ -358,7 +360,8 @@ void congruence(const S& alpha, const MA& A, const MP& P, const S& beta, MC& C) 
 ///
 /// The Joseph-form term K*R*K^T for a diagonal R. T(i,k) = A(i,k)*r(k) is
 /// formed directly (one rounding per entry, as mult by diag(r) gives), then
-/// gemmt(T, A^T) as in the dense-middle overload.
+/// gemmt(T, A^T) as in the dense-middle overload. With beta != 0, C must be
+/// symmetric, as there.
 template <typename Accumulator = void, Scalar S, Matrix MA, Vector VR, Matrix MC>
     requires (!Matrix<VR>)
 void congruence(const S& alpha, const MA& A, const VR& r, const S& beta, MC& C) {

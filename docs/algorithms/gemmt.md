@@ -78,7 +78,9 @@ not bit-identical to `mult`.
 `mult` and then the lower triangle of `T Aᵀ` with `gemmt`, mirrored. On the
 generic path the lower triangle is therefore bit-identical to
 `mult(mult(A, P), trans(A))`. `P`'s symmetry is the caller's promise; it is
-neither checked nor used to save work.
+neither checked nor used to save work. With `β ≠ 0`, `C` must be symmetric
+too: only its lower triangle is read, and the upper triangle of the result is
+the mirror of the lower one, so an asymmetric `C` loses its upper `β C` terms.
 
 This is the shape of every covariance update in a Kalman filter:
 
