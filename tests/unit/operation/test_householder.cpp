@@ -165,6 +165,9 @@ TEST_CASE("householder: a reflector the type cannot hold is the identity", "[ope
             A(i, j) = (i == j ? 1.0 : 0.0) + z(g);
     vec::dense_vector<short_max> tau(n);
     qr_factor(A, tau);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = i; j < n; ++j)
+            REQUIRE(std::isfinite(dbl(A(i, j))));   // R
     auto Q = qr_extract_Q(A, tau);
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = 0; j < n; ++j) {

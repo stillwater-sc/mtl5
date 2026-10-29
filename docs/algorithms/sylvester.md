@@ -172,10 +172,10 @@ has only a few fraction bits. The scalar was then wrong by several percent and
 The scalar is now computed as `−v₀ / ‖x‖`, which is equal in exact arithmetic
 and squares nothing small (#658); the table above was measured with it.
 
-`householder()` also checks the reflector it computed. An exact one has
-`β vᵀv = 2`, and a computed one is kept only if its distance from that, which is
-how far `H` is from orthogonal, is less than what leaving the column alone
-costs, `‖tail‖ / ‖x‖`. Otherwise it returns the identity. In `posit<64,3>`,
+`householder()` also checks the reflector it computed. With `c = β vᵀv`, which
+is 2 for an exact reflector, `‖HᵀH − I‖ = |2 − c| c`. The reflector is kept when
+`|2 − c| c ≤ ‖tail‖ / ‖x‖`, the cost of leaving the column alone, and otherwise
+(including a NaN `c`) it returns the identity. In `posit<64,3>`,
 Universal's `sqrt` is accurate only to double (stillwater-sc/universal#1846),
 so for a tail too small to matter the reflector was further from orthogonal
 than the tail was large. That put `posit<64,3>` at 29 ε, and the check brings it
