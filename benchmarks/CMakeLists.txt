@@ -156,6 +156,12 @@ add_executable(bench_mult_ikj bench_mult_ikj.cpp)
 target_link_libraries(bench_mult_ikj PRIVATE MTL5::mtl5)
 set_target_properties(bench_mult_ikj PROPERTIES FOLDER "Benchmarks")
 
+# congruence A*P*A^T through gemmt (#656) against the two-product form, dense
+# and CRS A, reported in docs/algorithms/gemmt.md.
+add_executable(bench_congruence bench_congruence.cpp)
+target_link_libraries(bench_congruence PRIVATE MTL5::mtl5)
+set_target_properties(bench_congruence PROPERTIES FOLDER "Benchmarks")
+
 add_executable(fig_mult_ikj fig_mult_ikj.cpp)
 target_link_libraries(fig_mult_ikj PRIVATE MTL5::mtl5)
 set_target_properties(fig_mult_ikj PROPERTIES FOLDER "Benchmarks")

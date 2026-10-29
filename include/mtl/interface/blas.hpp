@@ -89,6 +89,22 @@ void dgemm_(const char* transa, const char* transb,
             const double* B, const int* ldb,
             const double* beta, double* C, const int* ldc);
 
+#ifdef MTL5_BLAS_HAS_GEMMT
+// ?gemmt: a BLAS extension (MKL, OpenBLAS, BLIS; reference BLAS 3.12 as
+// ?gemmtr). Only the uplo triangle of C is formed. CMake defines
+// MTL5_BLAS_HAS_GEMMT when the library exports dgemmt_.
+void sgemmt_(const char* uplo, const char* transa, const char* transb,
+             const int* n, const int* k,
+             const float* alpha, const float* A, const int* lda,
+             const float* B, const int* ldb,
+             const float* beta, float* C, const int* ldc);
+void dgemmt_(const char* uplo, const char* transa, const char* transb,
+             const int* n, const int* k,
+             const double* alpha, const double* A, const int* lda,
+             const double* B, const int* ldb,
+             const double* beta, double* C, const int* ldc);
+#endif
+
 void strmm_(const char* side, const char* uplo, const char* transa,
             const char* diag, const int* m, const int* n,
             const float* alpha, const float* A, const int* lda,
@@ -260,6 +276,23 @@ inline void gemm(char transa, char transb, int m, int n, int k,
     ::mtl::interface::detail::nested_blas_cap cap;
     dgemm_(&transa, &transb, &m, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
 }
+
+#ifdef MTL5_BLAS_HAS_GEMMT
+inline void gemmt(char uplo, char transa, char transb, int n, int k,
+                  float alpha, const float* A, int lda,
+                  const float* B, int ldb,
+                  float beta, float* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    sgemmt_(&uplo, &transa, &transb, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
+}
+inline void gemmt(char uplo, char transa, char transb, int n, int k,
+                  double alpha, const double* A, int lda,
+                  const double* B, int ldb,
+                  double beta, double* C, int ldc) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    dgemmt_(&uplo, &transa, &transb, &n, &k, &alpha, A, &lda, B, &ldb, &beta, C, &ldc);
+}
+#endif
 
 inline void trmm(char side, char uplo, char transa, char diag, int m, int n,
                  float alpha, const float* A, int lda, float* B, int ldb) {
