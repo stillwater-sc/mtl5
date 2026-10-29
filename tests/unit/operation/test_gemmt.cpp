@@ -346,9 +346,11 @@ TEST_CASE("congruence: CRS and dense A agree bit for bit", "[operation][gemmt][c
             }
     };
     run(fl{});
-#ifndef MTL5_HAS_BLAS
+#if !defined(MTL5_HAS_BLAS) && !defined(MTL5_NATIVE_FAST_GEMM)
     // With BLAS the dense side's A*P is a dgemm, and with ?gemmt its second
     // product is too; either sums in the vendor's order, not the CRS kernel's.
+    // With MTL5_NATIVE_FAST_GEMM it is gemm_blocked, whose micro-kernel fuses
+    // each multiply-add where the CRS kernel rounds the product first.
     run(double{});
 #endif
 }
