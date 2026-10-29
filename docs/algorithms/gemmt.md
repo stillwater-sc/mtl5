@@ -54,9 +54,14 @@ result agrees with the dense one bit for bit whenever `A` is finite.
 
 `?gemmt` is a BLAS extension. MKL, BLIS and recent OpenBLAS export it;
 reference BLAS added it in 3.12 under the name `?gemmtr`, and older OpenBLAS
-releases lack it. CMake checks whether the linked library exports `dgemmt_`
-and defines `MTL5_BLAS_HAS_GEMMT` if it does. A build that links BLAS without
-CMake defines it by hand.
+releases lack it. CMake links and runs a small `dgemmt_` call and defines
+`MTL5_BLAS_HAS_GEMMT` only if it returns the right answer. Linking alone is
+not enough: OpenBLAS 0.3.26, the version in Ubuntu 24.04, exports `dgemmt_`
+but checks `lda` and `ldb` against each other's dimensions, so it rejects a
+valid call with `k > n` and leaves `C` unwritten (fixed in 0.3.27). When
+cross-compiling, the probe cannot run and `gemmt` keeps its generic path. A
+build that links BLAS without CMake defines `MTL5_BLAS_HAS_GEMMT` by hand,
+and only for a library that has a working `?gemmt`.
 
 With `MTL5_BLAS_HAS_GEMMT`, `gemmt` dispatches when the accumulator allows
 BLAS, `C` is a dense `float` or `double` matrix, and `A` and `B` are dense

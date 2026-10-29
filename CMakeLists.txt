@@ -177,9 +177,16 @@ endif()
 
 # ?gemmt, the triangular-output product (#656), is a BLAS extension: MKL,
 # BLIS and recent OpenBLAS export it; reference BLAS before 3.12 and
-# older OpenBLAS do not. Probed by linking dgemmt_, re-checked on every
-# configure for the same reason as the vendor checks below. Without it gemmt
-# takes its generic path.
+# older OpenBLAS do not. Re-checked on every configure for the same reason as
+# the vendor checks below. Without it gemmt takes its generic path.
+#
+# Linking dgemmt_ is not enough. OpenBLAS 0.3.26 (Ubuntu 24.04's) exports it
+# but checks lda against B's row count and ldb against A's, so a valid call
+# with k > n is rejected through xerbla and leaves C unwritten; 0.3.27 fixed
+# the check. The probe therefore runs such a call, n = 1 and k = 2, and uses
+# ?gemmt only if it gets the right answer. Not when cross-compiling, where the
+# program cannot run: gemmt then keeps its generic path.
+set(MTL5_BLAS_HAS_GEMMT OFF)
 if(MTL5_WITH_BLAS)
     include(CheckCXXSourceCompiles)
     include(CMakePushCheckState)
@@ -187,20 +194,38 @@ if(MTL5_WITH_BLAS)
     set(CMAKE_REQUIRED_QUIET ON)
     set(CMAKE_REQUIRED_LIBRARIES ${BLAS_LIBRARIES})
     unset(MTL5_BLAS_HAS_GEMMT CACHE)
-    check_cxx_source_compiles([[
+    unset(MTL5_BLAS_GEMMT_LINKS CACHE)
+    unset(MTL5_BLAS_GEMMT_WORKS CACHE)
+    set(_mtl5_gemmt_probe [[
         extern "C" void dgemmt_(const char*, const char*, const char*, const int*,
                                 const int*, const double*, const double*, const int*,
                                 const double*, const int*, const double*, double*,
                                 const int*);
         int main() {
-            const int one = 1; const double a = 1.0; double c = 0.0;
-            dgemmt_("L", "N", "N", &one, &one, &a, &a, &one, &a, &one, &a, &c, &one);
-            return c == 1.0 ? 0 : 1;
-        }]] MTL5_BLAS_HAS_GEMMT)
+            // C (1x1) = A (1x2) * B (2x1): lda = 1, ldb = 2.
+            const int n = 1, k = 2, lda = 1, ldb = 2, ldc = 1;
+            const double alpha = 1.0, beta = 0.0;
+            const double A[2] = {1.0, 2.0}, B[2] = {3.0, 4.0};
+            double C = 0.0;
+            dgemmt_("L", "N", "N", &n, &k, &alpha, A, &lda, B, &ldb, &beta, &C, &ldc);
+            return C == 11.0 ? 0 : 1;
+        }]])
+    check_cxx_source_compiles("${_mtl5_gemmt_probe}" MTL5_BLAS_GEMMT_LINKS)
+    if(MTL5_BLAS_GEMMT_LINKS AND NOT CMAKE_CROSSCOMPILING)
+        include(CheckCXXSourceRuns)
+        check_cxx_source_runs("${_mtl5_gemmt_probe}" MTL5_BLAS_GEMMT_WORKS)
+        if(MTL5_BLAS_GEMMT_WORKS)
+            set(MTL5_BLAS_HAS_GEMMT ON)
+        endif()
+    endif()
     cmake_pop_check_state()
     if(MTL5_BLAS_HAS_GEMMT)
         target_compile_definitions(mtl5 INTERFACE MTL5_BLAS_HAS_GEMMT)
         message(STATUS "BLAS ?gemmt: found")
+    elseif(MTL5_BLAS_GEMMT_LINKS AND CMAKE_CROSSCOMPILING)
+        message(STATUS "BLAS ?gemmt: links, not probed when cross-compiling (gemmt uses its generic path)")
+    elseif(MTL5_BLAS_GEMMT_LINKS)
+        message(STATUS "BLAS ?gemmt: links but fails its probe (gemmt uses its generic path)")
     else()
         message(STATUS "BLAS ?gemmt: not found (gemmt uses its generic path)")
     endif()
