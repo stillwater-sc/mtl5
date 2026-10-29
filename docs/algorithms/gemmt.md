@@ -16,6 +16,9 @@ mtl::congruence(alpha, A, P, beta, C);                     // C = alpha A P A^T 
 mtl::congruence(alpha, K, r, beta, C);
 ```
 
+Where these operations come from, the Joseph covariance update and the
+`GEMMT` BLAS extension, is told in [gemmt-origins.md](gemmt-origins.md).
+
 ## gemmt
 
 `gemmt` computes `C = α A B + β C` for an `n × k` matrix `A` and a `k × n`
