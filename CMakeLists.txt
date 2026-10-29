@@ -175,6 +175,37 @@ if(MTL5_WITH_BLAS)
     target_link_libraries(mtl5 INTERFACE ${BLAS_LIBRARIES})
 endif()
 
+# ?gemmt, the triangular-output product (#656), is a BLAS extension: MKL,
+# BLIS and recent OpenBLAS export it; reference BLAS before 3.12 and
+# older OpenBLAS do not. Probed by linking dgemmt_, re-checked on every
+# configure for the same reason as the vendor checks below. Without it gemmt
+# takes its generic path.
+if(MTL5_WITH_BLAS)
+    include(CheckCXXSourceCompiles)
+    include(CMakePushCheckState)
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_QUIET ON)
+    set(CMAKE_REQUIRED_LIBRARIES ${BLAS_LIBRARIES})
+    unset(MTL5_BLAS_HAS_GEMMT CACHE)
+    check_cxx_source_compiles([[
+        extern "C" void dgemmt_(const char*, const char*, const char*, const int*,
+                                const int*, const double*, const double*, const int*,
+                                const double*, const int*, const double*, double*,
+                                const int*);
+        int main() {
+            const int one = 1; const double a = 1.0; double c = 0.0;
+            dgemmt_("L", "N", "N", &one, &one, &a, &a, &one, &a, &one, &a, &c, &one);
+            return c == 1.0 ? 0 : 1;
+        }]] MTL5_BLAS_HAS_GEMMT)
+    cmake_pop_check_state()
+    if(MTL5_BLAS_HAS_GEMMT)
+        target_compile_definitions(mtl5 INTERFACE MTL5_BLAS_HAS_GEMMT)
+        message(STATUS "BLAS ?gemmt: found")
+    else()
+        message(STATUS "BLAS ?gemmt: not found (gemmt uses its generic path)")
+    endif()
+endif()
+
 if(MTL5_WITH_LAPACK)
     find_package(LAPACK REQUIRED)
     target_compile_definitions(mtl5 INTERFACE MTL5_HAS_LAPACK)
