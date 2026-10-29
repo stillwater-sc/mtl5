@@ -153,7 +153,7 @@ suite.
 | `cfloat<32,8>` | 0.33 | 2.7 | |
 | `posit<16,1>` | 0.38 | 4.7 | one equation; the next worst is 1.8 |
 | `posit<32,2>` | 0.26 | 2.1 | |
-| `posit<64,3>` | 0.37 | 29 | `sqrt` is accurate only to double (stillwater-sc/universal#1846) |
+| `posit<64,3>` | 0.31 | 2.5 | was 29 before reflectors could fall back to the identity; see below |
 | `takum<32>` | 0.75 | 4.0 | |
 | `lns<32,22>` | 0.35 | 2.2 | |
 | `dd` | 0.11 | 3.2 | |
@@ -171,6 +171,16 @@ has only a few fraction bits. The scalar was then wrong by several percent and
 `Q` was not orthogonal, which put half at 57 ε and `posit<16,1>` at 215 ε.
 The scalar is now computed as `−v₀ / ‖x‖`, which is equal in exact arithmetic
 and squares nothing small (#658); the table above was measured with it.
+
+`householder()` also checks the reflector it computed. With `c = β vᵀv`, which
+is 2 for an exact reflector, `‖HᵀH − I‖ = |2 − c| c`. The reflector is kept when
+`|2 − c| c ≤ ‖tail‖ / ‖x‖`, the cost of leaving the column alone, and otherwise
+(including a NaN `c`) it returns the identity. In `posit<64,3>`,
+Universal's `sqrt` is accurate only to double (stillwater-sc/universal#1846),
+so for a tail too small to matter the reflector was further from orthogonal
+than the tail was large. That put `posit<64,3>` at 29 ε, and the check brings it
+to 2.5 ε. The same check keeps 8-bit and fixed-point types finite: a reflector
+they cannot represent becomes the identity, as it did before #658.
 
 ## Limits
 
