@@ -159,6 +159,32 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
             v(i) = (x(i) / scale) / v0;
         v(0) = math::one<T>();
 
+        // An exact reflector has c = beta * v^T v = 2, and H = I - beta v v^T
+        // is then orthogonal; in general ||H^T H - I|| = |2 - c| * c. In a type
+        // with few bits near v0 or little range above 1/v0 the computed
+        // reflector can be far from that: fixpnt<16,8> gives beta = 2^-8, one
+        // ulp, and c = 0.5; an 8-bit cfloat overflows v and gives c = inf.
+        // Leaving x as it is (H = I) costs ||tail|| / ||x|| instead, so keep
+        // whichever is smaller. A NaN c fails the comparison and takes I. The
+        // old squared beta reached I in these types by underflowing to zero.
+        // In float and double, |2 - c| is a few eps and the tail is above half
+        // an ulp of x0, so the reflector is kept except where both costs are
+        // a few eps.
+        //
+        // c is summed as beta + sum (beta v(i)) v(i): beta v(i) = -x(i)/norm_x
+        // is at most 1 and every partial sum stays near 2. Summing v^T v first
+        // would reach 1/v0^2, which saturates a fixed-point type and hides
+        // exactly the error being measured.
+        T c = beta;
+        for (size_type i = 1; i < n; ++i)
+            c += (beta * v(i)) * v(i);
+        const T dev = abs(T(2) - c) * c;
+        if (!(dev <= sqrt(sigma) / norm_x)) {
+            for (size_type i = 1; i < n; ++i)
+                v(i) = math::zero<T>();
+            return {v, math::zero<T>()};
+        }
+
         return {v, beta};
     } else {
         // Complex path (LAPACK zlarfg's construction).
