@@ -203,11 +203,17 @@ inline constexpr bool gemmt_dispatches_blas_v = [] {
 /// C is n x n, A is n x k, B is k x n. The other triangle is mirrored from
 /// the formed one (`fill = mirror`, the default) or left untouched (`keep`).
 /// B may be a dense matrix, trans() of one, or trans() of a compressed2D.
+/// alpha and beta are converted to C's element type first, as ?gemmt takes
+/// them, so every path combines with the same coefficients. With beta != 0
+/// and `fill = mirror`, C must be symmetric: only the formed triangle of the
+/// old C is read.
 template <typename Accumulator = void, Scalar S, Matrix MA, Matrix MB, Matrix MC>
-void gemmt(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C,
+void gemmt(const S& alpha_in, const MA& A, const MB& B, const S& beta_in, MC& C,
            uplo t = uplo::lower, gemmt_fill fill = gemmt_fill::mirror) {
     using value_type = typename MC::value_type;
     using size_type  = typename MC::size_type;
+    const auto alpha = static_cast<value_type>(alpha_in);
+    const auto beta  = static_cast<value_type>(beta_in);
     const size_type n = C.num_rows();
     const std::size_t k = A.num_cols();
     assert(C.num_cols() == n);
@@ -226,7 +232,6 @@ void gemmt(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C,
     if constexpr (detail::gemmt_dispatches_blas_v<Accumulator, MA, MB, MC>) {
         const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
         if (static_cast<std::size_t>(n) <= imax && k <= imax) {
-            using T = value_type;
             const int ni = static_cast<int>(n);
             const int ki = static_cast<int>(k);
             const int ldc = ni;
@@ -236,16 +241,16 @@ void gemmt(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C,
                 const auto da = detail::flip(detail::gemmt_blas_describe(B));
                 const auto db = detail::flip(detail::gemmt_blas_describe(A));
                 interface::blas::gemmt(t == uplo::lower ? 'U' : 'L', da.op, db.op, ni, ki,
-                                       static_cast<T>(alpha), detail::gemmt_blas_data(B), da.ld,
+                                       alpha, detail::gemmt_blas_data(B), da.ld,
                                        detail::gemmt_blas_data(A), db.ld,
-                                       static_cast<T>(beta), C.data(), ldc);
+                                       beta, C.data(), ldc);
             } else {
                 const auto da = detail::gemmt_blas_describe(A);
                 const auto db = detail::gemmt_blas_describe(B);
                 interface::blas::gemmt(t == uplo::lower ? 'L' : 'U', da.op, db.op, ni, ki,
-                                       static_cast<T>(alpha), detail::gemmt_blas_data(A), da.ld,
+                                       alpha, detail::gemmt_blas_data(A), da.ld,
                                        detail::gemmt_blas_data(B), db.ld,
-                                       static_cast<T>(beta), C.data(), ldc);
+                                       beta, C.data(), ldc);
             }
             finish();
             return;
@@ -261,8 +266,8 @@ void gemmt(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C,
         // triangle's columns -- a contiguous inner loop the compiler
         // vectorizes. Every entry is still zero, + A(i,0)*B(0,j), + ... in
         // ascending k with the same generic_fma, so the bits do not change.
-        const bool alpha_zero = (alpha == math::zero<S>());
-        const bool beta_zero  = (beta == math::zero<S>());
+        const bool alpha_zero = (alpha == math::zero<value_type>());
+        const bool beta_zero  = (beta == math::zero<value_type>());
         std::vector<value_type> acc(static_cast<std::size_t>(n));
         for (size_type i = 0; i < n; ++i) {
             const size_type jb = (t == uplo::lower) ? size_type{0} : i;

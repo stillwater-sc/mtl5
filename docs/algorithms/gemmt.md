@@ -28,13 +28,19 @@ symmetric: `C(i,j)` and `C(j,i)` hold the same bits. This is `syrk`'s
 full-result convention. `gemmt_fill::keep` leaves the other triangle as it
 was, as the BLAS routine does.
 
+With `β ≠ 0` and the default mirror, the input `C` must be symmetric. Only the
+formed triangle of the old `C` is read, so an asymmetric `C` loses the other
+triangle's `β C` terms and the result is not `α A B + β C`.
+
 `B` can be a dense matrix, `trans()` of one, or `trans()` of a
 `compressed2D`. For a transposed CRS matrix `R`, entry `(i,j)` sums over the
 stored entries of row `j` of `R`, so its cost is that row's number of
 non-zeros rather than `k`.
 
-`α` and `β` follow the BLAS convention. With `β = 0`, `C` is not read, so a
-NaN left in it does not propagate; with `α = 0`, `A` and `B` are not read.
+`α` and `β` follow the BLAS convention. They are converted to `C`'s element
+type first, as `?gemmt` takes them, so the generic and BLAS paths combine with
+the same coefficients. With `β = 0`, `C` is not read, so a NaN left in it does
+not propagate; with `α = 0`, `A` and `B` are not read.
 
 ### Rounding
 

@@ -277,6 +277,28 @@ TEST_CASE("gemmt: alpha == 0 and beta == 0 follow BLAS", "[operation][gemmt]") {
     }
 }
 
+TEST_CASE("gemmt: coefficients are converted to C's element type", "[operation][gemmt]") {
+    // double alpha and beta on a float C combine as their float roundings do,
+    // on the generic path and through ?gemmt alike.
+    std::mt19937_64 g(656);
+    const double alpha = 1.0 / 3.0, beta = 0.1;
+    auto check = [&](auto A, auto B, auto C) {
+        fill_random(A, g);
+        fill_random(B, g);
+        fill_symmetric(C, g);
+        decltype(C) D(C.num_rows(), C.num_cols());
+        for (std::size_t i = 0; i < C.num_rows(); ++i)
+            for (std::size_t j = 0; j < C.num_cols(); ++j)
+                D(i, j) = C(i, j);
+        gemmt(alpha, A, B, beta, C);
+        gemmt(static_cast<float>(alpha), A, B, static_cast<float>(beta), D);
+        REQUIRE(same_bits(C, D));
+    };
+    check(dmat<float>(7, 5), dmat<float>(5, 7), dmat<float>(7, 7));
+    check(dmat<float, tag::col_major>(7, 5), dmat<float, tag::col_major>(5, 7),
+          dmat<float, tag::col_major>(7, 7));
+}
+
 TEST_CASE("gemmt: edge cases", "[operation][gemmt]") {
     dmat<double> A0(0, 3), B0(3, 0), C0(0, 0);
     gemmt(1.0, A0, B0, 0.0, C0);   // n == 0
