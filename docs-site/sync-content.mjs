@@ -78,6 +78,7 @@ const FILE_MAP = {
   'algorithms/matrix-functions.md':             'algorithms/matrix-functions.md',
   'algorithms/sylvester.md':                    'algorithms/sylvester.md',
   'algorithms/gemmt.md':                        'algorithms/gemmt.md',
+  'algorithms/gemmt-origins.md':                'algorithms/gemmt-origins.md',
   'algorithms/supernodal-ldlt.md':              'algorithms/supernodal-ldlt.md',
 
   // ── Benchmarking ────────────────────────────────────────────────
