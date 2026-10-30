@@ -80,6 +80,7 @@ const FILE_MAP = {
   'algorithms/gemmt.md':                        'algorithms/gemmt.md',
   'algorithms/gemmt-origins.md':                'algorithms/gemmt-origins.md',
   'algorithms/givens-householder-history.md':   'algorithms/givens-householder-history.md',
+  'algorithms/givens-householder-pictures.md':  'algorithms/givens-householder-pictures.md',
   'algorithms/supernodal-ldlt.md':              'algorithms/supernodal-ldlt.md',
 
   // ── Benchmarking ────────────────────────────────────────────────

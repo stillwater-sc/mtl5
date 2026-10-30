@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 380" width="760" height="380" role="img">
+<title>Chasing the bulge in a Golub-Kahan SVD step</title>
+<desc>A 5 by 5 upper bidiagonal matrix. Alternating right and left Givens rotations push a single nonzero, the bulge, down and to the right until it falls off the matrix and the matrix is bidiagonal again.</desc>
+<style>
+  .bg    { fill: #fbfbfd; stroke: #d0d4dc; }
+  .ink   { fill: #1f2430; }
+  .muted { fill: #6b7280; }
+  .line  { stroke: #1f2430; fill: none; }
+  .axis  { stroke: #9aa1ad; fill: none; }
+  .guide { stroke: #9aa1ad; fill: none; stroke-dasharray: 4 4; }
+  .vec   { stroke: #2563eb; fill: none; }
+  .vecf  { fill: #2563eb; }
+  .ghost { stroke: #93b4f5; fill: none; }
+  .mirror{ stroke: #c2410c; fill: none; stroke-dasharray: 6 4; }
+  .accent{ fill: #c2410c; }
+  .accs  { stroke: #c2410c; fill: none; }
+  .nz    { fill: #3b6fd8; }
+  .fill  { fill: #e8892c; }
+  .gone  { fill: #f3c1c1; }
+  .zero  { fill: #ffffff; stroke: #d7dbe3; }
+  .band  { fill: #fde68a; }
+  .s0 { stroke: #2563eb; } .s1 { stroke: #c2410c; }
+  .s2 { stroke: #059669; } .s3 { stroke: #7c3aed; }
+  .f0 { fill: #2563eb; } .f1 { fill: #c2410c; }
+  .f2 { fill: #059669; } .f3 { fill: #7c3aed; }
+  text { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    .bg    { fill: #171a21; stroke: #343a46; }
+    .ink   { fill: #e6e8ee; }
+    .muted { fill: #9aa1ad; }
+    .line  { stroke: #e6e8ee; }
+    .axis  { stroke: #5b6270; }
+    .guide { stroke: #5b6270; }
+    .vec   { stroke: #6ea0ff; }
+    .vecf  { fill: #6ea0ff; }
+    .ghost { stroke: #3c5a99; }
+    .mirror{ stroke: #f08a4b; }
+    .accent{ fill: #f08a4b; }
+    .accs  { stroke: #f08a4b; }
+    .nz    { fill: #5b8cf0; }
+    .fill  { fill: #f0a050; }
+    .gone  { fill: #6b3a3a; }
+    .zero  { fill: #1f232c; stroke: #343a46; }
+    .band  { fill: #5c4a12; }
+    .s0 { stroke: #6ea0ff; } .s1 { stroke: #f08a4b; }
+    .s2 { stroke: #34d399; } .s3 { stroke: #b28cff; }
+    .f0 { fill: #6ea0ff; } .f1 { fill: #f08a4b; }
+    .f2 { fill: #34d399; } .f3 { fill: #b28cff; }
+  }
+</style>
+<rect class="bg" x="0.5" y="0.5" width="759" height="379" rx="8"/>
+<text class="ink" x="175" y="40" font-size="15" text-anchor="middle" font-weight="600">One implicit-shift SVD step</text>
+<rect class="band" x="64" y="70" width="222" height="42" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.18;0.27"/></rect>
+<rect class="band" x="64" y="112" width="222" height="42" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0;1;0" keyTimes="0;0.18;0.27;0.36;0.45"/></rect>
+<rect class="band" x="64" y="154" width="222" height="42" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0;1;0" keyTimes="0;0.36;0.45;0.55;0.64"/></rect>
+<rect class="band" x="64" y="196" width="222" height="42" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0;1;0" keyTimes="0;0.55;0.64;0.73;0.82"/></rect>
+<rect class="band" x="64" y="238" width="222" height="42" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.73;0.82"/></rect>
+<rect class="band" x="70" y="64" width="42" height="222" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.09;0.18"/></rect>
+<rect class="band" x="112" y="64" width="42" height="222" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0;1;0" keyTimes="0;0.09;0.18;0.27;0.36"/></rect>
+<rect class="band" x="154" y="64" width="42" height="222" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0;1;0" keyTimes="0;0.27;0.36;0.45;0.55"/></rect>
+<rect class="band" x="196" y="64" width="42" height="222" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0;1;0" keyTimes="0;0.45;0.55;0.64;0.73"/></rect>
+<rect class="band" x="238" y="64" width="42" height="222" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.64;0.73"/></rect>
+<rect class="nz" x="73" y="73" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="nz" x="115" y="73" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="157" y="73" width="36" height="36" rx="4" opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0;1" keyTimes="0;0.18;0.36"/></rect><rect class="fill" x="157" y="73" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.18;0.27"/></rect><rect class="gone" x="157" y="73" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.27;0.36"/></rect>
+<rect class="zero" x="199" y="73" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="241" y="73" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="73" y="115" width="36" height="36" rx="4" opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0;1" keyTimes="0;0.09;0.27"/></rect><rect class="fill" x="73" y="115" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.09;0.18"/></rect><rect class="gone" x="73" y="115" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.18;0.27"/></rect>
+<rect class="nz" x="115" y="115" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="nz" x="157" y="115" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="199" y="115" width="36" height="36" rx="4" opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0;1" keyTimes="0;0.36;0.55"/></rect><rect class="fill" x="199" y="115" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.36;0.45"/></rect><rect class="gone" x="199" y="115" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.45;0.55"/></rect>
+<rect class="zero" x="241" y="115" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="73" y="157" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="115" y="157" width="36" height="36" rx="4" opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0;1" keyTimes="0;0.27;0.45"/></rect><rect class="fill" x="115" y="157" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.27;0.36"/></rect><rect class="gone" x="115" y="157" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.36;0.45"/></rect>
+<rect class="nz" x="157" y="157" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="nz" x="199" y="157" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="241" y="157" width="36" height="36" rx="4" opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0;1" keyTimes="0;0.55;0.73"/></rect><rect class="fill" x="241" y="157" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.55;0.64"/></rect><rect class="gone" x="241" y="157" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.64;0.73"/></rect>
+<rect class="zero" x="73" y="199" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="115" y="199" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="157" y="199" width="36" height="36" rx="4" opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0;1" keyTimes="0;0.45;0.64"/></rect><rect class="fill" x="157" y="199" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.45;0.55"/></rect><rect class="gone" x="157" y="199" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.55;0.64"/></rect>
+<rect class="nz" x="199" y="199" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="nz" x="241" y="199" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="73" y="241" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="115" y="241" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="157" y="241" width="36" height="36" rx="4" opacity="1"></rect>
+<rect class="zero" x="199" y="241" width="36" height="36" rx="4" opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0;1" keyTimes="0;0.64;0.82"/></rect><rect class="fill" x="199" y="241" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.64;0.73"/></rect><rect class="gone" x="199" y="241" width="36" height="36" rx="4" opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.73;0.82"/></rect>
+<rect class="nz" x="241" y="241" width="36" height="36" rx="4" opacity="1"></rect>
+<g opacity="1"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="1;0" keyTimes="0;0.09"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">upper bidiagonal B</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 0</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.09;0.18"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">right rotation, columns 1 and 2: shift enters, bulge at (2, 1)</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 1</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.18;0.27"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">left rotation, rows 1 and 2: zero (2, 1), bulge at (1, 3)</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 2</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.27;0.36"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">right rotation, columns 2 and 3: zero (1, 3), bulge at (3, 2)</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 3</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.36;0.45"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">left rotation, rows 2 and 3: zero (3, 2), bulge at (2, 4)</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 4</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.45;0.55"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">right rotation, columns 3 and 4: zero (2, 4), bulge at (4, 3)</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 5</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.55;0.64"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">left rotation, rows 3 and 4: zero (4, 3), bulge at (3, 5)</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 6</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.64;0.73"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">right rotation, columns 4 and 5: zero (3, 5), bulge at (5, 4)</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 7</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1;0" keyTimes="0;0.73;0.82"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">left rotation, rows 4 and 5: zero (5, 4), bidiagonal again</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 8</text></g>
+<g opacity="0"><animate attributeName="opacity" calcMode="discrete" dur="17.6s" repeatCount="indefinite" values="0;1" keyTimes="0;0.82"/><text class="ink" x="320" y="100" font-size="13" text-anchor="start">one step done: the last superdiagonal entry shrinks</text><text class="muted" x="320" y="126" font-size="12" text-anchor="start">rotations so far: 8</text></g>
+<text class="muted" x="320" y="190" font-size="12" text-anchor="start">Each rotation zeroes the bulge the previous one made</text>
+<text class="muted" x="320" y="210" font-size="12" text-anchor="start">and makes a new one one place further down.</text>
+<text class="muted" x="320" y="230" font-size="12" text-anchor="start">An n x n step costs 2(n − 1) rotations, O(n) work.</text>
+<text class="muted" x="320" y="250" font-size="12" text-anchor="start">The Francis step on a Hessenberg matrix chases its</text>
+<text class="muted" x="320" y="270" font-size="12" text-anchor="start">bulge the same way, with 3 x 3 reflectors.</text>
+<rect class="nz" x="70" y="320" width="14" height="14" rx="3"/>
+<text class="muted" x="90" y="332" font-size="12" text-anchor="start">band entry</text>
+<rect class="fill" x="230" y="320" width="14" height="14" rx="3"/>
+<text class="muted" x="250" y="332" font-size="12" text-anchor="start">bulge</text>
+<rect class="gone" x="390" y="320" width="14" height="14" rx="3"/>
+<text class="muted" x="410" y="332" font-size="12" text-anchor="start">just zeroed</text>
+<rect class="band" x="550" y="320" width="14" height="14" rx="3"/>
+<text class="muted" x="570" y="332" font-size="12" text-anchor="start">rows or columns rotated</text>
+</svg>
