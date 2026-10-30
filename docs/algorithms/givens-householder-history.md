@@ -92,7 +92,12 @@ a matrix: the QR factorization in its modern form.
 
 The sign in $v = x \mp \lVert x \rVert e_1$ is chosen to avoid cancellation,
 so that the first entry of $v$ is a sum of two quantities of the same sign.
-This is the choice LAPACK's `dlarfg` makes, and the choice whose rounding in
+LAPACK's `dlarfg` makes this choice, mapping $x$ onto
+$-\operatorname{sign}(x_0)\lVert x \rVert e_1$. B. N. Parlett's alternative
+keeps the other sign, mapping a vector with $x_0 > 0$ onto
+$+\lVert x \rVert e_1$, and avoids the cancellation by rewriting
+$x_0 - \lVert x \rVert = -\sigma/(x_0 + \lVert x \rVert)$ with
+$\sigma = \sum_{i \ge 1} x_i^2$. MTL5 uses Parlett's form; how it rounds in
 narrow formats is taken up in [Where MTL5 sits](#where-mtl5-sits).
 
 ## 4. Wilkinson and Golub: the methods become standard, 1960–1965
@@ -256,8 +261,11 @@ factored forms are more robust.
 
 Rotations and reflectors enter these filters directly. The square-root time
 and measurement updates are QR factorizations of a stacked array, the "array
-algorithms": triangularize $\begin{bmatrix} S F^T \\ Q^{1/2} \end{bmatrix}$ by
-Householder or Givens and the triangular factor is the new $S^T$. Their
+algorithms". For the time update $P^- = F P F^T + Q$ with $P = SS^T$ and
+$Q = S_Q S_Q^T$, triangularize
+$\begin{bmatrix} S^T F^T \\ S_Q^T \end{bmatrix}$ by Householder or Givens:
+the triangular factor $R$ satisfies $R^T R = F S S^T F^T + S_Q S_Q^T = P^-$,
+so $R^T$ is the new square root. Their
 behaviour in narrow arithmetic is the subject of mp-numerics #15.
 
 - J. E. Potter, R. G. Stern, "Statistical Filtering of Space Navigation
@@ -287,7 +295,9 @@ different granularities, and the granularity decides where each is used.
   column, at about two thirds of the cost of the rotations that would clear
   it. Through the compact WY form a block of reflectors is applied as matrix
   multiplies, so the factorization runs at Level 3 BLAS speed. LAPACK's
-  `dgeqrf` and MTL5's `qr_factor` work this way.
+  `dgeqrf` works this way. MTL5's `qr_factor` hands `float` and `double`
+  matrices to `geqrf` when LAPACK dispatch is enabled; its generic loop,
+  which every other scalar type runs, applies one reflector at a time.
 - **Sparse, banded, structured and updating problems: Givens.** A rotation
   touches two rows and zeroes one chosen entry, so it creates no fill outside
   those rows. Adding or deleting a row of a least-squares problem, updating a
@@ -331,14 +341,21 @@ rotations in these formats have had less attention.
 
 **Posits and takums.** The only work found that runs Householder QR in posit
 or takum arithmetic is Hunhold and Quinlan (ARITH 2025). It compares posit,
-takum, bfloat16, float16 and OFP8 E4M3 in sparse LU, sparse Householder QR
-(SuiteSparseQR), GMRES with ILU, and mixed-precision iterative refinement. At
-equal width, posits and takums match or beat the IEEE-style formats. The
-paper reports solution accuracy, not the loss of orthogonality of $Q$, and has
-no Givens rotations. Hunhold, Quinlan and Wesner's Arnoldi study (SC25) uses
+takum, bfloat16, float16 and OFP8 E4M3 in sparse LU, sparse Householder QR,
+GMRES with ILU, and mixed-precision iterative refinement. For the QR,
+SuiteSparseQR runs once in float64 to choose the row and column permutations;
+the factorization itself is the authors' own unblocked Householder QR, one
+reflector per column, in the target format. At equal width the posits and
+takums are generally as accurate as the IEEE-style formats or more, with
+exceptions the paper reports: posit16 is less accurate in LU for the lower
+quartile of matrices, it occasionally lags in GMRES, and takums are
+occasionally marginally less accurate than posits. The paper reports
+solution accuracy, not the loss of orthogonality of $Q$, and has no Givens
+rotations. Hunhold, Quinlan and Wesner's Arnoldi study (SC25) uses
 the same formats, but its dense Schur and QR core runs in IEEE arithmetic
-through LAPACK. Whether the OFP8 formats in these papers saturate or overflow
-is **(unconfirmed)**. Other posit studies cover Cholesky, LU, conjugate
+through LAPACK. The ARITH paper does not say whether its OFP8 conversions
+saturate or overflow; it records any overflow as a failed run. What the SC25
+study does is **(unconfirmed)**. Other posit studies cover Cholesky, LU, conjugate
 gradients and iterative refinement only.
 
 - L. Hunhold, J. Quinlan, posit, takum, bfloat16, float16 and OFP8 in sparse
@@ -369,9 +386,19 @@ gradients and iterative refinement only.
 
 **A posit Kalman filter.** Ilangovan, Rayan and Saxena, "Improving the
 Stability of Kalman Filters with Posit Arithmetic" (CoNGA 2023), is the one
-paper found on Kalman filtering in posits. Its content, in particular whether
-it covers square-root or $UDU^T$ forms, is **(unconfirmed)**: the paper is
-paywalled and could not be read.
+paper found on Kalman filtering in posits. Its
+[conference slides](https://www.posithub.org/conga/2023/assets/pdf/KalmanFilter.pdf)
+show the conventional filter only, with the update $P = (I - KH)P$. Joseph,
+Potter, Carlson and $UDU^T$ forms appear only in an operation-count
+comparison, as costlier alternatives. Two small filters, a rotating shaft
+(2 states) and the relative motion of two shafts (4 states), run in 32-bit
+posits with $es$ from 1 to 6 against binary32, with binary64 as the
+reference. A posit32 with a suitable $es$ keeps the filter stable where
+binary32 diverges, but the right $es$ depends on the range of the data:
+posit<32,1> fails when the covariance starts near $10^9$, where posit<32,4>
+works. The authors propose choosing $es$ by the average precision over the
+range the application uses. The slides were read; the proceedings paper,
+which is paywalled, was not.
 [doi:10.1007/978-3-031-32180-1_9](https://doi.org/10.1007/978-3-031-32180-1_9)
 
 **Logarithmic number systems.** Givens rotations in LNS appear only in
@@ -423,8 +450,8 @@ these appear to be open:
 | Householder QR in LNS | nothing | medium–high |
 | Accuracy against width for odd-width IEEE-like formats, and the effect of subnormals on rotations and reflectors | FPGA throughput only | high |
 | Saturating floating point (clamp instead of overflow) in hypot, rotation norms and reflector scaling | nothing | high |
-| Square-root and $UDU^T$ Kalman filters in any non-IEEE format | nothing (one posit Kalman paper, content unconfirmed) | high |
-| Eigenvalue and SVD algorithms in posit, takum or LNS | nothing | high |
+| Square-root and $UDU^T$ Kalman filters in any non-IEEE format | nothing (the one posit Kalman study uses the conventional form) | high |
+| Dense eigenvalue and SVD kernels (Hessenberg, tridiagonal and bidiagonal reduction, QR iteration) in posit, takum or LNS | Arnoldi with posit and takum Krylov vectors, but its dense core in IEEE (Hunhold, Quinlan and Wesner) | high |
 | Safe-scaling rotation constants (Bindel et al., Anderson) re-derived for tapered or saturating formats | nothing | high |
 
 The studies in mp-numerics #13 (rotations and reflectors as operators), #14
@@ -437,10 +464,14 @@ MTL5 is generic over the scalar type, so each of its rotations and reflectors
 is already an experiment in whatever arithmetic the caller supplies. They do
 not all take the same care.
 
-- **Householder reflectors** (`include/mtl/operation/householder.hpp`) follow
-  LAPACK's `dlarfg` by default: the column is scaled before its norm is
-  formed, $v$ is normalized to $v_0 = 1$, and Parlett's formula
-  $v_0 = -\sigma/(x_0 + \lVert x \rVert)$ avoids cancellation. A textbook form
+- **Householder reflectors** (`include/mtl/operation/householder.hpp`)
+  follow LAPACK's `dlarfg` by default in two respects: the column is scaled
+  before its norm is formed, and $v$ is normalized to $v_0 = 1$. They differ
+  in sign. MTL5 uses Parlett's formula $v_0 = -\sigma/(x_0 + \lVert x \rVert)$,
+  which maps a column with $x_0 > 0$ onto $+\lVert x \rVert e_1$, where
+  `dlarfg` maps it onto $-\lVert x \rVert e_1$; for $x = (1, 1)^T$ the two give
+  different reflectors. Both avoid cancellation, but they round differently,
+  which matters when comparing MTL5 against LAPACK in narrow formats. A textbook form
   is available as an option; [householder-reflector-forms.md](../numerical/householder-reflector-forms.md)
   compares the two. Since 5.21.0, `householder()` checks that the $\tau$ and $v$ it
   computed define a reflector the type can represent, and returns the
@@ -485,11 +516,9 @@ corrected or removed when a source is found.
    paper; the first release to include it, possibly 3.10, is not confirmed.
    Nor is whether the Bindel et al. algorithms of 2002 were themselves
    adopted into a LAPACK release before it.
-4. **OFP8 overflow semantics in the Hunhold papers.** Whether the OFP8
-   formats in the ARITH 2025 and SC25 studies saturate on overflow or produce
-   infinity or NaN. The OCP 8-bit specification defines both a saturating
-   and a non-saturating conversion, and how an OFP8 failure should be read
-   depends on which one was used.
-5. **The content of Ilangovan, Rayan and Saxena (CoNGA 2023)**, in particular
-   whether it studies square-root or $UDU^T$ filters. The bibliographic
-   record is confirmed; the paper itself was not read.
+4. **OFP8 overflow semantics in the SC25 Arnoldi study.** Whether its OFP8
+   formats saturate on overflow or produce infinity or NaN. The OCP 8-bit
+   specification defines both a saturating and a non-saturating conversion,
+   and how an OFP8 failure should be read depends on which one was used. The
+   ARITH 2025 paper was checked: it does not say, and records an overflow as
+   a failed run.
