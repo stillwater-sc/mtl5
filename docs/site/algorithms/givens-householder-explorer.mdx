@@ -1,0 +1,102 @@
+---
+title: Givens and Householder explorer
+description: Drag a column through a Givens rotation or a Householder reflector computed in a narrow number format, and watch what the rounding does to it and to a second column carried along.
+---
+
+import GivensHouseholderExplorer from '../../../components/GivensHouseholderExplorer.astro';
+
+{/*
+  Source: docs/site/algorithms/givens-householder-explorer.mdx, copied verbatim
+  by docs-site/sync-content.mjs. The component and its arithmetic live in
+  docs-site/src/components/; docs-site/tests/ checks the arithmetic against
+  vectors that tools/givens_householder_svg.py computes exactly.
+*/}
+
+A Givens rotation or a Householder reflector is built from one column of the
+matrix, the **pivot column** $x$, so that it puts $x$ on the first axis. Every
+other column of the rows it touches is then **carried along**: the same
+operator is applied to it, and it rotates or reflects without landing on any
+axis. The figures in [Givens and Householder in
+pictures](/mtl5/algorithms/givens-householder-pictures/) show only the pivot
+column. Here you can move both.
+
+The operator is computed the way MTL5 computes it, in the number format you
+choose. Each multiply, add, divide and square root is rounded to the format, so
+the operator you see is the one a factorization in that format would apply.
+The arrows' hollow rings show where an exact operator would put each vector.
+
+<GivensHouseholderExplorer />
+
+## What to look at
+
+**The pivot column lands on the axis; the carried one is only moved.** The
+operator is chosen for $x$, so $x$ ends at $(\lVert x \rVert, 0)$ up to
+rounding. $y$ turns through the same angle, or flips across the same mirror,
+and keeps its length only as well as the operator is orthogonal. The tables
+report that as $(\lVert y' \rVert - \lVert y \rVert) / \lVert y \rVert$, in
+units of the format's unit roundoff $u$ at 1.
+
+**A rounded operator is not orthogonal.** For a rotation, $c^2 + s^2 - 1$ is
+the stretch it applies to every vector. In fp8 E4M3 at the starting position,
+$x = (2.5, 1.5)$, $r$ rounds to 2.75 against an exact 2.92, so $c = a/r$
+rounds to 0.9375 and $c^2 + s^2 - 1 = 0.20$. The reflector for the same $x$
+in the same format has $\lVert H^TH - I \rVert = 0.025$.
+
+**Squaring overflows before the answer does.** MTL5's GMRES forms
+$r = \sqrt{a^2 + b^2}$ without scaling. In binary16, set
+$x = (300, 200)$ (view ±400): $a^2 = 90000$ is beyond the largest binary16
+value, 65504, so $r = \infty$, $c = s = 0$, and the "rotation" is the zero
+matrix. Both columns vanish. Choose **scaled by max(|a|, |b|) first** and the
+same $x$ gives $r = 360.75$. In fp8 E4M3, which saturates instead of
+overflowing, $x = (20, 15)$ gives $r = 22$ against an exact 25. The scaled
+form is the one `lapy2` and MTL5's `householder()` use.
+
+**Squaring underflows too.** In binary16, set $x = (0.0001, 0.0001)$: both
+squares are below the smallest subnormal, the sum is zero, and the unscaled
+rotation is the identity. The scaled one rotates correctly.
+
+**The reflector can decline.** MTL5's `householder()` returns the identity
+when $b$ is below half an ulp of $a$, and when the computed reflector would be
+further from orthogonal than leaving $x$ alone. In fp8 E4M3,
+$x = (4, 0.25)$ takes the first exit, while the rotation still turns by
+$s = 0.0625$. The readout names the test that fired.
+
+**The entry that should be zero.** Applying the computed operator to $x$
+leaves a small second component. Factorizations do not use it: MTL5's GMRES
+writes $r$ and an exact 0, and `qr_factor` stores the reflector's vector below
+the diagonal in its place. The rest of the row pair, the carried columns,
+gets no such repair.
+
+**Posit precision tapers.** {'posit<16,2>'} has 11 fraction bits for
+magnitudes between 1/16 and 16, and fewer further out: 9 near 2000. Move $y$
+far from the origin (view ±4000) and compare its error with binary16's, whose
+relative precision is the same across its normal range.
+
+## How the arithmetic is done
+
+The page holds every value as a JavaScript double and rounds each operation's
+result once to the chosen format. For formats of 16 bits or fewer, that gives
+the correctly rounded result: rounding twice is harmless when the wider format
+has at least $2p + 2$ significand bits, and a double has 53. Posits are
+rounded in their encoding, as the posit standard requires: never to zero, and
+values beyond the largest posit go to it.
+
+The arithmetic is in `docs-site/src/components/gh/`. It is checked by
+`npm test` in `docs-site/` against test vectors that
+`tools/givens_householder_svg.py` computes in exact rational arithmetic, the
+same code that draws the figures. The vectors cover rounding, square roots,
+both forms of the rotation, the reflector and eight steps of the drift figure,
+in ten formats.
+
+The operation sequences follow MTL5:
+
+- **Rotation**, from `include/mtl/operation/givens.hpp`:
+  $r = \sqrt{a \cdot a + b \cdot b}$, $c = a/r$, $s = b/r$, and
+  $G(u, w) = (c u + s w,\; c w - s u)$. The scaled variant divides $a$ and $b$
+  by $\max(\lvert a \rvert, \lvert b \rvert)$ before squaring.
+- **Reflector**, from `include/mtl/operation/householder.hpp`, for $n = 2$:
+  scale by $\max(\lvert a \rvert, \lvert b \rvert)$; Parlett's
+  $v_0 = -\sigma / (x_0 + \lVert x \rVert)$ for $x_0 > 0$;
+  $\tau = -v_0 / \lVert x \rVert$; $v = (1, x_1 / v_0)$; and the identity
+  fallbacks described above. It is applied as
+  $y - \tau v (v^T y)$.

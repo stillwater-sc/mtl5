@@ -13,6 +13,11 @@ Four figures, written to docs/img/ (or the directory given with --out):
                 bfloat16, binary16 and posit<16,2>, and the radius error
                 against k
 
+It also writes docs-site/tests/gh-vectors.json: rounding, square-root,
+rotation, reflector and drift results in ten narrow formats, computed here in
+exact arithmetic, against which the JavaScript arithmetic of the interactive
+page (docs/site/algorithms/givens-householder-explorer.mdx) is tested.
+
 The animations use SVG's own SMIL elements (<animate>, <animateTransform>),
 not script, so they play wherever the SVG is shown, including through an
 <img> tag. The output depends only on this file: rerunning it reproduces the
@@ -892,11 +897,211 @@ def self_test():
             assert fmt.round(r) == r, (fmt.name, v)
 
 
+# --------------------------------------------------------------------------
+# Test vectors for the interactive page
+# --------------------------------------------------------------------------
+#
+# docs-site/src/components/gh/numformats.js rounds in JavaScript, from a
+# double: each operation is done in double and the result rounded once to the
+# format. For formats this narrow that is the same as rounding the exact
+# result (Figueroa: double rounding is innocuous for +, -, *, / and sqrt when
+# the wide format has at least 2p + 2 bits). These vectors, rounded here in
+# exact arithmetic, are what docs-site/tests/numformats.test.mjs checks the
+# port against.
+
+VECTOR_FORMATS = [
+    {'kind': 'ieee', 'p': 4, 'emax': 8, 'emin': -6, 'saturate': True,
+     'maxval': 448},                                         # OCP E4M3
+    {'kind': 'ieee', 'p': 3, 'emax': 15},                    # OCP E5M2
+    {'kind': 'ieee', 'p': 8, 'emax': 127},                   # bfloat16
+    {'kind': 'ieee', 'p': 11, 'emax': 15},                   # binary16
+    {'kind': 'ieee', 'p': 5, 'emax': 7, 'subnormals': False},
+    {'kind': 'posit', 'n': 8, 'es': 0},
+    {'kind': 'posit', 'n': 8, 'es': 2},
+    {'kind': 'posit', 'n': 16, 'es': 1},
+    {'kind': 'posit', 'n': 16, 'es': 2},
+    {'kind': 'posit', 'n': 16, 'es': 3},
+]
+
+
+def vector_format(spec):
+    if spec['kind'] == 'posit':
+        return Posit('posit', spec['n'], spec['es'])
+    return IEEELike('ieee', spec['p'], spec['emax'],
+                    subnormals=spec.get('subnormals', True),
+                    saturate=spec.get('saturate', False),
+                    maxval=spec.get('maxval'), emin=spec.get('emin'))
+
+
+def representable(fmt):
+    """The format's positive finite values, ascending."""
+    if isinstance(fmt, Posit):
+        return [fmt._decode(b) for b in range(1, 1 << (fmt.n - 1))]
+    out = []
+    if fmt.subnormals:
+        q = Fraction(2) ** (fmt.emin - fmt.p + 1)
+        out += [m * q for m in range(1, 1 << (fmt.p - 1))]
+    for e in range(fmt.emin, fmt.emax + 1):
+        q = Fraction(2) ** (e - fmt.p + 1)
+        out += [m * q for m in range(1 << (fmt.p - 1), 1 << fmt.p)
+                if m * q <= fmt.maxval]
+    return out
+
+
+def jnum(q):
+    """A rounded value for JSON: a float, or a string for inf and NaN."""
+    if isinstance(q, float) and not math.isfinite(q):
+        return 'nan' if math.isnan(q) else ('inf' if q > 0 else '-inf')
+    return float(q)
+
+
+def ops_for(fmt):
+    """Correctly rounded +, *, / and sqrt. An overflow to infinity (only the
+    non-saturating IEEE formats have one) continues in IEEE float rules, as
+    it does in JavaScript."""
+    def special(*xs):
+        return any(isinstance(x, float) and not math.isfinite(x) for x in xs)
+
+    def mul(a, b):
+        if special(a, b):
+            return float(a) * float(b)
+        return rnd(fmt, a * b)
+
+    def add(a, b):
+        if special(a, b):
+            return float(a) + float(b)
+        return rnd(fmt, a + b)
+
+    def div(a, b):
+        if special(a, b):
+            fa, fb = float(a), float(b)
+            return math.nan if math.isinf(fa) and math.isinf(fb) else fa / fb
+        return rnd(fmt, Fraction(a) / b)
+
+    def sqrt(a):
+        if special(a):
+            return math.sqrt(a) if a > 0 else math.nan
+        return rsqrt_exact(fmt, a)
+    return mul, add, div, sqrt
+
+
+def givens_ref(fmt, a, b, scaled):
+    """The rotation as docs-site/src/components/gh/kernels.js computes it."""
+    mul, add, div, sqrt = ops_for(fmt)
+    if scaled:
+        sc = max(abs(a), abs(b))
+        if sc == 0:
+            return 1, 0, 0
+        a1, b1 = div(a, sc), div(b, sc)
+        r = mul(sc, sqrt(add(mul(a1, a1), mul(b1, b1))))
+    else:
+        r = sqrt(add(mul(a, a), mul(b, b)))
+    if r == 0:
+        return 1, 0, 0
+    return div(a, r), div(b, r), r
+
+
+def householder_ref(fmt, a, b):
+    """MTL5's real householder() for n = 2: (v1, tau), or None for H = I."""
+    mul, add, div, sqrt = ops_for(fmt)
+    sc = max(abs(a), abs(b))
+    if sc == 0:
+        return None
+    x1 = div(b, sc)
+    sigma = mul(x1, x1)
+    if sigma == 0:
+        return None
+    x0 = div(a, sc)
+    norm = sqrt(add(mul(x0, x0), sigma))
+    if x0 <= 0:
+        v0 = add(x0, -norm)
+    else:
+        if add(x0, sqrt(sigma)) == x0:
+            return None
+        v0 = -div(sigma, add(x0, norm))
+    tau = -div(v0, norm)
+    if tau == 0:
+        return None
+    v1 = div(x1, v0)
+    c = add(tau, mul(mul(tau, v1), v1))
+    dev = mul(abs(add(2, -c)), c)
+    if not dev <= div(sqrt(sigma), norm):
+        return None
+    return v1, tau
+
+
+def make_vectors():
+    import json
+    import random
+    rng = random.Random(665)
+    out = {'note': 'generated by tools/givens_householder_svg.py; '
+                   'do not edit', 'formats': []}
+    for spec in VECTOR_FORMATS:
+        fmt = vector_format(spec)
+        vals = representable(fmt)
+        lo, hi = float(vals[0]), float(vals[-1])
+        xs = [0.0, lo / 4, lo / 2, lo, hi, hi * 1.0625, hi * 2, 1e30,
+              float(vals[0] + vals[1]) / 2]
+        for _ in range(60):
+            xs.append(math.exp(rng.uniform(math.log(lo) - 2,
+                                           math.log(hi) + 2)))
+        for _ in range(30):
+            i = rng.randrange(len(vals) - 1)
+            mid = (vals[i] + vals[i + 1]) / 2
+            xs.append(float(mid))
+            xs.append(math.nextafter(float(mid), -math.inf))
+            xs.append(math.nextafter(float(mid), math.inf))
+        rows = []
+        for j, x in enumerate(xs):
+            x = -x if j % 2 else x
+            rows.append([x, jnum(fmt.round(Fraction(x)))])
+        sq = []
+        for _ in range(20):
+            x = float(vals[rng.randrange(len(vals))])
+            sq.append([x, jnum(rsqrt_exact(fmt, Fraction(x)))])
+        giv, hh = [], []
+        for _ in range(24):
+            a = rng.choice((-1, 1)) * vals[rng.randrange(len(vals))]
+            b = rng.choice((-1, 1)) * vals[rng.randrange(len(vals))]
+            if rng.random() < 0.3:
+                b = b / 2 ** rng.randrange(4, 12)
+                b = fmt.round(b) if b else b
+            for scaled in (False, True):
+                c, s, r = givens_ref(fmt, a, b, scaled)
+                giv.append([float(a), float(b), scaled,
+                            [jnum(x) for x in (c, s, r)]])
+            ref = householder_ref(fmt, a, b)
+            hh.append([float(a), float(b),
+                       None if ref is None else [jnum(v) for v in ref]])
+        c = rnd(fmt, math.cos(THETA))
+        s = rnd(fmt, math.sin(THETA))
+        pts = [(rnd(fmt, math.cos(2 * math.pi * i / NPTS)),
+                rnd(fmt, math.sin(2 * math.pi * i / NPTS)))
+               for i in range(0, NPTS, 6)]
+        start = [[float(x), float(y)] for x, y in pts]
+        for _ in range(KSTEP):
+            pts = [(rnd(fmt, rnd(fmt, c * x) - rnd(fmt, s * y)),
+                    rnd(fmt, rnd(fmt, s * x) + rnd(fmt, c * y)))
+                   for x, y in pts]
+        out['formats'].append({
+            'spec': spec, 'count': len(vals), 'round': rows, 'sqrt': sq,
+            'givens': giv, 'householder': hh,
+            'drift': {'c': float(c), 's': float(s), 'k': KSTEP,
+                      'start': start,
+                      'end': [[jnum(x), jnum(y)] for x, y in pts]}})
+    return json.dumps(out, indent=None, separators=(',', ':')) + '\n'
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     here = os.path.dirname(os.path.abspath(__file__))
     ap.add_argument('--out', default=os.path.join(here, '..', 'docs', 'img'),
                     help='output directory (default: docs/img)')
+    ap.add_argument('--vectors',
+                    default=os.path.join(here, '..', 'docs-site', 'tests',
+                                         'gh-vectors.json'),
+                    help='test vectors for the interactive page '
+                         '(default: docs-site/tests/gh-vectors.json)')
     args = ap.parse_args()
     self_test()
     figs = {
@@ -905,8 +1110,10 @@ def main():
         'gh-bulge.svg': fig_bulge,
         'gh-drift.svg': fig_drift,
     }
-    for name, fn in figs.items():
-        path = os.path.join(args.out, name)
+    outputs = [(os.path.join(args.out, name), fn)
+               for name, fn in figs.items()]
+    outputs.append((args.vectors, make_vectors))
+    for path, fn in outputs:
         with open(path, 'w', encoding='utf-8', newline='\n') as fh:
             fh.write(fn())
         print('wrote %s (%d bytes)' % (os.path.normpath(path),

@@ -11,6 +11,7 @@
     "build": "node sync-content.mjs && astro build",
     "build:full": "npm run api && npm run build",
     "preview": "astro preview",
+    "test": "node --test tests/*.test.mjs",
     "astro": "astro"
   },
   "dependencies": {
