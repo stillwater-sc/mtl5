@@ -245,6 +245,13 @@ def f(x):
     return '0' if s in ('-0', '') else s
 
 
+def ft(x):
+    """A keyTime fraction. Two decimals, as f() prints, would make equal
+    slots unequal: with 59 slots some states would show twice as long."""
+    s = ('%.6f' % x).rstrip('0').rstrip('.')
+    return '0' if s == '' else s
+
+
 def esc(s):
     return (s.replace('&', '&amp;').replace('<', '&lt;')
              .replace('>', '&gt;'))
@@ -284,7 +291,7 @@ def arrow(x1, y1, x2, y2, cls='vec', width=2.5):
 def discrete(attr, values, dur, extra=''):
     """A discrete SMIL animation stepping through values in equal slots."""
     n = len(values)
-    times = ';'.join(f(i / n) for i in range(n))
+    times = ';'.join(ft(i / n) for i in range(n))
     return ('<animate attributeName="%s" calcMode="discrete" dur="%ss" '
             'repeatCount="indefinite" values="%s" keyTimes="%s"%s/>'
             % (attr, f(dur), ';'.join(values), times, extra))
@@ -321,7 +328,7 @@ def discrete_sparse(attr, values, dur):
     if len(runs) == 1:
         return None
     vals = ';'.join(v for v, _ in runs)
-    times = ';'.join(f(i / n) if i else '0' for _, i in runs)
+    times = ';'.join(ft(i / n) for _, i in runs)
     return ('<animate attributeName="%s" calcMode="discrete" dur="%ss" '
             'repeatCount="indefinite" values="%s" keyTimes="%s"/>'
             % (attr, f(dur), vals, times))
