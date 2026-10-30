@@ -40,6 +40,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test the explorer's arithmetic
+        run: npm test
+
       - name: Generate C++ API reference (Doxygen)
         run: npm run api
 

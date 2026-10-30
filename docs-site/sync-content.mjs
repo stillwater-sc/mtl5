@@ -35,6 +35,7 @@ const BASE = '/mtl5';  // Astro base path
 const SITE_FILES = {
   'site/index.mdx': 'index.mdx',
   'site/contributing/index.md': 'contributing/index.md',
+  'site/algorithms/givens-householder-explorer.mdx': 'algorithms/givens-householder-explorer.mdx',
 };
 
 // ── Synced docs (source path relative to docs/ → dest relative to content/docs/) ──
@@ -160,6 +161,12 @@ function buildLinkLookup() {
     // path that is correct on GitHub *and* rewritten for the site.
     lookup[`../docs/${src}`] = url;
   }
+  // Site pages are MDX, copied verbatim; a docs/ page can still link to one
+  // by its source path (../site/<section>/<page>.mdx), which GitHub resolves.
+  for (const [src, dest] of Object.entries(SITE_FILES)) {
+    const slug = dest.replace(/\.mdx?$/, '').replace(/(^|\/)index$/, '$1');
+    lookup[src] = `${BASE}/${slug === '' || slug.endsWith('/') ? slug : slug + '/'}`;
+  }
   for (const [src, dest] of Object.entries(ROOT_FILE_MAP)) {
     const slug = dest.replace(/\.md$/, '').replace(/\/index$/, '/');
     lookup[`../${src}`] = `${BASE}/${slug.endsWith('/') ? slug : slug + '/'}`;
@@ -173,10 +180,11 @@ const LINK_LOOKUP = buildLinkLookup();
 
 function rewriteLinks(content, srcRelative) {
   const srcDir = posix.dirname(srcRelative);
-  // Match ](path.md) and ](path.md#anchor); the .md path is resolved via the
-  // link lookup and a trailing #section anchor (if any) is preserved verbatim,
-  // so cross-page section links survive the rewrite instead of 404-ing.
-  return content.replace(/\]\(([^)#]+\.md)(#[^)]*)?\)/g, (match, target, anchor = '') => {
+  // Match ](path.md) and ](path.md#anchor), or .mdx for a site page; the path
+  // is resolved via the link lookup and a trailing #section anchor (if any) is
+  // preserved verbatim, so cross-page section links survive the rewrite
+  // instead of 404-ing.
+  return content.replace(/\]\(([^)#]+\.mdx?)(#[^)]*)?\)/g, (match, target, anchor = '') => {
     if (target.startsWith('http://') || target.startsWith('https://')) return match;
     const resolved = posix.normalize(posix.join(srcDir, target));
     const url = LINK_LOOKUP[resolved];

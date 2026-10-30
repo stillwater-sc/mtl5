@@ -1,0 +1,597 @@
+---
+// Interactive companion to docs/algorithms/givens-householder-pictures.md.
+// The reader drags a pivot column x and a second column y of the same row
+// pair. A Givens rotation or Householder reflector is built from x in a
+// chosen number format, with MTL5's operation sequence, and applied to both.
+// The arithmetic lives in ./gh/ and is tested by docs-site/tests/.
+---
+
+<div class="ghx" data-ghx>
+  <form class="ghx-controls" autocomplete="off">
+    <fieldset>
+      <legend>Operator</legend>
+      <label><input type="radio" name="op" value="givens" checked /> Givens rotation</label>
+      <label><input type="radio" name="op" value="householder" /> Householder reflector</label>
+    </fieldset>
+    <fieldset>
+      <legend>Number format</legend>
+      <select name="fmt" aria-label="Number format">
+        <option value="e4m3" selected>fp8 E4M3 (OCP, saturating)</option>
+        <option value="e5m2">fp8 E5M2 (OCP)</option>
+        <option value="bf16">bfloat16</option>
+        <option value="fp16">binary16</option>
+        <option value="p8_0">posit&lt;8,0&gt;</option>
+        <option value="p8_2">posit&lt;8,2&gt;</option>
+        <option value="p16_1">posit&lt;16,1&gt;</option>
+        <option value="p16_2">posit&lt;16,2&gt;</option>
+        <option value="p16_3">posit&lt;16,3&gt;</option>
+        <option value="custom-ieee">IEEE-like, choose the fields</option>
+        <option value="custom-posit">posit, choose n and es</option>
+        <option value="double">binary64 (reference)</option>
+      </select>
+      <div class="ghx-custom" data-custom="ieee" hidden>
+        <label>exponent bits <input type="number" name="ebits" min="2" max="8" value="5" /></label>
+        <label>fraction bits <input type="number" name="mbits" min="1" max="10" value="4" /></label>
+        <label><input type="checkbox" name="subnormals" checked /> subnormals</label>
+        <label><input type="checkbox" name="saturate" /> saturate</label>
+      </div>
+      <div class="ghx-custom" data-custom="posit" hidden>
+        <label>n <input type="number" name="pn" min="3" max="16" value="12" /></label>
+        <label>es <input type="number" name="pes" min="0" max="3" value="1" /></label>
+      </div>
+      <p class="ghx-fmtinfo" data-out="fmtinfo"></p>
+    </fieldset>
+    <fieldset data-show="givens">
+      <legend>How r is formed</legend>
+      <label><input type="radio" name="scaled" value="0" checked /> r = sqrt(a·a + b·b), as MTL5's GMRES does</label>
+      <label><input type="radio" name="scaled" value="1" /> scaled by max(|a|, |b|) first</label>
+    </fieldset>
+    <fieldset>
+      <legend>Vectors (rounded to the format)</legend>
+      <div class="ghx-xy">
+        <span class="ghx-key ghx-key-x">x</span>
+        <input type="number" step="any" name="a" value="2.5" aria-label="x first entry" />
+        <input type="number" step="any" name="b" value="1.5" aria-label="x second entry" />
+      </div>
+      <div class="ghx-xy">
+        <span class="ghx-key ghx-key-y">y</span>
+        <input type="number" step="any" name="u" value="-1" aria-label="y first entry" />
+        <input type="number" step="any" name="w" value="2" aria-label="y second entry" />
+      </div>
+      <label>view ±
+        <select name="range">
+          <option value="1.5">1.5</option>
+          <option value="4" selected>4</option>
+          <option value="40">40</option>
+          <option value="400">400</option>
+          <option value="4000">4000</option>
+        </select>
+      </label>
+      <label>errors drawn
+        <select name="mag">
+          <option value="1" selected>to scale</option>
+          <option value="10">×10</option>
+          <option value="100">×100</option>
+          <option value="1000">×1000</option>
+        </select>
+      </label>
+    </fieldset>
+  </form>
+
+  <div class="ghx-stage">
+    <svg data-plane viewBox="0 0 400 400" role="img" aria-label="The plane of x and y, and their images under the operator"></svg>
+    <p class="ghx-legend">
+      Drag the arrow tips. <span class="ghx-key-x">●</span> computed image of x,
+      <span class="ghx-key-x">○</span> where an exact operator puts it;
+      <span class="ghx-key-y">●</span> and <span class="ghx-key-y">○</span> the same for y.
+      Ticks on the axes mark the format's values when they are few enough to draw.
+    </p>
+  </div>
+
+  <div class="ghx-readout" data-out="readout" aria-live="polite"></div>
+</div>
+
+<style>
+  .ghx {
+    --ghx-x: var(--sl-color-accent);
+    --ghx-y: #e8772e;
+    --ghx-line: var(--sl-color-gray-5);
+    --ghx-faint: var(--sl-color-gray-6);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  @media (min-width: 60rem) {
+    .ghx {
+      grid-template-columns: minmax(0, 17rem) minmax(0, 1fr);
+    }
+    .ghx-readout {
+      grid-column: 1 / -1;
+    }
+  }
+  .ghx-controls fieldset {
+    border: 1px solid var(--ghx-line);
+    border-radius: 0.4rem;
+    padding: 0.4rem 0.7rem 0.6rem;
+    margin: 0 0 0.6rem;
+  }
+  .ghx-controls legend {
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    padding: 0 0.3rem;
+  }
+  .ghx-controls label {
+    display: block;
+    font-size: var(--sl-text-sm);
+    margin: 0.15rem 0;
+  }
+  .ghx-controls input[type='number'],
+  .ghx-controls select {
+    font: inherit;
+    font-size: var(--sl-text-sm);
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+    border: 1px solid var(--ghx-line);
+    border-radius: 0.25rem;
+    padding: 0.1rem 0.3rem;
+    max-width: 100%;
+  }
+  .ghx-custom {
+    margin-top: 0.4rem;
+  }
+  .ghx-custom input[type='number'] {
+    width: 3.5rem;
+  }
+  .ghx-xy {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin: 0.2rem 0;
+  }
+  .ghx-xy input {
+    width: 6rem;
+    min-width: 0;
+  }
+  .ghx-key {
+    font-weight: 700;
+    width: 1rem;
+  }
+  .ghx-key-x {
+    color: var(--ghx-x);
+  }
+  .ghx-key-y {
+    color: var(--ghx-y);
+  }
+  .ghx-fmtinfo,
+  .ghx-legend {
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-3);
+    margin: 0.4rem 0 0;
+  }
+  .ghx-stage svg {
+    width: 100%;
+    max-width: 34rem;
+    aspect-ratio: 1;
+    touch-action: none;
+    user-select: none;
+    border: 1px solid var(--ghx-line);
+    border-radius: 0.4rem;
+    background: var(--sl-color-bg);
+    display: block;
+  }
+  .ghx-readout {
+    font-size: var(--sl-text-sm);
+    overflow-x: auto;
+  }
+  .ghx-readout :global(table) {
+    margin: 0 0 0.8rem;
+  }
+  .ghx-readout :global(td),
+  .ghx-readout :global(th) {
+    padding: 0.2rem 0.6rem;
+    vertical-align: top;
+  }
+  .ghx-readout :global(.ghx-val) {
+    white-space: nowrap;
+  }
+  .ghx-readout :global(.ghx-note) {
+    color: var(--sl-color-gray-3);
+    font-size: var(--sl-text-xs);
+  }
+  .ghx-readout :global(.ghx-warn) {
+    color: var(--sl-color-orange-high, #c2410c);
+  }
+  .ghx :global(.ghx-grid) {
+    stroke: var(--ghx-faint);
+    stroke-width: 1;
+  }
+  .ghx :global(.ghx-axis) {
+    stroke: var(--ghx-line);
+    stroke-width: 1.2;
+  }
+  .ghx :global(.ghx-tick) {
+    stroke: var(--sl-color-gray-3);
+    stroke-width: 1;
+  }
+  .ghx :global(.ghx-ref) {
+    stroke: var(--sl-color-gray-3);
+    stroke-width: 1.2;
+    stroke-dasharray: 4 4;
+    fill: none;
+  }
+  .ghx :global(.ghx-mirror) {
+    stroke: var(--sl-color-gray-2);
+    stroke-width: 1.5;
+    fill: none;
+  }
+  .ghx :global(.ghx-lbl) {
+    fill: var(--sl-color-gray-2);
+    font: 12px var(--sl-font-system, sans-serif);
+  }
+  .ghx :global(.ghx-vx) {
+    stroke: var(--ghx-x);
+    fill: var(--ghx-x);
+  }
+  .ghx :global(.ghx-vy) {
+    stroke: var(--ghx-y);
+    fill: var(--ghx-y);
+  }
+  .ghx :global(.ghx-ring) {
+    fill: none;
+    stroke-width: 2;
+  }
+  .ghx :global(.ghx-handle) {
+    cursor: grab;
+  }
+</style>
+
+<script>
+  import { makeFormat, arith } from './gh/numformats.js';
+  import {
+    givens,
+    applyGivens,
+    householder,
+    applyHouseholder,
+    orthogonalityError,
+    fmtNum,
+  } from './gh/kernels.js';
+
+  const PRESETS = {
+    e4m3: { kind: 'ieee', p: 4, emax: 8, emin: -6, saturate: true, maxval: 448 },
+    e5m2: { kind: 'ieee', p: 3, emax: 15 },
+    bf16: { kind: 'ieee', p: 8, emax: 127 },
+    fp16: { kind: 'ieee', p: 11, emax: 15 },
+    p8_0: { kind: 'posit', n: 8, es: 0 },
+    p8_2: { kind: 'posit', n: 8, es: 2 },
+    p16_1: { kind: 'posit', n: 16, es: 1 },
+    p16_2: { kind: 'posit', n: 16, es: 2 },
+    p16_3: { kind: 'posit', n: 16, es: 3 },
+    double: { kind: 'double' },
+  };
+
+  const SIZE = 400;
+  const HALF = SIZE / 2;
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-ghx]')) setup(root);
+
+  function setup(root: HTMLElement) {
+    const form = root.querySelector('form')!;
+    const svg = root.querySelector<SVGSVGElement>('[data-plane]')!;
+    const out = root.querySelector<HTMLElement>('[data-out="readout"]')!;
+    const fmtinfo = root.querySelector<HTMLElement>('[data-out="fmtinfo"]')!;
+    const field = (name: string) => form.elements.namedItem(name) as HTMLInputElement;
+    const radio = (name: string) =>
+      (form.querySelector(`input[name="${name}"]:checked`) as HTMLInputElement).value;
+
+    let valuesCache: { key: string; vals: number[] | null } = { key: '', vals: null };
+
+    function spec() {
+      const key = (form.elements.namedItem('fmt') as HTMLSelectElement).value;
+      if (key === 'custom-ieee') {
+        const E = clampInt(field('ebits').value, 2, 8);
+        const M = clampInt(field('mbits').value, 1, Math.min(10, 15 - E));
+        return {
+          key: `ieee-${E}-${M}-${field('subnormals').checked}-${field('saturate').checked}`,
+          spec: {
+            kind: 'ieee',
+            p: M + 1,
+            emax: 2 ** (E - 1) - 1,
+            subnormals: field('subnormals').checked,
+            saturate: field('saturate').checked,
+          },
+          label: `IEEE-like, 1 + ${E} + ${M} bits`,
+        };
+      }
+      if (key === 'custom-posit') {
+        const n = clampInt(field('pn').value, 3, 16);
+        const es = clampInt(field('pes').value, 0, 3);
+        return { key: `posit-${n}-${es}`, spec: { kind: 'posit', n, es }, label: `posit<${n},${es}>` };
+      }
+      const sel = form.elements.namedItem('fmt') as HTMLSelectElement;
+      return { key, spec: PRESETS[key as keyof typeof PRESETS], label: sel.selectedOptions[0].text };
+    }
+
+    function unitRoundoff(s: any) {
+      if (s.kind === 'ieee') return 2 ** -s.p;
+      if (s.kind === 'posit') return 2 ** -Math.max(s.n - 2 - s.es, 1);
+      return 2 ** -53;
+    }
+
+    // ---- drawing helpers --------------------------------------------------
+    let R = 4;
+    const px = (v: number) => HALF + (v / R) * (HALF - 14);
+    const py = (v: number) => HALF - (v / R) * (HALF - 14);
+    const clampView = (v: number) => Math.max(-3 * R, Math.min(3 * R, v));
+    const P = (x: number, y: number) => `${px(clampView(x)).toFixed(2)},${py(clampView(y)).toFixed(2)}`;
+
+    function arrow(cls: string, x: number, y: number, extra = '') {
+      const x1 = px(clampView(x)), y1 = py(clampView(y));
+      const len = Math.hypot(x1 - HALF, y1 - HALF);
+      if (len < 1) return '';
+      const ux = (x1 - HALF) / len, uy = (y1 - HALF) / len;
+      const hx = x1 - ux * 10, hy = y1 - uy * 10;
+      const head = `${x1},${y1} ${hx - uy * 4.5},${hy + ux * 4.5} ${hx + uy * 4.5},${hy - ux * 4.5}`;
+      return `<line class="${cls}" x1="${HALF}" y1="${HALF}" x2="${hx.toFixed(2)}" y2="${hy.toFixed(2)}" stroke-width="2.2"${extra}/>` +
+        `<polygon class="${cls}" points="${head}"${extra}/>`;
+    }
+    const dot = (cls: string, x: number, y: number, r = 4.5) =>
+      `<circle class="${cls}" cx="${px(clampView(x)).toFixed(2)}" cy="${py(clampView(y)).toFixed(2)}" r="${r}"/>`;
+    const ring = (cls: string, x: number, y: number) =>
+      `<circle class="${cls} ghx-ring" cx="${px(clampView(x)).toFixed(2)}" cy="${py(clampView(y)).toFixed(2)}" r="7"/>`;
+
+    function niceStep(range: number) {
+      const raw = range / 4;
+      const p = 10 ** Math.floor(Math.log10(raw));
+      for (const m of [1, 2, 5, 10]) if (m * p >= raw) return m * p;
+      return 10 * p;
+    }
+
+    // ---- state ------------------------------------------------------------
+    function num(name: string, fallback: number) {
+      const v = parseFloat(field(name).value);
+      return Number.isFinite(v) ? v : fallback;
+    }
+
+    function render() {
+      const op = radio('op');
+      const scaled = radio('scaled') === '1';
+      const { key, spec: s, label } = spec();
+      R = parseFloat((form.elements.namedItem('range') as HTMLSelectElement).value);
+      const mag = parseFloat((form.elements.namedItem('mag') as HTMLSelectElement).value);
+
+      for (const el of form.querySelectorAll<HTMLElement>('[data-custom]'))
+        el.hidden = !key.startsWith(el.dataset.custom!);
+      for (const el of form.querySelectorAll<HTMLElement>('[data-show]'))
+        el.hidden = el.dataset.show !== op;
+
+      const F = makeFormat(s);
+      const ops = arith(F);
+      const u = unitRoundoff(s);
+      if (valuesCache.key !== key) valuesCache = { key, vals: F.values() };
+      fmtinfo.textContent =
+        s.kind === 'double'
+          ? 'binary64, the reference: no rounding beyond JavaScript’s own.'
+          : `largest ${fmtNum(F.maxval)}, smallest positive ${fmtNum(F.minval)}, ` +
+            `unit roundoff at 1: u = ${fmtNum(u, 3)}` +
+            (s.kind === 'posit' ? ' (posit precision tapers away from 1)' : '');
+
+      // The matrix entries are values of the format.
+      const a = F.round(num('a', 2.5)), b = F.round(num('b', 1.5));
+      const yu = F.round(num('u', -1)), yw = F.round(num('w', 2));
+
+      // Exact operator, in double, for comparison.
+      const nx = Math.hypot(a, b);
+      let exact: (v: number[]) => number[];
+      if (op === 'givens') {
+        const c0 = nx ? a / nx : 1, s0 = nx ? b / nx : 0;
+        exact = ([p, q]) => [c0 * p + s0 * q, c0 * q - s0 * p];
+      } else if (b === 0) {
+        exact = (v) => v;
+      } else {
+        const v0 = a <= 0 ? a - nx : -(b * b) / (a + nx);
+        const t = (2 * v0 * v0) / (v0 * v0 + b * b);
+        const v1 = b / v0;
+        exact = ([p, q]) => {
+          const d = t * (p + v1 * q);
+          return [p - d, q - v1 * d];
+        };
+      }
+
+      // Computed operator.
+      let rows: string[] = [];
+      let image: (v: number[]) => number[];
+      let Q: number[];
+      let mirror: number[] | null = null;
+      if (op === 'givens') {
+        const g = givens(ops, a, b, scaled);
+        image = (v) => applyGivens(ops, g, v as [number, number]);
+        Q = [g.c, g.s, -g.s, g.c];
+        const sum = ops.add(ops.mul(a, a), ops.mul(b, b));
+        const steps = scaled
+          ? `r = m · sqrt((a/m)² + (b/m)²) with m = max(|a|, |b|)`
+          : `a·a = ${fmtNum(ops.mul(a, a))}, b·b = ${fmtNum(ops.mul(b, b))}, sum = ${fmtNum(sum)}, r = sqrt(sum)`;
+        rows.push(row('r', `${fmtNum(g.r)}`, `exact ‖x‖ = ${fmtNum(nx, 6)}; ${steps}`));
+        rows.push(row('c, s', `${fmtNum(g.c, 6)}, ${fmtNum(g.s, 6)}`, 'c = a/r, s = b/r, each rounded'));
+        const d = g.c * g.c + g.s * g.s - 1;
+        rows.push(row('c² + s² − 1', fmtNum(d, 3), `= ${fmtUnits(d, u)}; this is ‖GᵀG − I‖, the stretch of every vector G touches`));
+        if (!scaled && !(sum < F.maxval))
+          rows.push(row('', '', '<span class="ghx-warn">a·a + b·b reached the format’s largest value' +
+            (Number.isFinite(sum) ? ' and saturated' : ' and overflowed') + ', so r is wrong. Try the scaled form.</span>'));
+        else if (!scaled && nx > 0 && sum === 0)
+          rows.push(row('', '', '<span class="ghx-warn">a·a + b·b underflowed to zero, so G is the identity. Try the scaled form.</span>'));
+      } else {
+        const h = householder(ops, a, b);
+        image = (v) => applyHouseholder(ops, h, v as [number, number]);
+        if (h.identity) {
+          Q = [1, 0, 0, 1];
+          rows.push(row('H', 'I', `MTL5 returns the identity: ${h.reason}.`));
+        } else {
+          const t = h.tau!, v1 = h.v1!;
+          Q = [1 - t, -t * v1, -t * v1, 1 - t * v1 * v1];
+          rows.push(row('τ, v', `${fmtNum(t, 6)}, (1, ${fmtNum(v1, 6)})`, 'H = I − τ v vᵀ; MTL5 calls τ <code>beta</code> and computes it as −v₀/‖x‖'));
+          rows.push(row('τ vᵀv', fmtNum(h.check!, 6), 'exactly 2 for an orthogonal H'));
+          // The computed mirror is perpendicular to the rounded v.
+          mirror = [-v1, 1];
+        }
+        const e = orthogonalityError(Q);
+        rows.push(row('‖HᵀH − I‖', fmtNum(e, 3), `= ${fmtUnits(e, u)}`));
+      }
+
+      const xi = image([a, b]), xe = exact([a, b]);
+      const yi = image([yu, yw]), ye = exact([yu, yw]);
+      const ny = Math.hypot(yu, yw);
+
+      const pivotRows = [
+        row('x', `(${fmtNum(a)}, ${fmtNum(b)})`, `‖x‖ = ${fmtNum(nx, 6)}`),
+        row('computed image', `(${fmtNum(xi[0], 6)}, ${fmtNum(xi[1], 4)})`, `exact: (${fmtNum(xe[0], 6)}, 0)`),
+        row('entry to zero', fmtNum(xi[1], 3),
+          op === 'givens'
+            ? 'what −s·a + c·b gives in the format; GMRES in MTL5 skips this and stores an exact 0, with r on the diagonal'
+            : 'what applying H to x gives in the format; qr_factor stores the zeros below the diagonal exactly'),
+      ];
+      const yRel = ny ? (Math.hypot(yi[0], yi[1]) - ny) / ny : 0;
+      const yDist = ny ? Math.hypot(yi[0] - ye[0], yi[1] - ye[1]) / ny : 0;
+      const carriedRows = [
+        row('y', `(${fmtNum(yu)}, ${fmtNum(yw)})`, `‖y‖ = ${fmtNum(ny, 6)}; another column of the same two rows`),
+        row('computed image', `(${fmtNum(yi[0], 6)}, ${fmtNum(yi[1], 6)})`, `exact: (${fmtNum(ye[0], 6)}, ${fmtNum(ye[1], 6)})`),
+        row('(‖y′‖ − ‖y‖)/‖y‖', fmtNum(yRel, 3), `= ${fmtUnits(yRel, u)}; an orthogonal operator keeps lengths`),
+        row('‖y′ − exact‖/‖y‖', fmtNum(yDist, 3), `= ${fmtUnits(yDist, u)}`),
+      ];
+
+      out.innerHTML =
+        `<table><thead><tr><th colspan="3">The operator, in ${escapeHtml(label)}</th></tr></thead><tbody>${rows.join('')}</tbody></table>` +
+        `<table><thead><tr><th colspan="3"><span class="ghx-key-x">Pivot column x</span>: the operator is built to put it on the axis</th></tr></thead><tbody>${pivotRows.join('')}</tbody></table>` +
+        `<table><thead><tr><th colspan="3"><span class="ghx-key-y">Carried column y</span>: the same operator, applied to it</th></tr></thead><tbody>${carriedRows.join('')}</tbody></table>`;
+
+      // ---- the plane ----------------------------------------------------
+      const parts: string[] = [];
+      const step = niceStep(R);
+      for (let g = step; g <= R * 1.0001; g += step) {
+        for (const v of [g, -g]) {
+          parts.push(`<line class="ghx-grid" x1="${px(v)}" y1="0" x2="${px(v)}" y2="${SIZE}"/>`);
+          parts.push(`<line class="ghx-grid" x1="0" y1="${py(v)}" x2="${SIZE}" y2="${py(v)}"/>`);
+        }
+        parts.push(`<text class="ghx-lbl" x="${px(g) + 3}" y="${HALF + 14}">${fmtNum(g)}</text>`);
+      }
+      parts.push(`<line class="ghx-axis" x1="0" y1="${HALF}" x2="${SIZE}" y2="${HALF}"/>`);
+      parts.push(`<line class="ghx-axis" x1="${HALF}" y1="0" x2="${HALF}" y2="${SIZE}"/>`);
+      const vals = valuesCache.vals;
+      if (vals) {
+        const inView = vals.filter((v) => v <= R * 1.05);
+        const shown = inView.filter((v) => px(v) - HALF >= 1.5);
+        if (shown.length <= 90)
+          for (const v of shown)
+            for (const sgn of [1, -1]) {
+              parts.push(`<line class="ghx-tick" x1="${px(sgn * v)}" y1="${HALF - 4}" x2="${px(sgn * v)}" y2="${HALF + 4}"/>`);
+              parts.push(`<line class="ghx-tick" x1="${HALF - 4}" y1="${py(sgn * v)}" x2="${HALF + 4}" y2="${py(sgn * v)}"/>`);
+            }
+      }
+      // Exact circle through x, and the turn or the mirror.
+      const rpx = (nx / R) * (HALF - 14);
+      if (rpx > 2) parts.push(`<circle class="ghx-ref" cx="${HALF}" cy="${HALF}" r="${rpx.toFixed(2)}"/>`);
+      if (op === 'givens' && nx > 0) {
+        const th = Math.atan2(b, a);
+        const ar = Math.min(rpx * 0.45, 60);
+        const large = Math.abs(th) > Math.PI ? 1 : 0;
+        const sweep = th > 0 ? 1 : 0;
+        parts.push(`<path class="ghx-ref" d="M${HALF + ar * Math.cos(th)},${HALF - ar * Math.sin(th)} A${ar},${ar} 0 ${large} ${sweep} ${HALF + ar},${HALF}"/>`);
+        parts.push(`<text class="ghx-lbl" x="${HALF + ar * Math.cos(th / 2) + 4}" y="${HALF - ar * Math.sin(th / 2)}">θ</text>`);
+      }
+      if (op === 'householder' && b !== 0) {
+        // Exact mirror: perpendicular to x - ||x|| e1, i.e. along x + ||x|| e1.
+        const dx = a + nx, dy = b;
+        const L = Math.hypot(dx, dy);
+        if (L > 0) {
+          const k = (R * 3) / L;
+          parts.push(`<line class="ghx-ref" x1="${px(-dx * k)}" y1="${py(-dy * k)}" x2="${px(dx * k)}" y2="${py(dy * k)}"/>`);
+        }
+        if (mirror) {
+          const [mx, my] = mirror;
+          const Lm = Math.hypot(mx, my);
+          const k = (R * 3) / Lm;
+          parts.push(`<line class="ghx-mirror" x1="${px(-mx * k)}" y1="${py(-my * k)}" x2="${px(mx * k)}" y2="${py(my * k)}"/>`);
+          parts.push(`<text class="ghx-lbl" x="12" y="${SIZE - 12}">solid: the computed mirror; dashed: the exact one</text>`);
+        }
+      }
+      // Errors are drawn magnified about the exact images.
+      const shown = (c: number[], e: number[]) => [e[0] + mag * (c[0] - e[0]), e[1] + mag * (c[1] - e[1])];
+      const xs = shown(xi, xe), ys = shown(yi, ye);
+      parts.push(arrow('ghx-vy', yu, yw, ' opacity="0.45"'));
+      parts.push(arrow('ghx-vx', a, b, ' opacity="0.45"'));
+      parts.push(ring('ghx-vy', ye[0], ye[1]));
+      parts.push(ring('ghx-vx', xe[0], xe[1]));
+      parts.push(arrow('ghx-vy', ys[0], ys[1]));
+      parts.push(arrow('ghx-vx', xs[0], xs[1]));
+      parts.push(dot('ghx-vy', ys[0], ys[1]));
+      parts.push(dot('ghx-vx', xs[0], xs[1]));
+      parts.push(`<circle class="ghx-vy ghx-handle" data-h="y" cx="${px(clampView(yu))}" cy="${py(clampView(yw))}" r="9" fill-opacity="0.25"/>`);
+      parts.push(`<circle class="ghx-vx ghx-handle" data-h="x" cx="${px(clampView(a))}" cy="${py(clampView(b))}" r="9" fill-opacity="0.25"/>`);
+      parts.push(`<text class="ghx-lbl" x="${px(clampView(a)) + 10}" y="${py(clampView(b)) - 10}">x</text>`);
+      parts.push(`<text class="ghx-lbl" x="${px(clampView(yu)) + 10}" y="${py(clampView(yw)) - 10}">y</text>`);
+      if (mag > 1) parts.push(`<text class="ghx-lbl" x="12" y="20">errors drawn ×${mag}</text>`);
+      svg.innerHTML = parts.join('');
+    }
+
+    function row(k: string, v: string, note: string) {
+      if (v === '') return `<tr><td>${k}</td><td class="ghx-note" colspan="2">${note}</td></tr>`;
+      return `<tr><td>${k}</td><td class="ghx-val"><code>${v}</code></td><td class="ghx-note">${note}</td></tr>`;
+    }
+
+    function fmtUnits(x: number, u: number) {
+      if (!Number.isFinite(x)) return 'not finite';
+      return `${fmtNum(x / u, 3)} u`;
+    }
+
+    // ---- dragging -----------------------------------------------------------
+    let dragging: 'x' | 'y' | null = null;
+    function toPlane(ev: PointerEvent) {
+      const pt = svg.createSVGPoint();
+      pt.x = ev.clientX;
+      pt.y = ev.clientY;
+      const m = svg.getScreenCTM();
+      const q = m ? pt.matrixTransform(m.inverse()) : pt;
+      return [((q.x - HALF) / (HALF - 14)) * R, (-(q.y - HALF) / (HALF - 14)) * R];
+    }
+    svg.addEventListener('pointerdown', (ev) => {
+      const t = (ev.target as Element).closest('[data-h]') as SVGElement | null;
+      if (!t) return;
+      dragging = t.dataset.h as 'x' | 'y';
+      svg.setPointerCapture(ev.pointerId);
+      ev.preventDefault();
+    });
+    svg.addEventListener('pointermove', (ev) => {
+      if (!dragging) return;
+      const [vx, vy] = toPlane(ev);
+      const F = makeFormat(spec().spec);
+      const [n1, n2] = dragging === 'x' ? ['a', 'b'] : ['u', 'w'];
+      field(n1).value = String(F.round(roundView(vx)));
+      field(n2).value = String(F.round(roundView(vy)));
+      render();
+    });
+    const stop = () => {
+      dragging = null;
+    };
+    svg.addEventListener('pointerup', stop);
+    svg.addEventListener('pointercancel', stop);
+    // Keep dragged coordinates short: three significant digits of the view.
+    const roundView = (v: number) => {
+      const q = 10 ** (Math.floor(Math.log10(R)) - 2);
+      return Math.round(v / q) * q;
+    };
+
+    form.addEventListener('input', render);
+    form.addEventListener('change', render);
+    form.addEventListener('submit', (ev) => ev.preventDefault());
+    render();
+  }
+
+  function clampInt(v: string, lo: number, hi: number) {
+    const n = Math.round(parseFloat(v));
+    return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : lo;
+  }
+
+  function escapeHtml(s: string) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+</script>
