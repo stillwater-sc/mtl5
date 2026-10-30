@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 380" width="760" height="380" role="img">
+<title>A Givens rotation and a Householder reflection</title>
+<desc>Left: the vector x is rotated clockwise through its angle theta onto the positive x axis. Right: the same x is reflected across the line that bisects x and the x axis, landing on the same point.</desc>
+<style>
+  .bg    { fill: #fbfbfd; stroke: #d0d4dc; }
+  .ink   { fill: #1f2430; }
+  .muted { fill: #6b7280; }
+  .line  { stroke: #1f2430; fill: none; }
+  .axis  { stroke: #9aa1ad; fill: none; }
+  .guide { stroke: #9aa1ad; fill: none; stroke-dasharray: 4 4; }
+  .vec   { stroke: #2563eb; fill: none; }
+  .vecf  { fill: #2563eb; }
+  .ghost { stroke: #93b4f5; fill: none; }
+  .mirror{ stroke: #c2410c; fill: none; stroke-dasharray: 6 4; }
+  .accent{ fill: #c2410c; }
+  .accs  { stroke: #c2410c; fill: none; }
+  .nz    { fill: #3b6fd8; }
+  .fill  { fill: #e8892c; }
+  .gone  { fill: #f3c1c1; }
+  .zero  { fill: #ffffff; stroke: #d7dbe3; }
+  .band  { fill: #fde68a; }
+  .s0 { stroke: #2563eb; } .s1 { stroke: #c2410c; }
+  .s2 { stroke: #059669; } .s3 { stroke: #7c3aed; }
+  .f0 { fill: #2563eb; } .f1 { fill: #c2410c; }
+  .f2 { fill: #059669; } .f3 { fill: #7c3aed; }
+  text { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    .bg    { fill: #171a21; stroke: #343a46; }
+    .ink   { fill: #e6e8ee; }
+    .muted { fill: #9aa1ad; }
+    .line  { stroke: #e6e8ee; }
+    .axis  { stroke: #5b6270; }
+    .guide { stroke: #5b6270; }
+    .vec   { stroke: #6ea0ff; }
+    .vecf  { fill: #6ea0ff; }
+    .ghost { stroke: #3c5a99; }
+    .mirror{ stroke: #f08a4b; }
+    .accent{ fill: #f08a4b; }
+    .accs  { stroke: #f08a4b; }
+    .nz    { fill: #5b8cf0; }
+    .fill  { fill: #f0a050; }
+    .gone  { fill: #6b3a3a; }
+    .zero  { fill: #1f232c; stroke: #343a46; }
+    .band  { fill: #5c4a12; }
+    .s0 { stroke: #6ea0ff; } .s1 { stroke: #f08a4b; }
+    .s2 { stroke: #34d399; } .s3 { stroke: #b28cff; }
+    .f0 { fill: #6ea0ff; } .f1 { fill: #f08a4b; }
+    .f2 { fill: #34d399; } .f3 { fill: #b28cff; }
+  }
+</style>
+<rect class="bg" x="0.5" y="0.5" width="759" height="379" rx="8"/>
+<text class="ink" x="190" y="34" font-size="16" text-anchor="middle" font-weight="600">Givens rotation</text>
+<line class="axis" x1="50" y1="195" x2="340" y2="195"/>
+<line class="axis" x1="190" y1="225" x2="190" y2="60"/>
+<circle class="guide" cx="190" cy="195" r="100"/>
+<line class="ghost" x1="190" y1="195" x2="247.21" y2="126.82" stroke-width="2.5" opacity="0.45"/><path class="vecf" d="M254.28,118.4 L251.04,130.04 L243.38,123.61 Z" opacity="0.45"/>
+<text class="muted" x="260.28" y="112.4" font-size="12" text-anchor="start">x = (a, b)</text>
+<text class="muted" x="296" y="213" font-size="12" text-anchor="start">(r, 0)</text>
+<path class="accs" stroke-width="1.5" d="M217,162.83 A42,42 0 0 1 232,195"/>
+<text class="accent" x="238" y="179" font-size="14" text-anchor="start">θ</text>
+<g transform="translate(190,195)"><g>
+<animateTransform attributeName="transform" type="rotate" dur="8s" repeatCount="indefinite" values="0;0;50;50;0" keyTimes="0;0.15;0.5;0.85;1"/>
+<line class="vec" x1="0" y1="0" x2="57.21" y2="-68.18" stroke-width="2.5"/><path class="vecf" d="M64.28,-76.6 L61.04,-64.96 L53.38,-71.39 Z"/>
+</g></g>
+<text class="ink" x="190" y="322" font-size="13" text-anchor="middle">G = [ c  s ; −s  c ],   c = a/r,  s = b/r</text>
+<text class="muted" x="190" y="344" font-size="12" text-anchor="middle">r = √(a² + b²): one entry zeroed, two rows touched</text>
+<text class="ink" x="570" y="34" font-size="16" text-anchor="middle" font-weight="600">Householder reflection</text>
+<line class="axis" x1="430" y1="195" x2="720" y2="195"/>
+<line class="axis" x1="570" y1="225" x2="570" y2="60"/>
+<circle class="guide" cx="570" cy="195" r="100"/>
+<line class="ghost" x1="570" y1="195" x2="627.21" y2="126.82" stroke-width="2.5" opacity="0.45"/><path class="vecf" d="M634.28,118.4 L631.04,130.04 L623.38,123.61 Z" opacity="0.45"/>
+<text class="muted" x="640.28" y="112.4" font-size="12" text-anchor="start">x = (a, b)</text>
+<text class="muted" x="676" y="213" font-size="12" text-anchor="start">(r, 0)</text>
+<line class="mirror" stroke-width="1.5" x1="522.42" y1="217.19" x2="705.95" y2="131.61"/>
+<line class="guide" x1="670" y1="195" x2="634.28" y2="118.4"/>
+<g transform="translate(570,195) rotate(-25)"><g>
+<animateTransform attributeName="transform" type="scale" dur="8s" repeatCount="indefinite" values="1 1;1 1;1 -1;1 -1;1 1" keyTimes="0;0.15;0.5;0.85;1"/>
+<g transform="rotate(25)">
+<line class="vec" x1="0" y1="0" x2="57.21" y2="-68.18" stroke-width="2.5"/><path class="vecf" d="M64.28,-76.6 L61.04,-64.96 L53.38,-71.39 Z"/>
+</g></g></g>
+<text class="ink" x="570" y="322" font-size="13" text-anchor="middle">H = I − τ v vᵀ,   τ = 2 / vᵀv</text>
+<text class="muted" x="570" y="344" font-size="12" text-anchor="middle">one reflector zeroes a whole column below the diagonal</text>
+<text class="muted" x="570" y="362" font-size="11" text-anchor="middle">grey dashes: v = x − r e₁;  orange dashes: the mirror, ⟂ v</text>
+</svg>

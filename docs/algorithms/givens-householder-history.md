@@ -11,7 +11,8 @@ This page traces both from their origins to the modern safe-scaling
 algorithms, then surveys what is known about them in arithmetic other than
 IEEE binary32 and binary64. It is the background for the epic #666 and its
 studies in mp-numerics. The last section says where MTL5's own
-implementations stand.
+implementations stand. The geometry is animated in
+[givens-householder-pictures.md](givens-householder-pictures.md).
 
 Every reference below was checked against Crossref, OpenAlex, arXiv or the
 publisher, and its DOI is given where one exists. A few details could not be
