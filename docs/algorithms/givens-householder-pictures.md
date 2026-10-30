@@ -31,6 +31,10 @@ both are orthogonal, so neither changes a length.
 - **The reflection** flips $x$ across a mirror. The mirror is the line
   perpendicular to $v = x - r e_1$, which bisects the angle between $x$ and
   the axis. $H = I - \tau v v^T$ with $\tau = 2 / v^Tv$, and $\det H = -1$.
+  For $a > 0$, computing $a - r$ directly cancels when $b$ is small, so the
+  first component is computed as $v_1 = -b^2 / (a + r)$ (Parlett's form). If
+  $b = 0$ and $a > 0$, $x$ is already on the axis, $v = 0$, and the identity
+  is used in place of a reflector.
 
 In two dimensions the two do the same job. The difference shows in $n$
 dimensions. A rotation acts on two coordinates and zeroes one of them. A
@@ -141,7 +145,7 @@ Two effects are at work.
   $c^2 + s^2 \ne 1$, and every application scales the plane by
   $\sqrt{c^2 + s^2}$. Applied $k$ times, that is a geometric drift of about
   $k (c^2 + s^2 - 1)/2$. bfloat16's circle shrinks steadily for this reason,
-  and so does the radius error in the chart.
+  so its radius error in the chart keeps growing.
 - **Every operation rounds.** Each multiply and add adds an error of order
   the unit roundoff. These errors do not share a sign, so they accumulate
   more slowly, like a random walk. They are what makes the binary16 and

@@ -64,14 +64,16 @@ def round_scaled(a, qexp):
 
 class IEEELike:
     """A binary floating-point format with p significand bits (hidden bit
-    included) and exponents emin = 1 - emax .. emax."""
+    included) and exponents emin .. emax, with emin = 1 - emax unless given.
+    OCP E4M3 is the exception: bias 7 gives emin = -6, but it keeps exponent
+    field 15 for normals, so emax = 8."""
 
     def __init__(self, name, p, emax, subnormals=True, saturate=False,
-                 maxval=None):
+                 maxval=None, emin=None):
         self.name = name
         self.p = p
         self.emax = emax
-        self.emin = 1 - emax
+        self.emin = 1 - emax if emin is None else emin
         self.subnormals = subnormals
         self.saturate = saturate
         self.maxval = (Fraction(maxval) if maxval is not None else
@@ -175,7 +177,8 @@ def rsqrt_exact(fmt, q):
 
 
 FORMATS = [
-    IEEELike('fp8 E4M3 (OCP)', p=4, emax=8, saturate=True, maxval=448),
+    IEEELike('fp8 E4M3 (OCP)', p=4, emax=8, emin=-6, saturate=True,
+             maxval=448),
     IEEELike('bfloat16', p=8, emax=127),
     IEEELike('binary16', p=11, emax=15),
     Posit('posit<16,2>', n=16, es=2),
@@ -857,9 +860,14 @@ def self_test():
     assert h.round(Fraction(65519)) == 65504
     assert h.round(Fraction(2) ** -24) == Fraction(2) ** -24     # subnormal
     assert h.round(Fraction(2) ** -26) == 0
-    e4 = IEEELike('e4m3', p=4, emax=8, saturate=True, maxval=448)
+    e4 = IEEELike('e4m3', p=4, emax=8, emin=-6, saturate=True, maxval=448)
     assert e4.round(Fraction(1000)) == 448
     assert e4.round(Fraction(2) ** -9) == Fraction(2) ** -9      # min subnormal
+    assert e4.round(Fraction(2) ** -10) == 0                     # tie to even
+    assert e4.round(Fraction(2) ** -6 - Fraction(2) ** -9) == \
+        Fraction(2) ** -6 - Fraction(2) ** -9                    # max subnormal
+    assert e4.round(Fraction(2) ** -7 + Fraction(2) ** -10) == \
+        Fraction(2) ** -7                                        # spacing 2^-9
     p8 = Posit('p8', n=8, es=0)
     assert p8.round(Fraction(1)) == 1
     assert p8.round(Fraction(1000)) == 64                        # maxpos
