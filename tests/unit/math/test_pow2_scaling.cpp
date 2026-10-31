@@ -4,7 +4,7 @@
 // and a zeroed second component across the whole exponent range of float and
 // double: at |a| near sqrt(max) and sqrt(min), where the unscaled
 // sqrt(a*a + b*b) overflows or underflows, near max itself, and in the
-// subnormals. Inside the old band it must give the unscaled formula's bits.
+// subnormals. Inside the old band it must agree with the unscaled formula.
 // The fallback that a user-defined type gets is exercised with a wrapper
 // around double, and the solvers that use the rotation are checked on a
 // problem scaled to where the unscaled form overflows.
@@ -144,20 +144,24 @@ TEMPLATE_TEST_CASE("givens_rotation: where the unscaled form overflows or underf
 }
 
 // Scaling by 2^-e is exact and commutes with every rounding while no value
-// is subnormal, so inside the old band the result is the unscaled one, bit
-// for bit.
-TEMPLATE_TEST_CASE("givens_rotation: inside the old band it is the unscaled form",
+// is subnormal, so under strict IEEE evaluation the result inside the old
+// band is the unscaled one, bit for bit. It is not checked bit for bit: where
+// the target has an FMA (ARM64, or x86-64 at -march=x86-64-v3 and up), GCC
+// contracts a*a + b*b by default and may fuse a different product here than
+// in the header, which moves r by an ulp.
+TEMPLATE_TEST_CASE("givens_rotation: inside the old band it agrees with the unscaled form",
                    "[pow2_scaling][givens]", float, double) {
     using T = TestType;
+    const T eps = std::numeric_limits<T>::epsilon();
     std::mt19937_64 rng(6710);
     std::uniform_real_distribution<double> u(-4.0, 4.0);
     for (int i = 0; i < 2000; ++i) {
         const T a = T(u(rng)), b = T(u(rng));
         const T r = std::sqrt(a * a + b * b);
         const auto g = math::givens_rotation(a, b);
-        CHECK(g.r == r);
-        CHECK(g.c == a / r);
-        CHECK(g.s == b / r);
+        CHECK(std::fabs(g.r - r) <= 2 * eps * r);
+        CHECK(std::fabs(g.c - a / r) <= 2 * eps);
+        CHECK(std::fabs(g.s - b / r) <= 2 * eps);
     }
 }
 
