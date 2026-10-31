@@ -175,4 +175,6 @@ one-sided Jacobi. In a narrow format that product is where to look, by
 measuring $\lVert Q^TQ - I \rVert$. A square-root Kalman filter instead
 triangularizes afresh at every step and carries only the triangular factor;
 how that factor holds up over many steps is a separate question. The
-mp-numerics studies #13 to #15 make these measurements across formats.
+mp-numerics studies #13 to #15 make these measurements across formats; the
+results of #13 are in
+[Givens and Householder across number systems](givens-householder-study.md).

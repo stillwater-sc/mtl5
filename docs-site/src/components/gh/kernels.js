@@ -69,11 +69,15 @@ export function householder(ops, a, b) {
   return { identity: false, v1, tau, check: c };
 }
 
-/** H applied to (u, w) as y - tau v (v^T y), the way qr_factor applies it. */
+/**
+ * H applied to (u, w) the way qr_factor applies it (apply_householder_left):
+ * d = v^T y, then y(i) -= (tau * v(i)) * d. With v0 = 1 the first entry is
+ * u - tau d; the second rounds tau v1 before multiplying by d.
+ */
 export function applyHouseholder(ops, h, [u, w]) {
   if (h.identity) return [u, w];
-  const t = ops.mul(h.tau, ops.add(u, ops.mul(h.v1, w)));
-  return [ops.sub(u, t), ops.sub(w, ops.mul(h.v1, t))];
+  const d = ops.add(u, ops.mul(h.v1, w));
+  return [ops.sub(u, ops.mul(h.tau, d)), ops.sub(w, ops.mul(ops.mul(h.tau, h.v1), d))];
 }
 
 /** ||Q^T Q - I||_2 of a 2 x 2 matrix with entries m = [m00, m01, m10, m11]. */

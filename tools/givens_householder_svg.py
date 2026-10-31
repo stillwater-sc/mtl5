@@ -1030,6 +1030,14 @@ def householder_ref(fmt, a, b):
     return v1, tau
 
 
+def apply_householder_ref(fmt, v1, tau, u, w):
+    """H applied to (u, w) as kernels.js's applyHouseholder and qr_factor's
+    apply_householder_left do: d = u + v1 w, y(i) -= (tau v(i)) d."""
+    mul, add, div, sqrt = ops_for(fmt)
+    d = add(u, mul(v1, w))
+    return add(u, -mul(tau, d)), add(w, -mul(mul(tau, v1), d))
+
+
 def make_vectors():
     import json
     import random
@@ -1073,6 +1081,17 @@ def make_vectors():
             ref = householder_ref(fmt, a, b)
             hh.append([float(a), float(b),
                        None if ref is None else [jnum(v) for v in ref]])
+        # A separate generator, so the rows above stay as they were.
+        arng = random.Random(669)
+        app = []
+        for a, b, ref in hh:
+            if ref is None:
+                continue
+            v1, tau = householder_ref(fmt, Fraction(a), Fraction(b))
+            u = arng.choice((-1, 1)) * vals[arng.randrange(len(vals))]
+            w = arng.choice((-1, 1)) * vals[arng.randrange(len(vals))]
+            y = apply_householder_ref(fmt, v1, tau, u, w)
+            app.append([a, b, float(u), float(w), [jnum(x) for x in y]])
         c = rnd(fmt, math.cos(THETA))
         s = rnd(fmt, math.sin(THETA))
         pts = [(rnd(fmt, math.cos(2 * math.pi * i / NPTS)),
@@ -1085,7 +1104,7 @@ def make_vectors():
                    for x, y in pts]
         out['formats'].append({
             'spec': spec, 'count': len(vals), 'round': rows, 'sqrt': sq,
-            'givens': giv, 'householder': hh,
+            'givens': giv, 'householder': hh, 'apply_householder': app,
             'drift': {'c': float(c), 's': float(s), 'k': KSTEP,
                       'start': start,
                       'end': [[jnum(x), jnum(y)] for x, y in pts]}})
