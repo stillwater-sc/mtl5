@@ -11,6 +11,7 @@
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/magnitude.hpp>
+#include <mtl/math/pow2_scaling.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/hessenberg.hpp>
@@ -160,17 +161,21 @@ auto eigenvalue_symmetric_generic(const M& A,
         real_t c = d(end - 1);
         real_t delta = (a - c) / real_t(2);
         real_t sign_delta = (delta >= 0) ? real_t(1) : real_t(-1);
-        real_t mu = c - b * b / (delta + sign_delta * sqrt(delta * delta + b * b));
+        // b * (b / ...), not b * b / ...: b * b overflows once |b| passes
+        // sqrt(max), though the quotient does not (#671).
+        real_t mu = c - b * (b / (delta + sign_delta * math::scaled_hypot(delta, b)));
 
         // Implicit QR step with Givens rotations (Golub-Van Loan Algorithm 8.3.2)
         real_t x = d(p) - mu;
         real_t z = e(p);
 
         for (size_type k = p; k + 1 < end; ++k) {
-            // Compute Givens rotation to zero z
-            real_t r = sqrt(x * x + z * z);
-            real_t cs = x / r;
-            real_t sn = z / r;
+            // Compute Givens rotation to zero z, scaled by an exact power of
+            // two so r does not overflow or underflow (#671)
+            const auto g = math::givens_rotation(x, z);
+            real_t r = g.r;
+            real_t cs = g.c;
+            real_t sn = g.s;
 
             if (k > p) e(k - 1) = r;
 
@@ -433,16 +438,19 @@ auto eigen_symmetric(const M& A,
         real_t c = d(end - 1);
         real_t delta = (a - c) / real_t(2);
         real_t sign_delta = (delta >= 0) ? real_t(1) : real_t(-1);
-        real_t mu = c - b * b / (delta + sign_delta * sqrt(delta * delta + b * b));
+        // b * (b / ...), not b * b / ...: b * b overflows once |b| passes
+        // sqrt(max), though the quotient does not (#671).
+        real_t mu = c - b * (b / (delta + sign_delta * math::scaled_hypot(delta, b)));
 
         // Implicit QR step with Givens rotations
         real_t x = d(p) - mu;
         real_t z = e(p);
 
         for (size_type k = p; k + 1 < end; ++k) {
-            real_t r = sqrt(x * x + z * z);
-            real_t cs = x / r;
-            real_t sn = z / r;
+            const auto g = math::givens_rotation(x, z);   // scaled (#671)
+            real_t r = g.r;
+            real_t cs = g.c;
+            real_t sn = g.s;
 
             if (k > p) e(k - 1) = r;
 

@@ -164,6 +164,11 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # op_test_ogita_rump_oishi evaluates Corollary 4.7's computable error bound in
 # working precision; the corollary is proved for separately rounded operations,
 # and a fused multiply-add in that expression changes the bound being tested.
+#
+# math_test_pow2_scaling asserts that inside the old band the power-of-two
+# scaled Givens rotation (#671) gives the unscaled formula's bits: scaling by
+# 2^-e is exact and commutes with every rounding. Contraction can fuse a*a or
+# b*b in the test's reference and the other in the header, moving r by an ulp.
 if(NOT MSVC)
     foreach(mt_target sparse_test_supernodal_ldlt_mt
                       sparse_test_supernodal_lu_mt
@@ -182,6 +187,7 @@ if(NOT MSVC)
                       op_test_sum_trace_accumulator
                       itl_test_mg_accumulator
                       op_test_ogita_rump_oishi
+                      math_test_pow2_scaling
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
