@@ -146,13 +146,14 @@ jobs:
             name: Linux ARM64 (Clang 18)
 
           # ── macOS ARM64 (Apple Silicon) ───────────────────────────────
-          - os: macos-14
+          # macOS 14 images are retired on 2026-11-02 (actions/runner-images#13518).
+          - os: macos-15
             compiler: apple-clang
             cc: clang
             cxx: clang++
             name: macOS ARM64 (Apple Clang)
 
-          - os: macos-15
+          - os: macos-26
             compiler: apple-clang
             cc: clang
             cxx: clang++
