@@ -495,7 +495,8 @@ So MTL5 has a scaled reflector with a fallback for narrow types, a scaled
 hypot in one eigensolver, and unscaled rotations elsewhere. Measuring what the
 unscaled rotations cost in each format, and what a safe-scaling rotation would
 have to look like for posits, takums and saturating formats, is the first
-study of mp-numerics #13.
+study of mp-numerics #13. Its results, across 65 types, are in
+[Givens and Householder across number systems](givens-householder-study.md).
 
 ## Unconfirmed details
 
