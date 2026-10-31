@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { makeFormat, arith } from '../src/components/gh/numformats.js';
-import { givens, householder } from '../src/components/gh/kernels.js';
+import { givens, householder, applyHouseholder } from '../src/components/gh/kernels.js';
 
 const vectors = JSON.parse(readFileSync(new URL('./gh-vectors.json', import.meta.url), 'utf-8'));
 
@@ -61,6 +61,15 @@ for (const fv of vectors.formats) {
         same(h.v1, want[0], `${what}.v1`);
         same(h.tau, want[1], `${what}.tau`);
       }
+    }
+  });
+
+  test(`${name}: Householder reflector applied`, () => {
+    for (const [a, b, u, w, [y0, y1]] of fv.apply_householder) {
+      const [g0, g1] = applyHouseholder(ops, householder(ops, a, b), [u, w]);
+      const what = `householder(${a}, ${b}) applied to (${u}, ${w})`;
+      same(g0, y0, `${what}[0]`);
+      same(g1, y1, `${what}[1]`);
     }
   });
 
