@@ -15,7 +15,9 @@ The short version:
   every type.** The rotation used by GMRES, MINRES and the symmetric QR
   iteration is clean over only about half of it.
 - **Scaling by an exact power of two is the one form clean and accurate in all
-  65 types**, for the rotation and for the reflector alike. LAPACK's scalings
+  65 types.** The rotation scaled this way is clean everywhere. The reflector
+  is too, apart from a few overflows in the top binade of the 8- and 16-bit
+  IEEE cfloats. LAPACK's scalings
   prevent overflow, but in a tapered type or in double-double they don't keep
   the precision.
 - **MTL5's choice of sign costs accuracy in posits, takums and fixed point.**
@@ -25,10 +27,14 @@ The short version:
 
 Each operator is built for a vector x = (a, b) in the type, and its values are
 read out as exact Shewchuk expansions. So every number below is the error of the
-operator the arithmetic produced, not of a double approximation to it. The main
-measure is ‖QᵀQ − I‖₂ in units of the type's `epsilon()`. A sample is
-**gross** when that, or the part of x the operator failed to annihilate, is
-above max(1/2, 16 eps). It is **non-finite** when an infinity or NaN appears.
+operator the arithmetic produced, not of a double approximation to it. The
+exception is lns: its values are not dyadic, so they are read through double.
+That is still far finer than lns<32,23>'s own resolution.
+
+The main measure is ‖QᵀQ − I‖₂, reported in units of the type's `epsilon()`. A
+sample is **gross** when ‖QᵀQ − I‖₂ itself, or the part of x the operator
+failed to annihilate relative to ‖x‖, is above max(1/2, 16 eps). Neither
+measure is divided by eps for this test. It is **non-finite** when an infinity or NaN appears.
 A sample is **clean** when it is neither.
 
 | operator | what it is |
@@ -42,8 +48,8 @@ A sample is **clean** when it is neither.
 | `householder_lapack_pow2` | `dlarfg`'s sign (onto −sign(x₀)‖x‖e₁), v(0) = 1, on x scaled by an exact 2^-e |
 
 The inputs are random directions with ‖x‖ = 2^k for k across each type's
-whole exponent range (the **scale sweep**), and x = (1, 2^-j) for j up to past
-the type's precision (the **tail sweep**). A third sweep applies operators
+whole exponent range (the **scale sweep**), and x = (±1, ±2^-j (1 + u)) with u uniform in
+[0, 1), for j from 0 to past the type's precision (the **tail sweep**). A third sweep applies operators
 repeatedly.
 
 The types are:
@@ -127,9 +133,10 @@ The types added in the second part of the study show the same thing:
 
 ![Worst orthogonality of the three reflectors as the tail of x shrinks](../img/gh-study-tail-reflectors-ieee-posit-fixpnt.svg)
 
-On the tail sweep x₀ = 1, so the scaling rounds nothing and the sign is the
-only difference between MTL5's reflector (red) and the LAPACK-sign form
-(green).
+On the tail sweep |x₀| = 1. From j = 1 on, |x₁| < 1, so MTL5's max-scaling
+divides by 1 and rounds nothing, and the sign is the only difference between
+MTL5's reflector (red) and the LAPACK-sign form (green). At j = 0, |x₁| can
+exceed 1, and the scaling rounds too.
 
 Parlett's sign makes v₀ = −σ/(x₀ + ‖x‖) small for a small tail. After
 normalizing to v(0) = 1, v₁ ≈ −2x₀/x₁ is then large:
