@@ -11,6 +11,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/math/pow2_scaling.hpp>
 
 namespace mtl::itl {
 
@@ -100,16 +101,18 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         value_type delta     = cs * delta_bar + sn * alpha;
         value_type gamma_bar = -sn * delta_bar + cs * alpha;
 
-        // Step 3: Compute new Givens rotation G_j to zero beta_new
-        value_type gamma = sqrt(gamma_bar * gamma_bar + beta_new * beta_new);
+        // Step 3: Compute new Givens rotation G_j to zero beta_new, scaled by
+        // an exact power of two so gamma does not overflow or underflow (#671)
+        const auto g_new = math::givens_rotation(gamma_bar, beta_new);
+        value_type gamma = g_new.r;
 
         if (gamma == zero) {
             iter.fail(2, "minres breakdown: gamma == 0");
             return iter;
         }
 
-        value_type cs_new = gamma_bar / gamma;
-        value_type sn_new = beta_new / gamma;
+        value_type cs_new = g_new.c;
+        value_type sn_new = g_new.s;
 
         // Update direction vectors
         // d_new = (M^{-1}*v - delta*d_old - epsilon*d_older) / gamma

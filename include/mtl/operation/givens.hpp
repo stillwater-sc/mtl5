@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- Givens rotation utilities for GMRES Hessenberg QR factorization
 #include <cmath>
+#include <mtl/math/pow2_scaling.hpp>
 
 namespace mtl {
 
@@ -21,23 +22,15 @@ void apply_stored_rotation(Matrix& H, const Vector& c, const Vector& s,
 template <typename Matrix, typename VecG, typename VecC, typename VecS>
 void apply_givens_rotation(Matrix& H, VecG& g, VecC& c, VecS& s,
                            typename Matrix::size_type k) {
-    using std::sqrt;
-    using std::abs;
     using value_type = typename Matrix::value_type;
 
-    auto a = H(k, k);
-    auto b = H(k + 1, k);
-    auto r = sqrt(a * a + b * b);
+    // Scaled by an exact power of two, so r neither overflows nor underflows
+    // where a*a + b*b would (#671).
+    const auto rot = math::givens_rotation<value_type>(H(k, k), H(k + 1, k));
+    c(k) = rot.c;
+    s(k) = rot.s;
 
-    if (r == value_type(0)) {
-        c(k) = value_type(1);
-        s(k) = value_type(0);
-    } else {
-        c(k) = a / r;
-        s(k) = b / r;
-    }
-
-    H(k, k)     = r;
+    H(k, k)     = rot.r;
     H(k + 1, k) = value_type(0);
 
     // Apply to RHS vector g
