@@ -12,7 +12,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - mp-dsp's headers-only fallback moves from v5.12.0 to v5.22.0 (mp-dsp#219);
   - mp-dsp-python's floor and pin move to 5.22.0 (mp-dsp-python#136).
 
-  Every repo built and passed unchanged, and no binding source changed. What went stale was the text: mtl5-python's tests, docstrings and a comment still described the narrow formats' Q = I fallback, which #675 removed.
+  Every repo built against 5.22.0 and every bump PR's CI passed; the local runs' only failures were environmental, as the log records per repo. No binding source changed. What went stale was the text: mtl5-python's tests, docstrings and a comment still described the narrow formats' Q = I fallback, which #675 removed.
 
 ## [5.22.0] - 2026-11-01
 

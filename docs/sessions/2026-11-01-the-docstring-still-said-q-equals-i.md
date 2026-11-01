@@ -15,8 +15,9 @@ mtl5-python 5.22.0 to PyPI.
 
 ## The through-line
 
-Every repository built and passed against 5.22.0. What needed fixing was the
-text describing the old results.
+Every repository built against 5.22.0, and every bump PR's CI passed. The
+local runs failed only for environmental reasons, listed per repo below. What
+needed fixing was the text describing the old results.
 
 #675 gave `householder()` LAPACK `dlarfg`'s sign. In mtl5-python that ended
 the narrow formats' fallback to Q = I. The code needed no change, but three
