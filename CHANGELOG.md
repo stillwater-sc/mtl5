@@ -5,7 +5,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
-## [5.22.0] - 2026-10-31
+## [5.22.0] - 2026-11-01
 
 The plane rotations and reflectors that QR, LQ, GMRES, MINRES and the symmetric eigensolver are built on now hold up across the element type's whole range and precision. A study of Givens rotations and Householder reflectors in 65 number systems, published with this release (#667–#670), found that the forms MTL5 used fail where a type is narrow, tapered or near its range limits. Givens rotations now scale by an exact power of two before squaring (#673). Inside the old range the results are bit-identical under separately rounded arithmetic (FMA contraction can move them by an ulp); outside it, the old form returned inf, 0 or NaN. `householder()` now reflects onto LAPACK `dlarfg`'s sign, which bounds every entry of v by 1 (#675).
 
