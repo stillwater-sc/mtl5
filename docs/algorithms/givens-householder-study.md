@@ -47,6 +47,12 @@ A sample is **clean** when it is neither.
 | `householder_textbook` | `mtl::householder(x, tag::textbook_reflector)`: unscaled, LAPACK's sign |
 | `householder_lapack_pow2` | `dlarfg`'s sign (onto −sign(x₀)‖x‖e₁), v(0) = 1, on x scaled by an exact 2^-e |
 
+`givens_mtl5` and `householder_mtl5` are MTL5 5.21.0, which the study measured.
+MTL5 5.22.0 adopted the two remedies: `apply_givens_rotation`, MINRES and the
+symmetric QR iteration scale by an exact power of two, as `givens_pow2_scaled`
+does (#671), and `householder` takes `dlarfg`'s sign on x scaled by an exact
+power of two, as `householder_lapack_pow2` does (#672).
+
 The inputs are random directions with ‖x‖ = 2^k for k across each type's
 whole exponent range (the **scale sweep**), and x = (±1, ±2^-j (1 + u)) with u uniform in
 [0, 1), for j from 0 to past the type's precision (the **tail sweep**). A third sweep applies operators

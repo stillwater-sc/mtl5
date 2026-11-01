@@ -418,8 +418,10 @@ TEST_CASE("qr_solve skips a column the textbook qr_factor skipped",
 
 TEST_CASE("the textbook and default reflectors differ",
           "[operation][qr][textbook][559]") {
-    // Otherwise the tag would be selecting the same arithmetic. emul keeps the
-    // default on the generic path in LAPACK builds too.
+    // Otherwise the tag would be selecting the same arithmetic. From 5.22.0
+    // the two reflect onto the same sign (#672); they still scale and round
+    // differently. emul keeps the default on the generic path in LAPACK
+    // builds too.
     auto A = random_matrix<emul>(33, 15, 5594), B = A;
     vec::dense_vector<emul> ta, tb;
     REQUIRE(qr_factor(A, ta) == 0);

@@ -2,10 +2,13 @@
 
 `householder`, `apply_householder_left`, `apply_householder_right`,
 `qr_factor` and `lq_factor` can build and apply a Householder reflector in
-either of two forms. Both produce a valid factorization, and they produce
-different bits, and for some inputs different signs. The default is unchanged.
-The second form is opt-in, for callers that need to reproduce a hand-written
-textbook QR or LQ exactly.
+either of two forms. Both produce a valid factorization with the same signs,
+and they produce different bits. The second form is opt-in, for callers that
+need to reproduce a hand-written textbook QR or LQ exactly.
+
+From 5.22.0 the default reflects onto LAPACK's sign, −sign(x₀)·‖x‖, where it
+used to reflect onto +‖x‖ for x₀ > 0 (#672). See [The sign of R](#the-sign-of-r)
+below for what changed and how to get the old non-negative diagonal back.
 
 ```cpp
 #include <mtl/operation/qr.hpp>
@@ -23,17 +26,16 @@ Van Loan §5.1) makes different choices:
 
 | | default (LAPACK form) | textbook form |
 |---|---|---|
-| ‖x‖ | x scaled by max\|xᵢ\| before squaring | Σxᵢ², unscaled, from zero, ascending i |
+| ‖x‖ | x scaled by an exact 2⁻ᵉ, 2ᵉ ≤ max\|xᵢ\| < 2ᵉ⁺¹, before squaring | Σxᵢ², unscaled, from zero, ascending i |
 | v | normalized, v(0) = 1 | not normalized: v = x, v(0) = x₀ − α |
-| reflected onto | +‖x‖ when x₀ > 0 (Parlett's v₀ = −σ/(x₀ + ‖x‖)) | α = −sign(x₀)·‖x‖ |
-| scalar | τ = 2v₀²/(σ + v₀²) | vᵀv, summed from zero |
+| reflected onto | α = −sign(x₀)·‖x‖, so v₀ = x₀ − α | α = −sign(x₀)·‖x‖ |
+| scalar | τ = −v₀/α = 1 + \|x₀\|/‖x‖ | vᵀv, summed from zero |
 | column update | `A(i,j) -= τ·v(i)·w` | `f = (2·s)/vᵀv`, then `A(i,j) -= f·v(i)` |
-| R's diagonal | non-negative for x₀ > 0 | −sign(x₀)·‖x‖ |
+| R's diagonal | −sign(x₀)·‖x‖ | −sign(x₀)·‖x‖ |
 
-Each column is rounded through a different sequence of operations, so R differs
-in the last bits. Where x₀ > 0 the two forms also reflect onto opposite signs, so
-that row of R, and the matching column of Q, change sign. Both are correct:
-Q·R = A and Q is orthogonal either way.
+In both, sign(0) = +1. Each column is rounded through a different sequence of
+operations, so R differs in the last bits. Q·R = A and Q is orthogonal either
+way.
 
 That doesn't matter to most callers. It matters to a caller whose results are
 pinned to the textbook form. branes-ai/cortex is porting a multi-state-constraint
@@ -48,6 +50,10 @@ prototype on the default form measured:
   valid basis;
 - on EuRoC V2_03, 1 of 16,265 update decisions flipped, and the trajectory
   diverged from there (ATE 0.269 → 0.289 m).
+
+That prototype predates 5.22.0, when the default reflected onto the opposite
+sign. The two forms now agree on the sign, but they still round differently, so
+the tag is still what reproduces the textbook bits.
 
 This is the same situation as [summation order in
 Cholesky](summation-order-in-cholesky.md), and it has the same kind of remedy: a
@@ -204,7 +210,8 @@ page](summation-order-in-cholesky.md#reproducing-a-hand-written-factorization).
 | situation | use |
 |---|---|
 | Results must match an existing textbook-form implementation | `tag::textbook_reflector` |
-| Results must match MTL5 before #559, or LAPACK's `geqrf` | the default |
+| Results must match LAPACK's `geqrf`, signs included | the default |
+| Code relies on the non-negative diagonal MTL5 gave before 5.22.0 | the default, then `qr_normalize_signs` or `lq_normalize_signs` |
 | Columns may be very large or very small in magnitude | the default, which scales |
 | Complex matrices | the default |
 | You need the same bits in LAPACK and non-LAPACK builds | `tag::textbook_reflector`, because it never dispatches |
@@ -217,15 +224,40 @@ page](summation-order-in-cholesky.md#reproducing-a-hand-written-factorization).
 ```cpp
 mtl::vec::dense_vector<double> x{3.0, 4.0};
 
-auto [v, tau] = mtl::householder(x);                         // H*x = +5 e1
+auto [v, tau] = mtl::householder(x);                         // H*x = -5 e1
+// v == {1, 0.5}, tau == 1.6
 auto [w, vtv, alpha] = mtl::householder(x, mtl::tag::textbook_reflector{});
 // alpha == -5, w == {8, 4}, vtv == 80:                     H*x = -5 e1
 ```
 
-Both reflections are exact here. With x₀ = 3 > 0 the default reflects onto +5
-and the textbook form onto −5, so a QR built from either has the opposite sign
-in that row of R. A caller that uses only R·Rᵀ, or only the span of Q's columns,
-won't notice. A caller that compares bits will.
+Both reflections are exact here, and both reflect onto −5. Before 5.22.0 the
+default reflected this x onto +5, with Parlett's v₀ = −σ/(x₀ + ‖x‖) for x₀ > 0.
+That made R's diagonal non-negative, but for a small tail v₀ is small and
+v(1) ≈ −2x₀/x(1) is large. In a tapered or fixed-point type, v and 1 + v² then
+land where the type has few bits, and the reflector lost orthogonality: the
+[Givens and Householder study](../algorithms/givens-householder-study.md)
+measured 8.0×10⁵ ε for posit<64,2> and 512 ε for posit<32,2>, against 4.1 and
+3.8 ε with LAPACK's sign. With LAPACK's sign every |v(i)| ≤ 1.
+
+So from 5.22.0 a QR has R(k,k) < 0 wherever the pivot entry x₀ was ≥ 0, as
+LAPACK's `geqrf` has. The generic path and the `geqrf` path of a LAPACK build
+now agree, diagonal signs included; before, they disagreed wherever x₀ > 0. A
+caller that uses only Q·R, R·Rᵀ, or the span of Q's columns won't notice. A
+caller that reads the sign of R's diagonal, or compares Q or R entrywise, will.
+To get the old convention back, normalize the explicit factors:
+
+```cpp
+mtl::qr_factor(A, tau);
+auto Q = mtl::qr_extract_Q(A, tau);
+auto R = mtl::qr_extract_R(A);
+mtl::qr_normalize_signs(Q, R);   // R(k,k) >= 0; Q*R unchanged
+```
+
+`lq_normalize_signs(L, Q)` does the same for an LQ. For a full-rank A the
+normalized factorization is the unique one with a positive diagonal. The
+values match the pre-5.22.0 default to rounding, not to the bit. The packed
+factor can't store a negated column of Q, so the helpers work on the
+extracted Q and R (or L and Q).
 
 ### A column that is zero below the pivot
 
@@ -267,7 +299,7 @@ against serial reference loops written as above:
   Before #560's review fix, `qr_solve` applied the τ = 0 reflector anyway and
   0·NaN made the whole solution NaN;
 - the default and the textbook form produce different R, and different L, for
-  the same matrix.
+  the same matrix, though from 5.22.0 with the same signs.
 
 The target is compiled with `-ffp-contract=off`. As a teeth check, five
 patched copies of the headers each fail the tests that should notice:

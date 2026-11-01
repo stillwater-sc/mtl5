@@ -24,6 +24,7 @@
 #include <mtl/functor/scalar/imag.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/math/pow2_scaling.hpp>
 #include <mtl/tag/reflector_form.hpp>
 
 namespace mtl {
@@ -72,7 +73,35 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     if (scale == mag_t(0))
         return {v, math::zero<T>()};   // x is the zero vector
 
-    // sigma = sum |x(i)/scale|^2 for i >= 1, in the scaled variables.
+    // A real x is scaled by the exact power of two 2^-e, 2^e <= scale <
+    // 2^(e+1), rather than divided by scale (#672): the scaling then rounds
+    // nothing, which keeps a tapered type's entries exact as well as in
+    // range. 2^-e is formed once when it is a value of T, and otherwise
+    // (2^1074 for a double whose largest entry is subnormal) each entry is
+    // scaled on its own. A complex x, or a non-finite scale, is divided by
+    // scale as before.
+    bool pow2 = false;
+    int e = 0;
+    T pow2_factor = math::one<T>();
+    bool pow2_factor_exact = false;
+    if constexpr (!is_complex_v<T>) {
+        if (scale - scale == mag_t(0)) {
+            pow2 = true;
+            e = math::pow2_scaling<T>::exponent(scale);
+            pow2_factor = math::pow2_scaling<T>::scale(math::one<T>(), -e);
+            pow2_factor_exact = (math::pow2_scaling<T>::scale(pow2_factor, e) == math::one<T>());
+        }
+    }
+    auto scaled = [&](size_type i) -> T {
+        if constexpr (!is_complex_v<T>) {
+            if (pow2)
+                return pow2_factor_exact ? T(x(i) * pow2_factor)
+                                         : math::pow2_scaling<T>::scale(x(i), -e);
+        }
+        return x(i) / scale;
+    };
+
+    // sigma = sum |x(i)|^2 for i >= 1, in the scaled variables.
     // |z|^2, NOT z^2: the squared modulus is what a norm needs, and for real T
     // the two coincide, which is why the unconjugated form survived this long.
     using AccT = std::conditional_t<std::is_void_v<Accumulator>, mag_t, Accumulator>;
@@ -80,7 +109,7 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     AccT sigma_acc;
     SigmaAT::clear(sigma_acc);
     for (size_type i = 1; i < n; ++i) {
-        const T xs = x(i) / scale;
+        const T xs = scaled(i);
         const mag_t term = functor::scalar::real<T>::apply(T(xs * conj_t::apply(xs)));
         SigmaAT::add_product(sigma_acc, term, mag_t(1));
     }
@@ -99,7 +128,7 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     // complex branch gets nrm = |x0|, a well-conditioned d = x0 - beta of
     // magnitude 2|x0| (beta takes the opposite sign of Re(x0)), and a tail loop
     // that writes only zeros. x0 cannot be zero here -- scale > 0 and sigma == 0
-    // force |x0| == scale.
+    // force |x(0)| == scale.
     if (sigma == mag_t(0)) {
         if constexpr (!is_complex_v<T>) {
             return {v, math::zero<T>()};
@@ -108,55 +137,45 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
         }
     }
 
-    const T x0 = x(0) / scale;
+    const T x0 = scaled(0);
 
     if constexpr (!is_complex_v<T>) {
-        // Real path. Kept apart from the complex formulation below, which it
-        // predates; with v = [1; x(1:)/v0] it reflects x onto norm_x * e_1.
+        // Real path: LAPACK dlarfg's construction (#672). x is reflected onto
+        // alpha e_1 with alpha = -sign(x0) ||x||, where sign(0) = +1, so
+        //
+        //   v0   = x0 - alpha       |v0| = |x0| + ||x|| >= ||x||: no cancellation
+        //   v    = [1; x(1:) / v0]  every |v(i)| <= 1
+        //   beta = -v0 / alpha      = 1 + |x0| / ||x||, in [1, 2]
+        //
+        // and R's diagonal entry is alpha, as in LAPACK's geqrf, the textbook
+        // form and the complex path below. Until 5.22.0 the real path took
+        // Parlett's v0 = -sigma / (x0 + ||x||) for x0 > 0, reflecting onto
+        // +||x||. For a small tail that v0 is small and v(1) ~ -2 x0 / x(1) is
+        // large, and in a tapered or fixed-point type v and 1 + v^2 then land
+        // where the type has few bits: the Givens and Householder study
+        // measured 8.0e5 eps for posit<64,2> where this form gives 4.1, and
+        // 7.4 eps for double where it gives 4.0
+        // (docs/algorithms/givens-householder-study.md).
         const T norm_x = sqrt(x0 * x0 + sigma);
-        T v0;
-        if (x0 <= math::zero<T>()) {
-            v0 = x0 - norm_x;
-        } else {
-            // A tail below half an ulp of x0 is negligible: x is along e_1 to
-            // working precision, and H = I is backward stable. Reflecting it
-            // anyway needs v0 ~ sigma / 2 and tail entries x(i) / v0 of size
-            // 2 / |tail|, which overflow later products for no gain. The old
-            // squared beta reached the same identity by underflowing, but only
-            // for tails below about 1e-77 (double), and with an inaccurate
-            // beta just above that.
-            if (x0 + sqrt(sigma) == x0)
-                return {v, math::zero<T>()};
-            v0 = -sigma / (x0 + norm_x);
-        }
+        const T alpha = (x0 >= math::zero<T>()) ? T(-norm_x) : norm_x;
+        const T v0 = x0 - alpha;
 
-        // beta = 2 / (v^T v) = 2 v0^2 / (sigma + v0^2). Since v0 = x0 - norm_x
-        // and norm_x^2 = x0^2 + sigma, the denominator is exactly
-        // -2 norm_x v0, so beta = -v0 / norm_x (LAPACK dlarfg's
-        // tau = (beta - alpha) / beta, with its sign convention). That form
-        // never squares v0. The squared form did, and when the tail of x is
-        // small against x(0), v0 ~ sigma / 2 and v0^2 ~ sigma^2 / 4 is far
-        // below sigma: in a type with little range below 1 that square
-        // underflows or keeps only a few bits. Half precision with a tail 2%
-        // of x(0) has v0^2 near 2^-24, its smallest subnormal, and gave a beta
-        // wrong by percents, so the reflector was not orthogonal and the
-        // Hessenberg reduction of such a matrix had a backward error near
-        // 100 n eps (posit<16,1>: near 400 n eps) where it should be ~1 n eps.
-        // In float and double, beta changes only in its last bits.
-        const T beta = -v0 / norm_x;
+        // beta is dlarfg's tau. -v0 / alpha never squares v0; the squared form
+        // 2 v0^2 / (sigma + v0^2) did, and in a type with little range below 1
+        // that square underflowed (#658).
+        const T beta = -v0 / alpha;
 
-        // beta == 0 means the reflection is the identity, so v carries no
-        // information -- and computing it would divide by a v0 small enough to
-        // overflow. Return a clean unit v: qr_factor STORES v below the diagonal,
-        // so letting huge or infinite entries through would poison the factor and
-        // every later use of it.
+        // beta lies in [1, 2], so beta == 0 means only a type too narrow to
+        // hold it (or a NaN that compared false above). Return a clean unit v:
+        // qr_factor STORES v below the diagonal, so letting garbage through
+        // would poison the factor and every later use of it.
         if (beta == math::zero<T>())
             return {v, math::zero<T>()};
 
         // Normalize so that v(0) = 1. Both numerator and denominator are in the
         // scaled variables, so the ratio is the same as before the scaling.
         for (size_type i = 1; i < n; ++i)
-            v(i) = (x(i) / scale) / v0;
+            v(i) = scaled(i) / v0;
         v(0) = math::one<T>();
 
         // An exact reflector has c = beta * v^T v = 2, and H = I - beta v v^T
@@ -167,14 +186,12 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
         // Leaving x as it is (H = I) costs ||tail|| / ||x|| instead, so keep
         // whichever is smaller. A NaN c fails the comparison and takes I. The
         // old squared beta reached I in these types by underflowing to zero.
-        // In float and double, |2 - c| is a few eps and the tail is above half
-        // an ulp of x0, so the reflector is kept except where both costs are
-        // a few eps.
+        // In float and double the reflector is kept: where the tail is below
+        // an ulp of x0, ||x|| rounds to |x0| and beta is exactly 2, so |2 - c|
+        // is of the order of the tail squared.
         //
-        // c is summed as beta + sum (beta v(i)) v(i): beta v(i) = -x(i)/norm_x
-        // is at most 1 and every partial sum stays near 2. Summing v^T v first
-        // would reach 1/v0^2, which saturates a fixed-point type and hides
-        // exactly the error being measured.
+        // c is summed as beta + sum (beta v(i)) v(i): beta v(i) = -x(i)/alpha
+        // is at most 1 and every partial sum stays near 2.
         T c = beta;
         for (size_type i = 1; i < n; ++i)
             c += (beta * v(i)) * v(i);
@@ -197,12 +214,14 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
         //     tau = (beta - conj(a)) / beta
         //
         // beta's SIGN is the free choice, and it is chosen to keep a - beta
-        // away from cancellation -- the complex analogue of the real branch's
-        // `x0 <= 0` test. Picking the opposite sign of Re(a) makes |a - beta|
-        // >= beta, so the division below never amplifies rounding.
+        // away from cancellation, as in the real branch. Picking the opposite
+        // sign of Re(a) makes |a - beta| >= beta, so the division below never
+        // amplifies rounding. Re(a) == 0 takes beta = -nrm, as zlarfg's
+        // SIGN(beta, alphr) does and as the real branch does for x0 == 0; until
+        // 5.22.0 it took +nrm.
         const mag_t ax0  = abs(x0);
         const mag_t nrm  = sqrt(ax0 * ax0 + sigma);
-        const mag_t beta = (functor::scalar::real<T>::apply(x0) > mag_t(0)) ? -nrm : nrm;
+        const mag_t beta = (functor::scalar::real<T>::apply(x0) >= mag_t(0)) ? -nrm : nrm;
         const T     d    = x0 - T(beta);          // a - beta, no cancellation
         const T     tau  = (T(beta) - conj_t::apply(x0)) / T(beta);
 
@@ -211,7 +230,7 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
             return {v, math::zero<T>()};
 
         for (size_type i = 1; i < n; ++i)
-            v(i) = (x(i) / scale) / d;
+            v(i) = scaled(i) / d;
         v(0) = math::one<T>();
 
         return {v, tau};

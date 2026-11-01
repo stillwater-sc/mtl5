@@ -10,6 +10,7 @@
 #include <mtl/operation/householder.hpp>
 #include <mtl/tag/reflector_form.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/functor/scalar/real.hpp>
 #include <mtl/math/identity.hpp>
 
 namespace mtl {
@@ -161,6 +162,25 @@ auto lq_extract_L(const M& A) {
         for (size_type j = 0; j < n; ++j)
             L(i, j) = (j <= i) ? A(i, j) : math::zero<value_type>();
     return L;
+}
+
+/// Make L's diagonal non-negative: for each k < min(m, n) with L(k,k) < 0,
+/// negate column k of L and row k of Q. L*Q is unchanged. The LQ counterpart
+/// of qr_normalize_signs, for the same reason: lq_factor takes LAPACK's sign
+/// from 5.22.0 on (#672), so L(k,k) < 0 wherever the pivot entry was positive.
+template <Matrix ML, Matrix MQ>
+void lq_normalize_signs(ML& L, MQ& Q) {
+    using value_type = typename ML::value_type;
+    using size_type  = typename ML::size_type;
+    const size_type m = L.num_rows();
+    const size_type n = L.num_cols();
+    assert(Q.num_rows() == n && Q.num_cols() == n);
+    for (size_type k = 0; k < std::min(m, n); ++k) {
+        if (!(functor::scalar::real<value_type>::apply(L(k, k)) < math::zero<magnitude_t<value_type>>()))
+            continue;
+        for (size_type i = k; i < m; ++i) L(i, k) = -L(i, k);
+        for (size_type j = 0; j < n; ++j) Q(k, j) = -Q(k, j);
+    }
 }
 
 } // namespace mtl

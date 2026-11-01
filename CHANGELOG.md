@@ -5,6 +5,16 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `householder()` reflects onto LAPACK's sign, so R's diagonal is −sign(x₀)·‖x‖** (#672). The real default reflector used Parlett's v₀ = −σ/(x₀ + ‖x‖) for x₀ > 0 and reflected onto +‖x‖, which made R's diagonal non-negative. It now takes `dlarfg`'s sign, as LAPACK `geqrf`, the textbook form and the complex path do, with sign(0) = +1.
+  - **What changes for callers:** wherever a pivot entry is ≥ 0, `qr_factor`'s R(k,k) and the matching column of Q change sign, and so do `lq_factor`'s L(k,k) and the matching row of Q, and the Hessenberg reduction's subdiagonal. Q·R = A and Q's orthogonality hold either way, so only code that reads those signs, or compares Q, R or L entrywise, is affected. The complex path changes only where Re(x₀) = 0, which now takes −‖x‖, as `zlarfg` does.
+  - **Why:** for a small tail Parlett's v₀ is small and v(1) ≈ −2x₀/x(1) is large, and a tapered or fixed-point type has few bits there. The Givens and Householder study measured worst orthogonality on its tail sweep of 8.0×10⁵ ε for posit<64,2>, 512 ε for posit<32,2> and 2.4×10³ ε for fixpnt<32,16>, against 4.1, 3.8 and 2.8 ε with `dlarfg`'s sign, where every |v(i)| ≤ 1; double goes from 7.4 to 4.0 ε. In a fixpnt<16,8>-like type, the first column of mtl5-python's QR fixture now keeps a reflector accurate to the type's 2⁻⁸ resolution, where #662 had to fall back to H = I.
+  - **One convention:** the generic `qr_factor` and the `geqrf` path of a LAPACK build now give the same R, signs included; they disagreed wherever x₀ > 0.
+  - **To keep the old convention,** `qr_normalize_signs(Q, R)` and `lq_normalize_signs(L, Q)` (new) negate rows of R, or columns of L, and the matching parts of Q to make the diagonal non-negative, which for a full-rank A is the unique such factorization. `generators::randorth` uses it, so the distribution of its Q is unchanged.
+  - **The reflector also scales x by an exact power of two** instead of dividing by max |xᵢ|, through `math::pow2_scaling` (#671), so the scaling rounds nothing. A complex x is still divided by max |xᵢ|.
+  - Documented in `docs/numerical/householder-reflector-forms.md`.
+
 ## [5.21.0] - 2026-10-29
 
 Matrix functions arrive, generic in the element type. `expm` is the matrix exponential by scaling and squaring, with its Padé degree chosen from the element type's unit roundoff (#651). `schur` is the real Schur decomposition, built on the Francis loop `eigenvalue()` already used (#655). `sylvester` solves A X ± X B = C by Bartels–Stewart on top of it (#657). All three run for user-defined number types such as Universal's posits, takums, LNS and double-double, and dispatch to LAPACK for `float` and `double`. `gemmt` forms one triangle of a product known to be symmetric, and `congruence` builds A P Aᵀ and K diag(r) Kᵀ on it, the terms of a Kalman covariance update (#656, #660). The thread pool becomes public API, with a cross-library shared pool and a mutex-free `spin_pool` for real-time loops (#630, #639, #636), and a vendor BLAS called inside an MTL5 region now runs on one thread (#640).

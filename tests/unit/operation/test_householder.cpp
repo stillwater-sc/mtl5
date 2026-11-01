@@ -5,6 +5,8 @@
 // in a type with little range below 1, where forming beta from v0^2 lost it.
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
+#include <complex>
+#include <initializer_list>
 #include <limits>
 #include <random>
 #include <mtl/mtl.hpp>
@@ -136,24 +138,35 @@ TEST_CASE("householder: orthogonal and reflecting onto e_1 in double", "[operati
             }
 }
 
-TEST_CASE("householder: a reflector the type cannot hold is the identity", "[operation][householder]") {
-    // In coarse_fixed, this column (the first of mtl5-python's QR fixture)
-    // has v0 = -2^-8 and beta = 2^-8, one ulp each: beta v^T v = 0.5, so the
-    // computed H is far from orthogonal, which costs more than leaving the
-    // tail, 11% of ||x||. In short_max the tail v = x(1:)/v0 overflows.
+TEST_CASE("householder: a narrow type keeps the reflector dlarfg's sign gives it", "[operation][householder]") {
+    // The first column of mtl5-python's QR fixture, in coarse_fixed. With
+    // Parlett's sign (before 5.22.0) v0 was -2^-8 and beta 2^-8, one ulp
+    // each, so beta v^T v = 0.5 and householder() fell back to H = I. With
+    // dlarfg's sign (#672) v0 = x0 + ||x|| and every |v(i)| <= 1, which the
+    // type holds to its resolution, 2^-8.
     const double col[] = {1.030471707975443, -0.0016801157504288797, 0.036875078408249884, -0.042832782216310726, -0.051224272907153735, 0.07432541712034423, 0.0678913563071895, -0.027514225122668375};
     vec::dense_vector<coarse_fixed> xf(8);
     for (std::size_t i = 0; i < 8; ++i) xf(i) = col[i];
-    vec::dense_vector<short_max> xm{1.0, 0.25, 0.0, 0.0};
-    auto check_identity = [](const auto& x) {
-        auto [v, beta] = householder(x);
-        REQUIRE(dbl(beta) == 0.0);
-        REQUIRE(dbl(v(0)) == 1.0);
-        for (std::size_t i = 1; i < x.size(); ++i)
-            REQUIRE(dbl(v(i)) == 0.0);
-    };
-    check_identity(xf);
-    check_identity(xm);
+    auto [v, beta] = householder(xf);
+    REQUIRE(dbl(beta) != 0.0);
+    for (std::size_t i = 1; i < 8; ++i)
+        CHECK(std::abs(dbl(v(i))) <= 1.0);
+    auto [tail, orth] = reflect_quality(xf);   // 0.0029 and 0.0031 measured
+    INFO("tail " << tail << ", orth " << orth);
+    CHECK(tail <= 0x1.0p-8);
+    CHECK(orth <= 0x1.0p-8);
+}
+
+TEST_CASE("householder: a reflector the type cannot hold is the identity", "[operation][householder]") {
+    // In short_max the sum of squares of x = (1, ..., 1) reaches 4 and
+    // overflows, so ||x|| is infinite and beta v^T v is NaN.
+    vec::dense_vector<short_max> xm(8);
+    for (std::size_t i = 0; i < 8; ++i) xm(i) = 1.0;
+    auto [v, beta] = householder(xm);
+    REQUIRE(dbl(beta) == 0.0);
+    REQUIRE(dbl(v(0)) == 1.0);
+    for (std::size_t i = 1; i < xm.size(); ++i)
+        REQUIRE(dbl(v(i)) == 0.0);
 
     // QR of the whole fixture-like matrix stays finite and Q orthogonal.
     const std::size_t n = 8;
@@ -203,4 +216,103 @@ TEST_CASE("householder: never worse than the identity in a coarse type", "[opera
                 INFO("n " << n << ", tail scale " << tail_scale << ", c " << c);
                 CHECK(std::abs(c - 2.0) * c <= 1.5 * std::sqrt(nt / nx) + 0.02);
             }
+}
+
+TEST_CASE("householder: x is reflected onto -sign(x0) ||x||, LAPACK's sign (#672)",
+          "[operation][householder][672]") {
+    // H x = alpha e_1 with alpha = -sign(x0) ||x|| and sign(0) = +1, as in
+    // dlarfg, the textbook form and the complex path. Exact here: x = (3, 4)
+    // scales to (0.75, 1), and v = (1, 0.5), beta = 1.6.
+    auto onto = [](std::initializer_list<double> init) {
+        vec::dense_vector<double> x(init.size());
+        std::size_t i = 0;
+        for (double d : init) x(i++) = d;
+        auto [v, beta] = householder(x);
+        double vtx = 0;
+        for (std::size_t k = 0; k < x.size(); ++k) vtx += v(k) * x(k);
+        return x(0) - beta * v(0) * vtx;
+    };
+    CHECK(onto({3.0, 4.0}) == -5.0);
+    CHECK(onto({-3.0, 4.0}) == 5.0);
+    CHECK(onto({0.0, 2.0}) == -2.0);
+    CHECK(onto({0.0, -2.0}) == -2.0);
+
+    // qr_factor's R carries the same sign.
+    mat::dense2D<double> A(2, 1);
+    A(0, 0) = 3.0;
+    A(1, 0) = 4.0;
+    vec::dense_vector<double> tau;
+    qr_factor(A, tau);
+    CHECK(std::abs(A(0, 0) + 5.0) <= 1e-15);
+
+    // A complex pivot with Re(x0) == 0 takes -||x||, as zlarfg does.
+    mat::dense2D<std::complex<double>> C(2, 1);
+    C(0, 0) = {0.0, 3.0};
+    C(1, 0) = {4.0, 0.0};
+    vec::dense_vector<std::complex<double>> ctau;
+    qr_factor(C, ctau);
+    CHECK(std::abs(C(0, 0) - std::complex<double>(-5.0, 0.0)) <= 1e-14);
+}
+
+TEST_CASE("householder: a small tail keeps v bounded and H orthogonal (#672)",
+          "[operation][householder][672]") {
+    // x = (+-1, +-2^-j (1 + u)), j from 0 to past the type's precision: the
+    // study's tail sweep. With Parlett's sign (before 5.22.0) x0 = +1 gave
+    // v(1) ~ -2 / x(1), up to 2^(j+1), and in a narrow type an inaccurate H;
+    // with dlarfg's sign |v(1)| <= 1 for every j.
+    std::mt19937_64 g(672);
+    std::uniform_real_distribution<double> u(0.0, 1.0);
+    auto sweep = [&](auto zero, int digits, double eps, bool accurate) {
+        using T = decltype(zero);
+        for (double s0 : {1.0, -1.0})
+            for (double s1 : {1.0, -1.0})
+                for (int j = 0; j <= digits + 4; ++j)
+                    for (int rep = 0; rep < 4; ++rep) {
+                        vec::dense_vector<T> x(2);
+                        x(0) = T(s0);
+                        x(1) = T(s1 * std::ldexp(1.0 + u(g), -j));
+                        auto [v, beta] = householder(x);
+                        INFO("x = (" << dbl(x(0)) << ", " << dbl(x(1)) << "), j " << j);
+                        if (dbl(beta) == 0.0) {
+                            // Only a tail the type rounds away, or one too
+                            // small for the type to reflect accurately.
+                            CHECK((dbl(x(1)) == 0.0 || !accurate));
+                            continue;
+                        }
+                        CHECK(std::abs(dbl(v(1))) <= 1.0);
+                        CHECK(dbl(beta) >= 1.0);
+                        CHECK(dbl(beta) <= 2.0);
+                        if (accurate) {
+                            auto [tail, orth] = reflect_quality(x);
+                            CHECK(tail <= 4 * eps);
+                            CHECK(orth <= 4 * eps);
+                        }
+                    }
+    };
+    sweep(double{}, 53, std::numeric_limits<double>::epsilon(), true);
+    sweep(float{}, 24, std::numeric_limits<float>::epsilon(), true);
+    sweep(coarse_fixed{}, 8, 0x1.0p-8, false);
+}
+
+TEST_CASE("householder: scaling x by a power of two leaves v and beta unchanged (#672)",
+          "[operation][householder][672]") {
+    // x is scaled by an exact 2^-e before anything is squared, so x and
+    // x 2^k give the same scaled entries, and the same v and beta bit for bit,
+    // as long as x 2^k is itself exact.
+    std::mt19937_64 g(6720);
+    std::uniform_real_distribution<double> u(-1.0, 1.0);
+    for (std::size_t n : {2u, 5u, 9u})
+        for (int rep = 0; rep < 10; ++rep) {
+            vec::dense_vector<double> x(n);
+            for (std::size_t i = 0; i < n; ++i) x(i) = u(g);
+            auto [v, beta] = householder(x);
+            for (int k : {-1000, -600, -37, -1, 1, 37, 600, 1000}) {
+                vec::dense_vector<double> y(n);
+                for (std::size_t i = 0; i < n; ++i) y(i) = std::ldexp(x(i), k);
+                auto [w, gamma] = householder(y);
+                INFO("n " << n << ", k " << k);
+                CHECK(gamma == beta);
+                for (std::size_t i = 0; i < n; ++i) CHECK(w(i) == v(i));
+            }
+        }
 }
