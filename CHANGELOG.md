@@ -5,6 +5,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.22.0] - 2026-10-31
+
+The plane rotations and reflectors that QR, LQ, GMRES, MINRES and the symmetric eigensolver are built on now hold up across the element type's whole range and precision. A study of Givens rotations and Householder reflectors in 65 number systems, published with this release (#667–#670), found that the forms MTL5 used fail where a type is narrow, tapered or near its range limits. Givens rotations now scale by an exact power of two before squaring (#673). Inside the old range the results are bit-identical; outside it, the old form returned inf, 0 or NaN. `householder()` now reflects onto LAPACK `dlarfg`'s sign, which bounds every entry of v by 1 (#675).
+
+**One breaking change:** R's diagonal in `qr_factor`, and L's in `lq_factor`, is now −sign(x₀)·‖x‖, the sign LAPACK's `geqrf` gives, instead of non-negative. Q·R = A is unchanged. `qr_normalize_signs` and `lq_normalize_signs` restore the old convention.
+
 ### Changed
 
 - **BREAKING: `householder()` reflects onto LAPACK's sign, so R's diagonal is −sign(x₀)·‖x‖** (#672). The real default reflector used Parlett's v₀ = −σ/(x₀ + ‖x‖) for x₀ > 0 and reflected onto +‖x‖, which made R's diagonal non-negative. It now takes `dlarfg`'s sign, as LAPACK `geqrf`, the textbook form and the complex path do, with sign(0) = +1.
@@ -14,6 +20,30 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **To keep the old convention,** `qr_normalize_signs(Q, R)` and `lq_normalize_signs(L, Q)` (new) negate rows of R, or columns of L, and the matching parts of Q to make the diagonal non-negative, which for a full-rank A is the unique such factorization. `generators::randorth` uses it, so the distribution of its Q is unchanged.
   - **The reflector also scales x by an exact power of two** instead of dividing by max |xᵢ|, through `math::pow2_scaling` (#671), so the scaling rounds nothing. A complex x is still divided by max |xᵢ|.
   - Documented in `docs/numerical/householder-reflector-forms.md`.
+- **Givens rotations scale by an exact power of two** (#671, #673). `apply_givens_rotation` (GMRES's Hessenberg QR), MINRES, and `eigenvalue_symmetric`'s implicit QR step and Wilkinson shift formed r = sqrt(a² + b²) unscaled. The squares overflow once |a| passes sqrt(max) and underflow below sqrt(min), so the rotation was correct on only about half of each type's exponent range: in double, ‖x‖ from 2^−533 to 2^509 of 2^−1074 to 2^1023. They now scale a and b by 2^−e, where 2^e ≤ max(|a|, |b|), so the squares sit near 1.
+  - **Measured** in the Givens and Householder study, worst ‖QᵀQ − I‖ over the whole exponent range: double 1.46 ε, posit<64,2> 2.01 ε, takum<64> 3.65 ε, dd 3.79 ε. LAPACK's `lapy2` max-scaling and `dlartg` safe scaling each fail somewhere in those four types, by up to 10³¹ ε.
+  - **Results:** in a binary type the scaling rounds nothing, so float and double results inside the old band are bit-identical under separately rounded arithmetic. Only inputs where the old form overflowed, underflowed or lost bits change. `eigenvalue_symmetric` of a tridiagonal scaled by 2^600 now gives its eigenvalues, where it returned NaN.
+  - **The Wilkinson shift's** b²/(δ + sign(δ)·hypot(δ, b)) is now b·(b/(…)). Once the hypot no longer overflowed, b·b overflowed on its own.
+  - Complex and non-finite inputs keep the unscaled formula.
+
+### Added
+
+- **`math::pow2_scaling<T>`, `math::givens_rotation` and `math::scaled_hypot`** (`<mtl/math/pow2_scaling.hpp>`, #673). `pow2_scaling<T>` is a customization point with `exponent(m)` and `scale(x, k)`.
+  - The built-in floating-point types use `std::ilogb` and `std::ldexp`.
+  - Any other type gets an exact halving-and-doubling fallback that forms 2^k once and multiplies by it, so a tapered type rounds once.
+  - A number library can specialize the trait with its own exact `ldexp`, for example for Universal's dd and qd, whose multiplication near DBL_MAX overflows to NaN (stillwater-sc/universal#1881).
+- **`qr_normalize_signs(Q, R)` and `lq_normalize_signs(L, Q)`** (#675). They make the diagonal non-negative on the explicit factors, which for a full-rank A is the unique such factorization.
+
+### CI
+
+- **The macOS jobs move off the retiring macOS 14 image** (#674). GitHub retires `macos-14` on 2026-11-02 and fails jobs on it during scheduled brownouts until then (actions/runner-images#13518). The base job moves to `macos-15`, and the "latest" job from `macos-15` to `macos-26`. mtl5-python and universal_dtypes moved too, with their wheels' `MACOSX_DEPLOYMENT_TARGET` pinned at 11.0, the tag of every macOS wheel they have published.
+
+### Documentation
+
+- **The history of Givens rotations and Householder reflectors** (`docs/algorithms/givens-householder-history.md`, #667), from Jacobi and Givens to LAPACK's `dlartg` and `dlarfg`.
+- **Animated figures** of the plane rotation, the reflector, QR fill-in, bulge chasing and orthogonality drift (`docs/algorithms/givens-householder-pictures.md`, #668), with their generator, `tools/givens_householder_svg.py`.
+- **An interactive explorer** that applies a rotation or reflector in emulated number formats (`docs/site/algorithms/givens-householder-explorer.mdx`, #669). Its arithmetic is tested against vectors from the Python generator.
+- **Givens and Householder across 65 number systems** (`docs/algorithms/givens-householder-study.md`, #670): the results of stillwater-sc/mp-numerics#13 for the rotation and reflector forms MTL5 and LAPACK use, and the source of #671 and #672. The explorer's reflector now rounds in `qr_factor`'s order (#670).
 
 ## [5.21.0] - 2026-10-29
 
