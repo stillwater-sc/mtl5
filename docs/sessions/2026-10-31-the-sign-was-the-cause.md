@@ -82,7 +82,7 @@ form that was clean and within a few ε in all 65 types.
 - **The negligible-tail shortcut was removed.** It existed because Parlett's v
   was huge for a tail below an ulp. With `dlarfg`'s sign, v is tiny there, and
   keeping the shortcut would have made R(k,k)'s sign depend on the tail's size.
-- **The fixture #662 fell back on** now keeps a reflector. The first column of
+- **The fixture that #662 fell back on** now keeps a reflector. The first column of
   mtl5-python's QR fixture, in a fixpnt<16,8>-like type, had β = 2⁻⁸ with
   Parlett's sign. It now gets a reflector accurate to the type's 2⁻⁸
   resolution: tail 0.0029, orthogonality 0.0031.
