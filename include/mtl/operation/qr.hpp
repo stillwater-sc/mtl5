@@ -14,6 +14,7 @@
 #include <mtl/operation/householder.hpp>
 #include <mtl/tag/reflector_form.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/functor/scalar/real.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/math/accumulator_traits.hpp>
@@ -115,7 +116,8 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
 ///   R(k,k) = alpha
 ///
 /// so R on and above the diagonal is bit-identical to a hand-written textbook
-/// QR, including R's diagonal sign, -sign(x_k)*||x||. Below the diagonal and in
+/// QR. R's diagonal sign, -sign(x_k)*||x||, is the default's too from 5.22.0
+/// (#672); the values differ in rounding. Below the diagonal and in
 /// tau the same reflector is stored in MTL5's packed form, v/v(0) with
 /// tau(k) = 2*v(0)^2/vtv, so qr_extract_Q and qr_solve work on the result
 /// unchanged. Their Q agrees with the textbook Q to rounding, not to the bit:
@@ -215,6 +217,32 @@ auto qr_extract_R(const M& A) {
         for (size_type j = 0; j < n; ++j)
             R(i, j) = (j >= i) ? A(i, j) : math::zero<value_type>();
     return R;
+}
+
+/// Make R's diagonal non-negative: for each k < min(m, n) with R(k,k) < 0,
+/// negate row k of R and column k of Q. Q*R is unchanged (Q D D R with
+/// D = diag(+-1)), and for a full-rank A the result is the unique QR with a
+/// positive diagonal.
+///
+/// qr_factor reflects onto -sign(x_k)*||x||, LAPACK's sign, so R(k,k) < 0
+/// wherever the pivot entry was positive (#672). This is for callers that
+/// relied on the non-negative diagonal qr_factor gave before 5.22.0. It needs
+/// the explicit Q and R (qr_extract_Q, qr_extract_R): the packed factor has no
+/// way to store a negated column of Q. For a complex A, R's diagonal is real
+/// by construction and its real part is tested.
+template <Matrix MQ, Matrix MR>
+void qr_normalize_signs(MQ& Q, MR& R) {
+    using value_type = typename MR::value_type;
+    using size_type  = typename MR::size_type;
+    const size_type m = R.num_rows();
+    const size_type n = R.num_cols();
+    assert(Q.num_rows() == m && Q.num_cols() == m);
+    for (size_type k = 0; k < std::min(m, n); ++k) {
+        if (!(functor::scalar::real<value_type>::apply(R(k, k)) < math::zero<magnitude_t<value_type>>()))
+            continue;
+        for (size_type j = k; j < n; ++j) R(k, j) = -R(k, j);
+        for (size_type i = 0; i < m; ++i) Q(i, k) = -Q(i, k);
+    }
 }
 
 /// Solve A*x = b via QR factorization (least-squares for m > n).

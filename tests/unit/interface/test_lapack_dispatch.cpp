@@ -99,6 +99,32 @@ TEST_CASE("qr_factor produces valid Q and R", "[interface][lapack]") {
             REQUIRE_THAT(QR(i, j), WithinAbs(A_orig(i, j), 1e-8));
 }
 
+TEST_CASE("qr_factor's generic path gives LAPACK geqrf's R, signs included (#672)",
+          "[interface][lapack][672]") {
+    // From 5.22.0 the generic reflector takes dlarfg's sign, so the R of a
+    // LAPACK build and of the generic loop agree to rounding, diagonal signs
+    // included. Before, the generic R had a non-negative diagonal and geqrf's
+    // did not. A non-void accumulator keeps qr_factor on the generic path in
+    // a LAPACK build; without LAPACK both calls run it.
+    mat::dense2D<double> A(4, 3);
+    A(0,0) = 12; A(0,1) = -51; A(0,2) = 4;
+    A(1,0) = 6;  A(1,1) = 167; A(1,2) = -68;
+    A(2,0) = -4; A(2,1) = 24;  A(2,2) = -41;
+    A(3,0) = 1;  A(3,1) = -2;  A(3,2) = 3;
+    mat::dense2D<double> B(4, 3);
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 3; ++j)
+            B(i, j) = A(i, j);
+
+    vec::dense_vector<double> ta, tb;
+    REQUIRE(qr_factor(A, ta) == 0);            // geqrf in a LAPACK build
+    REQUIRE(qr_factor<double>(B, tb) == 0);    // always the generic loop
+    for (int i = 0; i < 3; ++i)
+        for (int j = i; j < 3; ++j)
+            REQUIRE_THAT(B(i, j), WithinAbs(A(i, j), 1e-12));
+    REQUIRE(A(0, 0) < 0.0);                    // pivot 12 > 0: onto -||x||
+}
+
 // -- Cholesky dispatch -------------------------------------------------------
 
 TEST_CASE("cholesky_factor and cholesky_solve on SPD matrix", "[interface][lapack]") {

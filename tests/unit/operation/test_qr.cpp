@@ -457,3 +457,86 @@ TEST_CASE("Complex QR produces a real R diagonal (#353)", "[operation][qr][regre
         REQUIRE(std::abs(R(i,i).imag()) < 1e-12);
     }
 }
+
+TEST_CASE("qr_normalize_signs and lq_normalize_signs give a non-negative diagonal (#672)",
+          "[operation][qr][lq][672]") {
+    // qr_factor and lq_factor take LAPACK's sign from 5.22.0, so the diagonal
+    // is negative wherever the pivot entry was positive. The helpers flip it
+    // back without changing the product, and leave a non-negative entry alone.
+    auto fill = [](auto& M, unsigned seed) {
+        unsigned s = seed;
+        for (std::size_t i = 0; i < M.num_rows(); ++i)
+            for (std::size_t j = 0; j < M.num_cols(); ++j) {
+                s = s * 1103515245u + 12345u;
+                M(i, j) = double((s >> 8) % 2001) / 1000.0 - 1.0;
+            }
+    };
+    {   // QR, 7 x 4
+        mat::dense2D<double> A(7, 4), F(7, 4);
+        fill(A, 672);
+        for (std::size_t i = 0; i < 7; ++i)
+            for (std::size_t j = 0; j < 4; ++j) F(i, j) = A(i, j);
+        vec::dense_vector<double> tau;
+        qr_factor(F, tau);
+        auto Q = qr_extract_Q(F, tau);
+        auto R = qr_extract_R(F);
+        mat::dense2D<double> R0 = R;
+        qr_normalize_signs(Q, R);
+        for (std::size_t k = 0; k < 4; ++k) {
+            REQUIRE(R(k, k) >= 0.0);
+            REQUIRE(std::abs(R(k, k)) == std::abs(R0(k, k)));
+        }
+        for (std::size_t i = 0; i < 7; ++i)
+            for (std::size_t j = 0; j < 4; ++j) {
+                double qr = 0, qtq = 0;
+                for (std::size_t k = 0; k < 7; ++k) qr += Q(i, k) * R(k, j);
+                for (std::size_t k = 0; k < 7; ++k) qtq += Q(k, i) * Q(k, j);
+                REQUIRE(std::abs(qr - A(i, j)) < 1e-14);
+                REQUIRE(std::abs(qtq - (i == j ? 1.0 : 0.0)) < 1e-14);
+            }
+    }
+    {   // LQ, 3 x 6
+        mat::dense2D<double> A(3, 6), F(3, 6);
+        fill(A, 6720);
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 6; ++j) F(i, j) = A(i, j);
+        vec::dense_vector<double> tau;
+        lq_factor(F, tau);
+        auto L = lq_extract_L(F);
+        auto Q = lq_extract_Q(F, tau);
+        mat::dense2D<double> L0 = L;
+        lq_normalize_signs(L, Q);
+        for (std::size_t k = 0; k < 3; ++k) {
+            REQUIRE(L(k, k) >= 0.0);
+            REQUIRE(std::abs(L(k, k)) == std::abs(L0(k, k)));
+        }
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 6; ++j) {
+                double lq = 0;
+                for (std::size_t k = 0; k < 3; ++k) lq += L(i, k) * Q(k, j);
+                REQUIRE(std::abs(lq - A(i, j)) < 1e-14);
+            }
+    }
+    {   // complex QR: R's diagonal is real, and ends up non-negative
+        using C = std::complex<double>;
+        mat::dense2D<C> A(4, 3), F(4, 3);
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t j = 0; j < 3; ++j)
+                F(i, j) = A(i, j) = C(1.0 + double(i + 2 * j), double(i) - double(j));
+        vec::dense_vector<C> tau;
+        qr_factor(F, tau);
+        auto Q = qr_extract_Q(F, tau);
+        auto R = qr_extract_R(F);
+        qr_normalize_signs(Q, R);
+        for (std::size_t k = 0; k < 3; ++k) {
+            REQUIRE(R(k, k).real() >= 0.0);
+            REQUIRE(std::abs(R(k, k).imag()) < 1e-12);
+        }
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t j = 0; j < 3; ++j) {
+                C qr = 0;
+                for (std::size_t k = 0; k < 4; ++k) qr += Q(i, k) * R(k, j);
+                REQUIRE(std::abs(qr - A(i, j)) < 1e-13);
+            }
+    }
+}
