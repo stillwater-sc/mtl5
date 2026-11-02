@@ -31,7 +31,7 @@ Van Loan §5.1) makes different choices:
 | reflected onto | α = −sign(x₀)·‖x‖, so v₀ = x₀ − α | α = −sign(x₀)·‖x‖ |
 | scalar | τ = −v₀/α = 1 + \|x₀\|/‖x‖ | vᵀv, summed from zero |
 | column update | `A(i,j) -= τ·v(i)·w` | `f = (2·s)/vᵀv`, then `A(i,j) -= f·v(i)` |
-| R's diagonal | −sign(x₀)·‖x‖: the reflector's β, stored | −sign(x₀)·‖x‖: α, stored |
+| R's diagonal | −sign(x₀)·‖x‖, the reflector's β, stored; x₀ when τ = 0 (the tail is already zero, H = I) | −sign(x₀)·‖x‖: α, stored |
 
 In both, sign(0) = +1. Each column is rounded through a different sequence of
 operations, so R differs in the last bits. Q·R = A and Q is orthogonal either
