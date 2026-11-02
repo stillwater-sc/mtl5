@@ -38,8 +38,14 @@ endif()
 # session -- so a syntax error surfaces at the worst moment on the one machine
 # nobody else has. Parse them wherever a PowerShell is present, which on the
 # hosted runners includes Linux.
+#
+# Not on Apple: on the macos-latest runner image, launching pwsh now fails in
+# LaunchServices (_LSOpenURLsWithCompletionHandler error -1712, a timeout)
+# before it parses anything, and leaves orphaned pwsh processes. The same
+# scripts are still parsed on the Linux and Windows runners, and they only
+# run on Windows.
 find_program(MTL5_POWERSHELL NAMES pwsh powershell)
-if(MTL5_POWERSHELL)
+if(MTL5_POWERSHELL AND NOT APPLE)
     file(GLOB MTL5_PS1_HARNESSES "${PROJECT_SOURCE_DIR}/benchmarks/*.ps1")
     if(MTL5_PS1_HARNESSES)
         add_test(NAME bench_powershell_parse
