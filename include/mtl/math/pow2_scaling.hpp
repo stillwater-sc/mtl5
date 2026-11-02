@@ -19,63 +19,166 @@
 //
 // pow2_scaling<T> is the customization point. The built-in floating-point
 // types use std::ilogb and std::ldexp. Any other type gets a fallback made of
-// multiplications by 2 and 1/2, which a number library can replace by
-// specializing the trait, for example with its own exact ldexp.
+// multiplications by exact powers of two, which a number library can replace
+// by specializing the trait, for example with its own exact ldexp.
 
 #include <cmath>
 #include <concepts>
+#include <cstddef>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/concepts/magnitude.hpp>
+
+namespace mtl::detail {
+
+/// T has an explicit or implicit conversion to double.
+template <typename T>
+concept converts_to_double = requires(const T& t) { static_cast<double>(t); };
+
+} // namespace mtl::detail
 
 namespace mtl::math {
 
 /// exponent(m): the e with 2^e <= m < 2^(e+1), for a positive finite m.
-/// scale(x, k): x * 2^k, exact whenever the result is a normal value of T.
+/// scale(x, k): x * 2^k, exact whenever 2^k and the result are values of T.
 ///
-/// The fallback finds e by halving or doubling m toward [1, 2), which rounds
-/// nothing in a binary type, at a cost of |e| multiplications. scale() forms
-/// 2^k by the same steps from 1 and multiplies x by it once, so a tapered
-/// type rounds the result once. Where 2^k itself is not a value of T (2^1074
-/// in an IEEE-like double, which only scales subnormals), x is stepped
-/// instead.
+/// The fallback works with two ladders of exact powers of two, 2^(2^i) and
+/// 2^-(2^i), each rung the square of the one before, kept while the square is
+/// exact, and built once per type. So both functions cost O(log |e|)
+/// multiplications, not |e| (#680).
+///
+/// A tapered type (posit, takum) is the hard case: near maxpos and minpos its
+/// values can lie farther apart than the largest exact rung, so m / 2^(2^i)
+/// rounds, and can round back to m. A search that steps m toward [1, 2) by
+/// powers of two, a binade or a rung at a time, then stalls or drifts (#680).
+/// So a T that converts to double reads e from that conversion, which is
+/// exact for any value inside double's range; the rungs only bring m into
+/// that range, which a type with a wider range (cfloat<256,19>) needs, and
+/// there the steps are exact. A T that does not convert to double is stepped
+/// by the rungs to [1, 2), and a step that does not move m ends the search,
+/// so it always terminates; it is exact where every step lands on a value of
+/// T, as in a binary floating-point type. A type with coarser ends than its
+/// rungs and no conversion should specialize the trait.
+///
+/// scale() multiplies x by 2^k once, so a tapered type rounds the result
+/// once: 2^k taken from double where T converts and 2^k is a value of T,
+/// otherwise formed from the ladder. Where 2^k itself is not a value of T
+/// (2^1074 in an IEEE-like double, which only scales subnormals), x is
+/// stepped by the rungs instead, largest first.
 template <typename T>
 struct pow2_scaling {
     static int exponent(T m) {
-        const T one(1), two(2), half(0.5);
+        const T zero(0), two(2);
+        if (!(m > zero) || !(m - m == zero)) return 0;   // not positive and finite
+        const auto& up = ladder(true);
         int e = 0;
-        while (m >= two) {
-            const T next = m * half;
-            if (!(next < m)) break;      // not finite
-            m = next;
-            ++e;
+        if constexpr (mtl::detail::converts_to_double<T>) {
+            constexpr double hi = 0x1p1000, lo = 0x1p-1000;
+            auto inside = [&](const T& y) {
+                const double d = static_cast<double>(y);
+                return d < hi && d > lo;
+            };
+            for (std::size_t i = up.size(); i-- > 0 && !inside(m);) {
+                const int step = 1 << i;
+                while (!(static_cast<double>(m) < hi)) {
+                    const T next = m / up[i];
+                    if (!(next < m) || !(static_cast<double>(next) > lo)) break;
+                    m = next;
+                    e += step;
+                }
+                while (!(static_cast<double>(m) > lo)) {
+                    const T next = m * up[i];
+                    if (!(m < next) || !(static_cast<double>(next) < hi)) break;
+                    m = next;
+                    e -= step;
+                }
+            }
+            if (inside(m)) {
+                const double d = static_cast<double>(m);
+                int k = std::ilogb(d);
+                // A T more precise than double can round up to 2^k from below.
+                if (d == std::ldexp(1.0, k) && m < T(d)) --k;
+                return e + k;
+            }
         }
-        while (m < one) {
-            const T next = m * two;
-            if (!(next > m)) break;      // zero
-            m = next;
-            --e;
+        for (std::size_t i = up.size(); i-- > 0;) {
+            const int step = 1 << i;
+            while (!(m < up[i])) {           // m >= 2^step
+                const T next = m / up[i];
+                if (!(next < m)) break;      // the step rounded back to m
+                m = next;
+                e += step;
+            }
+        }
+        for (std::size_t i = up.size(); i-- > 0;) {
+            const int step = 1 << i;
+            while (true) {                   // m < 2^(1 - step)
+                const T next = m * up[i];
+                if (!(next < two) || !(m < next)) break;
+                m = next;
+                e -= step;
+            }
         }
         return e;
     }
 
     static T scale(T x, int k) {
         if (k == 0) return x;
-        const T factor = k > 0 ? T(2) : T(0.5);
-        const T inverse = k > 0 ? T(0.5) : T(2);
-        const int n = k > 0 ? k : -k;
-        // 2^k by n exact steps from 1. A step is exact when undoing it gives
-        // back what it started from; overflow, saturation and underflow do not.
-        T p(1);
-        bool exact = true;
-        for (int i = 0; i < n && exact; ++i) {
-            const T next = p * factor;
-            exact = (next * inverse == p);
-            p = next;
+        if constexpr (mtl::detail::converts_to_double<T>) {
+            if (k >= -1022 && k <= 1023) {
+                const double pk = std::ldexp(1.0, k);
+                const T p(pk);
+                if (static_cast<double>(p) == pk) return x * p;
+            }
         }
-        if (exact) return x * p;
-        for (int i = 0; i < n; ++i) x = x * factor;
+        const auto& rung = ladder(k > 0);
+        const long long n = k > 0 ? static_cast<long long>(k) : -static_cast<long long>(k);
+        // 2^k from the rungs, exact while undoing each step gives back what
+        // it started from; overflow, saturation and underflow do not.
+        T p(1);
+        long long rest = n;
+        bool exact = true;
+        for (std::size_t i = rung.size(); i-- > 0 && exact;) {
+            const long long step = 1LL << i;
+            while (rest >= step) {
+                const T next = p * rung[i];
+                if (!(next / rung[i] == p)) { exact = false; break; }
+                p = next;
+                rest -= step;
+            }
+        }
+        if (exact && rest == 0) return x * p;
+        rest = n;
+        for (std::size_t i = rung.size(); i-- > 0;) {
+            const long long step = 1LL << i;
+            while (rest >= step) {
+                x = x * rung[i];
+                rest -= step;
+            }
+        }
         return x;
+    }
+
+private:
+    /// 2^(2^i) (up) or 2^-(2^i) (down) for i = 0, 1, ...: each rung the square
+    /// of the one before, kept while the square is exact and moves away from
+    /// 1. At most 31 rungs, so a step 2^i fits in an int.
+    static const std::vector<T>& ladder(bool up) {
+        static const std::vector<T> ladders[2] = {build(false), build(true)};
+        return ladders[up ? 1 : 0];
+    }
+
+    static std::vector<T> build(bool up) {
+        std::vector<T> r{up ? T(2) : T(0.5)};
+        while (r.size() < 31) {
+            const T p = r.back();
+            const T q = p * p;
+            const bool farther = up ? (q > p) : (q < p && q > T(0));
+            if (!farther || !(q - q == T(0)) || !(q / p == p)) break;
+            r.push_back(q);
+        }
+        return r;
     }
 };
 
