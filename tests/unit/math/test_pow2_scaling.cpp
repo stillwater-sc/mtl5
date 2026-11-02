@@ -16,6 +16,7 @@
 #include <complex>
 #include <limits>
 #include <random>
+#include <utility>
 
 #include <mtl/math/pow2_scaling.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -235,5 +236,172 @@ TEST_CASE("eigenvalue_symmetric: a tridiagonal beyond sqrt(max)", "[pow2_scaling
         CAPTURE(i, ev(i) / big);
         CHECK(std::isfinite(ev(i)));
         CHECK(std::fabs(ev(i) / big - expected[i]) <= 1e-13);
+    }
+}
+
+namespace {
+
+/// A real with a posit-like coarse end: 10 fraction bits for magnitudes in
+/// [2^-16, 2^17), and beyond that only the powers 2^(16 + Gap j), out to
+/// 2^Limit and down to 2^-Limit, saturating. ToDouble gives it an explicit
+/// conversion to double, as Universal's types have.
+///
+/// tapered (Gap 4, out to 2^40): halving 2^36 rounds back to 2^36, which the
+/// binade-by-binade exponent search of 5.22.0 took for a non-finite value and
+/// stopped at e = 0 (#680). coarse (Gap 40, out to 2^96) is takum<8>-like:
+/// its values lie farther apart than its largest exact power-of-two rung,
+/// 2^16, so 2^96 / 2^16 rounds back to 2^96.
+template <int Gap, int Limit, bool ToDouble>
+struct tapered_t {
+    double v = 0.0;
+    tapered_t() = default;
+    tapered_t(double d) : v(round(d)) {}
+    explicit operator double() const requires ToDouble { return v; }
+    static double round(double d) {
+        if (d == 0.0 || !std::isfinite(d)) return d;
+        const double sign = d < 0 ? -1.0 : 1.0;
+        double a = std::fabs(d);
+        if (std::ilogb(a) >= -16 && std::ilogb(a) <= 16) {
+            const int e = std::ilogb(a);
+            a = std::ldexp(std::nearbyint(std::ldexp(a, 10 - e)), e - 10);
+            if (std::ilogb(a) <= 16) return sign * a;
+        }
+        const double l = std::log2(a);
+        const double t = (std::fabs(l) - 16) / Gap;
+        int k = 16 + Gap * int(std::lround(t < 0 ? 0.0 : t));
+        k = k > Limit ? Limit : k;
+        return sign * std::ldexp(1.0, l < 0 ? -k : k);
+    }
+    friend tapered_t operator+(tapered_t a, tapered_t b) { return a.v + b.v; }
+    friend tapered_t operator-(tapered_t a, tapered_t b) { return a.v - b.v; }
+    friend tapered_t operator*(tapered_t a, tapered_t b) { return a.v * b.v; }
+    friend tapered_t operator/(tapered_t a, tapered_t b) { return a.v / b.v; }
+    friend tapered_t operator-(tapered_t a) { return -a.v; }
+    friend bool operator==(tapered_t a, tapered_t b) { return a.v == b.v; }
+    friend auto operator<=>(tapered_t a, tapered_t b) { return a.v <=> b.v; }
+    friend tapered_t abs(tapered_t a) { return std::fabs(a.v); }
+    friend tapered_t sqrt(tapered_t a) { return std::sqrt(a.v); }
+};
+
+using tapered = tapered_t<4, 40, false>;
+using coarse = tapered_t<40, 96, true>;
+using coarse_opaque = tapered_t<40, 96, false>;
+
+/// A real with an exponent range far beyond double's, f * 2^e with f in
+/// [1, 2) (or 0) and a long e, counting its multiplications and divisions.
+struct wide {
+    double f = 0.0;
+    long e = 0;
+    static inline long ops = 0;
+    wide() = default;
+    wide(double d) { set(d, 0); }
+    static wide make(double f, long e) { wide w; w.set(f, e); return w; }
+    void set(double d, long ex) {
+        if (d == 0.0) { f = 0.0; e = 0; return; }
+        int k;
+        const double m = std::frexp(d, &k);   // d = m 2^k, m in [1/2, 1)
+        f = 2 * m;
+        e = ex + k - 1;
+    }
+    friend wide operator*(wide a, wide b) { ++ops; return make(a.f * b.f, a.e + b.e); }
+    friend wide operator/(wide a, wide b) { ++ops; return make(a.f / b.f, a.e - b.e); }
+    friend wide operator+(wide a, wide b) {
+        if (a.f == 0.0) return b;
+        if (b.f == 0.0) return a;
+        if (a.e < b.e) std::swap(a, b);
+        const long d = a.e - b.e;
+        return d > 60 ? a : make(a.f + std::ldexp(b.f, int(-d)), a.e);
+    }
+    friend wide operator-(wide a) { a.f = -a.f; return a; }
+    friend wide operator-(wide a, wide b) { return a + (-b); }
+    friend bool operator==(wide a, wide b) { return a.f == b.f && (a.f == 0.0 || a.e == b.e); }
+    friend std::partial_ordering operator<=>(wide a, wide b) {
+        const int sa = (a.f > 0) - (a.f < 0), sb = (b.f > 0) - (b.f < 0);
+        if (sa != sb) return sa <=> sb;
+        if (sa == 0) return std::partial_ordering::equivalent;
+        if (a.e != b.e) return sa > 0 ? (a.e <=> b.e) : (b.e <=> a.e);
+        return a.f <=> b.f;
+    }
+};
+
+} // namespace
+
+TEST_CASE("pow2_scaling: exact exponent and scale at a tapered type's coarse ends (#680)",
+          "[pow2_scaling]") {
+    using P = math::pow2_scaling<tapered>;
+    // Every representable power of two, the coarse ones included.
+    for (int k = -40; k <= 40; ++k) {
+        if ((k < -16 || k > 16) && k % 4 != 0) continue;
+        CAPTURE(k);
+        const tapered x(std::ldexp(1.0, k));
+        REQUIRE(x.v == std::ldexp(1.0, k));
+        CHECK(P::exponent(x) == k);
+        CHECK(P::scale(tapered(1.0), k) == x);
+        CHECK(P::scale(x, -k) == tapered(1.0));
+    }
+    // Inside the fine range, values between powers of two.
+    for (int k = -16; k <= 16; ++k) {
+        CAPTURE(k);
+        CHECK(P::exponent(tapered(std::ldexp(1.5, k))) == k);
+    }
+    // The halving that stopped the old search.
+    REQUIRE(tapered(std::ldexp(1.0, 35)).v == std::ldexp(1.0, 36));
+}
+
+TEST_CASE("givens_rotation: orthogonal at a tapered type's coarse ends (#680)", "[pow2_scaling][givens]") {
+    for (int k : {-40, -36, -32, 0, 32, 36, 40}) {
+        CAPTURE(k);
+        const tapered a(std::ldexp(1.0, k));
+        const auto g = math::givens_rotation(a, a);
+        // c = s = 1/sqrt(2) to the type's 10 bits; 5.22.0 squared the
+        // unscaled values here and returned c = s far from it.
+        CHECK(std::fabs(g.c.v * g.c.v + g.s.v * g.s.v - 1.0) <= std::ldexp(1.0, -8));
+        CHECK(std::fabs(g.c.v - std::sqrt(0.5)) <= std::ldexp(1.0, -9));
+    }
+}
+
+TEST_CASE("pow2_scaling: logarithmic cost over a wide exponent range (#680)", "[pow2_scaling]") {
+    using P = math::pow2_scaling<wide>;
+    for (long k : {150000L, -150000L, 1L, -1L, 0L}) {
+        CAPTURE(k);
+        const wide x = wide::make(1.5, k);
+        wide::ops = 0;
+        CHECK(P::exponent(x) == k);
+        CHECK(P::scale(x, int(-k)) == wide(1.5));
+        CHECK(P::scale(wide(1.5), int(k)) == x);
+        // The ladder is built once per type (about 4 operations per rung, 31
+        // rungs); the searches then take a few operations per rung. 5.22.0
+        // took one per binade, 150,000 here.
+        CHECK(wide::ops <= 600);
+    }
+}
+
+TEST_CASE("pow2_scaling: a type whose ends are coarser than its rungs (#680)", "[pow2_scaling]") {
+    using P = math::pow2_scaling<coarse>;
+    // The case that hung the first ladder search: 2^96 / 2^16 is 2^96 again.
+    REQUIRE(coarse(0x1p96) / coarse(0x1p16) == coarse(0x1p96));
+    for (int k : {-96, -56, -16, -1, 0, 1, 16, 56, 96}) {
+        CAPTURE(k);
+        const coarse x(std::ldexp(1.0, k));
+        REQUIRE(x.v == std::ldexp(1.0, k));
+        CHECK(P::exponent(x) == k);
+        CHECK(P::scale(coarse(1.0), k) == x);
+        CHECK(P::scale(x, -k) == coarse(1.0));
+    }
+    for (int k : {-96, -56, 0, 56, 96}) {
+        CAPTURE(k);
+        const coarse a(std::ldexp(1.0, k));
+        const auto g = math::givens_rotation(a, a);
+        CHECK(std::fabs(g.c.v * g.c.v + g.s.v * g.s.v - 1.0) <= std::ldexp(1.0, -8));
+        CHECK(std::fabs(g.c.v - std::sqrt(0.5)) <= std::ldexp(1.0, -9));
+    }
+    // Without a conversion to double the steps cannot reach e there, so the
+    // trait has to be specialized for such a type; the search still ends.
+    using Q = math::pow2_scaling<coarse_opaque>;
+    for (int k : {-96, 96}) {
+        CAPTURE(k);
+        const int e = Q::exponent(coarse_opaque(std::ldexp(1.0, k)));
+        CHECK(e >= -96);
+        CHECK(e <= 96);
     }
 }
