@@ -48,11 +48,15 @@ int lq_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
             row(j) = functor::scalar::conj<value_type>::apply(A(i, i + j));
 
         // Compute Householder reflection
-        auto [v, beta] = householder<Accumulator>(row);
+        auto [v, beta, pivot] = householder_reflector<Accumulator>(row);
         tau(i) = beta;
 
-        // Apply reflection on the right to A(i:m-1, i:n-1) as A := A * H^H.
-        apply_householder_right<Accumulator>(A, v, functor::scalar::conj<value_type>::apply(beta), i, i);
+        // L(i,i) is the reflector's real beta, as LAPACK's xGELQ2 stores it,
+        // and H^H is applied on the right to A(i+1:m-1, i:n-1) only, not to
+        // row i itself, which would recompute L(i,i) with one more rounding
+        // (a 0 in fixed point, #678).
+        apply_householder_right<Accumulator>(A, v, functor::scalar::conj<value_type>::apply(beta), i + 1, i);
+        A(i, i) = pivot;
 
         // Store Householder vector above diagonal (v(0) is implicit 1)
         for (size_type j = 1; j < len; ++j)

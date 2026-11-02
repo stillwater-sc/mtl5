@@ -5,6 +5,18 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Householder factorizations store the reflector's β as the pivot** (#678). The default `qr_factor`, `lq_factor` and `hessenberg_factor`, and `eigen_symmetric`'s tridiagonalization, applied each reflector to its own pivot column (or row), so the pivot was recomputed as x₀ − τ(vᵀx) instead of set to the β the reflector maps x onto.
+  - **In fixed point**, the products v(i)·x(i) of a column near the type's resolution round to zero, so the pivot came out exactly 0 although β is representable, and `qr_solve` divided by it.
+  - **Found by** the decompositions study (stillwater-sc/mp-numerics#20). After `qr_factor`, `qr_solve` divided by zero in 72 of 404 fixpnt<16,8> least-squares problems and 12 of 558 fixpnt<32,16> problems; with β stored, none do. Universal's fixpnt reports a division by zero by printing and returning maxpos, so the study first saw it as a forward error of 426 (stillwater-sc/universal#1894).
+  - **The fix** stores β, as LAPACK's xGEQR2, xGELQ2, xGEHD2 and xSYTD2 store `dlarfg`'s, and applies the reflector to the trailing columns (or rows) only.
+  - **What changes:** in float and double the pivots, and what is computed from them (the solution of `qr_solve`, Schur forms, eigenvalues), move by a rounding; they aren't bit-identical. Q is unchanged. The LAPACK and textbook paths are unaffected.
+
+### Added
+
+- **`householder_reflector(x)`** returns `{v, tau, beta}`, with H x = beta e₁ (#678). `householder(x)` delegates to it and still returns `{v, tau}`, so existing structured bindings compile unchanged. When tau == 0, beta is x(0).
+
 ### Documentation and maintenance
 
 - **Session log for 2026-11-01**: `docs/sessions/2026-11-01-the-docstring-still-said-q-equals-i.md`. Covers the 5.22.0 tag and its rollout to the peer repos:

@@ -97,13 +97,15 @@ mat::dense2D<double> random_matrix(std::size_t m, std::size_t n, std::uint64_t s
 // Exact add_product counts, for a dense random input where no reflector is the
 // identity. householder(x) sums the squares of x(1:), i.e. len - 1 terms; the
 // left update forms one len-term dot per column, the right update one per row.
+// The pivot column (or row) is not updated: its pivot is the reflector's beta
+// (#678), so each reflector updates one column (or row) fewer than it spans.
 
 /// qr_factor on a tall m x n (m > n, so every column has len >= 2).
 std::size_t qr_factor_products(std::size_t m, std::size_t n) {
     std::size_t c = 0;
     for (std::size_t j = 0; j < n; ++j) {
         const std::size_t len = m - j;
-        c += (len - 1) + (n - j) * len;
+        c += (len - 1) + (n - j - 1) * len;
     }
     return c;
 }
@@ -127,7 +129,7 @@ std::size_t lq_factor_products(std::size_t m, std::size_t n) {
     std::size_t c = 0;
     for (std::size_t i = 0; i < m; ++i) {
         const std::size_t len = n - i;
-        c += (len - 1) + (m - i) * len;
+        c += (len - 1) + (m - i - 1) * len;
     }
     return c;
 }
@@ -140,12 +142,12 @@ std::size_t lq_extract_Q_products(std::size_t m, std::size_t n) {
 }
 
 /// hessenberg_factor on n x n: n-2 reflectors, each applied on the left to
-/// columns j.. and on the right to all n rows.
+/// columns j+1.. and on the right to all n rows.
 std::size_t hessenberg_products(std::size_t n) {
     std::size_t c = 0;
     for (std::size_t j = 0; j + 2 < n; ++j) {
         const std::size_t len = n - j - 1;
-        c += (len - 1) + (n - j) * len + n * len;
+        c += (len - 1) + (n - j - 1) * len + n * len;
     }
     return c;
 }
