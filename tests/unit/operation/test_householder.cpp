@@ -316,3 +316,112 @@ TEST_CASE("householder: scaling x by a power of two leaves v and beta unchanged 
             }
         }
 }
+
+TEST_CASE("householder_reflector: beta is H x, and householder() is its v and tau (#678)",
+          "[operation][householder]") {
+    std::mt19937_64 g(678);
+    std::uniform_real_distribution<double> u(-1.0, 1.0);
+    for (int t = 0; t < 200; ++t) {
+        const std::size_t n = 2 + std::size_t(t % 9);
+        vec::dense_vector<double> x(n);
+        for (std::size_t i = 0; i < n; ++i) x(i) = std::ldexp(u(g), t % 40 - 20);
+        const auto [v, tau, beta] = householder_reflector(x);
+        const auto [v2, tau2] = householder(x);
+        REQUIRE(tau == tau2);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(v(i) == v2(i));
+        double nx = 0, vtx = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            nx += x(i) * x(i);
+            vtx += v(i) * x(i);
+        }
+        nx = std::sqrt(nx);
+        // H x = x - tau v (v^T x): its first entry is beta, which has the
+        // opposite sign of x(0) and magnitude ||x||.
+        REQUIRE(std::abs(beta - (x(0) - tau * vtx)) <= 8 * std::numeric_limits<double>::epsilon() * nx);
+        REQUIRE(std::abs(std::abs(beta) - nx) <= 4 * std::numeric_limits<double>::epsilon() * nx);
+        REQUIRE((x(0) >= 0) == (beta < 0));
+    }
+    // H = I: beta is x(0).
+    vec::dense_vector<double> e1(3);
+    e1(0) = -3.0; e1(1) = 0.0; e1(2) = 0.0;
+    const auto r = householder_reflector(e1);
+    REQUIRE(r.tau == 0.0);
+    REQUIRE(r.beta == -3.0);
+    vec::dense_vector<double> zero(3);
+    zero(0) = zero(1) = zero(2) = 0.0;
+    REQUIRE(householder_reflector(zero).beta == 0.0);
+}
+
+namespace {
+
+/// x = (0, u, ..., u) with eight entries u = 2^-8, the resolution of
+/// coarse_fixed. ||x|| = 2.83u, so beta is a nonzero multiple of u, while
+/// v(i) = 0.355 makes every product v(i) x(i) = 0.355u round to 0: applying H
+/// to x recomputes the pivot as 0 - tau (v^T x) = 0.
+vec::dense_vector<coarse_fixed> resolution_column() {
+    vec::dense_vector<coarse_fixed> x(9);
+    x(0) = coarse_fixed(0.0);
+    for (std::size_t i = 1; i < 9; ++i) x(i) = coarse_fixed(std::ldexp(1.0, -8));
+    return x;
+}
+
+} // namespace
+
+TEST_CASE("qr, lq, hessenberg: the pivot is beta, not recomputed (#678)", "[operation][householder]") {
+    const auto x = resolution_column();
+    const coarse_fixed beta = householder_reflector(x).beta;
+    REQUIRE(dbl(beta) != 0.0);
+    REQUIRE(std::abs(dbl(beta)) >= 2 * std::ldexp(1.0, -8));
+
+    SECTION("qr_factor: R(0,0), and qr_solve stays finite") {
+        mat::dense2D<coarse_fixed> A(9, 1);
+        for (std::size_t i = 0; i < 9; ++i) A(i, 0) = x(i);
+        const mat::dense2D<coarse_fixed> A0(A);
+        vec::dense_vector<coarse_fixed> tau(1), sol(1), b(9);
+        qr_factor(A, tau);
+        REQUIRE(A(0, 0) == beta);
+        for (std::size_t i = 0; i < 9; ++i) b(i) = A0(i, 0);
+        // Before #678 R(0,0) was 0 and the back substitution 0/0. Forming
+        // Q^T b rounds the same products v(i) b(i) away, so x is 0 rather
+        // than 1: storing beta removes the division by zero, not the type's
+        // resolution.
+        qr_solve(A, tau, sol, b);
+        REQUIRE(std::isfinite(dbl(sol(0))));
+    }
+    SECTION("lq_factor: L(0,0)") {
+        mat::dense2D<coarse_fixed> A(1, 9);
+        for (std::size_t j = 0; j < 9; ++j) A(0, j) = x(j);
+        vec::dense_vector<coarse_fixed> tau(1);
+        lq_factor(A, tau);
+        REQUIRE(A(0, 0) == beta);
+    }
+    SECTION("hessenberg_factor: H(1,0)") {
+        mat::dense2D<coarse_fixed> A(10, 10);
+        for (std::size_t i = 0; i < 10; ++i)
+            for (std::size_t j = 0; j < 10; ++j) A(i, j) = coarse_fixed(0.0);
+        for (std::size_t i = 0; i < 9; ++i) A(i + 1, 0) = x(i);
+        vec::dense_vector<coarse_fixed> tau(9);
+        hessenberg_factor(A, tau);
+        REQUIRE(A(1, 0) == beta);
+    }
+}
+
+TEST_CASE("symmetric eigensolvers: the tridiagonal keeps the subdiagonal (#678)",
+          "[operation][householder]") {
+    // A = x e_0^T + e_0 x^T over the resolution column: rank two, eigenvalues
+    // +-||x|| = +-2.83u. A recomputed subdiagonal of 0 decouples the first row
+    // and gives all eigenvalues 0.
+    const auto x = resolution_column();
+    mat::dense2D<coarse_fixed> A(10, 10);
+    for (std::size_t i = 0; i < 10; ++i)
+        for (std::size_t j = 0; j < 10; ++j) A(i, j) = coarse_fixed(0.0);
+    for (std::size_t i = 0; i < 9; ++i) A(i + 1, 0) = A(0, i + 1) = x(i);
+    const double u = std::ldexp(1.0, -8);
+    auto largest = [](const auto& lambda) {
+        double m = 0;
+        for (std::size_t i = 0; i < lambda.size(); ++i) m = std::max(m, std::abs(dbl(lambda(i))));
+        return m;
+    };
+    REQUIRE(largest(eigenvalue_symmetric_generic(A)) >= 2 * u);
+    REQUIRE(largest(eigen_symmetric(A).eigenvalues) >= 2 * u);
+}

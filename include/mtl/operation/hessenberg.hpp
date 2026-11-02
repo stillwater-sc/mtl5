@@ -43,11 +43,15 @@ void hessenberg_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
         for (size_type i = 0; i < len; ++i)
             col(i) = A(j + 1 + i, j);
 
-        auto [v, beta] = householder<Accumulator>(col);
+        auto [v, beta, pivot] = householder_reflector<Accumulator>(col);
         tau(j) = beta;
 
-        // Apply from left: A(j+1:n-1, j:n-1) = H * A(j+1:n-1, j:n-1)
-        apply_householder_left<Accumulator>(A, v, beta, j + 1, j);
+        // Apply from left: A(j+1:n-1, j+1:n-1) = H * A(j+1:n-1, j+1:n-1). The
+        // subdiagonal entry A(j+1, j) is the reflector's beta, as LAPACK's
+        // xGEHD2 stores it, rather than recomputed by applying H to column j,
+        // which rounds again (a 0 in fixed point, #678).
+        apply_householder_left<Accumulator>(A, v, beta, j + 1, j + 1);
+        A(j + 1, j) = pivot;
 
         // Apply from right: A(0:n-1, j+1:n-1) = A(0:n-1, j+1:n-1) * H^H.
         // apply_householder_right computes A*(I - s*v*v^H); passing conj(beta)

@@ -93,11 +93,17 @@ int qr_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
             col(i) = A(j + i, j);
 
         // Compute Householder reflection
-        auto [v, beta] = householder<Accumulator>(col);
+        auto [v, beta, pivot] = householder_reflector<Accumulator>(col);
         tau(j) = beta;
 
-        // Apply reflection to A(j:m-1, j:n-1)
-        apply_householder_left<Accumulator>(A, v, beta, j, j);
+        // R(j,j) is the reflector's own beta, as LAPACK's xGEQR2 stores it,
+        // and H is applied to A(j:m-1, j+1:n-1) only. Applying H to column j
+        // too would recompute R(j,j) as x0 - tau*(v^H x): one more rounding
+        // in floating point, and in fixed point a 0 wherever the products
+        // v(i)*x(i) of a column near the type's resolution round away,
+        // although beta is representable (#678).
+        apply_householder_left<Accumulator>(A, v, beta, j, j + 1);
+        A(j, j) = pivot;
 
         // Store Householder vector below diagonal (v(0) is implicit 1)
         for (size_type i = 1; i < len; ++i)

@@ -31,7 +31,7 @@ Van Loan §5.1) makes different choices:
 | reflected onto | α = −sign(x₀)·‖x‖, so v₀ = x₀ − α | α = −sign(x₀)·‖x‖ |
 | scalar | τ = −v₀/α = 1 + \|x₀\|/‖x‖ | vᵀv, summed from zero |
 | column update | `A(i,j) -= τ·v(i)·w` | `f = (2·s)/vᵀv`, then `A(i,j) -= f·v(i)` |
-| R's diagonal | −sign(x₀)·‖x‖ | −sign(x₀)·‖x‖ |
+| R's diagonal | −sign(x₀)·‖x‖, the reflector's β, stored; x₀ when τ = 0 (the tail is already zero, H = I) | −sign(x₀)·‖x‖: α, stored |
 
 In both, sign(0) = +1. Each column is rounded through a different sequence of
 operations, so R differs in the last bits. Q·R = A and Q is orthogonal either
@@ -68,6 +68,7 @@ namespace mtl::tag { struct textbook_reflector {}; }   // <mtl/tag/reflector_for
 | call | form | LAPACK |
 |---|---|---|
 | `householder(x)` | default; returns `{v, τ}` with v(0) = 1 | — |
+| `householder_reflector(x)` | default; returns `{v, τ, β}`, H x = β e₁ | — |
 | `householder(x, tag::textbook_reflector{})` | textbook; returns `{v, vtv, alpha}` | — |
 | `apply_householder_left(A, v, τ, row, col)` | default | — |
 | `apply_householder_left(A, v, vtv, row, col, tag::textbook_reflector{})` | textbook | — |
@@ -84,6 +85,28 @@ structured bindings:
 ```cpp
 auto [v, vtv, alpha] = mtl::householder(x, mtl::tag::textbook_reflector{});
 ```
+
+### The pivot is β, not recomputed
+
+`householder_reflector(x)` returns the β that the default reflector maps x
+onto, alongside v and τ. `householder(x)` is a wrapper over it that returns
+`{v, τ}`, so existing two-name structured bindings keep compiling. When τ = 0
+(H = I), β is x₀.
+
+The default `qr_factor`, `lq_factor` and `hessenberg_factor`, and the
+tridiagonalization in `eigen_symmetric`, store β as the pivot: R(k,k), L(k,k),
+or the subdiagonal entry. They apply the reflector to the trailing columns (or
+rows) only. That is what LAPACK's xGEQR2, xGELQ2, xGEHD2 and xSYTD2 do with
+`dlarfg`'s β, and what the textbook form does with α.
+
+Until #678 the default applied the reflector to the pivot column as well, which
+recomputed the pivot as x₀ − τ(vᵀx). In floating point that only adds a
+rounding. In fixed point the products v(i)·x(i) of a column near the type's
+resolution round to zero, so the pivot came out 0 although β is representable,
+and `qr_solve` divided by it. The decompositions study found this in
+fixpnt<16,8> and fixpnt<32,16> (stillwater-sc/mp-numerics#20). Q depends only
+on v and τ, so it is unchanged. In float and double the pivots, and what is
+computed from them, move by a rounding.
 
 ### Skipped columns
 

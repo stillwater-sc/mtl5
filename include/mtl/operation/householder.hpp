@@ -14,6 +14,7 @@
 #include <cassert>
 #include <cstddef>
 #include <type_traits>
+#include <utility>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/magnitude.hpp>
@@ -29,18 +30,37 @@
 
 namespace mtl {
 
+/// A reflector H = I - tau*v*v^H with v(0) == 1, and beta, H*x = beta*e_1, as
+/// householder_reflector() returns them. Supports structured bindings:
+/// `auto [v, tau, beta] = householder_reflector(x);`
+template <typename T>
+struct normalized_reflection {
+    vec::dense_vector<T> v;
+    T tau;    ///< 0 means H = I
+    T beta;   ///< H*x = beta*e_1; real-valued for a complex x; x(0) when tau == 0
+};
+
 /// Compute Householder vector v and scalar tau for a column vector x, such
-/// that H = I - tau*v*v^H satisfies H*x = beta*e_1. v(0) is always 1
-/// (implicit). Returns {v, tau}. For complex x, beta is real by construction.
+/// that H = I - tau*v*v^H satisfies H*x = beta*e_1, and return beta with them.
+/// v(0) is always 1 (implicit). For complex x, beta is real by construction.
+/// When tau == 0, H = I and beta is x(0).
+///
+/// beta is what a factorization stores as its pivot (R(j,j) in QR, L(i,i) in
+/// LQ, the subdiagonal in a Hessenberg or tridiagonal reduction), as LAPACK's
+/// xGEQR2, xGELQ2, xGEHD2 and xSYTD2 store dlarfg's beta. Recomputing the
+/// pivot by applying H to x instead rounds again, and in a type with
+/// absolute resolution (fixed point) the products v(i)*x(i) of a column near
+/// that resolution round to zero, so the recomputed pivot is 0 although beta
+/// is not (#678).
 template <typename Accumulator = void, typename T>
-std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
+normalized_reflection<T> householder_reflector(const vec::dense_vector<T>& x) {
     using std::sqrt;
     using std::abs;
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = x.size();
 
     vec::dense_vector<T> v(n);
-    if (n == 0) return {v, math::zero<T>()};   // no element at index 0 to write
+    if (n == 0) return {v, math::zero<T>(), math::zero<T>()};   // no element at index 0 to write
 
     // Scale by the largest magnitude before squaring. Forming sum(x(i)^2)
     // directly underflows to zero once the entries are small -- and the old
@@ -71,7 +91,7 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     v(0) = math::one<T>();
 
     if (scale == mag_t(0))
-        return {v, math::zero<T>()};   // x is the zero vector
+        return {v, math::zero<T>(), math::zero<T>()};   // x is the zero vector
 
     // A real x is scaled by the exact power of two 2^-e, 2^e <= scale <
     // 2^(e+1), rather than divided by scale (#672): the scaling then rounds
@@ -99,6 +119,14 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
                                          : math::pow2_scaling<T>::scale(x(i), -e);
         }
         return x(i) / scale;
+    };
+    // The inverse of scaled(), for beta: exact in the power-of-two case.
+    auto unscaled = [&](const T& s) -> T {
+        if constexpr (!is_complex_v<T>) {
+            if (pow2)
+                return math::pow2_scaling<T>::scale(s, e);
+        }
+        return s * T(scale);
     };
 
     // sigma = sum |x(i)|^2 for i >= 1, in the scaled variables.
@@ -131,9 +159,9 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
     // force |x(0)| == scale.
     if (sigma == mag_t(0)) {
         if constexpr (!is_complex_v<T>) {
-            return {v, math::zero<T>()};
+            return {v, math::zero<T>(), x(0)};
         } else if (functor::scalar::imag<T>::apply(x(0)) == mag_t(0)) {
-            return {v, math::zero<T>()};
+            return {v, math::zero<T>(), x(0)};
         }
     }
 
@@ -170,7 +198,7 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
         // qr_factor STORES v below the diagonal, so letting garbage through
         // would poison the factor and every later use of it.
         if (beta == math::zero<T>())
-            return {v, math::zero<T>()};
+            return {v, math::zero<T>(), x(0)};
 
         // Normalize so that v(0) = 1. Both numerator and denominator are in the
         // scaled variables, so the ratio is the same as before the scaling.
@@ -199,10 +227,10 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
         if (!(dev <= sqrt(sigma) / norm_x)) {
             for (size_type i = 1; i < n; ++i)
                 v(i) = math::zero<T>();
-            return {v, math::zero<T>()};
+            return {v, math::zero<T>(), x(0)};
         }
 
-        return {v, beta};
+        return {v, beta, unscaled(alpha)};
     } else {
         // Complex path (LAPACK zlarfg's construction).
         //
@@ -227,14 +255,24 @@ std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
 
         // Identity reflection -- same reasoning as the real branch.
         if (tau == math::zero<T>())
-            return {v, math::zero<T>()};
+            return {v, math::zero<T>(), x(0)};
 
         for (size_type i = 1; i < n; ++i)
             v(i) = scaled(i) / d;
         v(0) = math::one<T>();
 
-        return {v, tau};
+        return {v, tau, unscaled(T(beta))};
     }
+}
+
+/// Compute Householder vector v and scalar tau for a column vector x, such
+/// that H = I - tau*v*v^H satisfies H*x = beta*e_1. v(0) is always 1
+/// (implicit). Returns {v, tau}. For complex x, beta is real by construction;
+/// householder_reflector() returns it as well.
+template <typename Accumulator = void, typename T>
+std::pair<vec::dense_vector<T>, T> householder(const vec::dense_vector<T>& x) {
+    auto h = householder_reflector<Accumulator>(x);
+    return {std::move(h.v), h.tau};
 }
 
 /// A textbook Householder reflector (#559): H = I - (2/vtv)*v*v^T with v NOT

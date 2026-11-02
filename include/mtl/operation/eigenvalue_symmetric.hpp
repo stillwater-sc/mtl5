@@ -364,11 +364,19 @@ auto eigen_symmetric(const M& A,
             for (size_type i = 0; i < len; ++i)
                 col(i) = T(j + 1 + i, j);
 
-            auto [v, beta] = householder<Accumulator>(col);
+            auto [v, beta, pivot] = householder_reflector<Accumulator>(col);
 
             // T -> H*T*H^H: left factor H (I - beta*v*v^H), right factor H^H
-            // (conj(beta)); conj is the identity for a real value_type.
-            apply_householder_left<Accumulator>(T, v, beta, j + 1, j);
+            // (conj(beta)); conj is the identity for a real value_type. Column
+            // j of H*T is pivot*e_1 below the diagonal: the subdiagonal entry
+            // is the reflector's beta, as LAPACK's xSYTD2 stores it, rather
+            // than recomputed by applying H to column j, which rounds again
+            // (a 0 in fixed point, #678). The right factor never touches
+            // column j.
+            apply_householder_left<Accumulator>(T, v, beta, j + 1, j + 1);
+            T(j + 1, j) = pivot;
+            for (size_type i = j + 2; i < n; ++i)
+                T(i, j) = math::zero<value_type>();
             apply_householder_right<Accumulator>(T, v, conj_t::apply(beta), 0, j + 1);
 
             // Accumulate Q = H_0^H * H_1^H * ... so that A = Q*T*Q^H. Building it
