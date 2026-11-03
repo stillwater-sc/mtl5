@@ -30,6 +30,11 @@ const DOCS = join(REPO, 'docs');
 const OUT  = join(import.meta.dirname, 'src', 'content', 'docs');
 const BASE = '/mtl5';  // Astro base path
 
+// Starlight builds each page's "Edit page" link from editLink.baseUrl plus the
+// GENERATED path (src/content/docs/...), which does not exist in the repo. So
+// every page gets an editUrl pointing at the file it was made from.
+const EDIT = 'https://github.com/stillwater-sc/mtl5/edit/main';
+
 // ── Site pages (MDX with Starlight components) ────────────────────
 // These are copied verbatim — they already contain frontmatter.
 const SITE_FILES = {
@@ -212,13 +217,20 @@ function rewriteImagePaths(content) {
     .replace(/```bib/g, '```text');
 }
 
-function addFrontmatter(content, srcRelative) {
+function addFrontmatter(content, srcRelative, editPath) {
   const title = extractTitle(content);
   let body = stripFirstHeading(content);
   body = rewriteImagePaths(body);
   body = rewriteLinks(body, srcRelative);
   const safeTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `---\ntitle: "${safeTitle}"\n---\n\n${body}`;
+  return `---\ntitle: "${safeTitle}"\neditUrl: "${EDIT}/${editPath}"\n---\n\n${body}`;
+}
+
+// A site page keeps its own frontmatter; add the editUrl unless it sets one.
+function addEditUrl(content, editPath) {
+  const fm = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm || /^editUrl:/m.test(fm[1])) return content;
+  return content.replace(/^---\r?\n/, (open) => `${open}editUrl: "${EDIT}/${editPath}"\n`);
 }
 
 // ── File operations ───────────────────────────────────────────────
@@ -229,22 +241,22 @@ function writeOut(destRelative, content) {
   writeFileSync(destPath, content);
 }
 
-function syncMarkdown(srcPath, srcRelative, destRelative) {
+function syncMarkdown(srcPath, srcRelative, destRelative, editPath) {
   if (!existsSync(srcPath)) {
     console.warn(`  SKIP (not found): ${srcPath}`);
     return;
   }
   const content = readFileSync(srcPath, 'utf-8');
-  writeOut(destRelative, addFrontmatter(content, srcRelative));
+  writeOut(destRelative, addFrontmatter(content, srcRelative, editPath));
 }
 
-function copySitePage(srcPath, destRelative) {
+function copySitePage(srcPath, destRelative, editPath) {
   if (!existsSync(srcPath)) {
     console.warn(`  SKIP (not found): ${srcPath}`);
     return;
   }
   const content = readFileSync(srcPath, 'utf-8');
-  writeOut(destRelative, content);
+  writeOut(destRelative, addEditUrl(content, editPath));
 }
 
 // ── Main ──────────────────────────────────────────────────────────
@@ -265,19 +277,19 @@ console.log('Syncing docs/ → docs-site/src/content/docs/ ...');
 
 // 1. Copy site pages (MDX with components, already have frontmatter)
 for (const [src, dest] of Object.entries(SITE_FILES)) {
-  copySitePage(join(DOCS, src), dest);
+  copySitePage(join(DOCS, src), dest, `docs/${src}`);
   console.log(`  site: ${src} → ${dest}`);
 }
 
 // 2. Sync docs/ markdown files (add frontmatter, rewrite links)
 for (const [src, dest] of Object.entries(FILE_MAP)) {
-  syncMarkdown(join(DOCS, src), src, dest);
+  syncMarkdown(join(DOCS, src), src, dest, `docs/${src}`);
   console.log(`  sync: ${src} → ${dest}`);
 }
 
 // 3. Sync repo-root files
 for (const [src, dest] of Object.entries(ROOT_FILE_MAP)) {
-  syncMarkdown(join(REPO, src), `../${src}`, dest);
+  syncMarkdown(join(REPO, src), `../${src}`, dest, src);
   console.log(`  root: ${src} → ${dest}`);
 }
 
