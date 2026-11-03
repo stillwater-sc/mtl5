@@ -230,6 +230,9 @@ The study worked around these, and they are filed in Universal:
 
 ## Reproducing
 
+The study's own write-up, with every figure and the full tables, is published
+on the mp-numerics site as
+[Givens rotations and Householder reflectors, one at a time](https://stillwater-sc.github.io/mp-numerics/studies/linalg/givens-householder/).
 The harness, the CSVs with their `.sysinfo` sidecars, all twelve figures and
 the full tables are in
 [mp-numerics/benchmarks/linalg/givens_householder](https://github.com/stillwater-sc/mp-numerics/tree/382bcea48dc405a1113171cdb121bcbe0107d296/benchmarks/linalg/givens_householder).

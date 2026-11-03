@@ -135,6 +135,21 @@ export default defineConfig({
           autogenerate: { directory: 'contributing' },
         },
         {
+          // The peer sites: Universal's number types, and the mp-numerics
+          // studies that run MTL5's algorithms in them.
+          label: 'Related',
+          items: [
+            {
+              label: 'mp-numerics studies',
+              link: 'https://stillwater-sc.github.io/mp-numerics/',
+            },
+            {
+              label: 'Universal number systems',
+              link: 'https://stillwater-sc.github.io/universal/',
+            },
+          ],
+        },
+        {
           // Doxygen C++ API reference, generated into public/api/ by
           // `npm run api` and served at <base>api/ (i.e. /mtl5/api/ on
           // Pages, /api/ in local dev). Starlight prepends the site `base` to
