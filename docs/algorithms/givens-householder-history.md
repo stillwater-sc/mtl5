@@ -457,7 +457,10 @@ these appear to be open:
 
 The studies in mp-numerics #13 (rotations and reflectors as operators), #14
 (the decompositions built on them) and #15 (ill-conditioned Kalman filters)
-are designed to fill these.
+are designed to fill these. The first two are published on the mp-numerics
+site:
+[rotations and reflectors](https://stillwater-sc.github.io/mp-numerics/studies/linalg/givens-householder/)
+and [QR and least squares](https://stillwater-sc.github.io/mp-numerics/studies/linalg/decompositions/).
 
 ## Where MTL5 sits
 
