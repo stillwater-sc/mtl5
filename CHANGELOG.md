@@ -26,6 +26,8 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Documentation and maintenance
 
+- **The docs site's "Edit page" links point at the source files.** Starlight joins `editLink.baseUrl` with the generated `src/content/docs/` path, so every link went to a file that does not exist, such as `docs/src/content/docs/getting-started/index.md`. `sync-content.mjs` now gives each page an `editUrl`: `docs/<page>` for the synced and site pages, and the file itself for those synced from outside `docs/`: `CHANGELOG.md`, `benchmarks/README.md` and the others. All 85 pages' links now resolve to tracked files. The same fix went into mp-numerics' new site (stillwater-sc/mp-numerics#23).
+
 - **Session log for 2026-11-01**: `docs/sessions/2026-11-01-the-docstring-still-said-q-equals-i.md`. Covers the 5.22.0 tag and its rollout to the peer repos:
   - mtl5-python moves to MTL5 v5.22.0 (mtl5-python#120), and its 5.22.0 is on PyPI;
   - mp-dsp's headers-only fallback moves from v5.12.0 to v5.22.0 (mp-dsp#219);
