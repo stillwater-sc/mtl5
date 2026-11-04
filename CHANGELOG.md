@@ -26,6 +26,8 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Documentation and maintenance
 
+- **A daily QA sweep for scheduled runs**: the `/qa-sweep` skill and the read-only `qa-reviewer` agent, synced into `.claude/skills/` and `.claude/agents/` from the `qa-sweep` plugin in [stillwater-sc/claude-plugins](https://github.com/stillwater-sc/claude-plugins), with MTL5's build commands, area rotation, sanitizer pass and review focus in `.claude/qa-sweep.md`. Each run builds and runs the unit tests, reviews the commits since the last sweep, takes a deep pass over one of eleven areas in rotation with ASan and UBSan, and files its findings as one issue labelled `qa-sweep`. It does not edit, push or comment; the next run finds its starting commit in the last sweep issue.
+
 - **The Givens/Householder study and history pages give the study's type count as 57, not 65.** The results they report (stillwater-sc/mp-numerics@382bcea) cover 57 types; 65 was a miscount carried over from the study's README.
 
 - **The docs site links to the mp-numerics site** (stillwater-sc/mp-numerics#22): a "Studies across number systems" section on the landing page, a Related sidebar group with mp-numerics and Universal, and links from the Givens/Householder study and history pages to the published studies.
