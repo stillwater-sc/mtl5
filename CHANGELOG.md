@@ -26,6 +26,8 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Documentation and maintenance
 
+- **The Givens/Householder study and history pages give the study's type count as 57, not 65.** The results they report (stillwater-sc/mp-numerics@382bcea) cover 57 types; 65 was a miscount carried over from the study's README.
+
 - **The docs site links to the mp-numerics site** (stillwater-sc/mp-numerics#22): a "Studies across number systems" section on the landing page, a Related sidebar group with mp-numerics and Universal, and links from the Givens/Householder study and history pages to the published studies.
 
 - **The docs site's "Edit page" links point at the source files.** Starlight joins `editLink.baseUrl` with the generated `src/content/docs/` path, so every link went to a file that does not exist, such as `docs/src/content/docs/getting-started/index.md`. `sync-content.mjs` now gives each page an `editUrl`: `docs/<page>` for the synced and site pages, and the file itself for those synced from outside `docs/`: `CHANGELOG.md`, `benchmarks/README.md` and the others. All 85 pages' links now resolve to tracked files. The same fix went into mp-numerics' new site (stillwater-sc/mp-numerics#23).
