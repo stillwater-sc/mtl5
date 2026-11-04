@@ -2,7 +2,7 @@
 
 MTL5's rotations and reflectors are generic over the scalar type, so they run
 unchanged on posits, fixed point, logarithmic numbers and wide floats. This
-page reports what one rotation or one reflector does in 65 number types,
+page reports what one rotation or one reflector does in 57 number types,
 measured exactly. These are the results of the first study of the series in
 mtl5#666, mp-numerics#13.
 [The history](givens-householder-history.md) explains why these operators are
@@ -15,7 +15,7 @@ The short version:
   every type.** The rotation used by GMRES, MINRES and the symmetric QR
   iteration is clean over only about half of it.
 - **Scaling by an exact power of two is the one form clean and accurate in all
-  65 types.** The rotation scaled this way is clean everywhere. The reflector
+  57 types.** The rotation scaled this way is clean everywhere. The reflector
   is too, apart from a few overflows in the top binade of the 8- and 16-bit
   IEEE cfloats. LAPACK's scalings
   prevent overflow, but in a tapered type or in double-double they don't keep
