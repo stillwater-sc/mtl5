@@ -26,13 +26,17 @@ cmake --build build-ci -j4
 ctest --test-dir build-ci -j4 --output-on-failure
 ```
 
+The examples are left out on purpose. Tier 1 CI builds them on eight
+platforms for every PR and every push to `main`, so a break shows there; the
+sweep's build time goes to the tests and the sanitizer pass instead.
+
 A test's name is its target's: `<prefix>_test_<stem>`, where the prefix
 follows the directory under `tests/unit/` (`op` for `operation/`, `iface` for
 `interface/`, `concept` for `concepts/`).
 
 ## Docs-only paths
 
-`docs/`, `docs-site/`, Markdown files and images.
+`docs/`, `docs-site/`, and Markdown files and images outside `.claude/`.
 
 ## Areas
 
