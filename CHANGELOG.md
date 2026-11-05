@@ -5,6 +5,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`two_norm` and `frobenius_norm` no longer overflow or underflow; the max-based norms propagate NaN** (#690). The default path summed unscaled squares, so `two_norm` of `dense_vector<float>{1e20f, 1e20f}` was `inf` and of `dense_vector<double>{1e-200, 1e-200}` was `0`, while a BLAS build, whose `nrm2` scales, gave the right answer. `infinity_norm` and the matrix `one_norm` and `infinity_norm` kept the maximum with `a > result`, which skips a NaN, so `infinity_norm({1, NaN, 2})` was `2` although `one_norm` of the same vector was NaN.
+  - **The fix:** the plain sum stays the fast path. A second pass runs when that sum reaches `max()`, either infinite or saturated as a posit saturates, or falls below `min()/epsilon()`, where the small squares may have underflowed. It sums the squares scaled by a power of two near `max|a|`. A vector whose norm genuinely overflows is still `inf`, and one containing an `inf` is `inf`. The max-based norms return NaN when any element, column sum or row sum is NaN.
+  - **Custom number types are rescaled too:** `frexp`, `ldexp` and `sqrt` are found by ADL, with the `std` versions brought in by using-declarations. A number library's own functions are used, for example for lns, fixpnt, posit or takum. A type takes the rescan when it has those three functions and a `std::numeric_limits` specialization.
+  - **What changes:** nothing for an ordinary input: it never rescans, so its result is bit-identical to before. A type without `frexp`, `ldexp`, `sqrt` or `std::numeric_limits` keeps the plain sum. Integer norms keep their wrapping semantics. A magnitude type without `!=` keeps the plain maximum. The explicit-`Accumulator` overloads are unchanged.
+  - **Test:** `test_norms` covers:
+    - values near the float and double overflow and underflow thresholds;
+    - subnormals, and zero and `inf` vectors;
+    - the generic loop, through `std::complex<double>`;
+    - a user-defined real type that is rescaled only through its own `frexp` and `ldexp`;
+    - a magnitude type without equality;
+    - NaN in every position for every norm.
+
+    It passes in a BLAS build too. Against the old header, 7 of the 22 test cases in the first version of this change fail.
+
 ## [5.23.0] - 2026-11-05
 
 Three fixes, each found by a study or a downstream project. `dense_vector` and `dense2D` build with exceptions disabled, for flight-control firmware (#652). `pow2_scaling`'s fallback finds the right exponent near the ends of a tapered type, so Givens rotations and Householder reflectors scale correctly in posits and takums (#680). Householder factorizations store the reflector's β as the pivot, so `qr_solve` no longer divides by a pivot that rounded to zero in fixed point (#678). It is a minor release because #678 adds `householder_reflector`. Nothing is breaking: in float and double the factorizations' pivots move by a rounding, and with exceptions enabled the thread pool's names and layout are unchanged.
