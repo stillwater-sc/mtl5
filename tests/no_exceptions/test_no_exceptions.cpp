@@ -1,8 +1,8 @@
 // MTL5 -- dense_vector and dense2D build with exceptions and RTTI disabled (#652)
 //
 // Firmware builds with -fno-exceptions -fno-rtti. tests/CMakeLists.txt builds
-// this file with those flags and -Werror on GCC and Clang, once with the
-// default thread pool and once with MTL5_POOL_SPIN, so every CI job on those
+// this file with those flags and -Werror on GCC and Clang, with the default
+// thread pool, with MTL5_POOL_SPIN, and with MTL5_SHARED_POOL, so every CI job on those
 // compilers fails if a try, catch or throw reaches these headers again. It is
 // a plain executable: Catch2 itself needs exceptions.
 //
@@ -20,7 +20,24 @@
 #  error "this test must be built with exceptions disabled"
 #endif
 
+// The shared variant defines the process's pool in this translation unit, as
+// the mtl5_pool library would.
+#if defined(MTL5_SHARED_POOL)
+#  include <mtl/parallel/shared_pool_definition.hpp>
+#endif
+
 #include <cstdio>
+#include <type_traits>
+
+// The pool's names carry the exception mode, so a module built with exceptions
+// cannot link to this pool, whose workers have no catch.
+#if defined(MTL5_SHARED_POOL)
+static_assert(std::is_same_v<mtl::parallel::thread_pool,
+                             mtl::parallel::pool_shared_noexc::thread_pool>);
+#else
+static_assert(std::is_same_v<mtl::parallel::thread_pool,
+                             mtl::parallel::pool_local_noexc::thread_pool>);
+#endif
 
 namespace {
 

@@ -20,9 +20,8 @@
 //     concurrently from another thread -- runs serially on its caller, all tids
 //     in order. It never deadlocks and never oversubscribes.
 //   * The first exception thrown by any tid is rethrown after all tids join.
-//     Built without exceptions (#652), a task cannot throw, and run() has no
-//     try/catch; worker_exc_ stays a member either way, so the layout (and the
-//     _v1 ABI below) does not depend on the flag.
+//     Built without exceptions (#652), a task cannot throw, and neither run()
+//     nor the workers have a try/catch.
 //   * detail::in_region() is true on every tid of a region the pool runs on
 //     more than one thread, and on every tid of a region that runs serially
 //     because another is in progress (#640). It is false outside a region, and
@@ -94,10 +93,22 @@ namespace mtl::parallel {
 // the local mode's `static pool_config` object, or route one mode's
 // configure() to the other's pool. Source code names mtl::parallel::thread_pool
 // either way.
-#if defined(MTL5_SHARED_POOL)
+//
+// Exceptions on or off (#652) is part of the name too, as _noexc. The workers
+// run worker_loop() as compiled where the pool was built, which has no catch
+// without exceptions, so an exception-enabled module that ran a throwing task
+// on such a pool would terminate instead of rethrowing. With the mode in the
+// name, a module built the other way from the mtl5_pool library fails to link
+// against it, and two translation units of one module built different ways
+// get a pool each instead of sharing one worker_loop().
+#if defined(MTL5_SHARED_POOL) && MTL5_HAS_EXCEPTIONS
 inline namespace pool_shared {
-#else
+#elif defined(MTL5_SHARED_POOL)
+inline namespace pool_shared_noexc {
+#elif MTL5_HAS_EXCEPTIONS
 inline namespace pool_local {
+#else
+inline namespace pool_local_noexc {
 #endif
 
 class thread_pool;
@@ -562,7 +573,7 @@ inline bool configure(unsigned threads) {
     return true;
 }
 
-} // inline namespace pool_shared / pool_local
+} // inline namespace pool_shared / pool_local (_noexc)
 } // namespace mtl::parallel
 
 #if defined(MTL5_POOL_SPIN)

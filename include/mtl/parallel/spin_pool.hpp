@@ -77,10 +77,14 @@
 #endif
 
 namespace mtl::parallel {
-#if defined(MTL5_SHARED_POOL)
+#if defined(MTL5_SHARED_POOL) && MTL5_HAS_EXCEPTIONS
 inline namespace pool_shared {
-#else
+#elif defined(MTL5_SHARED_POOL)
+inline namespace pool_shared_noexc {
+#elif MTL5_HAS_EXCEPTIONS
 inline namespace pool_local {
+#else
+inline namespace pool_local_noexc {
 #endif
 
 class spin_pool;
@@ -400,5 +404,5 @@ inline default_pool& pool() { return spin_pool::instance(); }
 } // inline namespace pool_select_spin
 #endif
 
-} // inline namespace pool_shared / pool_local
+} // inline namespace pool_shared / pool_local (_noexc)
 } // namespace mtl::parallel

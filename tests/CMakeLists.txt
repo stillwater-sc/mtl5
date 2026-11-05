@@ -16,16 +16,19 @@ add_subdirectory(integration)
 # -- exceptions and RTTI disabled (#652) --------------------------------------
 # Firmware builds with -fno-exceptions -fno-rtti, so dense_vector and dense2D
 # (fixed-size, on-stack, and the thread pool they include) must compile that
-# way. Built once per pool, so MTL5_POOL_SPIN's spin_pool is covered too. GCC
-# and Clang only: MSVC and Clang-CL spell the flags differently.
+# way. Built once per pool mode: the default, MTL5_POOL_SPIN's spin_pool, and
+# MTL5_SHARED_POOL with the pool defined in the test itself. GCC and Clang
+# only: MSVC and Clang-CL spell the flags differently.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-    foreach(_pool default spin)
+    foreach(_pool default spin shared)
         set(_tgt build_test_no_exceptions_${_pool})
         add_executable(${_tgt} no_exceptions/test_no_exceptions.cpp)
         target_link_libraries(${_tgt} PRIVATE MTL5::mtl5)
         target_compile_options(${_tgt} PRIVATE -fno-exceptions -fno-rtti -Wall -Wextra -Werror)
         if(_pool STREQUAL "spin")
             target_compile_definitions(${_tgt} PRIVATE MTL5_POOL_SPIN)
+        elseif(_pool STREQUAL "shared")
+            target_compile_definitions(${_tgt} PRIVATE MTL5_SHARED_POOL MTL5_SHARED_POOL_BUILD)
         endif()
         set_target_properties(${_tgt} PROPERTIES FOLDER "Tests/build")
         add_test(NAME ${_tgt} COMMAND ${_tgt})
