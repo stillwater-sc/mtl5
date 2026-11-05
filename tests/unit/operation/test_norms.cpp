@@ -224,3 +224,106 @@ TEST_CASE("integer infinity_norm is unchanged by NaN propagation", "[operation][
     REQUIRE(one_norm(m) == 6);
     REQUIRE(infinity_norm(m) == 7);
 }
+
+// -- A user-defined real type takes the rescan through ADL (#690) --------
+//
+// adl_real wraps a float, so its squares overflow at about 1.8e19 as float's
+// do, but std::frexp, std::ldexp and std::sqrt do not accept it: the rescan
+// must find the friends below by ADL, as it would a posit's, an lns's or a
+// fixpnt's. frexp and ldexp count their calls, so the test can tell that an
+// ordinary input never rescans.
+
+namespace norms_test {
+
+struct adl_real {
+    float v;
+    adl_real() = default;
+    adl_real(float x) : v(x) {}
+    explicit adl_real(double x) : v(static_cast<float>(x)) {}
+    explicit adl_real(int x) : v(static_cast<float>(x)) {}
+    explicit operator double() const { return v; }
+    static inline int scalings = 0;
+    friend adl_real operator+(adl_real a, adl_real b) { return a.v + b.v; }
+    friend adl_real operator-(adl_real a, adl_real b) { return a.v - b.v; }
+    friend adl_real operator*(adl_real a, adl_real b) { return a.v * b.v; }
+    friend adl_real operator/(adl_real a, adl_real b) { return a.v / b.v; }
+    friend adl_real operator-(adl_real a) { return -a.v; }
+    adl_real& operator+=(adl_real b) { v += b.v; return *this; }
+    adl_real& operator-=(adl_real b) { v -= b.v; return *this; }
+    adl_real& operator*=(adl_real b) { v *= b.v; return *this; }
+    adl_real& operator/=(adl_real b) { v /= b.v; return *this; }
+    friend bool operator==(adl_real a, adl_real b) { return a.v == b.v; }
+    friend bool operator<(adl_real a, adl_real b) { return a.v < b.v; }
+    friend bool operator>(adl_real a, adl_real b) { return a.v > b.v; }
+    friend bool operator<=(adl_real a, adl_real b) { return a.v <= b.v; }
+    friend bool operator>=(adl_real a, adl_real b) { return a.v >= b.v; }
+    friend adl_real abs(adl_real a) { return std::fabs(a.v); }
+    friend adl_real sqrt(adl_real a) { return std::sqrt(a.v); }
+    friend adl_real frexp(adl_real a, int* e) { ++scalings; return std::frexp(a.v, e); }
+    friend adl_real ldexp(adl_real a, int k) { ++scalings; return std::ldexp(a.v, k); }
+};
+
+} // namespace norms_test
+
+template <>
+struct std::numeric_limits<norms_test::adl_real> {
+    static constexpr bool is_specialized = true;
+    static constexpr bool is_integer = false;
+    static norms_test::adl_real max() noexcept { return std::numeric_limits<float>::max(); }
+    static norms_test::adl_real min() noexcept { return std::numeric_limits<float>::min(); }
+    static norms_test::adl_real epsilon() noexcept { return std::numeric_limits<float>::epsilon(); }
+};
+
+TEST_CASE("two_norm and frobenius_norm rescale a user-defined type through ADL", "[operation][norms][690]") {
+    using R = norms_test::adl_real;
+    static_assert(detail::rescalable_sum_squares_v<R>);
+
+    R::scalings = 0;
+    dense_vector<R> ordinary = {R(3.0f), R(4.0f)};
+    REQUIRE(two_norm(ordinary).v == 5.0f);
+    REQUIRE(R::scalings == 0);                      // the fast path does not rescan
+
+    dense_vector<R> big = {R(3e20f), R(4e20f)};
+    REQUIRE_THAT(two_norm(big).v, WithinRel(5e20f, 1e-6f));
+    REQUIRE(R::scalings > 0);
+
+    dense_vector<R> small = {R(3e-30f), R(4e-30f)};
+    REQUIRE_THAT(two_norm(small).v, WithinRel(5e-30f, 1e-6f));
+
+    dense2D<R> m = {{R(3e20f), R(0.0f)}, {R(0.0f), R(4e20f)}};
+    REQUIRE_THAT(frobenius_norm(m).v, WithinRel(5e20f, 1e-6f));
+
+    dense_vector<R> with_nan = {R(1e20f), R(std::numeric_limits<float>::quiet_NaN())};
+    REQUIRE(std::isnan(two_norm(with_nan).v));
+    REQUIRE(std::isnan(infinity_norm(with_nan).v));
+}
+
+// A magnitude type with an ordering but no equality still has the max-based
+// norms: NaN propagation needs `!=`, and is skipped without it.
+namespace norms_test {
+
+struct ordered_only {
+    double v;
+    ordered_only() = default;
+    ordered_only(double x) : v(x) {}
+    explicit ordered_only(int x) : v(x) {}
+    friend ordered_only operator+(ordered_only a, ordered_only b) { return a.v + b.v; }
+    friend ordered_only operator-(ordered_only a, ordered_only b) { return a.v - b.v; }
+    friend ordered_only operator*(ordered_only a, ordered_only b) { return a.v * b.v; }
+    friend ordered_only operator-(ordered_only a) { return -a.v; }
+    ordered_only& operator+=(ordered_only b) { v += b.v; return *this; }
+    friend bool operator<(ordered_only a, ordered_only b) { return a.v < b.v; }
+    friend bool operator>(ordered_only a, ordered_only b) { return a.v > b.v; }
+    friend ordered_only abs(ordered_only a) { return std::fabs(a.v); }
+};
+
+} // namespace norms_test
+
+TEST_CASE("max-based norms accept a magnitude type without equality", "[operation][norms][690]") {
+    using O = norms_test::ordered_only;
+    dense_vector<O> v = {O(1.0), O(-7.0), O(3.0)};
+    REQUIRE(infinity_norm(v).v == 7.0);
+    dense2D<O> m = {{O(1.0), O(-2.0)}, {O(3.0), O(4.0)}};
+    REQUIRE(one_norm(m).v == 6.0);
+    REQUIRE(infinity_norm(m).v == 7.0);
+}

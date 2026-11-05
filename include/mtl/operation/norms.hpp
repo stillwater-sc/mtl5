@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <limits>
 #include <mtl/concepts/vector.hpp>
@@ -28,57 +29,89 @@ namespace detail {
 /// The default two_norm and frobenius_norm sum the squares unscaled, which
 /// overflows for elements above about sqrt(max) and loses everything below
 /// about sqrt(min) (#690). Rather than scale every element, as LAPACK's dnrm2
-/// does, they keep the plain sum and call this afterwards: when the sum is
-/// infinite, or too close to the underflow threshold for the small squares to
-/// have been accumulated accurately, it is recomputed in a second pass scaled
-/// by a power of two near max|a|. An ordinary input never rescans, so its
-/// result is bit-identical to the unscaled sum.
+/// does, they keep the plain sum and call this afterwards: when the sum has
+/// reached max() (an infinity, or a saturated posit), or is too close to the
+/// underflow threshold for the small squares to have been accumulated
+/// accurately, it is recomputed in a second pass scaled by a power of two near
+/// max|a|. An ordinary input never rescans, so its result is bit-identical to
+/// the unscaled sum.
 ///
-/// Only the standard floating-point magnitudes are rescaled. Integers keep
-/// their wrapping semantics, and a custom number type keeps the plain sum: it
-/// may have no infinity, a different underflow behaviour (a posit saturates),
-/// or no frexp/ldexp.
-template <typename Mag>
-inline constexpr bool rescalable_sum_squares_v = std::is_floating_point_v<Mag>;
+/// The rescan needs frexp, ldexp and sqrt, found by ADL so that a number
+/// library's own (lns, fixpnt, posit, takum, ...) are used, with the std
+/// versions brought in by using-declarations for the built-in types; and a
+/// std::numeric_limits specialization for max(), min() and epsilon(). A type
+/// without them, and any integer type, keeps the plain sum, so integers keep
+/// their wrapping semantics.
+namespace norms_adl {
+using std::frexp;
+using std::ldexp;
+using std::sqrt;
 
 template <typename Mag>
-bool sum_squares_needs_rescan(Mag ss) noexcept {
-    // NaN fails both comparisons: a NaN element gives a NaN norm, as it should.
-    return ss > std::numeric_limits<Mag>::max()
-        || ss < std::numeric_limits<Mag>::min() / std::numeric_limits<Mag>::epsilon();
-}
+concept rescalable_sum_squares =
+    std::numeric_limits<Mag>::is_specialized && !std::numeric_limits<Mag>::is_integer &&
+    requires(Mag a, int* e, int k) {
+        frexp(a, e);
+        { ldexp(a, k) } -> std::convertible_to<Mag>;
+        { sqrt(a) } -> std::convertible_to<Mag>;
+        { a < a } -> std::convertible_to<bool>;
+        { a > a } -> std::convertible_to<bool>;
+    };
 
 /// sqrt(sum a^2) over the magnitudes that `for_each_abs(f)` passes to `f`,
 /// computed with a power-of-two scale so that neither the squares nor their
-/// sum overflow or underflow. The scaled squares are exact up to the usual
-/// rounding of the sum, because scaling by a power of two is exact.
+/// sum overflow or underflow. In a binary floating-point type the scaling is
+/// exact; in a tapered type it also keeps the squares near 1, where the type
+/// is most precise.
 template <typename Mag, typename ForEachAbs>
 Mag rescaled_two_norm(ForEachAbs&& for_each_abs) {
     Mag amax(0);
-    bool any_nan = false;
-    for_each_abs([&](Mag a) {
-        if (a != a) any_nan = true;
-        else if (a > amax) amax = a;
+    bool has_nan = false;
+    Mag nan_value(0);
+    for_each_abs([&](const Mag& a) {
+        if constexpr (requires { { a != a } -> std::convertible_to<bool>; }) {
+            if (a != a) { if (!has_nan) nan_value = a; has_nan = true; return; }
+        }
+        if (a > amax) amax = a;
     });
-    if (any_nan) return std::numeric_limits<Mag>::quiet_NaN();
-    if (amax == Mag(0) || amax > std::numeric_limits<Mag>::max()) return amax;  // all zero, or an inf
+    if (has_nan) return nan_value;
+    // All zero, or an infinity: the norm is amax itself.
+    if (!(amax > Mag(0)) || amax > std::numeric_limits<Mag>::max()) return amax;
     int e = 0;
-    std::frexp(amax, &e);              // amax = f * 2^e, f in [0.5, 1)
+    frexp(amax, &e);                   // amax = f * 2^e, f in [0.5, 1)
     Mag ss(0);
-    for_each_abs([&](Mag a) {
-        const Mag s = std::ldexp(a, -e);  // in [0, 1): s*s neither overflows nor matters if it underflows
-        ss += s * s;
+    for_each_abs([&](const Mag& a) {
+        const Mag s = ldexp(a, -e);    // in [0, 1): s*s cannot overflow
+        ss = ss + s * s;
     });
-    return std::ldexp(std::sqrt(ss), e);
+    return ldexp(Mag(sqrt(ss)), e);
+}
+} // namespace norms_adl
+
+template <typename Mag>
+inline constexpr bool rescalable_sum_squares_v = norms_adl::rescalable_sum_squares<Mag>;
+
+using norms_adl::rescaled_two_norm;
+
+template <typename Mag>
+bool sum_squares_needs_rescan(const Mag& ss) {
+    // !(ss < max()) catches an infinity and a type that saturates at max()
+    // instead; it is also true for NaN, which the rescan returns unchanged.
+    return !(ss < std::numeric_limits<Mag>::max())
+        || ss < std::numeric_limits<Mag>::min() / std::numeric_limits<Mag>::epsilon();
 }
 
 /// result = max(result, a), but a NaN `a` makes the result NaN and keeps it
 /// there (#690). A plain `a > result` skips a NaN, so infinity_norm({1, NaN, 2})
-/// gave 2 while one_norm gave NaN. For an integer `a != a` is always false.
+/// gave 2 while one_norm gave NaN. For an integer `a != a` is always false. A
+/// magnitude type without `!=` keeps the plain maximum.
 template <typename Mag>
 void max_propagating_nan(Mag& result, const Mag& a) {
-    if (a != a || a > result) {
-        if (!(result != result)) result = a;
+    if constexpr (requires { { a != a } -> std::convertible_to<bool>; }) {
+        if (result != result) return;          // already NaN: keep it
+        if (a != a || a > result) result = a;
+    } else {
+        if (a > result) result = a;
     }
 }
 
@@ -176,7 +209,7 @@ auto two_norm(const V& v) {
             [&](std::size_t lo, std::size_t hi) { return simd::reduce_sum_squares<T>(d + lo, hi - lo); });
         if (detail::sum_squares_needs_rescan(ss)) {   // #690
             return detail::rescaled_two_norm<T>([&](auto&& f) {
-                for (std::size_t i = 0; i < v.size(); ++i) f(std::abs(d[i]));
+                for (std::size_t i = 0; i < v.size(); ++i) f(T(std::abs(d[i])));
             });
         }
         return sqrt(ss);
