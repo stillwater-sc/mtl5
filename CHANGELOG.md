@@ -5,6 +5,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.23.0] - 2026-11-05
+
+Three fixes, each found by a study or a downstream project. `dense_vector` and `dense2D` build with exceptions disabled, for flight-control firmware (#652). `pow2_scaling`'s fallback finds the right exponent near the ends of a tapered type, so Givens rotations and Householder reflectors scale correctly in posits and takums (#680). Householder factorizations store the reflector's β as the pivot, so `qr_solve` no longer divides by a pivot that rounded to zero in fixed point (#678). It is a minor release because #678 adds `householder_reflector`. Nothing is breaking: in float and double the factorizations' pivots move by a rounding, and with exceptions enabled the thread pool's names and layout are unchanged.
+
 ### Fixed
 
 - **`dense_vector` and `dense2D` compile with exceptions and RTTI disabled** (#652). Firmware builds with `-fno-exceptions`, but including either header failed. GCC reports only the first such error in a translation unit, the thread pool's `try`/`catch`, so the pool looked like the only blocker. Clang lists every error, and that shows the `throw`s in the bounds-checked element accessors fail too, on both compilers, so fixing the pool alone would not have been enough. This blocked branes-ai/reflex's flight-control code, which uses the fixed-size, on-stack types.
@@ -29,6 +33,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 ### Added
 
 - **`householder_reflector(x)`** returns `{v, tau, beta}`, with H x = beta e₁ (#678). `householder(x)` delegates to it and still returns `{v, tau}`, so existing structured bindings compile unchanged. When tau == 0, beta is x(0).
+
+### CI
+
+- **The PowerShell parse test is skipped on Apple platforms** (#682). On the macos-latest runner image, launching `pwsh` fails in LaunchServices with a timeout before it parses anything, and leaves orphaned `pwsh` processes, so `bench_powershell_parse` failed on main from the #679 merge on. The Linux and Windows runners still parse the same harnesses.
 
 ### Documentation and maintenance
 
