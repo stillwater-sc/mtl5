@@ -20,6 +20,8 @@
 //     concurrently from another thread -- runs serially on its caller, all tids
 //     in order. It never deadlocks and never oversubscribes.
 //   * The first exception thrown by any tid is rethrown after all tids join.
+//     Built without exceptions (#652), a task cannot throw, and neither run()
+//     nor the workers have a try/catch.
 //   * detail::in_region() is true on every tid of a region the pool runs on
 //     more than one thread, and on every tid of a region that runs serially
 //     because another is in progress (#640). It is false outside a region, and
@@ -68,6 +70,8 @@
 #include <utility>
 #include <vector>
 
+#include <mtl/detail/exceptions.hpp>
+
 #if defined(MTL5_SHARED_POOL)
 #  if defined(_WIN32) || defined(__CYGWIN__)
 #    if defined(MTL5_SHARED_POOL_BUILD)
@@ -89,10 +93,22 @@ namespace mtl::parallel {
 // the local mode's `static pool_config` object, or route one mode's
 // configure() to the other's pool. Source code names mtl::parallel::thread_pool
 // either way.
-#if defined(MTL5_SHARED_POOL)
+//
+// Exceptions on or off (#652) is part of the name too, as _noexc. The workers
+// run worker_loop() as compiled where the pool was built, which has no catch
+// without exceptions, so an exception-enabled module that ran a throwing task
+// on such a pool would terminate instead of rethrowing. With the mode in the
+// name, a module built the other way from the mtl5_pool library fails to link
+// against it, and two translation units of one module built different ways
+// get a pool each instead of sharing one worker_loop().
+#if defined(MTL5_SHARED_POOL) && MTL5_HAS_EXCEPTIONS
 inline namespace pool_shared {
-#else
+#elif defined(MTL5_SHARED_POOL)
+inline namespace pool_shared_noexc {
+#elif MTL5_HAS_EXCEPTIONS
 inline namespace pool_local {
+#else
+inline namespace pool_local_noexc {
 #endif
 
 class thread_pool;
@@ -447,22 +463,33 @@ private:
         lk.unlock();
         wake_.notify_all();
 
+#if MTL5_HAS_EXCEPTIONS
         std::exception_ptr caller_exc;
         try {
             detail::region_scope in_region;
             fn(0);
         } catch (...) { caller_exc = std::current_exception(); }
+#else
+        {
+            detail::region_scope in_region;
+            fn(0);
+        }
+#endif
 
         lk.lock();
         done_.wait(lk, [&] { return remaining_ == 0; });
         ctx_ = nullptr;
         call_ = nullptr;
         busy_ = false;
+#if MTL5_HAS_EXCEPTIONS
         std::exception_ptr worker_exc = worker_exc_;
         lk.unlock();
 
         if (caller_exc) std::rethrow_exception(caller_exc);
         if (worker_exc) std::rethrow_exception(worker_exc);
+#else
+        lk.unlock();
+#endif
     }
 
     void worker_loop(unsigned tid) {
@@ -481,12 +508,16 @@ private:
                 void* ctx = ctx_;             // the caller's fn, by address
                 void (*call)(void*, unsigned) = call_;
                 lk.unlock();
+#if MTL5_HAS_EXCEPTIONS
                 try { call(ctx, tid); }
                 catch (...) {
                     lk.lock();
                     if (!worker_exc_) worker_exc_ = std::current_exception();
                     lk.unlock();
                 }
+#else
+                call(ctx, tid);
+#endif
                 lk.lock();
                 if (--remaining_ == 0) { lk.unlock(); done_.notify_one(); lk.lock(); }
             }
@@ -542,7 +573,7 @@ inline bool configure(unsigned threads) {
     return true;
 }
 
-} // inline namespace pool_shared / pool_local
+} // inline namespace pool_shared / pool_local (_noexc)
 } // namespace mtl::parallel
 
 #if defined(MTL5_POOL_SPIN)

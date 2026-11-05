@@ -12,6 +12,8 @@
 #include <new>           // ::operator new(std::align_val_t), std::align_val_t
 #include <type_traits>   // remove_cv_t
 
+#include <mtl/detail/exceptions.hpp>
+
 namespace mtl::detail {
 
 /// Default over-alignment: 64 bytes covers a typical cache line and the widest
@@ -34,12 +36,16 @@ template <typename T>
     if (n == 0) return nullptr;
     void* raw = ::operator new(n * sizeof(U), std::align_val_t(block_alignment<U>));
     U* p = static_cast<U*>(raw);
+#if MTL5_HAS_EXCEPTIONS
     try {
         std::uninitialized_value_construct_n(p, n);
     } catch (...) {
         ::operator delete(raw, std::align_val_t(block_alignment<U>));   // no leak if a ctor throws
         throw;
     }
+#else
+    std::uninitialized_value_construct_n(p, n);   // a throwing ctor aborts (#652)
+#endif
     return p;   // implicit U* -> T* (adds const/volatile back if any)
 }
 
