@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <utility>
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -62,9 +63,19 @@ Target saturating_cast(Value v) {
         if (v >= static_cast<Value>(limit::max())) return limit::max();
         if (v <= static_cast<Value>(limit::min())) return limit::min();
     } else if constexpr (std::is_integral_v<Target> && std::is_integral_v<Value>) {
+        // Compare by value, not in Value's type (#691): casting Target's limits
+        // to Value wraps when the signedness differs, so uint32 -> int32 saw
+        // INT32_MAX as a negative bound and int -> uint32 saw UINT32_MAX as -1.
+        // std::cmp_less/cmp_greater compare mixed signedness correctly; they do
+        // not accept bool or the character types, so both sides are widened,
+        // value-preserving, to (unsigned) long long first.
         using limit = std::numeric_limits<Target>;
-        if (v > static_cast<Value>(limit::max())) return limit::max();
-        if (v < static_cast<Value>(limit::min())) return limit::min();
+        auto wide = [](auto x) {
+            if constexpr (std::is_signed_v<decltype(x)>) return static_cast<long long>(x);
+            else return static_cast<unsigned long long>(x);
+        };
+        if (std::cmp_greater(wide(v), wide(limit::max()))) return limit::max();
+        if (std::cmp_less(wide(v), wide(limit::min()))) return limit::min();
     }
     return static_cast<Target>(v);
 }
