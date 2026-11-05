@@ -20,6 +20,9 @@
 //     concurrently from another thread -- runs serially on its caller, all tids
 //     in order. It never deadlocks and never oversubscribes.
 //   * The first exception thrown by any tid is rethrown after all tids join.
+//     Built without exceptions (#652), a task cannot throw, and run() has no
+//     try/catch; worker_exc_ stays a member either way, so the layout (and the
+//     _v1 ABI below) does not depend on the flag.
 //   * detail::in_region() is true on every tid of a region the pool runs on
 //     more than one thread, and on every tid of a region that runs serially
 //     because another is in progress (#640). It is false outside a region, and
@@ -67,6 +70,8 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+#include <mtl/detail/exceptions.hpp>
 
 #if defined(MTL5_SHARED_POOL)
 #  if defined(_WIN32) || defined(__CYGWIN__)
@@ -447,22 +452,33 @@ private:
         lk.unlock();
         wake_.notify_all();
 
+#if MTL5_HAS_EXCEPTIONS
         std::exception_ptr caller_exc;
         try {
             detail::region_scope in_region;
             fn(0);
         } catch (...) { caller_exc = std::current_exception(); }
+#else
+        {
+            detail::region_scope in_region;
+            fn(0);
+        }
+#endif
 
         lk.lock();
         done_.wait(lk, [&] { return remaining_ == 0; });
         ctx_ = nullptr;
         call_ = nullptr;
         busy_ = false;
+#if MTL5_HAS_EXCEPTIONS
         std::exception_ptr worker_exc = worker_exc_;
         lk.unlock();
 
         if (caller_exc) std::rethrow_exception(caller_exc);
         if (worker_exc) std::rethrow_exception(worker_exc);
+#else
+        lk.unlock();
+#endif
     }
 
     void worker_loop(unsigned tid) {
@@ -481,12 +497,16 @@ private:
                 void* ctx = ctx_;             // the caller's fn, by address
                 void (*call)(void*, unsigned) = call_;
                 lk.unlock();
+#if MTL5_HAS_EXCEPTIONS
                 try { call(ctx, tid); }
                 catch (...) {
                     lk.lock();
                     if (!worker_exc_) worker_exc_ = std::current_exception();
                     lk.unlock();
                 }
+#else
+                call(ctx, tid);
+#endif
                 lk.lock();
                 if (--remaining_ == 0) { lk.unlock(); done_.notify_one(); lk.lock(); }
             }

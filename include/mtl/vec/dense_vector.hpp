@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <mtl/config.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/tag/storage.hpp>
 #include <mtl/tag/sparsity.hpp>
@@ -151,14 +152,14 @@ public:
     // -- Element access --------------------------------------------------
     reference operator()(size_type i) {
         if constexpr (bounds_checking) {
-            if (i >= size()) throw std::out_of_range("dense_vector: index out of range");
+            if (i >= size()) ::mtl::detail::throw_or_abort(std::out_of_range("dense_vector: index out of range"));
         }
         return mem_[i];
     }
 
     const_reference operator()(size_type i) const {
         if constexpr (bounds_checking) {
-            if (i >= size()) throw std::out_of_range("dense_vector: index out of range");
+            if (i >= size()) ::mtl::detail::throw_or_abort(std::out_of_range("dense_vector: index out of range"));
         }
         return mem_[i];
     }
@@ -212,7 +213,7 @@ public:
     void checked_change_dim(size_type n) {
         if constexpr (dim_type::is_fixed) {
             if (n != static_size)
-                throw std::domain_error("dense_vector: cannot resize fixed-size vector");
+                ::mtl::detail::throw_or_abort(std::domain_error("dense_vector: cannot resize fixed-size vector"));
         } else {
             change_dim(n);
         }

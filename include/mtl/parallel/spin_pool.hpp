@@ -137,6 +137,7 @@ public:
     explicit spin_pool(unsigned n, unsigned spin = default_spin)
         : n_(n < 1 ? 1 : (n > max_pool_threads ? max_pool_threads : n)), spin_(spin) {
         workers_.reserve(n_ - 1);
+#if MTL5_HAS_EXCEPTIONS
         try {
             for (unsigned i = 1; i < n_; ++i)
                 workers_.emplace_back([this, i] { worker_loop(i); });
@@ -144,6 +145,10 @@ public:
             shutdown();   // a joinable std::thread left behind would terminate
             throw;
         }
+#else
+        for (unsigned i = 1; i < n_; ++i)            // a failed spawn aborts (#652)
+            workers_.emplace_back([this, i] { worker_loop(i); });
+#endif
     }
 
     /// Process-wide spin_pool, sized on first use as thread_pool's is
@@ -279,6 +284,7 @@ private:
         word_.store(next_word(count), std::memory_order_seq_cst);
         if (sleepers_.load(std::memory_order_seq_cst) != 0) word_.notify_all();
 
+#if MTL5_HAS_EXCEPTIONS
         std::exception_ptr caller_exc;
         try {
             detail::region_scope in_region;
@@ -292,6 +298,15 @@ private:
 
         if (caller_exc) std::rethrow_exception(caller_exc);
         if (worker_exc) std::rethrow_exception(worker_exc);
+#else
+        {
+            detail::region_scope in_region;
+            fn(0);
+        }
+
+        join();
+        busy_.store(false, std::memory_order_release);
+#endif
     }
 
     /// The caller's wait for remaining_ == 0: spin, then sleep on it.
@@ -340,11 +355,15 @@ private:
             seen = await_region(seen);
             if (stop_.load(std::memory_order_relaxed)) return;
             if (tid >= (seen & team_mask)) continue;   // not part of this region
+#if MTL5_HAS_EXCEPTIONS
             try { call_(ctx_, tid); }
             catch (...) {
                 if (!exc_claimed_.exchange(true, std::memory_order_relaxed))
                     worker_exc_ = std::current_exception();
             }
+#else
+            call_(ctx_, tid);
+#endif
             if (remaining_.fetch_sub(1, std::memory_order_seq_cst) == 1 &&
                 caller_sleeping_.load(std::memory_order_seq_cst))
                 remaining_.notify_one();

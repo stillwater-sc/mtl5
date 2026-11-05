@@ -10,6 +10,7 @@
 #include <utility>
 
 #include <mtl/config.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/tag/storage.hpp>
 #include <mtl/tag/sparsity.hpp>
@@ -205,7 +206,7 @@ public:
         auto ci = index_type::to_internal(c);
         if constexpr (bounds_checking) {
             if (ri >= num_rows() || ci >= num_cols())
-                throw std::out_of_range("dense2D: index out of range");
+                ::mtl::detail::throw_or_abort(std::out_of_range("dense2D: index out of range"));
         }
         return mem_[compute_offset(ri, ci, ldim_)];
     }
@@ -215,7 +216,7 @@ public:
         auto ci = index_type::to_internal(c);
         if constexpr (bounds_checking) {
             if (ri >= num_rows() || ci >= num_cols())
-                throw std::out_of_range("dense2D: index out of range");
+                ::mtl::detail::throw_or_abort(std::out_of_range("dense2D: index out of range"));
         }
         return mem_[compute_offset(ri, ci, ldim_)];
     }
@@ -262,7 +263,7 @@ public:
     void checked_change_dim(size_type r, size_type c) {
         if constexpr (is_fixed) {
             if (r != dim_type::rows || c != dim_type::cols)
-                throw std::domain_error("dense2D: cannot resize fixed-size matrix");
+                ::mtl::detail::throw_or_abort(std::domain_error("dense2D: cannot resize fixed-size matrix"));
         } else {
             change_dim(r, c);
         }

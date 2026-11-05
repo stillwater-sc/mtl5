@@ -13,6 +13,25 @@ include(Catch2Testing OPTIONAL)
 add_subdirectory(unit)
 add_subdirectory(integration)
 
+# -- exceptions and RTTI disabled (#652) --------------------------------------
+# Firmware builds with -fno-exceptions -fno-rtti, so dense_vector and dense2D
+# (fixed-size, on-stack, and the thread pool they include) must compile that
+# way. Built once per pool, so MTL5_POOL_SPIN's spin_pool is covered too. GCC
+# and Clang only: MSVC and Clang-CL spell the flags differently.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    foreach(_pool default spin)
+        set(_tgt build_test_no_exceptions_${_pool})
+        add_executable(${_tgt} no_exceptions/test_no_exceptions.cpp)
+        target_link_libraries(${_tgt} PRIVATE MTL5::mtl5)
+        target_compile_options(${_tgt} PRIVATE -fno-exceptions -fno-rtti -Wall -Wextra -Werror)
+        if(_pool STREQUAL "spin")
+            target_compile_definitions(${_tgt} PRIVATE MTL5_POOL_SPIN)
+        endif()
+        set_target_properties(${_tgt} PROPERTIES FOLDER "Tests/build")
+        add_test(NAME ${_tgt} COMMAND ${_tgt})
+    endforeach()
+endif()
+
 # -- benchmark preflight contract (#442) -------------------------------------
 # preflight.sh and preflight.ps1 are one contract with two implementations that
 # run on disjoint machines, so they drift silently unless each platform checks
