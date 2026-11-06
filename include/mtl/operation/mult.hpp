@@ -10,6 +10,7 @@
 #include <mtl/concepts/vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/detail/same_object.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/mat/compressed2D.hpp>
@@ -630,6 +631,7 @@ template <typename Accumulator = void, typename V, typename P, typename VIn, typ
 void mult(const mat::view::transposed_view<mat::compressed2D<V, P>>& At, const VIn& x, VOut& y) {
     assert(At.num_cols() == x.size());
     assert(At.num_rows() == y.size());
+    assert(!detail::same_object(y, x) && "mult: y must not alias x");
     detail::mult_sparse_crs_transposed<Accumulator>(At, x, y);
 }
 
@@ -637,6 +639,7 @@ template <typename Accumulator = void, Matrix M, Vector VIn, Vector VOut>
 void mult(const M& A, const VIn& x, VOut& y) {
     assert(A.num_cols() == x.size());
     assert(A.num_rows() == y.size());
+    assert(!detail::same_object(y, x) && "mult: y must not alias x");
 
     if constexpr (interface::is_compressed2D_v<M>) {
         detail::mult_sparse_crs_par<Accumulator>(A, x, y);
@@ -743,6 +746,8 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
+    assert(!detail::same_object(C, A) && "mult: C must not alias A");
+    assert(!detail::same_object(C, B) && "mult: C must not alias B");
 
     // Sparse (CRS) x row-major dense (#550): walk A's stored entries instead of
     // reading A(r, k) by binary search for every (r, c, k).
@@ -962,6 +967,8 @@ void mult_quad(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
+    assert(!detail::same_object(C, A) && "mult_quad: C must not alias A");
+    assert(!detail::same_object(C, B) && "mult_quad: C must not alias B");
 
     using TA = typename MA::value_type;
     using TB = typename MB::value_type;

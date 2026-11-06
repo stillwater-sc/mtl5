@@ -46,6 +46,7 @@
 #include <mtl/concepts/block_scheme.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
+#include <mtl/detail/same_object.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
@@ -320,6 +321,7 @@ void mult(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y,
           std::span<std::byte> scratch) {
     assert(A.num_cols() == static_cast<std::size_t>(x.size()));
     assert(A.num_rows() == static_cast<std::size_t>(y.size()));
+    assert(!detail::same_object(y, x) && "mult: y must not alias x");
     if constexpr (detail::block_fused_gemv_v<Accumulator, S, VIn, VOut>) {
         const std::size_t need = block_gemv_scratch_bytes<S>(A.num_cols());
         constexpr std::size_t align = block_gemv_scratch_alignment<S>;
