@@ -3,6 +3,7 @@
 // A is upper (upper=true) or lower triangular; the opposite triangle is ignored.
 // unit_diag treats the diagonal as all ones. No transpose in this variant.
 // BLAS dispatch for column-major dense float/double when available.
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -78,8 +79,9 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
                   std::is_same_v<value_type, typename M::value_type>) {
         using T = value_type;
         if (n <= static_cast<size_type>(std::numeric_limits<int>::max())) {
+            // BLAS requires lda >= 1 even for an empty A (#693).
             interface::blas::trmv(upper ? 'U' : 'L', 'N', unit_diag ? 'U' : 'N',
-                                  static_cast<int>(n), A.data(), static_cast<int>(n),
+                                  static_cast<int>(n), A.data(), std::max(1, static_cast<int>(n)),
                                   x.data(), 1);
             return;
         }

@@ -10,6 +10,7 @@
 // `interface::accumulator_allows_blas_v`, same as symv/trmv -- a custom
 // accumulator cannot be honored by external BLAS, so the BLAS dispatch below
 // is now conditional on the gate rather than unconditional.
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -41,8 +42,9 @@ void trsv(const M& A, VX& x, bool upper, bool unit_diag = false) {
                       std::is_same_v<value_type, typename M::value_type>) {
             using T = value_type;
             if (n <= static_cast<size_type>(std::numeric_limits<int>::max())) {
+                // BLAS requires lda >= 1 even for an empty A (#693).
                 interface::blas::trsv(upper ? 'U' : 'L', 'N', unit_diag ? 'U' : 'N',
-                                      static_cast<int>(n), A.data(), static_cast<int>(n),
+                                      static_cast<int>(n), A.data(), std::max(1, static_cast<int>(n)),
                                       x.data(), 1);
                 return;
             }

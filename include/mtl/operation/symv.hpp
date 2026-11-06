@@ -9,6 +9,7 @@
 // alpha/beta follow the BLAS convention, as gemmt does (#692): beta == 0 does
 // not read y, so a NaN or uninitialized y does not propagate, and alpha == 0
 // does not read A or x, leaving y = beta*y.
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -76,9 +77,10 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
                   std::is_same_v<value_type, typename VX::value_type>) {
         using T = value_type;
         if (n <= static_cast<size_type>(std::numeric_limits<int>::max())) {
-            // 'L' reads the lower triangle, as the generic paths do.
+            // 'L' reads the lower triangle, as the generic paths do. BLAS
+            // requires lda >= 1 even for an empty A (#693).
             interface::blas::symv('L', static_cast<int>(n), static_cast<T>(alpha),
-                                  A.data(), static_cast<int>(n), x.data(), 1,
+                                  A.data(), std::max(1, static_cast<int>(n)), x.data(), 1,
                                   static_cast<T>(beta), y.data(), 1);
             return;
         }
