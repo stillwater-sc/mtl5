@@ -348,3 +348,23 @@ TEST_CASE("saturating_cast to and from character types", "[operation][projection
     REQUIRE(detail::saturating_cast<int>(std::numeric_limits<unsigned long long>::max())
             == std::numeric_limits<int>::max());
 }
+
+TEST_CASE("scaled embed_into: widening between signed types", "[operation][projection][scaled][691]") {
+    // Old bound cast: static_cast<int>(LLONG_MAX) == -1 and
+    // static_cast<int>(LLONG_MIN) == 0, so every positive value clamped to
+    // LLONG_MAX and every negative one to LLONG_MIN.
+    vec::dense_vector<int32_t> v = {5, -5, 0, std::numeric_limits<int32_t>::max(),
+                                    std::numeric_limits<int32_t>::min()};
+    auto r = embed_into<long long>(v, 1);
+    REQUIRE(r(0) == 5);
+    REQUIRE(r(1) == -5);
+    REQUIRE(r(2) == 0);
+    REQUIRE(r(3) == std::numeric_limits<int32_t>::max());
+    REQUIRE(r(4) == std::numeric_limits<int32_t>::min());
+    REQUIRE(detail::saturating_cast<long long>(int{5}) == 5);
+    // Unsigned widening was unaffected; check it stays so.
+    vec::dense_vector<uint16_t> u = {0, 7, std::numeric_limits<uint16_t>::max()};
+    auto ru = embed_into<uint64_t>(u, uint64_t{1});
+    REQUIRE(ru(1) == 7u);
+    REQUIRE(ru(2) == 65535u);
+}
