@@ -16,7 +16,7 @@ namespace mtl::tensor {
 
 /// Symmetric rank-2 tensor: t(i,j) == t(j,i) (within tol) for all i < j.
 template <typename V, std::size_t D>
-bool is_symmetric(const tensor<V, 2, D>& t, magnitude_t<V> tol = 0) {
+bool is_symmetric(const tensor<V, 2, D>& t, magnitude_t<V> tol = magnitude_t<V>(0)) {
     using std::abs;
     for (std::size_t i = 0; i < D; ++i)
         for (std::size_t j = i + 1; j < D; ++j)
@@ -27,7 +27,7 @@ bool is_symmetric(const tensor<V, 2, D>& t, magnitude_t<V> tol = 0) {
 /// Antisymmetric (skew) rank-2 tensor: t(i,j) == -t(j,i) (within tol). This
 /// forces a zero diagonal (t(i,i) == -t(i,i)), which is checked explicitly.
 template <typename V, std::size_t D>
-bool is_antisymmetric(const tensor<V, 2, D>& t, magnitude_t<V> tol = 0) {
+bool is_antisymmetric(const tensor<V, 2, D>& t, magnitude_t<V> tol = magnitude_t<V>(0)) {
     using std::abs;
     for (std::size_t i = 0; i < D; ++i) {
         if (!(abs(t(i, i)) <= tol)) return false;               // diagonal must vanish

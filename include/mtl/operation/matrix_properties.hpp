@@ -33,7 +33,7 @@ bool is_empty(const M& A) { return A.num_rows() == 0 || A.num_cols() == 0; }
 
 /// A == A^T (within tol). Non-square matrices are never symmetric.
 template <Matrix M>
-bool is_symmetric(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_symmetric(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
     if (A.num_rows() != A.num_cols()) return false;
@@ -47,7 +47,7 @@ bool is_symmetric(const M& A, magnitude_t<typename M::value_type> tol = 0) {
 /// A == A^H (within tol): A(i,j) == conj(A(j,i)), and the diagonal is real.
 /// For real element types this coincides with is_symmetric.
 template <Matrix M>
-bool is_hermitian(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_hermitian(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using T = typename M::value_type;
     using size_type = typename M::size_type;
@@ -61,7 +61,7 @@ bool is_hermitian(const M& A, magnitude_t<typename M::value_type> tol = 0) {
 
 /// Upper triangular: everything strictly below the main diagonal is ~0.
 template <Matrix M>
-bool is_upper_triangular(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_upper_triangular(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
     const size_type m = A.num_rows(), n = A.num_cols();
@@ -73,7 +73,7 @@ bool is_upper_triangular(const M& A, magnitude_t<typename M::value_type> tol = 0
 
 /// Lower triangular: everything strictly above the main diagonal is ~0.
 template <Matrix M>
-bool is_lower_triangular(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_lower_triangular(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
     const size_type m = A.num_rows(), n = A.num_cols();
@@ -85,13 +85,13 @@ bool is_lower_triangular(const M& A, magnitude_t<typename M::value_type> tol = 0
 
 /// Upper or lower triangular.
 template <Matrix M>
-bool is_triangular(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_triangular(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     return is_upper_triangular(A, tol) || is_lower_triangular(A, tol);
 }
 
 /// Diagonal: every off-diagonal entry is ~0.
 template <Matrix M>
-bool is_diagonal(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_diagonal(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
     const size_type m = A.num_rows(), n = A.num_cols();
@@ -105,7 +105,7 @@ bool is_diagonal(const M& A, magnitude_t<typename M::value_type> tol = 0) {
 /// below (i - j > kl) or more than ku above (j - i > ku) the diagonal must be ~0.
 template <Matrix M>
 bool is_banded(const M& A, std::size_t kl, std::size_t ku,
-               magnitude_t<typename M::value_type> tol = 0) {
+               magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
     const size_type m = A.num_rows(), n = A.num_cols();
@@ -166,7 +166,7 @@ magnitude_t<typename M::value_type> product_tol(const M& A,
 /// scale-aware relative threshold (~128 * n * eps * max|A|^2); pass tol >= 0 for
 /// an explicit absolute threshold. Non-square matrices are never unitary.
 template <Matrix M>
-bool is_unitary(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+bool is_unitary(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(-1)) {
     using T = typename M::value_type;
     using size_type = typename M::size_type;
     using std::abs;
@@ -186,7 +186,7 @@ bool is_unitary(const M& A, magnitude_t<typename M::value_type> tol = -1) {
 
 /// Orthogonal: alias for is_unitary (conventional name for real matrices).
 template <Matrix M>
-bool is_orthogonal(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+bool is_orthogonal(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(-1)) {
     return is_unitary(A, tol);
 }
 
@@ -194,7 +194,7 @@ bool is_orthogonal(const M& A, magnitude_t<typename M::value_type> tol = -1) {
 /// unitarily diagonalizable, containing the symmetric/Hermitian, skew, and
 /// unitary matrices. Default tol as for is_unitary. Non-square is never normal.
 template <Matrix M>
-bool is_normal(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+bool is_normal(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(-1)) {
     using T = typename M::value_type;
     using size_type = typename M::size_type;
     using std::abs;

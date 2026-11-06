@@ -91,7 +91,7 @@ magnitude_t<typename M::value_type> rcond(const M& A) {
 /// pass tol to set an explicit absolute threshold on the singular values.
 template <Matrix M>
 std::size_t numerical_rank(const M& A,
-                           magnitude_t<typename M::value_type> tol = -1) {
+                           magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(-1)) {
     using mag_t = magnitude_t<typename M::value_type>;
     const auto sv = detail::singular_values(A);
     if (sv.empty()) return 0;
@@ -109,7 +109,7 @@ std::size_t numerical_rank(const M& A,
 
 /// Nullity: dimension of the null space = num_cols - numerical_rank.
 template <Matrix M>
-std::size_t nullity(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+std::size_t nullity(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(-1)) {
     const std::size_t r = numerical_rank(A, tol);
     const std::size_t ncols = static_cast<std::size_t>(A.num_cols());
     return ncols > r ? ncols - r : 0;
@@ -129,7 +129,7 @@ struct inertia_t {
 };
 
 template <Matrix M>
-inertia_t inertia(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+inertia_t inertia(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(-1)) {
     using mag_t = magnitude_t<typename M::value_type>;
     using std::abs;
     inertia_t result;
@@ -153,7 +153,7 @@ inertia_t inertia(const M& A, magnitude_t<typename M::value_type> tol = -1) {
 
 /// Indefinite: a symmetric matrix with both positive and negative eigenvalues.
 template <Matrix M>
-bool is_indefinite(const M& A, magnitude_t<typename M::value_type> tol = -1) {
+bool is_indefinite(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(-1)) {
     const inertia_t in = inertia(A, tol);
     return in.positive > 0 && in.negative > 0;
 }

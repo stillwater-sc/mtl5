@@ -10,6 +10,12 @@ FetchContent_MakeAvailable(Catch2)
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch2Testing OPTIONAL)
 
+# Test-only support headers (#703): native_shim, a user-defined number type
+# for checking that MTL5 stays generic over the number type. Every test under
+# tests/ includes them as <mtl5_test/...>. They are not under include/mtl, so
+# they are not part of the installed library.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/support)
+
 add_subdirectory(unit)
 add_subdirectory(integration)
 

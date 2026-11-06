@@ -7,6 +7,7 @@
 // tolerance defaulting to a small multiple of the element epsilon, since a
 // computed norm/inner-product is rarely bit-exact.
 #include <cmath>
+#include <concepts>
 #include <limits>
 #include <type_traits>
 
@@ -19,15 +20,33 @@ namespace mtl {
 
 namespace detail {
 
-// Per-element floating-point classification that degrades gracefully:
-// real floating types use <cmath>; complex checks both parts; every other
-// (exact/integer/custom) type is treated as finite / never nan / never inf.
+// Per-element floating-point classification that degrades gracefully: real
+// floating types use <cmath>; complex checks both parts; a custom type that
+// provides isfinite / isnan / isinf, found by ADL as a number library provides
+// them (posit's NaR, an lns or cfloat NaN), uses its own (#703); every other
+// (exact, integer, or custom without them) type is treated as finite, never
+// NaN and never infinite. Before #703 a custom type always took that last
+// branch, so has_nan missed a NaN that the type itself could report.
+namespace classify_adl {
+using std::isfinite;
+using std::isinf;
+using std::isnan;
+template <typename T> concept has_isfinite = requires(const T& x) { { isfinite(x) } -> std::convertible_to<bool>; };
+template <typename T> concept has_isnan    = requires(const T& x) { { isnan(x) } -> std::convertible_to<bool>; };
+template <typename T> concept has_isinf    = requires(const T& x) { { isinf(x) } -> std::convertible_to<bool>; };
+template <typename T> bool call_isfinite(const T& x) { return isfinite(x); }
+template <typename T> bool call_isnan(const T& x) { return isnan(x); }
+template <typename T> bool call_isinf(const T& x) { return isinf(x); }
+} // namespace classify_adl
+
 template <typename T>
 bool scalar_is_finite(const T& x) {
     if constexpr (std::is_floating_point_v<T>) {
         using std::isfinite; return isfinite(x);
     } else if constexpr (requires { x.real(); x.imag(); }) {
         using std::isfinite; return isfinite(x.real()) && isfinite(x.imag());
+    } else if constexpr (classify_adl::has_isfinite<T>) {
+        return classify_adl::call_isfinite(x);
     } else {
         return true;
     }
@@ -38,6 +57,8 @@ bool scalar_is_nan(const T& x) {
         using std::isnan; return isnan(x);
     } else if constexpr (requires { x.real(); x.imag(); }) {
         using std::isnan; return isnan(x.real()) || isnan(x.imag());
+    } else if constexpr (classify_adl::has_isnan<T>) {
+        return classify_adl::call_isnan(x);
     } else {
         return false;
     }
@@ -48,6 +69,8 @@ bool scalar_is_inf(const T& x) {
         using std::isinf; return isinf(x);
     } else if constexpr (requires { x.real(); x.imag(); }) {
         using std::isinf; return isinf(x.real()) || isinf(x.imag());
+    } else if constexpr (classify_adl::has_isinf<T>) {
+        return classify_adl::call_isinf(x);
     } else {
         return false;
     }
@@ -64,7 +87,7 @@ constexpr Mag default_norm_tol() {
 /// Every entry is within tol of zero (default tol 0: exactly zero). Written as
 /// !(abs <= tol) so a NaN entry fails the predicate rather than being accepted.
 template <Vector V>
-bool is_zero(const V& v, magnitude_t<typename V::value_type> tol = 0) {
+bool is_zero(const V& v, magnitude_t<typename V::value_type> tol = magnitude_t<typename V::value_type>(0)) {
     using std::abs;
     for (typename V::size_type i = 0; i < v.size(); ++i)
         if (!(abs(v(i)) <= tol)) return false;
