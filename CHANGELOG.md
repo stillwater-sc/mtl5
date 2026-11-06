@@ -7,6 +7,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Three generic-type defects found by the new `native_shim` test type** (#703). Each one broke a user-defined number type that has no implicit conversions to or from the built-in types:
+  - **The symmetric eigensolvers compared `delta >= 0`**, an int. `eigenvalue_symmetric` and `eigen_symmetric` did not compile for such a type. They now compare with `math::zero<real_t>()`.
+  - **The property predicates defaulted `tol` to an int literal** (`tol = 0`, or the sentinel `-1`). This affected 22 functions in `matrix_properties.hpp`, `factorization_properties.hpp`, `vector_properties.hpp`, `spectral_properties.hpp` and `tensor/properties.hpp`, so a call that relied on the default did not compile. The default is now `magnitude_t<T>(0)` or `magnitude_t<T>(-1)`.
+  - **`has_nan`, `has_inf` and `is_finite` treated every custom real type as finite and never NaN.** A posit NaR or an lns NaN went unseen even when the type provides `isnan`. The classification now uses the type's own `isfinite`, `isnan` and `isinf` when ADL finds them, and only falls back to "finite" for a type without them.
+
 - **`mult` asserts in debug builds that its output does not alias an input** (#696). `mult(A, B, C)` and `mult(A, x, y)` overwrite C (or y) while still reading the inputs, so `mult(A, B, A)` or `mult(A, x, x)` silently gave a wrong result. The precondition was documented but not checked.
   - **The fix:** the public `mult` overloads (dense, sparse transposed, block matrix) and `mult_quad` `assert` that the output is not the same object as an input. Release builds are unchanged.
   - **Limits:** the check compares object addresses, so it does not see a view of the output, such as `mult(trans(C), B, C)`.
@@ -55,6 +60,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Results:** in the interval, the same r as before, and the same c and s except where one of them is subnormal, where the new value is the correctly rounded quotient. `bench_givens`, 20M calls on values in [1, 2): double 0.258 s → 0.062 s, float 0.297 s → 0.044 s.
 
 ### Tests
+
+- **`native_shim`, a user-defined float for testing genericity over the number type** (#703). `float_shim` and `double_shim` are in `tests/support/mtl5_test/native_shim.hpp`, which every test can include and which is not installed. Each holds a native float or double and rounds exactly as it does, but is a class:
+  - it is not `is_floating_point` or `is_arithmetic`;
+  - it converts to or from a native type only explicitly, and has no mixed operators;
+  - its math functions are found only by ADL, so a qualified `std::sqrt(x)` does not compile.
+
+  `test_shim_genericity` runs norms, dot, axpy, gemv, gemm, kron, LU, QR, Cholesky, Householder, Givens, `pow2_scaling`, the SVD, the symmetric eigensolvers, CG, BiCGSTAB, GMRES and MINRES (with identity, diagonal and ILU(0) preconditioners), the projections, and the property predicates on both shims. It compares each result with the native one: bit for bit where MTL5 runs the same code for both, and within a few eps where native types take a BLAS, LAPACK or SIMD path. A qualified `std::frexp` in the `two_norm` rescan (#700) makes it fail to compile. Gating that rescan on `is_floating_point` makes it fail at run time. Both tests carry the CTest label `generic`.
 
 - **Regression tests for the recent factorization and rotation changes that no test exercised** (#698). Each new test fails when the behaviour it covers is removed, which was checked by breaking the code locally; none of these lines failed a test before.
   - **MINRES and `eigen_symmetric` scaled rotations** (#671): both now run on an operator of 2^600 and one of 2^-600 (`test_pow2_scaling`). With the unscaled rotation, MINRES reports convergence with x = 0 at 2^600 and breaks down at 2^-600, and `eigen_symmetric` returns NaN eigenpairs.

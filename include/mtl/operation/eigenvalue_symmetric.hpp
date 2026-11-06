@@ -160,7 +160,7 @@ auto eigenvalue_symmetric_generic(const M& A,
         real_t b = e(end - 2);
         real_t c = d(end - 1);
         real_t delta = (a - c) / real_t(2);
-        real_t sign_delta = (delta >= 0) ? real_t(1) : real_t(-1);
+        real_t sign_delta = (delta >= math::zero<real_t>()) ? real_t(1) : real_t(-1);
         // b * (b / ...), not b * b / ...: b * b overflows once |b| passes
         // sqrt(max), though the quotient does not (#671).
         real_t mu = c - b * (b / (delta + sign_delta * math::scaled_hypot(delta, b)));
@@ -445,7 +445,7 @@ auto eigen_symmetric(const M& A,
         real_t b = e(end - 2);
         real_t c = d(end - 1);
         real_t delta = (a - c) / real_t(2);
-        real_t sign_delta = (delta >= 0) ? real_t(1) : real_t(-1);
+        real_t sign_delta = (delta >= math::zero<real_t>()) ? real_t(1) : real_t(-1);
         // b * (b / ...), not b * b / ...: b * b overflows once |b| passes
         // sqrt(max), though the quotient does not (#671).
         real_t mu = c - b * (b / (delta + sign_delta * math::scaled_hypot(delta, b)));

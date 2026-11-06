@@ -23,7 +23,7 @@ namespace mtl {
 /// and its Cholesky factorization exists (every pivot strictly positive).
 /// Non-square matrices are never SPD. Runs Cholesky on a copy; O(n^3).
 template <Matrix M>
-bool is_spd(const M& A, magnitude_t<typename M::value_type> sym_tol = 0) {
+bool is_spd(const M& A, magnitude_t<typename M::value_type> sym_tol = magnitude_t<typename M::value_type>(0)) {
     if (A.num_rows() != A.num_cols()) return false;
     if (!is_symmetric(A, sym_tol)) return false;
     auto work = A;                      // Cholesky is destructive
@@ -32,7 +32,7 @@ bool is_spd(const M& A, magnitude_t<typename M::value_type> sym_tol = 0) {
 
 /// Alias for is_spd.
 template <Matrix M>
-bool is_positive_definite(const M& A, magnitude_t<typename M::value_type> sym_tol = 0) {
+bool is_positive_definite(const M& A, magnitude_t<typename M::value_type> sym_tol = magnitude_t<typename M::value_type>(0)) {
     return is_spd(A, sym_tol);
 }
 
@@ -40,7 +40,7 @@ bool is_positive_definite(const M& A, magnitude_t<typename M::value_type> sym_to
 /// |U(k,k)| is <= tol (default 0, i.e. an exact zero pivot). Requires a square
 /// matrix. Runs LU on a copy; O(n^3).
 template <Matrix M>
-bool is_singular(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_singular(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
     using std::abs;
@@ -61,13 +61,13 @@ bool is_singular(const M& A, magnitude_t<typename M::value_type> tol = 0) {
 
 /// Complement of is_singular.
 template <Matrix M>
-bool is_nonsingular(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_nonsingular(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     return !is_singular(A, tol);
 }
 
 /// Alias for is_nonsingular.
 template <Matrix M>
-bool is_invertible(const M& A, magnitude_t<typename M::value_type> tol = 0) {
+bool is_invertible(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     return is_nonsingular(A, tol);
 }
 

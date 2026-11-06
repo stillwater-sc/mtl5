@@ -165,6 +165,10 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # working precision; the corollary is proved for separately rounded operations,
 # and a fused multiply-add in that expression changes the bound being tested.
 #
+# concept_test_shim_genericity compares MTL5 on native_shim with MTL5 on the
+# native type underneath, bit for bit where both run the same code (#703).
+# Contraction can fuse an operation in one and not the other.
+#
 # math_test_pow2_scaling asserts that inside the old band the power-of-two
 # scaled Givens rotation (#671) gives the unscaled formula's bits: scaling by
 # 2^-e is exact and commutes with every rounding. Contraction can fuse a*a or
@@ -188,6 +192,7 @@ if(NOT MSVC)
                       itl_test_mg_accumulator
                       op_test_ogita_rump_oishi
                       math_test_pow2_scaling
+                      concept_test_shim_genericity
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)
@@ -330,3 +335,12 @@ if(NOT MSVC)
             LABELS "death")
     endforeach()
 endif()
+
+# The genericity tests over the number type (#703) carry the `generic` label,
+# so `ctest -L generic` runs them alone. They are ordinary unit tests and run
+# in Tier 1 on every platform.
+foreach(_generic_test concept_test_native_shim concept_test_shim_genericity)
+    if(TEST ${_generic_test})
+        set_tests_properties(${_generic_test} PROPERTIES LABELS generic)
+    endif()
+endforeach()
