@@ -453,7 +453,7 @@ struct std::numeric_limits<ieee_wrapped> {
 TEMPLATE_TEST_CASE("givens_rotation: the fast path gives the scaled form's bits (#697)",
                    "[pow2_scaling][givens]", float, double) {
     using T = TestType;
-    const T lo = math::detail::plain_givens_lo<T>, hi = math::detail::plain_givens_hi<T>;
+    const T lo = math::detail::plain_givens_interval<T>.lo, hi = math::detail::plain_givens_interval<T>.hi;
     const int klo = std::ilogb(lo) + 1, khi = std::ilogb(hi) - 1;
     std::mt19937_64 rng(697);
     std::uniform_real_distribution<double> mant(1.0, 2.0);
@@ -483,7 +483,7 @@ TEMPLATE_TEST_CASE("givens_rotation: the fast path gives the scaled form's bits 
 TEMPLATE_TEST_CASE("givens_rotation: the fast-path interval", "[pow2_scaling][givens]", float, double) {
     using T = TestType;
     using L = std::numeric_limits<T>;
-    const T lo = math::detail::plain_givens_lo<T>, hi = math::detail::plain_givens_hi<T>;
+    const T lo = math::detail::plain_givens_interval<T>.lo, hi = math::detail::plain_givens_interval<T>.hi;
     // As documented: for double about (2^-483, 2^510).
     CHECK(std::ilogb(hi) == (L::max_exponent - 1) / 2 - 2);
     CHECK(lo * lo > T(16) * (L::min() / L::epsilon()) * T(0.99));
@@ -512,4 +512,65 @@ TEST_CASE("givens_rotation: a type declaring is_iec559 takes the fast path (#697
     const auto big = math::givens_rotation(ieee_wrapped(3.0 * 0x1p600), ieee_wrapped(-4.0 * 0x1p600));
     CHECK(ieee_wrapped::mults > 2);
     CHECK(big.r.v == 5.0 * 0x1p600);
+}
+
+TEMPLATE_TEST_CASE("givens_rotation: a subnormal c or s is the plain formula's (#697)",
+                   "[pow2_scaling][givens]", float, double) {
+    // The bit-identity case above stops where c or s would be subnormal: there
+    // the scaled form rounds b 2^-e before dividing, so it can differ from the
+    // plain quotient, which is the correctly rounded one and which the fast
+    // path returns.
+    using T = TestType;
+    using L = std::numeric_limits<T>;
+    std::mt19937_64 rng(6970);
+    std::uniform_real_distribution<double> mant(1.0, 2.0);
+    int subnormal = 0;
+    for (int k : {L::max_exponent / 4, L::max_exponent / 2 - 4}) {
+        for (int gap = -L::min_exponent + 2; gap <= -L::min_exponent + L::digits - 2; gap += 3) {
+            const T a = std::ldexp(T(mant(rng)), k);
+            const T b = std::ldexp(T(mant(rng)), k - gap);
+            for (auto [x, y] : {std::pair{a, b}, std::pair{b, a}}) {
+                CAPTURE(x, y);
+                const auto g = math::givens_rotation(x, y);
+                const T r = std::sqrt(x * x + y * y);
+                const T small = std::fabs(x) < std::fabs(y) ? x / r : y / r;
+                REQUIRE(small != T(0));
+                REQUIRE(std::fpclassify(small) == FP_SUBNORMAL);
+                ++subnormal;
+                CHECK(g.r == r);
+                CHECK(g.c == x / r);
+                CHECK(g.s == y / r);
+            }
+        }
+    }
+    CHECK(subnormal > 10);
+}
+
+TEST_CASE("givens_rotation: NaN on the fast path (#697)", "[pow2_scaling][givens]") {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (auto [a, b] : {std::pair{1.5, nan}, std::pair{nan, 1.5}}) {
+        CAPTURE(a, b);
+        const auto g = math::givens_rotation(a, b);
+        CHECK(std::isnan(g.c));
+        CHECK(std::isnan(g.s));
+        CHECK(std::isnan(g.r));
+    }
+}
+
+TEST_CASE("givens_rotation: the interval's ends take the scaled path (#697)", "[pow2_scaling][givens]") {
+    // The interval is open: lo and hi themselves scale, and the neighbouring
+    // values inside it take the plain formula's two multiplications.
+    const auto& bounds = math::detail::plain_givens_interval<ieee_wrapped>;
+    const double lo = bounds.lo.v, hi = bounds.hi.v;
+    REQUIRE(lo == math::detail::plain_givens_interval<double>.lo);
+    REQUIRE(hi == math::detail::plain_givens_interval<double>.hi);
+    auto mults_for = [](double m) {
+        ieee_wrapped::mults = 0;
+        (void)math::givens_rotation(ieee_wrapped(m), ieee_wrapped(0.5 * m));
+        return ieee_wrapped::mults;
+    };
+    CHECK(mults_for(lo) > 2);
+    CHECK(mults_for(hi) > 2);
+    CHECK(mults_for(std::nextafter(lo, 1.0)) == 2);
+    CHECK(mults_for(std::nextafter(hi, 0.0)) == 2);
 }
