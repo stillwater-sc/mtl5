@@ -24,6 +24,9 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/givens.hpp>
 #include <mtl/operation/eigenvalue_symmetric.hpp>
+#include <mtl/itl/iteration/basic_iteration.hpp>
+#include <mtl/itl/krylov/minres.hpp>
+#include <mtl/itl/pc/identity.hpp>
 
 using namespace mtl;
 
@@ -573,4 +576,81 @@ TEST_CASE("givens_rotation: the interval's ends take the scaled path (#697)", "[
     CHECK(mults_for(hi) > 2);
     CHECK(mults_for(std::nextafter(lo, 1.0)) == 2);
     CHECK(mults_for(std::nextafter(hi, 0.0)) == 2);
+}
+
+namespace {
+
+/// The symmetric tridiagonal (diag, off) of order n, times scale.
+mat::dense2D<double> scaled_tridiagonal(std::size_t n, double diag, double off, double scale) {
+    mat::dense2D<double> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = i == j ? diag * scale : (i + 1 == j || j + 1 == i ? off * scale : 0.0);
+    return A;
+}
+
+} // namespace
+
+TEST_CASE("minres: an operator beyond sqrt(max) or below sqrt(min) (#671, #698)", "[pow2_scaling][givens]") {
+    // MINRES's step 3 rotates (gamma_bar, beta_new), both of the order of A's
+    // entries. Unscaled, gamma_bar^2 overflows for an A of 2^600: gamma is
+    // infinite, sn and so the residual estimate are 0, and MINRES reports
+    // convergence with x still 0. For an A of 2^-600 the square underflows
+    // and MINRES stops with "gamma == 0". The scaled rotation solves both as
+    // it solves A at scale 1, and x is then that solution over the scale.
+    const std::size_t n = 8;
+    vec::dense_vector<double> b(n);
+    for (std::size_t i = 0; i < n; ++i) b(i) = 1.0 + double(i % 3);
+    auto solve = [&](double scale) {
+        const auto A = scaled_tridiagonal(n, 4.0, -1.0, scale);
+        vec::dense_vector<double> x(n, 0.0);
+        itl::pc::identity<mat::dense2D<double>> pc(A);
+        itl::basic_iteration<double> iter(b, 100, 1e-12);
+        const int err = itl::minres(A, x, b, pc, iter);
+        return std::pair{err, x};
+    };
+    const auto [err1, x1] = solve(1.0);
+    REQUIRE(err1 == 0);
+    for (double scale : {0x1p600, 0x1p-600}) {
+        CAPTURE(scale);
+        const auto [err, x] = solve(scale);
+        REQUIRE(err == 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            CAPTURE(i);
+            REQUIRE(std::isfinite(x(i)));
+            CHECK(std::fabs(x(i) * scale - x1(i)) <= 1e-10 * std::fabs(x1(i)));
+        }
+    }
+}
+
+TEST_CASE("eigen_symmetric: eigenpairs beyond sqrt(max) or below sqrt(min) (#671, #698)",
+          "[pow2_scaling][givens]") {
+    // eigen_symmetric has its own copy of the implicit QR step, rotating
+    // (x, z) of the order of A's entries. Unscaled, x^2 + z^2 overflows at
+    // 2^600 and underflows at 2^-600, and the NaN rotation reaches both the
+    // eigenvalues and the accumulated eigenvectors.
+    const double expected[] = {2 - std::sqrt(2.0), 2.0, 2 + std::sqrt(2.0)};
+    for (double scale : {0x1p600, 0x1p-600}) {
+        CAPTURE(scale);
+        const auto A = scaled_tridiagonal(3, 2.0, 1.0, scale);
+        const auto [lambda, V] = eigen_symmetric(A);
+        for (std::size_t k = 0; k < 3; ++k) {
+            CAPTURE(k, lambda(k) / scale);
+            REQUIRE(std::isfinite(lambda(k)));
+            CHECK(std::fabs(lambda(k) / scale - expected[k]) <= 1e-13);
+            // A v = lambda v, in units of the scale, and V^T V = I.
+            for (std::size_t i = 0; i < 3; ++i) {
+                double av = 0.0;
+                for (std::size_t j = 0; j < 3; ++j) av += (A(i, j) / scale) * V(j, k);
+                CAPTURE(i);
+                CHECK(std::fabs(av - (lambda(k) / scale) * V(i, k)) <= 1e-13);
+            }
+            for (std::size_t l = 0; l < 3; ++l) {
+                double vtv = 0.0;
+                for (std::size_t i = 0; i < 3; ++i) vtv += V(i, k) * V(i, l);
+                CAPTURE(l);
+                CHECK(std::fabs(vtv - (k == l ? 1.0 : 0.0)) <= 1e-14);
+            }
+        }
+    }
 }

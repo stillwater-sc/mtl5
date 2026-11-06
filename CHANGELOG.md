@@ -54,6 +54,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Who gets it:** any type whose `std::numeric_limits` declares a binary IEEE format (`is_iec559`, radix 2), including a user-defined one. Tapered types such as posit and takum don't declare it, and keep the scaled path, which keeps their arithmetic near 1, where they are most precise.
   - **Results:** in the interval, the same r as before, and the same c and s except where one of them is subnormal, where the new value is the correctly rounded quotient. `bench_givens`, 20M calls on values in [1, 2): double 0.258 s → 0.062 s, float 0.297 s → 0.044 s.
 
+### Tests
+
+- **Regression tests for the recent factorization and rotation changes that no test exercised** (#698). Each new test fails when the behaviour it covers is removed, which was checked by breaking the code locally; none of these lines failed a test before.
+  - **MINRES and `eigen_symmetric` scaled rotations** (#671): both now run on an operator of 2^600 and one of 2^-600 (`test_pow2_scaling`). With the unscaled rotation, MINRES reports convergence with x = 0 at 2^600 and breaks down at 2^-600, and `eigen_symmetric` returns NaN eigenpairs.
+  - **The identity rotation for x = z = 0:** a 3x3 fixed-point tridiagonal whose QR sweep rounds both to zero, for `eigenvalue_symmetric_generic` and `eigen_symmetric` (`test_householder`). Double never reaches this case.
+  - **Complex `householder_reflector`:** beta is real, of magnitude ||x||, opposite in sign to Re(x0), and H x = beta e_1, at scales far from 1; plus the zero-tail cases.
+  - **`lq_normalize_signs` on a complex L** (`test_qr`), and **`randorth`'s sign normalization** (`test_randorth`): without `qr_normalize_signs`, Q(0,0) is negative on every draw.
+  - **Already covered:** the Hessenberg and `eigen_symmetric` pivot signs from #678 and the subnormal Householder scaling fail existing tests when broken, so they needed none.
+
 ## [5.23.0] - 2026-11-05
 
 Three fixes, each found by a study or a downstream project. `dense_vector` and `dense2D` build with exceptions disabled, for flight-control firmware (#652). `pow2_scaling`'s fallback finds the right exponent near the ends of a tapered type, so Givens rotations and Householder reflectors scale correctly in posits and takums (#680). Householder factorizations store the reflector's β as the pivot, so `qr_solve` no longer divides by a pivot that rounded to zero in fixed point (#678). It is a minor release because #678 adds `householder_reflector`. Nothing is breaking: in float and double the factorizations' pivots move by a rounding, and with exceptions enabled the thread pool's names and layout are unchanged.

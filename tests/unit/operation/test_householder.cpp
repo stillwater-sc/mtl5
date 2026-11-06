@@ -43,6 +43,7 @@ struct coarse_fixed {
     coarse_fixed() = default;
     constexpr coarse_fixed(double d) : v(round(d)) {}
     static constexpr double round(double d) {
+        if (d != d) return d;   // keep a NaN a NaN, so a test can see it
         const double q = (d >= 0 ? 1.0 : -1.0) * double(static_cast<long long>((d >= 0 ? d : -d) * 256.0 + 0.5)) / 256.0;
         const double m = 128.0 - 1.0 / 256.0;
         return q > m ? m : (q < -m ? -m : q);
@@ -424,4 +425,84 @@ TEST_CASE("symmetric eigensolvers: the tridiagonal keeps the subdiagonal (#678)"
     };
     REQUIRE(largest(eigenvalue_symmetric_generic(A)) >= 2 * u);
     REQUIRE(largest(eigen_symmetric(A).eigenvalues) >= 2 * u);
+}
+
+TEST_CASE("householder_reflector: a complex beta is real, ||x||, and opposite to Re(x0) (#698)",
+          "[operation][householder]") {
+    using C = std::complex<double>;
+    std::mt19937_64 g(698);
+    std::uniform_real_distribution<double> u(-1.0, 1.0);
+    auto check = [](const vec::dense_vector<C>& x) {
+        const std::size_t n = x.size();
+        const auto [v, tau, beta] = householder_reflector(x);
+        double nx = 0;
+        for (std::size_t i = 0; i < n; ++i) nx = std::hypot(nx, std::abs(x(i)));
+        // H x = x - tau v (v^H x) is beta e_1.
+        C vhx = 0;
+        for (std::size_t i = 0; i < n; ++i) vhx += std::conj(v(i)) * x(i);
+        const double eps = std::numeric_limits<double>::epsilon();
+        REQUIRE(beta.imag() == 0.0);
+        REQUIRE(std::abs(std::abs(beta.real()) - nx) <= 4 * eps * nx);
+        REQUIRE((x(0).real() >= 0) == (beta.real() < 0));
+        REQUIRE(std::abs(x(0) - tau * vhx - beta) <= 8 * eps * nx);
+        for (std::size_t i = 1; i < n; ++i)
+            REQUIRE(std::abs(x(i) - tau * v(i) * vhx) <= 8 * eps * nx);
+    };
+    // A complex x is divided by its largest |x(i)|, not by a power of two, and
+    // beta multiplied back: the scales put that factor far from 1.
+    for (double scale : {1.0, 3.7e-3, 1e300, 1e-300})
+        for (int t = 0; t < 50; ++t) {
+            const std::size_t n = 1 + std::size_t(t % 7);
+            vec::dense_vector<C> x(n);
+            for (std::size_t i = 0; i < n; ++i) x(i) = scale * C(u(g), u(g));
+            if (t % 5 == 0) x(0) = C(0.0, x(0).imag());   // Re(x0) == 0 takes -||x||
+            CAPTURE(scale, t);
+            check(x);
+        }
+    // A zero tail with a complex x0 still reflects, to a real beta = -|x0|
+    // here; a zero tail with a real x0 is H = I, and beta is x0.
+    vec::dense_vector<C> x(3);
+    x(0) = C(3.0, -4.0); x(1) = x(2) = C(0.0, 0.0);
+    check(x);
+    REQUIRE(householder_reflector(x).beta == C(-5.0, 0.0));
+    REQUIRE(householder_reflector(x).tau != C(0.0, 0.0));
+    x(0) = C(-2.5, 0.0);
+    const auto id = householder_reflector(x);
+    REQUIRE(id.tau == C(0.0, 0.0));
+    REQUIRE(id.beta == C(-2.5, 0.0));
+}
+
+TEST_CASE("symmetric eigensolvers: a fixed-point QR step meeting x = z = 0 rotates by I (#698)",
+          "[operation][householder]") {
+    // In coarse_fixed the QR sweep of this tridiagonal rounds both x and the
+    // bulge z to 0 mid-chase. givens_rotation(0, 0) is the identity; without
+    // that case it divides 0 by 0, and the NaN reaches every eigenvalue and,
+    // through the accumulated rotations, the eigenvectors. Double never gets
+    // there: its x and z do not round to 0 together.
+    const double u = std::ldexp(1.0, -8);
+    const int a[3][3] = {{-5, -6, 0}, {-6, -5, -2}, {0, -2, -1}};
+    mat::dense2D<coarse_fixed> A(3, 3);
+    mat::dense2D<double> Ad(3, 3);
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 3; ++j) {
+            A(i, j) = coarse_fixed(a[i][j] * u);
+            Ad(i, j) = a[i][j] * u;
+        }
+    const auto exact = eigenvalue_symmetric_generic(Ad);
+    const auto values = eigenvalue_symmetric_generic(A);
+    const auto [lambda, V] = eigen_symmetric(A);
+    for (std::size_t k = 0; k < 3; ++k) {
+        CAPTURE(k, dbl(values(k)) / u, dbl(lambda(k)) / u, exact(k) / u);
+        REQUIRE(std::isfinite(dbl(values(k))));
+        REQUIRE(std::isfinite(dbl(lambda(k))));
+        // A few units of coarse_fixed's resolution: the type's rounding, not NaN.
+        CHECK(std::abs(dbl(values(k)) - exact(k)) <= 4 * u);
+        CHECK(std::abs(dbl(lambda(k)) - exact(k)) <= 4 * u);
+        for (std::size_t l = 0; l < 3; ++l) {
+            double vtv = 0;
+            for (std::size_t i = 0; i < 3; ++i) vtv += dbl(V(i, k)) * dbl(V(i, l));
+            CAPTURE(l);
+            CHECK(std::abs(vtv - (k == l ? 1.0 : 0.0)) <= 16 * u);
+        }
+    }
 }
