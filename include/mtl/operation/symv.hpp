@@ -1,8 +1,14 @@
 #pragma once
 // MTL5 -- symv: y <- alpha*A*x + beta*y  for symmetric A  (BLAS level-2)
-// The generic path reads the full matrix (correct for any symmetric A); the
-// BLAS path reads a single triangle. BLAS dispatch for column-major dense
-// float/double when available.
+// Only A's lower triangle is read, on every path, as BLAS symv with uplo 'L'
+// reads it (#692): A(i,j) for j > i is taken as A(j,i), so the strict upper
+// triangle may hold anything. Before #692 the generic path read the full
+// matrix and so disagreed with the BLAS path for a non-symmetric A. BLAS
+// dispatch for column-major dense float/double when available.
+//
+// alpha/beta follow the BLAS convention, as gemmt does (#692): beta == 0 does
+// not read y, so a NaN or uninitialized y does not propagate, and alpha == 0
+// does not read A or x, leaving y = beta*y.
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -40,17 +46,25 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
     using size_type  = typename M::size_type;
     const size_type n = A.num_rows();
     assert(A.num_cols() == n && x.size() == n && y.size() == n);
+    const bool alpha_zero = (alpha == math::zero<S>());
+    const bool beta_zero  = (beta == math::zero<S>());
+    // The lower triangle, read as a symmetric matrix.
+    auto a = [&A](size_type i, size_type j) -> decltype(auto) { return j <= i ? A(i, j) : A(j, i); };
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         using Value = std::common_type_t<S, typename M::value_type, typename VX::value_type>;
         using AT = math::accumulator_traits<Accumulator, Value>;
         for (size_type i = 0; i < n; ++i) {
+            if (alpha_zero) {
+                y(i) = beta_zero ? math::zero<value_type>() : value_type(beta * y(i));
+                continue;
+            }
             Accumulator acc{};
             AT::clear(acc);
             for (size_type j = 0; j < n; ++j)
-                AT::add_product(acc, static_cast<Value>(A(i, j)), static_cast<Value>(x(j)));
+                AT::add_product(acc, static_cast<Value>(a(i, j)), static_cast<Value>(x(j)));
             const value_type reduced = AT::template value<value_type>(acc);
-            y(i) = alpha * reduced + beta * y(i);
+            y(i) = beta_zero ? value_type(alpha * reduced) : value_type(alpha * reduced + beta * y(i));
         }
         return;
     }
@@ -62,7 +76,7 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
                   std::is_same_v<value_type, typename VX::value_type>) {
         using T = value_type;
         if (n <= static_cast<size_type>(std::numeric_limits<int>::max())) {
-            // Symmetric: 'L' reads the lower triangle (== upper for symmetric A).
+            // 'L' reads the lower triangle, as the generic paths do.
             interface::blas::symv('L', static_cast<int>(n), static_cast<T>(alpha),
                                   A.data(), static_cast<int>(n), x.data(), 1,
                                   static_cast<T>(beta), y.data(), 1);
@@ -71,10 +85,14 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
     }
 #endif
     for (size_type i = 0; i < n; ++i) {
+        if (alpha_zero) {
+            y(i) = beta_zero ? math::zero<value_type>() : value_type(beta * y(i));
+            continue;
+        }
         auto acc = math::zero<value_type>();
         for (size_type j = 0; j < n; ++j)
-            acc += A(i, j) * x(j);
-        y(i) = alpha * acc + beta * y(i);
+            acc += a(i, j) * x(j);
+        y(i) = beta_zero ? value_type(alpha * acc) : value_type(alpha * acc + beta * y(i));
     }
 }
 

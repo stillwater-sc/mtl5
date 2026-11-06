@@ -14,6 +14,10 @@
 //
 // Gated on `interface::accumulator_allows_blas_v`, same as trmm/trsm/symm: a
 // custom accumulator cannot be honored by external BLAS.
+//
+// alpha/beta follow the BLAS convention, as gemmt does (#692): beta == 0 does
+// not read C, so a NaN or uninitialized C does not propagate, and alpha == 0
+// does not read A, leaving C = beta*C.
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -39,18 +43,25 @@ void syrk(const S& alpha, const MA& A, const S& beta, MC& C) {
     const size_type m = A.num_rows();
     const size_type k = A.num_cols();
     assert(C.num_rows() == m && C.num_cols() == m);
+    const bool alpha_zero = (alpha == math::zero<S>());
+    const bool beta_zero  = (beta == math::zero<S>());
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         using Value = std::common_type_t<value_type, typename MA::value_type>;
         using AT = math::accumulator_traits<Accumulator, Value>;
         for (size_type i = 0; i < m; ++i)
             for (size_type j = 0; j <= i; ++j) {
+                if (alpha_zero) {
+                    C(i, j) = beta_zero ? math::zero<value_type>() : value_type(beta * C(i, j));
+                    continue;
+                }
                 Accumulator acc{};
                 AT::clear(acc);
                 for (size_type l = 0; l < k; ++l)
                     AT::add_product(acc, static_cast<Value>(A(i, l)), static_cast<Value>(A(j, l)));
                 const value_type reduced = AT::template value<value_type>(acc);
-                C(i, j) = alpha * reduced + beta * C(i, j);
+                C(i, j) = beta_zero ? value_type(alpha * reduced)
+                                    : value_type(alpha * reduced + beta * C(i, j));
             }
         for (size_type i = 0; i < m; ++i)
             for (size_type j = 0; j < i; ++j)
@@ -80,10 +91,14 @@ void syrk(const S& alpha, const MA& A, const S& beta, MC& C) {
     // Compute the lower triangle, then mirror.
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j <= i; ++j) {
+            if (alpha_zero) {
+                C(i, j) = beta_zero ? math::zero<value_type>() : value_type(beta * C(i, j));
+                continue;
+            }
             auto acc = math::zero<value_type>();
             for (size_type l = 0; l < k; ++l)
                 acc += A(i, l) * A(j, l);
-            C(i, j) = alpha * acc + beta * C(i, j);
+            C(i, j) = beta_zero ? value_type(alpha * acc) : value_type(alpha * acc + beta * C(i, j));
         }
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < i; ++j)

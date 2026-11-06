@@ -3,6 +3,9 @@
 // A is m x m upper (upper=true) or lower triangular; B is m x n. unit_diag treats
 // A's diagonal as all ones. Left side, no transpose in this variant. BLAS
 // dispatch for column-major dense float/double when available.
+//
+// alpha == 0 follows the BLAS convention (#692): A and B are not read and B is
+// set to zero, so a NaN or uninitialized B does not propagate.
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -47,6 +50,12 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
     const size_type m = A.num_rows();
     const size_type n = B.num_cols();
     assert(A.num_cols() == m && B.num_rows() == m);
+    if (alpha == math::zero<S>()) {
+        for (size_type r = 0; r < m; ++r)
+            for (size_type c = 0; c < n; ++c)
+                B(r, c) = math::zero<value_type>();
+        return;
+    }
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         using Value = std::common_type_t<value_type, typename MA::value_type>;
