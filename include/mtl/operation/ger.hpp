@@ -2,6 +2,7 @@
 // MTL5 -- ger: A <- alpha*x*y^T + A  (BLAS level-2 general rank-1 update)
 // Generic path for any Matrix/Vector; BLAS dispatch for column-major dense
 // float/double when available.
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -62,11 +63,13 @@ void ger(const S& alpha, const VX& x, const VY& y, M& A) {
                   std::is_same_v<typename M::value_type, typename VY::value_type>) {
         using T = typename M::value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
+        if (m == 0 || n == 0) return;   // nothing to update; skip BLAS (#693)
         if (m <= imax && n <= imax) {
-            // Column-major storage: leading dimension is the row count.
+            // Column-major storage: the leading dimension is the row count,
+            // and BLAS requires it to be at least 1 even for an empty A (#693).
             interface::blas::ger(static_cast<int>(m), static_cast<int>(n),
                                  static_cast<T>(alpha), x.data(), 1, y.data(), 1,
-                                 A.data(), static_cast<int>(m));
+                                 A.data(), std::max(1, static_cast<int>(m)));
             return;
         }
     }
