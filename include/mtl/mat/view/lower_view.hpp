@@ -55,4 +55,9 @@ template <typename Matrix>
 auto lower(const Matrix& A) {
     return mat::view::lower_view<Matrix>(A);
 }
+
+/// Deleted for an rvalue (#695): the view refers to its matrix, so a view of a
+/// temporary dangles once the full expression ends. Name the matrix first.
+template <typename Matrix>
+void lower(const Matrix&&) = delete;
 } // namespace mtl

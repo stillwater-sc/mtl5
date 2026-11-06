@@ -63,4 +63,9 @@ template <typename Matrix>
 auto banded(const Matrix& A, std::ptrdiff_t lower, std::ptrdiff_t upper) {
     return mat::view::banded_view<Matrix>(A, lower, upper);
 }
+
+/// Deleted for an rvalue (#695): the view refers to its matrix, so a view of a
+/// temporary dangles once the full expression ends. Name the matrix first.
+template <typename Matrix>
+void banded(const Matrix&&, std::ptrdiff_t, std::ptrdiff_t) = delete;
 } // namespace mtl
