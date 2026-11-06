@@ -11,6 +11,7 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <compare>
 #include <complex>
@@ -404,4 +405,111 @@ TEST_CASE("pow2_scaling: a type whose ends are coarser than its rungs (#680)", "
         CHECK(e >= -96);
         CHECK(e <= 96);
     }
+}
+
+// -- The plain-formula fast path (#697) ------------------------------------
+namespace {
+
+// The scaled rotation as givens_rotation computed it before the fast path.
+template <typename T>
+math::givens_parameters<T> scaled_reference(T a, T b) {
+    const T m = std::fmax(std::fabs(a), std::fabs(b));
+    const int e = std::ilogb(m);
+    const T a1 = std::ldexp(a, -e), b1 = std::ldexp(b, -e);
+    const T d = std::sqrt(a1 * a1 + b1 * b1);
+    return {a1 / d, b1 / d, std::ldexp(d, e)};
+}
+
+// wrapped with numeric_limits declaring a binary IEEE format, and counting its
+// multiplications: the fast path makes exactly two, a*a and b*b.
+struct ieee_wrapped {
+    double v;
+    static inline int mults = 0;
+    ieee_wrapped() = default;
+    constexpr ieee_wrapped(double x) : v(x) {}
+    friend ieee_wrapped operator+(ieee_wrapped a, ieee_wrapped b) { return a.v + b.v; }
+    friend ieee_wrapped operator-(ieee_wrapped a, ieee_wrapped b) { return a.v - b.v; }
+    friend ieee_wrapped operator*(ieee_wrapped a, ieee_wrapped b) { ++mults; return a.v * b.v; }
+    friend ieee_wrapped operator/(ieee_wrapped a, ieee_wrapped b) { return a.v / b.v; }
+    friend ieee_wrapped operator-(ieee_wrapped a) { return -a.v; }
+    friend bool operator==(ieee_wrapped a, ieee_wrapped b) { return a.v == b.v; }
+    friend auto operator<=>(ieee_wrapped a, ieee_wrapped b) { return a.v <=> b.v; }
+    friend ieee_wrapped abs(ieee_wrapped a) { return std::fabs(a.v); }
+    friend ieee_wrapped sqrt(ieee_wrapped a) { return std::sqrt(a.v); }
+};
+
+} // namespace
+
+template <>
+struct std::numeric_limits<ieee_wrapped> {
+    static constexpr bool is_specialized = true;
+    static constexpr bool is_iec559 = true;
+    static constexpr int radix = 2;
+    static constexpr ieee_wrapped min() noexcept { return std::numeric_limits<double>::min(); }
+    static constexpr ieee_wrapped max() noexcept { return std::numeric_limits<double>::max(); }
+    static constexpr ieee_wrapped epsilon() noexcept { return std::numeric_limits<double>::epsilon(); }
+};
+
+TEMPLATE_TEST_CASE("givens_rotation: the fast path gives the scaled form's bits (#697)",
+                   "[pow2_scaling][givens]", float, double) {
+    using T = TestType;
+    const T lo = math::detail::plain_givens_lo<T>, hi = math::detail::plain_givens_hi<T>;
+    const int klo = std::ilogb(lo) + 1, khi = std::ilogb(hi) - 1;
+    std::mt19937_64 rng(697);
+    std::uniform_real_distribution<double> mant(1.0, 2.0);
+    std::uniform_int_distribution<int> sign(0, 1);
+    int compared = 0;
+    for (int k = klo; k <= khi; ++k) {
+        // b from as large as a down to where s = b / r would be subnormal,
+        // where the plain quotient is the correctly rounded one and may differ.
+        const int jmin = std::max(std::numeric_limits<T>::min_exponent + k + 1, k - std::numeric_limits<T>::digits - 4);
+        for (int j = k; j >= jmin; j -= 3) {
+            const T a = std::ldexp(T(mant(rng)), k) * (sign(rng) ? T(-1) : T(1));
+            const T b = std::ldexp(T(mant(rng)), j) * (sign(rng) ? T(-1) : T(1));
+            for (auto [x, y] : {std::pair{a, b}, std::pair{b, a}}) {
+                CAPTURE(x, y);
+                const auto g = math::givens_rotation(x, y);
+                const auto s = scaled_reference(x, y);
+                REQUIRE(g.r == s.r);
+                REQUIRE(g.c == s.c);
+                REQUIRE(g.s == s.s);
+                ++compared;
+            }
+        }
+    }
+    CHECK(compared > 1000);
+}
+
+TEMPLATE_TEST_CASE("givens_rotation: the fast-path interval", "[pow2_scaling][givens]", float, double) {
+    using T = TestType;
+    using L = std::numeric_limits<T>;
+    const T lo = math::detail::plain_givens_lo<T>, hi = math::detail::plain_givens_hi<T>;
+    // As documented: for double about (2^-483, 2^510).
+    CHECK(std::ilogb(hi) == (L::max_exponent - 1) / 2 - 2);
+    CHECK(lo * lo > T(16) * (L::min() / L::epsilon()) * T(0.99));
+    CHECK(T(2) * hi * hi < L::max());
+    // Just outside it the scaled path runs and is still correct.
+    for (T m : {lo, lo / T(2), hi, hi * T(2)}) {
+        const auto g = math::givens_rotation(m, T(-0.75) * m);
+        const auto s = scaled_reference(m, T(-0.75) * m);
+        CHECK(g.r == s.r);
+        CHECK(g.c == s.c);
+        CHECK(g.s == s.s);
+    }
+}
+
+TEST_CASE("givens_rotation: a type declaring is_iec559 takes the fast path (#697)", "[pow2_scaling][givens]") {
+    STATIC_REQUIRE(math::detail::binary_ieee_limits<ieee_wrapped>);
+    STATIC_REQUIRE(!math::detail::binary_ieee_limits<wrapped>);
+    ieee_wrapped::mults = 0;
+    const auto g = math::givens_rotation(ieee_wrapped(3.0), ieee_wrapped(-4.0));
+    CHECK(ieee_wrapped::mults == 2);
+    CHECK(g.c.v == 0.6);
+    CHECK(g.s.v == -0.8);
+    CHECK(g.r.v == 5.0);
+    // Outside the interval it scales, through the fallback, and stays exact.
+    ieee_wrapped::mults = 0;
+    const auto big = math::givens_rotation(ieee_wrapped(3.0 * 0x1p600), ieee_wrapped(-4.0 * 0x1p600));
+    CHECK(ieee_wrapped::mults > 2);
+    CHECK(big.r.v == 5.0 * 0x1p600);
 }

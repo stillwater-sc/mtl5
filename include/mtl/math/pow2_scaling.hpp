@@ -25,6 +25,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -188,6 +189,47 @@ struct pow2_scaling<T> {
     static T scale(T x, int k) { return std::ldexp(x, k); }
 };
 
+namespace detail {
+
+/// T is a binary IEEE-754 format, as its numeric_limits declare (#697). For
+/// such a T, scaling by 2^-e is exact, so wherever a*a + b*b neither overflows
+/// nor loses a term to underflow, the scaled rotation and the plain formula
+/// give the same r, and givens_rotation can skip the scaling. They give the
+/// same c and s too, except where c or s is itself subnormal: there the scaled
+/// form rounds a 2^-e or b 2^-e before it divides, and the plain form rounds
+/// the quotient once, so the plain result is the correctly rounded one. This is a property of
+/// the format, not of the built-in types: a user-defined type that declares
+/// is_iec559 gets the same fast path. A tapered type (posit, takum) does not
+/// declare it, and keeps the scaled path, which keeps its arithmetic near 1,
+/// where it is most precise.
+template <typename T>
+concept binary_ieee_limits = std::numeric_limits<T>::is_specialized &&
+                             std::numeric_limits<T>::is_iec559 &&
+                             std::numeric_limits<T>::radix == 2;
+
+/// The magnitudes m = max(|a|, |b|) for which the plain formula is safe, as
+/// the open interval (lo, hi):
+///   hi = sqrt(max) / 4, so a*a + b*b <= 2 m^2 stays below max;
+///   lo = 4 sqrt(min / eps), so m^2 > 16 min / eps, and any b*b too small to
+///   be normal is below half an ulp of a*a and drops out of the sum exactly as
+///   it does in the scaled form.
+/// The factors of 4 cover the rounding of the square roots. Namespace-scope
+/// constants, so a call pays no initialization guard. Read during another
+/// translation unit's static initialization they may still be 0, which empties
+/// the interval and sends every call down the scaled path, still correct.
+template <typename T>
+inline const T plain_givens_lo = [] {
+    using std::sqrt;
+    return T(4) * sqrt(std::numeric_limits<T>::min() / std::numeric_limits<T>::epsilon());
+}();
+template <typename T>
+inline const T plain_givens_hi = [] {
+    using std::sqrt;
+    return sqrt(std::numeric_limits<T>::max()) / T(4);
+}();
+
+} // namespace detail
+
 /// A plane rotation [c s; -s c] with c a + s b = r and -s a + c b = 0.
 template <typename T>
 struct givens_parameters {
@@ -201,6 +243,11 @@ struct givens_parameters {
 /// A complex T (one whose magnitude type is not T itself), and an a or b that
 /// is not finite, keep the unscaled formula r = sqrt(a*a + b*b), c = a/r,
 /// s = b/r, so their results are what they were before the scaling existed.
+///
+/// A binary IEEE T (detail::binary_ieee_limits) whose larger magnitude lies
+/// in (plain_givens_lo, plain_givens_hi) also takes the unscaled formula, which
+/// there gives the scaled form's result without its exponent extraction and
+/// three scalings (#697). For double the interval is about (2^-483, 2^510).
 template <typename T>
 givens_parameters<T> givens_rotation(const T& a, const T& b) {
     using std::abs;
@@ -216,6 +263,12 @@ givens_parameters<T> givens_rotation(const T& a, const T& b) {
     } else {
         const T aa = abs(a), ab = abs(b);
         const T m = aa < ab ? ab : aa;
+        if constexpr (detail::binary_ieee_limits<T>) {
+            if (m > detail::plain_givens_lo<T> && m < detail::plain_givens_hi<T>) {
+                const T r = sqrt(a * a + b * b);
+                return {a / r, b / r, r};
+            }
+        }
         if (m == zero) return {one, zero, zero};
         if (!(m - m == zero)) return unscaled();   // inf or NaN
         const int e = pow2_scaling<T>::exponent(m);
