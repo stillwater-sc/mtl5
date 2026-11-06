@@ -47,6 +47,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **The fix:** `trans`, `upper`, `lower`, `strict_upper`, `strict_lower`, `triu`, `tril`, `banded`, `hermitian` and `mapped` each have a deleted `const M&&` overload, which an rvalue prefers over `const M&`.
   - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
 
+### Performance
+
+- **`math::givens_rotation` takes the plain formula for ordinary magnitudes, about 4x faster for double and 6x for float** (#697). Since #671 every call extracted an exponent and made three power-of-two scalings, even when nothing needed scaling. The rotation is in the inner loops of GMRES, MINRES and the implicit QR sweep.
+  - **The fix:** when the larger magnitude lies in an interval where `a*a + b*b` can neither overflow nor lose a term to underflow, about (2^-483, 2^510) for double, the rotation is `r = sqrt(a*a + b*b)`, `c = a/r`, `s = b/r`. Outside it, the scaled path is unchanged.
+  - **Who gets it:** any type whose `std::numeric_limits` declares a binary IEEE format (`is_iec559`, radix 2), including a user-defined one. Tapered types such as posit and takum don't declare it, and keep the scaled path, which keeps their arithmetic near 1, where they are most precise.
+  - **Results:** in the interval, the same r as before, and the same c and s except where one of them is subnormal, where the new value is the correctly rounded quotient. `bench_givens`, 20M calls on values in [1, 2): double 0.258 s → 0.062 s, float 0.297 s → 0.044 s.
+
 ## [5.23.0] - 2026-11-05
 
 Three fixes, each found by a study or a downstream project. `dense_vector` and `dense2D` build with exceptions disabled, for flight-control firmware (#652). `pow2_scaling`'s fallback finds the right exponent near the ends of a tapered type, so Givens rotations and Householder reflectors scale correctly in posits and takums (#680). Householder factorizations store the reflector's β as the pivot, so `qr_solve` no longer divides by a pivot that rounded to zero in fixed point (#678). It is a minor release because #678 adds `householder_reflector`. Nothing is breaking: in float and double the factorizations' pivots move by a rounding, and with exceptions enabled the thread pool's names and layout are unchanged.

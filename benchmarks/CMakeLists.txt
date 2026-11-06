@@ -20,6 +20,13 @@ target_link_libraries(bench_block_scaled_dot PRIVATE MTL5::mtl5)
 target_include_directories(bench_block_scaled_dot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(bench_block_scaled_dot PROPERTIES FOLDER "Benchmarks")
 
+# Givens rotation cost (#697): math::givens_rotation against the plain formula,
+# inside the fast-path interval and outside it. Native-only; build it Release.
+add_executable(bench_givens bench_givens.cpp)
+target_link_libraries(bench_givens PRIVATE MTL5::mtl5)
+target_include_directories(bench_givens PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_target_properties(bench_givens PROPERTIES FOLDER "Benchmarks")
+
 # KLU performance scoreboard: native KLU vs SuiteSparse KLU (epic #138, Phase 0).
 # Links MTL5::mtl5, which propagates MTL5_HAS_KLU + the KLU library when the
 # build is configured with -DMTL5_WITH_SUITESPARSE_KLU=ON; otherwise it builds
