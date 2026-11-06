@@ -611,6 +611,15 @@ TEST_CASE("minres: an operator beyond sqrt(max) or below sqrt(min) (#671, #698)"
     };
     const auto [err1, x1] = solve(1.0);
     REQUIRE(err1 == 0);
+    // The reference itself solves A x = b, so a scaled solve cannot match it
+    // by both returning 0.
+    const auto A1 = scaled_tridiagonal(n, 4.0, -1.0, 1.0);
+    for (std::size_t i = 0; i < n; ++i) {
+        double ax = 0.0;
+        for (std::size_t j = 0; j < n; ++j) ax += A1(i, j) * x1(j);
+        CAPTURE(i);
+        REQUIRE(std::fabs(ax - b(i)) <= 1e-10 * std::fabs(b(i)));
+    }
     for (double scale : {0x1p600, 0x1p-600}) {
         CAPTURE(scale);
         const auto [err, x] = solve(scale);

@@ -464,8 +464,11 @@ TEST_CASE("householder_reflector: a complex beta is real, ||x||, and opposite to
     vec::dense_vector<C> x(3);
     x(0) = C(3.0, -4.0); x(1) = x(2) = C(0.0, 0.0);
     check(x);
-    REQUIRE(householder_reflector(x).beta == C(-5.0, 0.0));
-    REQUIRE(householder_reflector(x).tau != C(0.0, 0.0));
+    // x0 is divided by |x0| and beta multiplied back, neither exactly.
+    const auto tail0 = householder_reflector(x);
+    REQUIRE(tail0.beta.imag() == 0.0);
+    REQUIRE(std::abs(tail0.beta.real() + 5.0) <= 4 * std::numeric_limits<double>::epsilon() * 5.0);
+    REQUIRE(tail0.tau != C(0.0, 0.0));
     x(0) = C(-2.5, 0.0);
     const auto id = householder_reflector(x);
     REQUIRE(id.tau == C(0.0, 0.0));
