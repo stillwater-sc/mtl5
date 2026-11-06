@@ -62,4 +62,11 @@ auto mapped(const Matrix& A,
             const std::vector<typename Matrix::size_type>& col_map) {
     return mat::view::map_view<Matrix>(A, row_map, col_map);
 }
+
+/// Deleted for an rvalue (#695): the view refers to its matrix, so a view of a
+/// temporary dangles once the full expression ends. Name the matrix first.
+template <typename Matrix>
+void mapped(const Matrix&&,
+            const std::vector<typename Matrix::size_type>&,
+            const std::vector<typename Matrix::size_type>&) = delete;
 } // namespace mtl

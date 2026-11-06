@@ -38,6 +38,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
     It passes in a BLAS build too. Against the old header, 7 of the 22 test cases in the first version of this change fail.
 
+### Changed
+
+- **BREAKING: `trans` and the other view factories reject a temporary at compile time** (#695). Every view in `mat/view/` holds a reference to its matrix, and the factories took `const M&`, so `auto t = trans(A * B);` compiled and `t` read freed memory once the product was destroyed.
+  - **The fix:** `trans`, `upper`, `lower`, `strict_upper`, `strict_lower`, `triu`, `tril`, `banded`, `hermitian` and `mapped` each have a deleted `const M&&` overload, which an rvalue prefers over `const M&`.
+  - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
+
 ## [5.23.0] - 2026-11-05
 
 Three fixes, each found by a study or a downstream project. `dense_vector` and `dense2D` build with exceptions disabled, for flight-control firmware (#652). `pow2_scaling`'s fallback finds the right exponent near the ends of a tapered type, so Givens rotations and Householder reflectors scale correctly in posits and takums (#680). Householder factorizations store the reflector's β as the pivot, so `qr_solve` no longer divides by a pivot that rounded to zero in fixed point (#678). It is a minor release because #678 adds `householder_reflector`. Nothing is breaking: in float and double the factorizations' pivots move by a rounding, and with exceptions enabled the thread pool's names and layout are unchanged.

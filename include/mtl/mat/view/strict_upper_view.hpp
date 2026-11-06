@@ -62,6 +62,11 @@ auto strict_upper(const Matrix& A) {
     return mat::view::strict_upper_view<Matrix>(A);
 }
 
+/// Deleted for an rvalue (#695): the view refers to its matrix, so a view of a
+/// temporary dangles once the full expression ends. Name the matrix first.
+template <typename Matrix>
+void strict_upper(const Matrix&&) = delete;
+
 /// MATLAB-compatible triu(A, k): elements on diag k and above.
 /// triu(A, 0) = upper(A), triu(A, 1) = strict_upper(A), etc.
 template <typename Matrix>
@@ -69,4 +74,9 @@ auto triu(const Matrix& A, std::ptrdiff_t k = 0) {
     // Return elements where c - r >= k, i.e., exclude where c - r < k
     return mat::view::strict_upper_view<Matrix>(A, k - 1);
 }
+
+/// Deleted for an rvalue (#695): the view refers to its matrix, so a view of a
+/// temporary dangles once the full expression ends. Name the matrix first.
+template <typename Matrix>
+void triu(const Matrix&&, std::ptrdiff_t = 0) = delete;
 } // namespace mtl
