@@ -7,6 +7,9 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`mult` asserts in debug builds that its output does not alias an input** (#696). `mult(A, B, C)` and `mult(A, x, y)` overwrite C (or y) while still reading the inputs, so `mult(A, B, A)` or `mult(A, x, x)` silently gave a wrong result. The precondition was documented but not checked.
+  - **The fix:** the public `mult` overloads (dense, sparse transposed, block matrix) and `mult_quad` `assert` that the output is not the same object as an input. Release builds are unchanged.
+  - **Limits:** the check compares object addresses, so it does not see a view of the output, such as `mult(trans(C), B, C)`.
 - **The BLAS Level 2 calls pass a valid leading dimension for an empty matrix, and `mult(A, x, y)` sets y to zero when A has no columns** (#693). BLAS requires `lda >= max(1, rows)`. The gemv dispatch in `mult`, and `ger`, `symv`, `trmv` and `trsv`, passed 0 for an empty matrix, so BLAS reported an illegal parameter through XERBLA and returned; other BLAS libraries may abort. gemv also returns without touching y when a dimension is 0, so `mult` on a `3x0` A left y's old values instead of making it 0, as the generic path does.
   - **The fix:** every one of these calls is skipped for an empty matrix, and `mult` then sets y to zero. The leading dimension is also clamped to at least 1, as the Level 3 dispatches already do.
   - **What changes:** nothing for a non-empty matrix, and nothing without BLAS.
