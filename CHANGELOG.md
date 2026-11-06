@@ -10,6 +10,9 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 - **`mult` asserts in debug builds that its output does not alias an input** (#696). `mult(A, B, C)` and `mult(A, x, y)` overwrite C (or y) while still reading the inputs, so `mult(A, B, A)` or `mult(A, x, x)` silently gave a wrong result. The precondition was documented but not checked.
   - **The fix:** the public `mult` overloads (dense, sparse transposed, block matrix) and `mult_quad` `assert` that the output is not the same object as an input. Release builds are unchanged.
   - **Limits:** the check compares object addresses, so it does not see a view of the output, such as `mult(trans(C), B, C)`.
+- **The BLAS Level 2 calls pass a valid leading dimension for an empty matrix, and `mult(A, x, y)` sets y to zero when A has no columns** (#693). BLAS requires `lda >= max(1, rows)`. The gemv dispatch in `mult`, and `ger`, `symv`, `trmv` and `trsv`, passed 0 for an empty matrix, so BLAS reported an illegal parameter through XERBLA and returned; other BLAS libraries may abort. gemv also returns without touching y when a dimension is 0, so `mult` on a `3x0` A left y's old values instead of making it 0, as the generic path does.
+  - **The fix:** every one of these calls is skipped for an empty matrix, and `mult` then sets y to zero. The leading dimension is also clamped to at least 1, as the Level 3 dispatches already do.
+  - **What changes:** nothing for a non-empty matrix, and nothing without BLAS.
 - **`syrk`, `syr2k`, `symv`, `symm` and `trmm` follow the BLAS alpha/beta convention on every path; `symv` and `symm` read only A's lower triangle** (#692). BLAS defines `beta == 0` to mean C (or y) is not read, so it may hold NaN or uninitialized values, and `alpha == 0` to mean A and B (or x) are not read. The generic paths computed `alpha*sum + beta*C` regardless, so a NaN in C survived `beta == 0`, since `0 * NaN` is NaN, while `gemmt` and the BLAS paths gave the right result. `trmm`, which has no beta, kept a NaN in A or B under `alpha == 0`. The generic `symv` and `symm` also read A's full matrix, while BLAS reads only the lower triangle, so for a non-symmetric A the two paths gave different results.
   - **The fix:** each element is computed as `gemmt` computes it. When alpha is zero it is `beta*C`, or zero when beta is zero too. Otherwise it is `alpha*sum`, plus `beta*C` only when beta is nonzero. `trmm` with `alpha == 0` sets B to zero. On the generic and accumulator paths, `symv` and `symm` take A(i,j) above the diagonal from A(j,i).
   - **What changes:** results for a nonzero alpha and beta are unchanged. With `beta == 0` and a finite C they are unchanged too. For a symmetric A, `symv` and `symm` are unchanged. A caller that stored only the upper triangle of A, and relied on the generic path reading it, now gets the lower triangle's values, as a BLAS build always gave.
@@ -37,6 +40,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - NaN in every position for every norm.
 
     It passes in a BLAS build too. Against the old header, 7 of the 22 test cases in the first version of this change fail.
+
+### Changed
+
+- **BREAKING: `trans` and the other view factories reject a temporary at compile time** (#695). Every view in `mat/view/` holds a reference to its matrix, and the factories took `const M&`, so `auto t = trans(A * B);` compiled and `t` read freed memory once the product was destroyed.
+  - **The fix:** `trans`, `upper`, `lower`, `strict_upper`, `strict_lower`, `triu`, `tril`, `banded`, `hermitian` and `mapped` each have a deleted `const M&&` overload, which an rvalue prefers over `const M&`.
+  - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
 
 ## [5.23.0] - 2026-11-05
 

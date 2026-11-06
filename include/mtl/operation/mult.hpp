@@ -658,15 +658,23 @@ void mult(const M& A, const VIn& x, VOut& y) {
         int n = static_cast<int>(A.num_cols());
         T alpha = math::one<T>();
         T beta  = math::zero<T>();
+        // An empty A (#693): BLAS returns without touching y when either
+        // dimension is 0, but y = A*x over an empty inner dimension is 0, as the
+        // generic path makes it. Set it here and skip the call.
+        if (m == 0 || n == 0) {
+            for (std::size_t i = 0; i < y.size(); ++i) y(i) = math::zero<T>();
+            return;
+        }
+        // BLAS requires lda >= max(1, leading extent), even for an empty A.
         if constexpr (interface::is_row_major_v<M>) {
             // Row-major: A_row is A_col^T, so y = A_row * x => y = A_col^T * x
             // BLAS: gemv('T', n, m, ..., A_data, n, x, 1, ..., y, 1)
             interface::blas::gemv('T', n, m, alpha,
-                                  A.data(), n, x.data(), 1,
+                                  A.data(), std::max(1, n), x.data(), 1,
                                   beta, y.data(), 1);
         } else {
             interface::blas::gemv('N', m, n, alpha,
-                                  A.data(), m, x.data(), 1,
+                                  A.data(), std::max(1, m), x.data(), 1,
                                   beta, y.data(), 1);
         }
         return;
