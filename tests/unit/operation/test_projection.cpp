@@ -269,3 +269,102 @@ TEST_CASE("concept check: ProjectableOnto and EmbeddableInto", "[operation][proj
     static_assert(!EmbeddableInto<int8_t, float>);   // 7 < 24
     REQUIRE(true);  // test needs at least one assertion
 }
+
+// ============================================================================
+// Integer to integer saturation across signedness (#691)
+// ============================================================================
+//
+// saturating_cast used to cast Target's limits to the source type before
+// comparing, which wraps when the signedness differs: uint32 -> int32 clamped
+// every value to INT32_MIN, and int -> uint32 clamped every value to UINT32_MAX.
+
+TEST_CASE("scaled project_onto: unsigned to signed of equal width", "[operation][projection][scaled][691]") {
+    constexpr auto u32max = std::numeric_limits<uint32_t>::max();
+    vec::dense_vector<uint32_t> v = {5u, 100u, 0u, u32max, uint32_t{1} << 31,
+                                     static_cast<uint32_t>(std::numeric_limits<int32_t>::max())};
+    auto r = project_onto<int32_t>(v, uint32_t{1});
+    REQUIRE(r(0) == 5);
+    REQUIRE(r(1) == 100);
+    REQUIRE(r(2) == 0);
+    REQUIRE(r(3) == std::numeric_limits<int32_t>::max());   // saturated
+    REQUIRE(r(4) == std::numeric_limits<int32_t>::max());   // 2^31, one past max
+    REQUIRE(r(5) == std::numeric_limits<int32_t>::max());   // exactly max
+}
+
+TEST_CASE("scaled embed_into: signed to unsigned", "[operation][projection][scaled][691]") {
+    // int * int16 is int, so this is int -> uint32.
+    vec::dense_vector<int16_t> v = {5, 7, 0, -1, std::numeric_limits<int16_t>::min(),
+                                    std::numeric_limits<int16_t>::max()};
+    auto r = embed_into<uint32_t>(v, 1);
+    REQUIRE(r(0) == 5u);
+    REQUIRE(r(1) == 7u);
+    REQUIRE(r(2) == 0u);
+    REQUIRE(r(3) == 0u);                                     // negative saturates to 0
+    REQUIRE(r(4) == 0u);
+    REQUIRE(r(5) == 32767u);
+}
+
+TEST_CASE("scaled project_onto: narrowing signed to unsigned, int64 to uint16", "[operation][projection][scaled][691]") {
+    vec::dense_vector<int64_t> v = {5, -5, 65535, 65536, std::numeric_limits<int64_t>::max(),
+                                    std::numeric_limits<int64_t>::min()};
+    auto r = project_onto<uint16_t>(v, int64_t{1});
+    REQUIRE(r(0) == 5);
+    REQUIRE(r(1) == 0);
+    REQUIRE(r(2) == 65535);
+    REQUIRE(r(3) == 65535);
+    REQUIRE(r(4) == 65535);
+    REQUIRE(r(5) == 0);
+}
+
+TEST_CASE("scaled project_onto: narrowing unsigned to signed, uint64 to int8", "[operation][projection][scaled][691]") {
+    vec::dense_vector<uint64_t> v = {3u, 127u, 128u, std::numeric_limits<uint64_t>::max()};
+    auto r = project_onto<int8_t>(v, uint64_t{2});
+    REQUIRE(r(0) == 6);
+    REQUIRE(r(1) == 127);                                    // 254 saturates
+    REQUIRE(r(2) == 127);
+    REQUIRE(r(3) == 127);                                    // 2 * max wraps to max - 1, still > 127
+}
+
+TEST_CASE("scaled project_onto: same signedness still saturates", "[operation][projection][scaled][691]") {
+    vec::dense_vector<int32_t> v = {-200, 200, 50};
+    auto r = project_onto<int8_t>(v, int32_t{1});
+    REQUIRE(r(0) == -128);
+    REQUIRE(r(1) == 127);
+    REQUIRE(r(2) == 50);
+    dense2D<uint32_t> m = {{5u, 70000u}, {0u, 1u}};
+    auto rm = project_onto<uint16_t>(m, uint32_t{1});
+    REQUIRE(rm(0, 0) == 5);
+    REQUIRE(rm(0, 1) == 65535);
+    REQUIRE(rm(1, 1) == 1);
+}
+
+TEST_CASE("saturating_cast to and from character types", "[operation][projection][691]") {
+    // std::cmp_less rejects char types; saturating_cast widens them first.
+    REQUIRE(detail::saturating_cast<char>(1000) == std::numeric_limits<char>::max());
+    REQUIRE(detail::saturating_cast<char>(-1000) == std::numeric_limits<char>::min());
+    REQUIRE(detail::saturating_cast<char>(65) == 'A');
+    REQUIRE(detail::saturating_cast<uint8_t>('A') == 65);
+    REQUIRE(detail::saturating_cast<char16_t>(-1) == char16_t{0});
+    REQUIRE(detail::saturating_cast<int>(std::numeric_limits<unsigned long long>::max())
+            == std::numeric_limits<int>::max());
+}
+
+TEST_CASE("scaled embed_into: widening between signed types", "[operation][projection][scaled][691]") {
+    // Old bound cast: static_cast<int>(LLONG_MAX) == -1 and
+    // static_cast<int>(LLONG_MIN) == 0, so every positive value clamped to
+    // LLONG_MAX and every negative one to LLONG_MIN.
+    vec::dense_vector<int32_t> v = {5, -5, 0, std::numeric_limits<int32_t>::max(),
+                                    std::numeric_limits<int32_t>::min()};
+    auto r = embed_into<long long>(v, 1);
+    REQUIRE(r(0) == 5);
+    REQUIRE(r(1) == -5);
+    REQUIRE(r(2) == 0);
+    REQUIRE(r(3) == std::numeric_limits<int32_t>::max());
+    REQUIRE(r(4) == std::numeric_limits<int32_t>::min());
+    REQUIRE(detail::saturating_cast<long long>(int{5}) == 5);
+    // Unsigned widening was unaffected; check it stays so.
+    vec::dense_vector<uint16_t> u = {0, 7, std::numeric_limits<uint16_t>::max()};
+    auto ru = embed_into<uint64_t>(u, uint64_t{1});
+    REQUIRE(ru(1) == 7u);
+    REQUIRE(ru(2) == 65535u);
+}
