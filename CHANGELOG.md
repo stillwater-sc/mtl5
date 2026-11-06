@@ -7,9 +7,6 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
-- **`trans` and the other view factories reject a temporary at compile time** (#695). Every view in `mat/view/` holds a reference to its matrix, and the factories took `const M&`, so `auto t = trans(A * B);` compiled and `t` read freed memory once the product was destroyed.
-  - **The fix:** `trans`, `upper`, `lower`, `strict_upper`, `strict_lower`, `triu`, `tril`, `banded`, `hermitian` and `mapped` each have a deleted `const M&&` overload, which an rvalue prefers over `const M&`.
-  - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
 - **The BLAS Level 2 calls pass a valid leading dimension for an empty matrix, and `mult(A, x, y)` sets y to zero when A has no columns** (#693). BLAS requires `lda >= max(1, rows)`. The gemv dispatch in `mult`, and `ger`, `symv`, `trmv` and `trsv`, passed 0 for an empty matrix, so BLAS reported an illegal parameter through XERBLA and returned; other BLAS libraries may abort. gemv also returns without touching y when a dimension is 0, so `mult` on a `3x0` A left y's old values instead of making it 0, as the generic path does.
   - **The fix:** every one of these calls is skipped for an empty matrix, and `mult` then sets y to zero. The leading dimension is also clamped to at least 1, as the Level 3 dispatches already do.
   - **What changes:** nothing for a non-empty matrix, and nothing without BLAS.
@@ -40,6 +37,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - NaN in every position for every norm.
 
     It passes in a BLAS build too. Against the old header, 7 of the 22 test cases in the first version of this change fail.
+
+### Changed
+
+- **BREAKING: `trans` and the other view factories reject a temporary at compile time** (#695). Every view in `mat/view/` holds a reference to its matrix, and the factories took `const M&`, so `auto t = trans(A * B);` compiled and `t` read freed memory once the product was destroyed.
+  - **The fix:** `trans`, `upper`, `lower`, `strict_upper`, `strict_lower`, `triu`, `tril`, `banded`, `hermitian` and `mapped` each have a deleted `const M&&` overload, which an rvalue prefers over `const M&`.
+  - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
 
 ## [5.23.0] - 2026-11-05
 

@@ -61,6 +61,14 @@ MTL5_VIEW_REJECTS_RVALUES(can_tril)
 MTL5_VIEW_REJECTS_RVALUES(can_banded)
 MTL5_VIEW_REJECTS_RVALUES(can_mapped)
 
+// A view of a view: trans(upper(A)) passes upper's temporary to trans, so it
+// is rejected too; a named upper view is accepted.
+using Upper = decltype(mtl::upper(std::declval<D&>()));
+static_assert(can_trans<Upper&>, "trans: a named view makes a view");
+static_assert(can_trans<const Upper&>, "trans: a const named view makes a view");
+static_assert(!can_trans<Upper>, "trans: a view rvalue must not make a view");
+static_assert(!can_trans<const Upper>, "trans: a const view rvalue must not make a view");
+
 #undef MTL5_VIEW_REJECTS_RVALUES
 
 } // namespace
@@ -80,6 +88,8 @@ TEST_CASE("view factories still accept a named matrix", "[mat][view][695]") {
     // A view of a view is made from a named view.
     auto tt = mtl::trans(t);
     REQUIRE(tt(1, 2) == A(1, 2));
+    auto up = mtl::upper(A);
+    REQUIRE(mtl::trans(up)(1, 0) == A(0, 1));
 
     REQUIRE(mtl::upper(A)(1, 0) == 0.0);
     REQUIRE(mtl::lower(A)(1, 0) == A(1, 0));
