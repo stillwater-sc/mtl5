@@ -63,6 +63,7 @@ void ger(const S& alpha, const VX& x, const VY& y, M& A) {
                   std::is_same_v<typename M::value_type, typename VY::value_type>) {
         using T = typename M::value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
+        if (m == 0 || n == 0) return;   // nothing to update; skip BLAS (#693)
         if (m <= imax && n <= imax) {
             // Column-major storage: the leading dimension is the row count,
             // and BLAS requires it to be at least 1 even for an empty A (#693).

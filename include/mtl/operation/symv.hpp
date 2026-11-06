@@ -76,6 +76,7 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
                   std::is_same_v<value_type, typename M::value_type> &&
                   std::is_same_v<value_type, typename VX::value_type>) {
         using T = value_type;
+        if (n == 0) return;   // y is empty; skip BLAS (#693)
         if (n <= static_cast<size_type>(std::numeric_limits<int>::max())) {
             // 'L' reads the lower triangle, as the generic paths do. BLAS
             // requires lda >= 1 even for an empty A (#693).

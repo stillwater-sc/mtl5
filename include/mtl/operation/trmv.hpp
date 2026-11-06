@@ -78,6 +78,7 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
                   !interface::is_row_major_v<M> &&
                   std::is_same_v<value_type, typename M::value_type>) {
         using T = value_type;
+        if (n == 0) return;   // x is empty; skip BLAS (#693)
         if (n <= static_cast<size_type>(std::numeric_limits<int>::max())) {
             // BLAS requires lda >= 1 even for an empty A (#693).
             interface::blas::trmv(upper ? 'U' : 'L', 'N', unit_diag ? 'U' : 'N',

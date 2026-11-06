@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <string>
 #include <utility>
 
 using namespace mtl;
@@ -135,6 +136,22 @@ TEST_CASE("trsv: triangular solve A x = b inverts trmv", "[operation][blas][trsv
     REQUIRE_THAT(rhs(2), Catch::Matchers::WithinAbs(3.0, 1e-12));
 }
 
+// A BLAS build counts every XERBLA call (#693). Reference BLAS and OpenBLAS
+// report an illegal argument through xerbla_ and return, so a bad lda would
+// otherwise pass any test that only checks the result. Defining xerbla_ here
+// replaces the library's on ELF platforms, where the executable's definition
+// takes precedence; elsewhere the library keeps its own and the count stays 0.
+#if defined(MTL5_HAS_BLAS) && defined(__ELF__)
+namespace { int xerbla_calls = 0; }
+extern "C" void xerbla_(const char* srname, const int* info, std::size_t len) {
+    ++xerbla_calls;
+    UNSCOPED_INFO("XERBLA: " << std::string(srname, len) << " parameter " << *info);
+}
+#define MTL5_REQUIRE_NO_XERBLA() REQUIRE(std::exchange(xerbla_calls, 0) == 0)
+#else
+#define MTL5_REQUIRE_NO_XERBLA() ((void)0)
+#endif
+
 // Empty shapes (#693). BLAS requires lda >= max(1, rows) even when a dimension
 // is 0, and returns without touching y when either gemv dimension is 0. The
 // generic path makes y = A*x over an empty inner dimension 0, so every path
@@ -153,6 +170,7 @@ void check_empty_l2(std::size_t m, std::size_t n) {
         for (std::size_t i = 0; i < m; ++i) y(i) = 7.0;
         mult(A, x, y);
         for (std::size_t i = 0; i < m; ++i) REQUIRE(y(i) == 0.0);
+        MTL5_REQUIRE_NO_XERBLA();
     }
     // ger: A += alpha x y^T has no elements to update; it must not fail.
     {
@@ -163,6 +181,7 @@ void check_empty_l2(std::size_t m, std::size_t n) {
         ger(2.0, x, y, A);
         REQUIRE(A.num_rows() == m);
         REQUIRE(A.num_cols() == n);
+        MTL5_REQUIRE_NO_XERBLA();
     }
 }
 
@@ -172,11 +191,13 @@ void check_empty_square() {
     vec::dense_vector<double> x(0), y(0);
     symv(1.0, A, x, 0.0, y);
     REQUIRE(y.size() == 0);
+    MTL5_REQUIRE_NO_XERBLA();
     for (bool upper : {true, false})
         for (bool unit : {true, false}) {
             trmv(A, x, upper, unit);
             trsv(A, x, upper, unit);
             REQUIRE(x.size() == 0);
+            MTL5_REQUIRE_NO_XERBLA();
         }
 }
 
