@@ -308,3 +308,25 @@ foreach(cf_src ${COMPILE_FAIL_SRC})
         PASS_REGULAR_EXPRESSION "${cf_expect}"
         LABELS "compile_fail")
 endforeach()
+
+# -- Death tests ---------------------------------------------------------------
+# A death test makes one call that must fail an assertion. mult_alias makes an
+# aliased mult call, chosen by its argument (#696). The source undefines NDEBUG,
+# so it runs in every build type, and turns SIGABRT into a normal exit, because
+# ctest counts a signal as a failure even when the output matches. The test
+# passes only when the output names the aliasing assertion.
+#
+# Not on MSVC: its debug CRT can report a failed assertion in a dialog, which
+# would hang a CI runner instead of failing.
+if(NOT MSVC)
+    add_executable(death_test_mult_alias death/mult_alias.cpp)
+    target_link_libraries(death_test_mult_alias PRIVATE MTL5::mtl5)
+    set_target_properties(death_test_mult_alias PROPERTIES FOLDER "Tests/death")
+    foreach(death_case matvec_x matmat_a matmat_b acc_matvec_x acc_matmat_a)
+        add_test(NAME death_test_mult_alias_${death_case}
+                 COMMAND death_test_mult_alias ${death_case})
+        set_tests_properties(death_test_mult_alias_${death_case} PROPERTIES
+            PASS_REGULAR_EXPRESSION "must not alias"
+            LABELS "death")
+    endforeach()
+endif()
