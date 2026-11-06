@@ -33,19 +33,40 @@ template <typename T> concept mixed_double  = requires(T t) { 2.0 * t; };
 // The math generic code calls through `using std::f; f(x);` resolves to the
 // shim's hidden friends by ADL; the test below calls each of them that way.
 
-template <typename S>
-constexpr bool rejects_native_only() {
-    return !std::is_floating_point_v<S> && !std::is_arithmetic_v<S> &&
-           std::is_trivially_default_constructible_v<S> && std::is_trivially_copyable_v<S> &&
-           !std_sqrt_ok<S> && !std_abs_ok<S> && !std_frexp_ok<S> && !std_ldexp_ok<S> &&
-           !std_isnan_ok<S> && !compares_int<S> && !mixed_double<S> &&
-           !std::is_convertible_v<double, S> && !std::is_convertible_v<int, S> &&
-           !std::is_convertible_v<S, double> && !std::is_convertible_v<S, float> &&
-           std::is_constructible_v<S, double> && std::is_constructible_v<S, int> &&
-           std::numeric_limits<S>::is_specialized;
-}
-static_assert(rejects_native_only<float_shim>());
-static_assert(rejects_native_only<double_shim>());
+// One static_assert per property, so a failure names the one that broke.
+#define MTL5_SHIM_STATIC_CHECKS(S)                                              \
+    static_assert(!std::is_floating_point_v<S>);                               \
+    static_assert(!std::is_arithmetic_v<S>);                                   \
+    static_assert(std::is_trivially_default_constructible_v<S>);               \
+    static_assert(std::is_trivially_copyable_v<S>);                            \
+    static_assert(!std_sqrt_ok<S>);                                            \
+    static_assert(!std_abs_ok<S>);                                             \
+    static_assert(!std_frexp_ok<S>);                                           \
+    static_assert(!std_ldexp_ok<S>);                                           \
+    MTL5_SHIM_STD_ISNAN_CHECK(S)                                               \
+    static_assert(!compares_int<S>);                                           \
+    static_assert(!mixed_double<S>);                                           \
+    static_assert(!std::is_convertible_v<double, S>);                          \
+    static_assert(!std::is_convertible_v<int, S>);                             \
+    static_assert(!std::is_convertible_v<S, double>);                          \
+    static_assert(!std::is_convertible_v<S, float>);                           \
+    static_assert(std::is_constructible_v<S, double>);                         \
+    static_assert(std::is_constructible_v<S, int>);                            \
+    static_assert(std::numeric_limits<S>::is_specialized);
+
+// Microsoft's <math.h> declares isnan, isinf, isfinite and signbit as
+// unconstrained templates, so std::isnan(t) is well-formed in an unevaluated
+// requires-expression for any type and only fails once instantiated. The
+// check is a property of the standard library there, not of the shim; the
+// others hold on every library.
+#if defined(_MSVC_STL_VERSION)
+#define MTL5_SHIM_STD_ISNAN_CHECK(S)
+#else
+#define MTL5_SHIM_STD_ISNAN_CHECK(S) static_assert(!std_isnan_ok<S>);
+#endif
+
+MTL5_SHIM_STATIC_CHECKS(float_shim)
+MTL5_SHIM_STATIC_CHECKS(double_shim)
 static_assert(sizeof(float_shim) == sizeof(float) && sizeof(double_shim) == sizeof(double));
 
 } // namespace
