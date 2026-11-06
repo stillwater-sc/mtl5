@@ -70,3 +70,19 @@ TEST_CASE("randorth different calls produce different matrices", "[generators][r
                 differ = true;
     REQUIRE(differ);
 }
+
+TEST_CASE("randorth takes Q from the QR with a non-negative R diagonal (#698)", "[generators][randorth]") {
+    // Q = A R^-1, so Q's first column is A's first column over R(0,0). With
+    // R(0,0) = ||A(:,0)|| > 0 the sign of Q(0,0) is that of the random A(0,0),
+    // either way about half the time. qr_factor's own R(0,0) is
+    // -sign(A(0,0)) ||A(:,0)|| (#672), which makes Q(0,0) negative every time:
+    // without qr_normalize_signs all 64 draws below would be.
+    int positive = 0;
+    for (int t = 0; t < 64; ++t) {
+        const auto Q = generators::randorth<double>(4);
+        if (Q(0, 0) > 0.0) ++positive;
+    }
+    CAPTURE(positive);
+    REQUIRE(positive > 0);
+    REQUIRE(positive < 64);
+}

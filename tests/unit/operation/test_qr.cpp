@@ -540,3 +540,43 @@ TEST_CASE("qr_normalize_signs and lq_normalize_signs give a non-negative diagona
             }
     }
 }
+
+TEST_CASE("lq_normalize_signs: a complex L ends with a real, non-negative diagonal (#698)",
+          "[operation][lq][672]") {
+    // The complex counterpart of the LQ block above: lq_factor's L(k,k) is
+    // real with LAPACK's sign, and the helper negates column k of L and row k
+    // of Q wherever its real part is negative, leaving L*Q equal to A.
+    using C = std::complex<double>;
+    mat::dense2D<C> A(3, 5), F(3, 5);
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 5; ++j)
+            F(i, j) = A(i, j) = C(1.0 + double(2 * i + j), double(j) - double(i));
+    vec::dense_vector<C> tau;
+    lq_factor(F, tau);
+    auto L = lq_extract_L(F);
+    auto Q = lq_extract_Q(F, tau);
+    const mat::dense2D<C> L0 = L;
+    bool flipped = false;
+    for (std::size_t k = 0; k < 3; ++k) flipped = flipped || L0(k, k).real() < 0.0;
+    REQUIRE(flipped);   // otherwise the helper has nothing to do here
+    lq_normalize_signs(L, Q);
+    for (std::size_t k = 0; k < 3; ++k) {
+        CAPTURE(k);
+        REQUIRE(L(k, k).real() >= 0.0);
+        REQUIRE(std::abs(L(k, k).imag()) < 1e-12);
+        REQUIRE(std::abs(L(k, k)) == std::abs(L0(k, k)));
+    }
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 5; ++j) {
+            C lq = 0;
+            for (std::size_t k = 0; k < 3; ++k) lq += L(i, k) * Q(k, j);
+            REQUIRE(std::abs(lq - A(i, j)) < 1e-13);
+        }
+    // Q stays unitary: Q Q^H = I.
+    for (std::size_t a = 0; a < 5; ++a)
+        for (std::size_t b = 0; b < 5; ++b) {
+            C qqh = 0;
+            for (std::size_t k = 0; k < 5; ++k) qqh += Q(a, k) * std::conj(Q(b, k));
+            REQUIRE(std::abs(qqh - (a == b ? C(1.0) : C(0.0))) < 1e-13);
+        }
+}
