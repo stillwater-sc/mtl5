@@ -7,6 +7,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`kron` takes its value type from both operands, so a mixed-type product is no longer narrowed** (#694). The result's value type was A's alone, so `kron(dense2D<int>{2}, dense2D<double>{0.25})` gave `0`, and `kron` of a `double` matrix with a `std::complex<double>` one did not compile.
+  - **The fix:** the value type is `std::common_type_t` of the two value types, as in `dot`, `axpy` and the other mixed-type operations.
+  - **What changes:** nothing when both operands have the same value type. For example, `int8_t (x) int8_t` stays `int8_t`, although `int8_t * int8_t` is `int`. A pair of custom types with no `std::common_type` keeps A's value type, as before, rather than failing to compile.
+  - **Test:** `test_kron` covers `int (x) double` in both orders, `float (x) double`, `double (x) complex<double>`, same-type `double` and `int8_t`, and the no-common-type fallback. Against the old header, the new cases do not compile.
+
 - **Scaled `project_onto` and `embed_into` saturate correctly between integers of different signedness** (#691). `detail::saturating_cast` cast the target's limits to the source type before comparing, and those limits wrap when the signedness differs. So `project_onto<int32_t>(dense_vector<uint32_t>{5, 100}, uint32_t{1})` gave `INT32_MIN` for both elements, and `embed_into<uint32_t>(dense_vector<int16_t>{5, 7}, 1)` gave `UINT32_MAX`.
   - **The fix:** the comparison is by value, with `std::cmp_less` and `std::cmp_greater`. Both sides are first widened to `long long` or `unsigned long long`, since those functions reject `bool` and the character types. Widening between signed types was broken the same way: `static_cast<int>(LLONG_MAX)` is -1, so `embed_into<long long>` of an `int` vector clamped every positive value to `LLONG_MAX` and every negative one to `LLONG_MIN`. That is fixed too. Same-signedness narrowing, unsigned widening and floating-point conversions are unchanged.
   - **Test:** `test_projection` covers unsigned to signed and signed to unsigned at both ends of the range, equal-width (uint32 to int32), narrowing (int64 to uint16, uint64 to int8), integer scale factors, widening between signed types, and `char` targets. Against the old header, 5 of its 26 test cases fail.
