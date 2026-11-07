@@ -188,6 +188,29 @@ jobs:
           github.event.pull_request.head.repo.full_name == github.repository
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
+      # Report whether the Linux ARM64 runner has SVE (#427). batch<T> demotes a
+      # scalable target to one lane, so whether SVE work can be tested here --
+      # or needs other hardware -- depends on what this runner reports. Shown as
+      # a check annotation; informational only, it never fails the job.
+      - name: Report SIMD features (Linux ARM64)
+        if: runner.os == 'Linux' && runner.arch == 'ARM64'
+        env:
+          CXX_UNDER_TEST: ${{ matrix.cxx }}
+        run: |
+          model=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)
+          feats=$(grep -m1 '^Features' /proc/cpuinfo | cut -d: -f2)
+          sve=no; sve2=no
+          for f in $feats; do
+            [ "$f" = sve ] && sve=yes
+            [ "$f" = sve2 ] && sve2=yes
+          done
+          vl=$(cat /proc/sys/abi/sve_default_vector_length 2>/dev/null || echo n/a)
+          native=$("$CXX_UNDER_TEST" -march=native -dM -E -x c++ /dev/null 2>/dev/null \
+                     | grep -c '__ARM_FEATURE_SVE ' || true)
+          echo "CPU: ${model:-unknown}"
+          echo "Features:$feats"
+          echo "::notice title=ARM64 SIMD (#427)::cpu=${model:-unknown} sve=$sve sve2=$sve2 default_vl_bytes=$vl native_sve_macro=$native"
+
       - name: Configure (Unix, GCC/Clang)
         if: runner.os != 'Windows'
         run: >
