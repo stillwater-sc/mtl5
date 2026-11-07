@@ -53,18 +53,40 @@ struct isa_kernels {
     double f32_flops_per_iter = 0.0;
 };
 
-// Twelve chains: covers FMA latency 4 x 2 ports with headroom, and fits the 16
-// vector registers of SSE/AVX2 with the two constants.
+// How every kernel here is written, and why (each point was a measured failure):
 //
-// Every FMA kernel ACCUMULATES: acc = m*c + acc, the accumulator as the addend.
-// AArch64's FMLA can only add into its destination, so the form acc*m + c
-// (accumulator as a multiplicand) cost two vector moves per FMA there -- 32 movs
-// to 16 fmla in the loop -- and the NEON "peak" on Neoverse N2 came out at 6.8
-// GFLOP/s, below the scalar build's 10.8. x86 FMA has a form for every operand
-// order, so it never showed. Each chain grows by 1e-6 per iteration: bounded and
-// normal over any run length the timing driver chooses. (SSE2 keeps acc*m + c:
-// with no FMA, m*c would be loop-invariant and the loop would time adds only.)
+// * NAMED ACCUMULATORS, never an array. With `V acc[16]`, GCC for aarch64 kept
+//   the array in memory and stored every accumulator on every iteration (8 stp
+//   per 16 fmla): the loop was store-bound and the NEON "peak" on Neoverse N2 read
+//   18.1 GFLOP/s f64 where the core sustains at least 27. Named locals are always
+//   register-allocated. The chain lists below generate them.
+// * ACCUMULATE INTO THE ADDEND: acc = m*c + acc. AArch64's FMLA adds only into
+//   its destination; with the accumulator as a multiplicand (acc*m + c) GCC
+//   emitted two vector moves per FMA, and the peak read 6.8. x86 FMA has a form
+//   for every operand order, so neither problem showed there.
+//   Each chain grows by 1e-6 per iteration: bounded and normal for any run length
+//   the timing driver chooses.
+// * SSE2 has no FMA, so its kernel keeps acc*m + c (two instructions, two flops):
+//   with m*c + acc, the product would be loop-invariant and the loop would time
+//   adds only.
+//
+// Chains: 12 on x86 (FMA latency 4 x 2 ports with headroom, inside the 16
+// registers of SSE/AVX2 with the two constants), 16 on AArch64 (the V-class
+// Neoverse cores issue four 128-bit FMAs per cycle at latency 4; 32 registers).
 inline constexpr int kChains = 12;
+inline constexpr int kChainsNeon = 16;
+
+#define MTL5_HW_C12(X) X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11)
+#define MTL5_HW_C16(X) MTL5_HW_C12(X) X(12) X(13) X(14) X(15)
+// The three steps of a kernel, in terms of per-kernel MTL5_V, MTL5_SET, MTL5_STEP
+// and MTL5_ADD, which each kernel defines and undefines around its body.
+#define MTL5_HW_DECL(i) MTL5_V a##i = MTL5_SET(seed + (i));
+#define MTL5_HW_UPDATE(i) a##i = MTL5_STEP(a##i);
+#define MTL5_HW_SUM(i) if ((i) != 0) a0 = MTL5_ADD(a0, a##i);
+#define MTL5_HW_BODY(CHAINS)                                                   \
+    CHAINS(MTL5_HW_DECL)                                                       \
+    for (std::size_t it = 0; it < iters; ++it) { CHAINS(MTL5_HW_UPDATE) }      \
+    CHAINS(MTL5_HW_SUM)
 
 #if defined(MTL5_HW_PEAK_X86)
 
@@ -91,83 +113,101 @@ inline unsigned long long xcr0() {
 
 MTL5_HW_TARGET("avx512f")
 inline double avx512_f64(std::size_t iters, double seed) {
-    __m512d acc[kChains];
-    for (int a = 0; a < kChains; ++a) acc[a] = _mm512_set1_pd(seed + a);
+#define MTL5_V __m512d
+#define MTL5_SET(x) _mm512_set1_pd(x)
+#define MTL5_STEP(a) _mm512_fmadd_pd(m, c, a)
+#define MTL5_ADD(a, b) _mm512_add_pd(a, b)
     const __m512d m = _mm512_set1_pd(1e-3), c = _mm512_set1_pd(1e-3);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm512_fmadd_pd(m, c, acc[a]);
-    __m512d s = acc[0];
-    for (int a = 1; a < kChains; ++a) s = _mm512_add_pd(s, acc[a]);
+    MTL5_HW_BODY(MTL5_HW_C12)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
     double o[8];
-    _mm512_storeu_pd(o, s);
+    _mm512_storeu_pd(o, a0);
     return o[0] + o[1] + o[2] + o[3] + o[4] + o[5] + o[6] + o[7];
 }
 MTL5_HW_TARGET("avx512f")
 inline double avx512_f32(std::size_t iters, double seed) {
-    __m512 acc[kChains];
-    for (int a = 0; a < kChains; ++a) acc[a] = _mm512_set1_ps(static_cast<float>(seed + a));
+#define MTL5_V __m512
+#define MTL5_SET(x) _mm512_set1_ps(static_cast<float>(x))
+#define MTL5_STEP(a) _mm512_fmadd_ps(m, c, a)
+#define MTL5_ADD(a, b) _mm512_add_ps(a, b)
     const __m512 m = _mm512_set1_ps(1e-3f), c = _mm512_set1_ps(1e-3f);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm512_fmadd_ps(m, c, acc[a]);
-    __m512 s = acc[0];
-    for (int a = 1; a < kChains; ++a) s = _mm512_add_ps(s, acc[a]);
+    MTL5_HW_BODY(MTL5_HW_C12)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
     float o[16];
-    _mm512_storeu_ps(o, s);
+    _mm512_storeu_ps(o, a0);
     double r = 0;
     for (float v : o) r += v;
     return r;
 }
 MTL5_HW_TARGET("avx2,fma")
 inline double avx2_f64(std::size_t iters, double seed) {
-    __m256d acc[kChains];
-    for (int a = 0; a < kChains; ++a) acc[a] = _mm256_set1_pd(seed + a);
+#define MTL5_V __m256d
+#define MTL5_SET(x) _mm256_set1_pd(x)
+#define MTL5_STEP(a) _mm256_fmadd_pd(m, c, a)
+#define MTL5_ADD(a, b) _mm256_add_pd(a, b)
     const __m256d m = _mm256_set1_pd(1e-3), c = _mm256_set1_pd(1e-3);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm256_fmadd_pd(m, c, acc[a]);
-    __m256d s = acc[0];
-    for (int a = 1; a < kChains; ++a) s = _mm256_add_pd(s, acc[a]);
+    MTL5_HW_BODY(MTL5_HW_C12)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
     double o[4];
-    _mm256_storeu_pd(o, s);
+    _mm256_storeu_pd(o, a0);
     return o[0] + o[1] + o[2] + o[3];
 }
 MTL5_HW_TARGET("avx2,fma")
 inline double avx2_f32(std::size_t iters, double seed) {
-    __m256 acc[kChains];
-    for (int a = 0; a < kChains; ++a) acc[a] = _mm256_set1_ps(static_cast<float>(seed + a));
+#define MTL5_V __m256
+#define MTL5_SET(x) _mm256_set1_ps(static_cast<float>(x))
+#define MTL5_STEP(a) _mm256_fmadd_ps(m, c, a)
+#define MTL5_ADD(a, b) _mm256_add_ps(a, b)
     const __m256 m = _mm256_set1_ps(1e-3f), c = _mm256_set1_ps(1e-3f);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm256_fmadd_ps(m, c, acc[a]);
-    __m256 s = acc[0];
-    for (int a = 1; a < kChains; ++a) s = _mm256_add_ps(s, acc[a]);
+    MTL5_HW_BODY(MTL5_HW_C12)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
     float o[8];
-    _mm256_storeu_ps(o, s);
+    _mm256_storeu_ps(o, a0);
     double r = 0;
     for (float v : o) r += v;
     return r;
 }
 // SSE2 has no FMA: a multiply and an add per lane, two flops, two instructions.
 inline double sse2_f64(std::size_t iters, double seed) {
-    __m128d acc[kChains];
-    for (int a = 0; a < kChains; ++a) acc[a] = _mm_set1_pd(seed + a);
+#define MTL5_V __m128d
+#define MTL5_SET(x) _mm_set1_pd(x)
+#define MTL5_STEP(a) _mm_add_pd(_mm_mul_pd(a, m), c)
+#define MTL5_ADD(a, b) _mm_add_pd(a, b)
     const __m128d m = _mm_set1_pd(0.999999), c = _mm_set1_pd(1e-6);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm_add_pd(_mm_mul_pd(acc[a], m), c);
-    __m128d s = acc[0];
-    for (int a = 1; a < kChains; ++a) s = _mm_add_pd(s, acc[a]);
+    MTL5_HW_BODY(MTL5_HW_C12)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
     double o[2];
-    _mm_storeu_pd(o, s);
+    _mm_storeu_pd(o, a0);
     return o[0] + o[1];
 }
 inline double sse2_f32(std::size_t iters, double seed) {
-    __m128 acc[kChains];
-    for (int a = 0; a < kChains; ++a) acc[a] = _mm_set1_ps(static_cast<float>(seed + a));
+#define MTL5_V __m128
+#define MTL5_SET(x) _mm_set1_ps(static_cast<float>(x))
+#define MTL5_STEP(a) _mm_add_ps(_mm_mul_ps(a, m), c)
+#define MTL5_ADD(a, b) _mm_add_ps(a, b)
     const __m128 m = _mm_set1_ps(0.999999f), c = _mm_set1_ps(1e-6f);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm_add_ps(_mm_mul_ps(acc[a], m), c);
-    __m128 s = acc[0];
-    for (int a = 1; a < kChains; ++a) s = _mm_add_ps(s, acc[a]);
+    MTL5_HW_BODY(MTL5_HW_C12)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
     float o[4];
-    _mm_storeu_ps(o, s);
+    _mm_storeu_ps(o, a0);
     return double(o[0]) + o[1] + o[2] + o[3];
 }
 
@@ -198,30 +238,32 @@ inline isa_kernels select() {
 
 #elif defined(MTL5_HW_PEAK_ARM64)
 
-// Sixteen chains here: the V-class Neoverse cores issue four 128-bit FMAs per
-// cycle at latency 4, and AArch64 has 32 vector registers.
-inline constexpr int kChainsNeon = 16;
-
 inline double neon_f64(std::size_t iters, double seed) {
-    float64x2_t acc[kChainsNeon];
-    for (int a = 0; a < kChainsNeon; ++a) acc[a] = vdupq_n_f64(seed + a);
+#define MTL5_V float64x2_t
+#define MTL5_SET(x) vdupq_n_f64(x)
+#define MTL5_STEP(a) vfmaq_f64(a, m, c)   // a + m*c
+#define MTL5_ADD(a, b) vaddq_f64(a, b)
     const float64x2_t m = vdupq_n_f64(1e-3), c = vdupq_n_f64(1e-3);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChainsNeon; ++a) acc[a] = vfmaq_f64(acc[a], m, c);   // acc + m*c
-    float64x2_t s = acc[0];
-    for (int a = 1; a < kChainsNeon; ++a) s = vaddq_f64(s, acc[a]);
-    return vgetq_lane_f64(s, 0) + vgetq_lane_f64(s, 1);
+    MTL5_HW_BODY(MTL5_HW_C16)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
+    return vgetq_lane_f64(a0, 0) + vgetq_lane_f64(a0, 1);
 }
 inline double neon_f32(std::size_t iters, double seed) {
-    float32x4_t acc[kChainsNeon];
-    for (int a = 0; a < kChainsNeon; ++a) acc[a] = vdupq_n_f32(static_cast<float>(seed + a));
+#define MTL5_V float32x4_t
+#define MTL5_SET(x) vdupq_n_f32(static_cast<float>(x))
+#define MTL5_STEP(a) vfmaq_f32(a, m, c)
+#define MTL5_ADD(a, b) vaddq_f32(a, b)
     const float32x4_t m = vdupq_n_f32(1e-3f), c = vdupq_n_f32(1e-3f);
-    for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChainsNeon; ++a) acc[a] = vfmaq_f32(acc[a], m, c);
-    float32x4_t s = acc[0];
-    for (int a = 1; a < kChainsNeon; ++a) s = vaddq_f32(s, acc[a]);
-    return double(vgetq_lane_f32(s, 0)) + vgetq_lane_f32(s, 1) + vgetq_lane_f32(s, 2) +
-           vgetq_lane_f32(s, 3);
+    MTL5_HW_BODY(MTL5_HW_C16)
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
+    return double(vgetq_lane_f32(a0, 0)) + vgetq_lane_f32(a0, 1) + vgetq_lane_f32(a0, 2) +
+           vgetq_lane_f32(a0, 3);
 }
 
 inline isa_kernels select() {

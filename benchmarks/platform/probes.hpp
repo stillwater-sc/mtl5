@@ -84,23 +84,33 @@ double run_on_threads(unsigned threads, Fn fn) {
     return std::chrono::duration<double>(clock::now() - t0).count();
 }
 
-/// One thread's FMA kernel: ACC independent accumulator chains, `iters` deep.
-/// Returns a value derived from every accumulator so none is dead code.
+/// One thread's FMA kernel: ACC (12 or 16) independent accumulator chains,
+/// `iters` deep. Returns a value derived from every accumulator so none is dead
+/// code. Written as hw_peak.hpp's kernels are, for the same measured reasons:
+/// named accumulators (an array of 16 vectors stayed in memory on aarch64) and
+/// acc = m*c + acc (the accumulator as the addend, which FMLA requires).
 template <typename T, std::size_t ACC>
-T fma_kernel(std::size_t iters, T seed) {
+T fma_kernel(std::size_t iters, T seed_in) {
+    static_assert(ACC == 12 || ACC == 16, "the chain lists provide 12 or 16");
     using B = simd::batch<T>;
-    B acc[ACC];
-    for (std::size_t a = 0; a < ACC; ++a) acc[a] = B(seed + static_cast<T>(a));
-    // acc = m*c + acc, the accumulator as the ADDEND: AArch64's FMLA adds only
-    // into its destination, so acc*m + c cost two vector moves per FMA there
-    // (see hw_peak.hpp). Each chain grows by 1e-6 per iteration, bounded.
+    const double seed = static_cast<double>(seed_in);
     const B m(static_cast<T>(1e-3));
     const B c(static_cast<T>(1e-3));
-    for (std::size_t i = 0; i < iters; ++i)
-        for (std::size_t a = 0; a < ACC; ++a) acc[a] = fma(m, c, acc[a]);
-    B s = acc[0];
-    for (std::size_t a = 1; a < ACC; ++a) s = s + acc[a];
-    return reduce_add(s);
+#define MTL5_V B
+#define MTL5_SET(x) B(static_cast<T>(x))
+#define MTL5_STEP(a) fma(m, c, a)
+#define MTL5_ADD(a, b) ((a) + (b))
+    if constexpr (ACC == 16) {
+        MTL5_HW_BODY(MTL5_HW_C16)
+        return reduce_add(a0);
+    } else {
+        MTL5_HW_BODY(MTL5_HW_C12)
+        return reduce_add(a0);
+    }
+#undef MTL5_V
+#undef MTL5_SET
+#undef MTL5_STEP
+#undef MTL5_ADD
 }
 
 /// Time `kernel(iters, seed)` on `threads` threads: grow `iters` until a run
