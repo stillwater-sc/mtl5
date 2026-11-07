@@ -61,6 +61,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`mtl5_bench` covers sparse kernels, sparse direct solvers and orderings** (#721, milestone M4). There are 16 new entries, bringing the catalogue to 66. Every input is generated (2D Poisson, unsymmetric convection–diffusion, scrambled copies, a planted block-triangular matrix), so nothing is downloaded. Each check is one a wrong result can't pass:
+  - **SpMV, transposed SpMV on an unsymmetric matrix, CRS×dense:** per-row error against `γ_k·|A||x|`.
+  - **SpGEMM:** C·x against A·(A·x).
+  - **Level-scheduled lower solve:** the componentwise backward error of each row.
+  - **Direct solvers (`sparse_cholesky`, `sparse_ldlt`, `supernodal_ldlt`, `sparse_lu`, `supernodal_lu`, `native_klu`, `sparse_qr`):** the backward error of the solve.
+  - **AMD and COLAMD:** a valid permutation, with at most half the Cholesky fill of the scrambled natural order (of A, and of AᵀA).
+  - **RCM:** a bandwidth within 4× of the grid side.
+  - **Block-triangular form:** valid permutations, a zero-free diagonal, no entry below its block, and at least the planted number of blocks.
+
+  Every check was confirmed to fail when its result is corrupted. That process caught an `amd` check that measured a fresh AMD call instead of the permutation under test. Timing-only entries now show `n/a` instead of 0%. All 66 pass at every class with GCC 15, and at `small` with Clang 18 and on aarch64 (NEON) under QEMU. Run time on an i7-12700K with one thread: `small` about 10 s, `medium` about 55 s, `large` about 5.5 minutes.
+
+  These findings aren't addressed here (medium class, generic build, 96² grid):
+  - **`sparse_qr`:** 4.1 s per solve, more than 50× any other solver on the same matrix (`native_klu` 17 ms, `supernodal_ldlt` 9 ms). The entry runs QR on half the grid side until this is fixed.
+  - **`sparse_cholesky`:** 73 ms, slower than `sparse_ldlt` (27 ms) and 8× slower than `supernodal_ldlt`. At the large grid the gap is 17× (900 ms against 52 ms).
+  - **`supernodal_lu`:** 56 ms, slower than the non-supernodal `sparse_lu` (41 ms).
+
 - **`mtl5_bench` covers dense factorizations, eigensolvers, SVD, matrix functions and element-wise kernels** (#721, milestone M3). There are 25 new entries, bringing the catalogue to 50, and each has a check that a wrong result can't pass:
   - **Factorizations (`lu`, `cholesky`, `ldlt`, `ldlt_bk`, `qr`):** the backward error of a solve.
   - **`lq`:** L·Lᵀ against A·Aᵀ.

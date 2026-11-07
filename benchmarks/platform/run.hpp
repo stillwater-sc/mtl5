@@ -36,6 +36,9 @@ struct record {
     bool   cache_resident = false; // bytes <= last-level cache: the DRAM roofline does not apply
     check_result check;
     std::string error;            // non-empty if the entry threw
+    /// No work model (an ordering, say): timed and checked, but with no
+    /// meaningful rate or roofline, so reports show "n/a" rather than 0%.
+    bool timed_only() const { return flops <= 0.0 && bytes <= 0.0; }
 };
 
 inline double budget_seconds(size_class c) {

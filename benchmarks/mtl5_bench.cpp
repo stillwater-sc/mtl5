@@ -24,6 +24,7 @@
 
 #include <benchmarks/platform/entries_blas.hpp>
 #include <benchmarks/platform/entries_dense.hpp>
+#include <benchmarks/platform/entries_sparse.hpp>
 #include <benchmarks/platform/probes.hpp>
 #include <benchmarks/platform/registry.hpp>
 #include <benchmarks/platform/run.hpp>
@@ -135,7 +136,7 @@ bool write_json(const std::string& path, const std::string& label, const std::st
            << ", \"flops\": " << num(r.flops) << ", \"bytes\": " << num(r.bytes)
            << ",\n     \"gflops\": " << num(r.gflops) << ", \"gbytes_per_s\": " << num(r.gbytes_per_s)
            << ", \"roofline_gflops\": " << num(r.roofline_gflops)
-           << ", \"roofline_pct\": " << num(r.roofline_pct)
+           << ", \"roofline_pct\": " << (r.timed_only() ? std::string("null") : num(r.roofline_pct))
            << ", \"cache_resident\": " << (r.cache_resident ? "true" : "false")
            << ",\n     \"check\": {\"ok\": " << (r.check.ok ? "true" : "false")
            << ", \"error\": " << num(r.check.error) << ", \"tolerance\": " << num(r.check.tolerance)
@@ -206,14 +207,18 @@ bool write_card(const std::string& path, const std::string& label, const std::st
     for (const auto& a : areas) {
         std::vector<double> pct;
         int failed = 0;
+        std::size_t entries = 0;
         for (const auto& r : rs)
             if (r.area == a) {
-                pct.push_back(r.roofline_pct);
+                if (!r.timed_only()) pct.push_back(r.roofline_pct);
+                ++entries;
                 failed += !(r.check.ok && r.error.empty());
             }
         std::sort(pct.begin(), pct.end());
-        md << "| " << a << " | " << pct.size() << " | " << std::setprecision(0) << pct[pct.size() / 2]
-           << "% | " << pct.back() << "% | " << failed << " |\n";
+        md << "| " << a << " | " << entries << " | " << std::setprecision(0);
+        if (pct.empty()) md << "n/a | n/a";
+        else md << pct[pct.size() / 2] << "% | " << pct.back() << "%";
+        md << " | " << failed << " |\n";
     }
 
     md << "\n| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |\n"
@@ -224,8 +229,10 @@ bool write_card(const std::string& path, const std::string& label, const std::st
         any_cached |= r.cache_resident;
         md << "| " << r.area << " | " << r.op << " | " << r.dtype << " | " << r.shape << " | "
            << std::setprecision(3) << r.median_s * 1e3 << " ms | " << std::setprecision(2) << r.gflops
-           << " | " << r.gbytes_per_s << " | " << std::setprecision(0) << r.roofline_pct << "%"
-           << (r.cache_resident ? "\\*" : "") << " | " << (ok ? "ok" : "**FAIL**") << " |\n";
+           << " | " << r.gbytes_per_s << " | " << std::setprecision(0);
+        if (r.timed_only()) md << "n/a";
+        else md << r.roofline_pct << "%" << (r.cache_resident ? "\\*" : "");
+        md << " | " << (ok ? "ok" : "**FAIL**") << " |\n";
     }
     if (any_cached)
         md << "\n\\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.\n";
@@ -264,6 +271,7 @@ int main(int argc, char** argv) {
     bp::registry reg;
     bp::blas::register_all(reg);
     bp::dense::register_all(reg);
+    bp::sparse_entries::register_all(reg);
 
     std::vector<const bp::entry*> selected;
     for (const auto& e : reg.entries())
@@ -299,7 +307,7 @@ int main(int argc, char** argv) {
               << (pr.triad_array_bytes >> 20) << " MiB arrays)\n\n";
 
     std::cout << std::left << std::setw(12) << "area" << std::setw(23) << "op" << std::setw(8) << "type"
-              << std::setw(16) << "shape" << std::right << std::setw(11) << "median"
+              << std::setw(30) << "shape" << std::right << std::setw(11) << "median"
               << std::setw(11) << "GFLOP/s" << std::setw(10) << "GB/s" << std::setw(9) << "%roof"
               << "  check\n";
 
@@ -313,10 +321,12 @@ int main(int argc, char** argv) {
         t << std::fixed << std::setprecision(r.median_s < 1e-3 ? 1 : 2)
           << (r.median_s < 1e-3 ? r.median_s * 1e6 : r.median_s * 1e3) << (r.median_s < 1e-3 ? "us" : "ms");
         std::cout << std::left << std::setw(12) << r.area << std::setw(23) << r.op << std::setw(8) << r.dtype
-                  << std::setw(16) << r.shape << std::right << std::setw(11) << t.str()
+                  << std::setw(30) << r.shape << std::right << std::setw(11) << t.str()
                   << std::fixed << std::setprecision(2) << std::setw(11) << r.gflops
-                  << std::setw(10) << r.gbytes_per_s << std::setprecision(0) << std::setw(8)
-                  << r.roofline_pct << (r.cache_resident ? "%* " : "%  ") << (ok ? "ok" : "FAIL");
+                  << std::setw(10) << r.gbytes_per_s << std::setprecision(0) << std::setw(8);
+        if (r.timed_only()) std::cout << "n/a" << "   ";
+        else std::cout << r.roofline_pct << (r.cache_resident ? "%* " : "%  ");
+        std::cout << (ok ? "ok" : "FAIL");
         if (!ok) {
             std::cout << "  (" << (r.error.empty() ? r.check.what : r.error) << ": "
                       << std::scientific << std::setprecision(2) << r.check.error << " > "
