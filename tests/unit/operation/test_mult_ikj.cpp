@@ -22,8 +22,10 @@
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/parameter.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/trans.hpp>
+#include <mtl/tag/orientation.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
 #include <mtl5_test/native_shim.hpp>
@@ -196,4 +198,119 @@ TEST_CASE("CRS x dense matrix product overwrites C", "[mult][crs][550]") {
     REQUIRE(C(0, 1) == 8.0);
     REQUIRE(C(1, 0) == 0.0);  // an empty row is zero, not left over
     REQUIRE(C(1, 1) == 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// A zero inner dimension (#714). mult assigns, so an m x 0 times 0 x n product
+// is the zero matrix and an m x 0 matvec is the zero vector -- not whatever C
+// or y held before. Every kernel's k loop is empty there, so a kernel that also
+// skipped its store would leave the caller's values in place, and nothing else
+// would notice. test_gemm_blocked covers the default i-k-j branch for double;
+// these cover the other branches of the dispatch. The element types are chosen
+// so each section reaches its branch in every build: double_shim is never
+// claimed by BLAS or the native fast GEMM.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+template <typename T>
+bool all_equal(const mat::dense2D<T>& C, T want) {
+    for (std::size_t i = 0; i < C.num_rows(); ++i)
+        for (std::size_t j = 0; j < C.num_cols(); ++j)
+            if (!(C(i, j) == want)) return false;
+    return true;
+}
+
+template <typename T>
+bool all_equal(const vec::dense_vector<T>& y, T want) {
+    for (std::size_t i = 0; i < y.size(); ++i)
+        if (!(y(i) == want)) return false;
+    return true;
+}
+
+template <typename M>
+M filled(std::size_t r, std::size_t c, typename M::value_type v) {
+    M m(r, c);
+    for (std::size_t i = 0; i < r; ++i)
+        for (std::size_t j = 0; j < c; ++j) m(i, j) = v;
+    return m;
+}
+
+template <typename T>
+vec::dense_vector<T> filled(std::size_t n, T v) {
+    vec::dense_vector<T> y(n);
+    for (std::size_t i = 0; i < n; ++i) y(i) = v;
+    return y;
+}
+
+} // namespace
+
+TEST_CASE("mult at a zero inner dimension sets the output to zero", "[mult][edge][714]") {
+    using S = double_shim;
+    using colmaj = mat::parameters<tag::col_major>;
+    const S s0(0), s7(7);
+
+    SECTION("generic GEMM, row-major i-k-j branch, class-typed scalar") {
+        mat::dense2D<S> A(3, 0), B(0, 4);
+        auto C = filled<mat::dense2D<S>>(3, 4, s7);
+        mult(A, B, C);
+        REQUIRE(all_equal(C, s0));
+    }
+    SECTION("generic GEMM, dot-product branch: a col-major operand") {
+        mat::dense2D<S> A(3, 0);
+        mat::dense2D<S, colmaj> B(0, 4);
+        auto C = filled<mat::dense2D<S>>(3, 4, s7);
+        mult(A, B, C);
+        REQUIRE(all_equal(C, s0));
+    }
+    SECTION("generic GEMM, dot-product branch: a transposed view") {
+        mat::dense2D<S> A(3, 0), Bt(4, 0);
+        auto C = filled<mat::dense2D<S>>(3, 4, s7);
+        mult(A, trans(Bt), C);
+        REQUIRE(all_equal(C, s0));
+    }
+    SECTION("generic GEMM, accumulator branch (a non-arithmetic element type)") {
+        mat::dense2D<S> A(3, 0), B(0, 4);
+        auto C = filled<mat::dense2D<S>>(3, 4, s7);
+        mult<S>(A, B, C);
+        REQUIRE(all_equal(C, s0));
+    }
+    SECTION("packed-panel accumulator GEMM (#587): float operands, double accumulator") {
+        // 11 columns: one full panel of 8 and a ragged one of 3.
+        mat::dense2D<float> A(3, 0), B(0, 11);
+        auto C = filled<mat::dense2D<float>>(3, 11, 7.0f);
+        mult<double>(A, B, C);
+        REQUIRE(all_equal(C, 0.0f));
+    }
+    SECTION("GEMV with no columns, with and without an accumulator") {
+        mat::dense2D<S> A(3, 0);
+        vec::dense_vector<S> x(0);
+        auto y = filled<S>(3, s7);
+        mult(A, x, y);
+        REQUIRE(all_equal(y, s0));
+        y = filled<S>(3, s7);
+        mult<S>(A, x, y);
+        REQUIRE(all_equal(y, s0));
+
+        mat::dense2D<float> Af(3, 0);
+        vec::dense_vector<float> xf(0);
+        auto yf = filled<float>(3, 7.0f);
+        mult<double>(Af, xf, yf);
+        REQUIRE(all_equal(yf, 0.0f));
+    }
+    SECTION("CRS x dense (#550) and CRS x vector with no columns") {
+        const auto A = crs_of(mat::dense2D<double>(3, 0));
+        mat::dense2D<double> B(0, 4);
+        auto C = filled<mat::dense2D<double>>(3, 4, 7.0);
+        mult(A, B, C);
+        REQUIRE(all_equal(C, 0.0));
+
+        vec::dense_vector<double> x(0);
+        auto y = filled<double>(3, 7.0);
+        mult(A, x, y);
+        REQUIRE(all_equal(y, 0.0));
+        y = filled<double>(3, 7.0);
+        mult<long double>(A, x, y);
+        REQUIRE(all_equal(y, 0.0));
+    }
 }
