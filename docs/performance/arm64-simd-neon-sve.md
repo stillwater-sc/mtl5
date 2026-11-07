@@ -87,7 +87,16 @@ mismatch`. Use `-mcpu=neoverse-n2` (or `-march=armv9-a+i8mm+bf16`) together with
 
 **R3. A fixed-length binary is correct only at its vector length.** Code built
 with `-msve-vector-bits=128` assumes a 128-bit SVE vector length. On a machine
-with a different vector length it computes wrong answers. It does not trap.
+with a different vector length it misbehaves, and not reliably loudly. Running
+the SIMD tests under QEMU at the wrong width (see below) gave:
+
+| binary | run at | SIMD tests |
+|---|---|---|
+| `SVE2_128` | 256-bit | 6 of 11 fail (crashes and wrong results); **5 pass** |
+| `SVE_256` | 128-bit | 11 of 11 crash |
+| `SVE_256` | 512-bit | 11 of 11 crash |
+
+A binary that is partly right is the dangerous case: a smoke test can pass.
 - Neoverse N2, V2 and Grace (Graviton 4) are 128 bits.
 - Neoverse V1 (Graviton 3) is 256 bits.
 - A64FX is 512 bits.
@@ -278,6 +287,44 @@ dispatcher picks the `SVE2_128` copy on N2.
 `native` CI lane becomes the correctness test. For performance, compare against
 the `SVE2_128` build on the same host; dispatch overhead should be invisible
 above n = 64.
+
+## Testing ARM code on an x86 host (QEMU)
+
+QEMU's user mode runs aarch64 Linux binaries on an x86-64 Linux host, and it
+emulates SVE and SVE2 at any vector length from 128 to 2048 bits. That covers
+widths no CI runner has. It establishes **correctness only**: emulated timings
+say nothing about hardware, and `mtl5_bench`'s rates under QEMU are meaningless,
+although its checks are valid.
+
+```bash
+sudo apt install g++-aarch64-linux-gnu qemu-user
+cmake --preset aarch64-sve-256              # or aarch64-neon, -sve2-128, -sve2-scalable
+cmake --build --preset aarch64-sve-256      # or build only the simd_* targets
+ctest --preset aarch64-sve-256-simd         # the SIMD tests, run through qemu-aarch64
+```
+
+The toolchain file `tools/cmake/toolchains/aarch64-linux-gnu.cmake` sets
+`CMAKE_CROSSCOMPILING_EMULATOR`, so `ctest` runs every test under QEMU.
+`MTL5_QEMU_CPU` picks the emulated core, and with it the vector length.
+
+| preset | flags | QEMU CPU (VL) | Highway target | `batch<float>` lanes |
+|---|---|---|---|---|
+| `aarch64-neon` | (default) | neoverse-n2 (128) | `NEON_WITHOUT_AES` | 4 |
+| `aarch64-sve2-128` | `-mcpu=neoverse-n2 -msve-vector-bits=128` | neoverse-n2 (128) | `SVE2_128` | 4 |
+| `aarch64-sve-256` | `-mcpu=neoverse-v1 -msve-vector-bits=256` | neoverse-v1 (256) | `SVE_256` | 8 |
+| `aarch64-sve2-scalable` | `-mcpu=neoverse-n2` | max (512) | `SVE2`, scalable | 1 (demoted, #427) |
+
+All four pass the 11 SIMD tests. `SVE_256` (Graviton 3's width) had never been
+compiled or run before this; CI's runners are 128-bit. The scalable build also
+passes at 128, 256, 512 and 2048 bits. To rerun it at another width, set
+`-DMTL5_QEMU_CPU=max,sve-default-vector-length=<bytes>` and reconfigure. No
+rebuild is needed, since the binary doesn't depend on the vector length. This
+is the test bed for #427: once `batch` is vector-length agnostic, the same
+binary has to pass at every width.
+
+Each fixed-length preset is correct only at its own width (R3), so its
+`MTL5_QEMU_CPU` must match. QEMU's `neoverse-n2` is 128-bit,
+`neoverse-v1` is 256-bit, and `a64fx` is 512-bit.
 
 ## Hardware that would settle these
 
