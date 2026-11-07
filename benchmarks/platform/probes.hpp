@@ -5,14 +5,16 @@
 // running THIS build, can sustain, so "% of roofline" means the same thing on a
 // Jetson and on a Ryzen. Two ceilings, measured, never looked up:
 //
-//   FMA peak   a register-resident kernel over simd::batch<T>: independent
-//              accumulators, no loads, no stores. It uses the SIMD target the
-//              build compiled -- the same batch the GEMM micro-kernel uses --
-//              so it is the ceiling of what MTL5's kernels can reach in this
-//              build, not the datasheet's. (A build without Highway measures a
-//              scalar FMA; its GEMM can then exceed "100%" where the compiler
-//              auto-vectorizes. The card records the SIMD backend for that
-//              reason.)
+//   FMA peak   register-resident kernels with independent accumulators, no
+//              loads, no stores, measured twice:
+//                build     over simd::batch<T>, the SIMD target this build
+//                          compiled (the same batch the GEMM micro-kernel uses)
+//                hardware  in the widest ISA the CPU and OS support, picked at
+//                          run time whatever the build's flags (hw_peak.hpp)
+//              The roofline uses the HIGHER of the two, so every build on a
+//              machine is judged against the same, machine-level ceiling: a
+//              build without Highway has a scalar batch, and judging it by its
+//              own scalar peak put its GEMM at thousands of percent.
 //   bandwidth  two streams over arrays of at least four times the last-level
 //              cache:
 //                read   sum of a[i] + b[i] + c[i] (SIMD): 24 B/elem, no stores
@@ -34,6 +36,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -41,12 +44,21 @@
 #include <mtl/simd/blocking.hpp>
 #include <mtl/util/cache_info.hpp>
 
+#include <benchmarks/platform/hw_peak.hpp>
+
 namespace mtl::bench::platform {
 
 struct probe_results {
     unsigned threads = 1;
+    // The ceilings the roofline uses: max(build, hardware).
     double fma_peak_f64_gflops = 0.0;
     double fma_peak_f32_gflops = 0.0;
+    // The two measurements behind them.
+    double build_fma_peak_f64_gflops = 0.0;
+    double build_fma_peak_f32_gflops = 0.0;
+    double hw_fma_peak_f64_gflops = 0.0;
+    double hw_fma_peak_f32_gflops = 0.0;
+    std::string hw_isa = "none";
     double triad_gbytes_per_s = 0.0;
     double read_gbytes_per_s = 0.0;
     double update_gbytes_per_s = 0.0;
@@ -89,6 +101,31 @@ T fma_kernel(std::size_t iters, T seed) {
     return reduce_add(s);
 }
 
+/// Time `kernel(iters, seed)` on `threads` threads: grow `iters` until a run
+/// takes ~0.2 s, then keep the best of three. `flops_per_iter` is per thread.
+template <typename Kernel>
+double peak_gflops(unsigned threads, double flops_per_iter, Kernel kernel) {
+    // One result slot per worker: a single shared sink written by every
+    // thread is a data race, which volatile does not prevent.
+    std::vector<double> sink(threads, 0.0);
+    volatile double seed = 1.0;
+    std::size_t iters = std::size_t(1) << 16;
+    double best = 0.0;
+    for (int round = 0; round < 32; ++round) {
+        const double s = run_on_threads(threads, [&](unsigned t) { sink[t] = kernel(iters, seed); });
+        if (s < 0.2) { iters *= 2; continue; }
+        for (int rep = 0; rep < 3; ++rep) {
+            const double sec = run_on_threads(threads, [&](unsigned t) { sink[t] = kernel(iters, seed); });
+            best = std::max(best, flops_per_iter * double(iters) * threads / sec * 1e-9);
+        }
+        break;
+    }
+    volatile double keep = sink[0];   // the results are observable, so no chain is dead code
+    (void)keep;
+    return best;
+}
+
+/// The build's peak: fma_kernel over simd::batch<T>.
 template <typename T>
 double fma_peak_gflops(unsigned threads) {
     // Enough chains to cover latency x issue width on every core measured so
@@ -96,30 +133,9 @@ double fma_peak_gflops(unsigned threads) {
     // 12 with 16 registers -- 3/4 of the file, leaving room for the constants.
     constexpr std::size_t ACC = simd::target_vec_registers() >= 32 ? 16 : 12;
     constexpr std::size_t W = simd::batch<T>::size;
-    // One result slot per worker: a single shared sink written by every
-    // thread is a data race, which volatile does not prevent.
-    std::vector<T> sink(threads, T(0));
-    volatile T seed = T(1);
-    std::size_t iters = std::size_t(1) << 16;
-    double best = 0.0;
-    // Grow the run until it takes ~0.2 s, then keep the best of three.
-    for (int round = 0; round < 32; ++round) {
-        const double s = run_on_threads(threads, [&](unsigned t) {
-            sink[t] = fma_kernel<T, ACC>(iters, seed);
-        });
-        if (s < 0.2) { iters *= 2; continue; }
-        for (int rep = 0; rep < 3; ++rep) {
-            const double sec = run_on_threads(threads, [&](unsigned t) {
-                sink[t] = fma_kernel<T, ACC>(iters, seed);
-            });
-            const double flops = 2.0 * double(W) * double(ACC) * double(iters) * threads;
-            best = std::max(best, flops / sec * 1e-9);
-        }
-        break;
-    }
-    volatile T keep = sink[0];   // the results are observable, so no chain is dead code
-    (void)keep;
-    return best;
+    return peak_gflops(threads, 2.0 * double(W) * double(ACC), [](std::size_t iters, double seed) {
+        return static_cast<double>(fma_kernel<T, ACC>(iters, static_cast<T>(seed)));
+    });
 }
 
 /// Sum of a[i] + b[i] + c[i] over [lo, hi): THREE read streams, with
@@ -207,8 +223,14 @@ inline void bandwidth(unsigned threads, probe_results& out) {
 inline probe_results run_probes(unsigned threads) {
     probe_results p;
     p.threads = threads == 0 ? 1 : threads;
-    p.fma_peak_f64_gflops = detail::fma_peak_gflops<double>(p.threads);
-    p.fma_peak_f32_gflops = detail::fma_peak_gflops<float>(p.threads);
+    p.build_fma_peak_f64_gflops = detail::fma_peak_gflops<double>(p.threads);
+    p.build_fma_peak_f32_gflops = detail::fma_peak_gflops<float>(p.threads);
+    const hw::isa_kernels k = hw::select();
+    p.hw_isa = k.isa;
+    if (k.f64) p.hw_fma_peak_f64_gflops = detail::peak_gflops(p.threads, k.f64_flops_per_iter, k.f64);
+    if (k.f32) p.hw_fma_peak_f32_gflops = detail::peak_gflops(p.threads, k.f32_flops_per_iter, k.f32);
+    p.fma_peak_f64_gflops = std::max(p.build_fma_peak_f64_gflops, p.hw_fma_peak_f64_gflops);
+    p.fma_peak_f32_gflops = std::max(p.build_fma_peak_f32_gflops, p.hw_fma_peak_f32_gflops);
     detail::bandwidth(p.threads, p);
     return p;
 }

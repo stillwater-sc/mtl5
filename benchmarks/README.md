@@ -91,13 +91,56 @@ columns stay empty. See the per-backend builds below.
 
 `mtl5_bench` is the standard characterization of a machine. It runs the same way
 on every machine, so results from a Jetson, a Ventuno Q and an x86 desktop can be
-compared directly. Each run does three things:
+compared directly.
 
-1. **Measures the machine's ceilings**, with probes compiled for the build's own
-   SIMD target:
-   - FMA peak in f64 and f32;
-   - memory bandwidth: three-stream read, update (`a += s*b`) and STREAM triad.
-     The best of the three is the bandwidth ceiling.
+### On a new machine: one command
+
+```bash
+git clone https://github.com/stillwater-sc/mtl5 && cd mtl5
+benchmarks/platform.sh                # Windows: .\benchmarks\platform.ps1
+```
+
+`platform.sh` does the following, in order:
+1. Gates the session with `preflight.sh`.
+2. Builds `mtl5_bench` once per variant, each in a clean directory under
+   `build-platform/`, and builds every variant before measuring any of them:
+   - `native`;
+   - `native-fast` (Highway and the blocked GEMM, with `-march=native` except
+     on SVE hardware (#720) and macOS);
+   - `blas` (if CMake finds a system BLAS/LAPACK; skipped otherwise).
+3. Gates again after the builds.
+4. Runs each variant at 1 thread and at all CPUs. MTL5's pool and every
+   vendor library's pool are pinned to the same count.
+
+Results go to `build-platform/results/<host>-<UTC time>/`:
+- `<variant>-t<T>.json`, with its `.sysinfo` sidecar, to which `preflight`'s
+  machine-state record is appended;
+- `<variant>-t<T>.md`, the capability card;
+- `summary.md`, all the cards in one file;
+- `logs/`.
+
+Options: `--class`, `--variants`, `--threads`, `--jobs` (default: half the
+CPUs), `--out`, `--machine` (default: the ARM board's device-tree model, else
+the CPU brand), and `--no-gate`, which records the machine state without
+stopping on it.
+
+CI runs the script end to end at `--class small` on Linux x64, Linux ARM64,
+macOS and Windows.
+
+### What one run does
+
+1. **Measures the machine's ceilings:**
+   - **FMA peak in f64 and f32,** measured twice:
+     - with a kernel in the widest vector ISA the CPU and OS support, chosen at
+       run time (AVX-512F, AVX2+FMA or SSE2 on x86, NEON on AArch64);
+     - over `simd::batch`, the SIMD target this build compiled.
+
+     The ceiling is the higher of the two. Every build on a machine is
+     therefore judged against the same machine-level ceiling: a build without
+     Highway has a scalar `batch`, and judging it by that put its GEMM at
+     thousands of percent.
+   - **Memory bandwidth:** three-stream read, update (`a += s*b`) and STREAM
+     triad. The best of the three is the bandwidth ceiling.
 2. **Runs every registered operation** at a fixed problem size for the chosen
    class. Each operation goes through the public `mtl::` API, so the build
    decides the backend, as described above.

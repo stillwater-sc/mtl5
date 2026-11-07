@@ -32,6 +32,7 @@
 #include <mtl/simd/batch.hpp>
 #include <mtl/util/system_info.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -54,11 +55,13 @@ constexpr const char* kDefaultLabel = "native";
 #endif
 
 void usage(std::ostream& os) {
-    os << "usage: mtl5_bench [--class small|medium|large] [--json FILE] [--label NAME]\n"
-          "                  [--filter SUBSTR] [--list]\n"
+    os << "usage: mtl5_bench [--class small|medium|large] [--json FILE] [--card FILE]\n"
+          "                  [--label NAME] [--machine NAME] [--filter SUBSTR] [--list]\n"
           "  --class    problem sizes (default: medium)\n"
           "  --json     write results to FILE and provenance to FILE.sysinfo\n"
+          "  --card     write a markdown capability card to FILE\n"
           "  --label    build label recorded in the output (default: from the build)\n"
+          "  --machine  machine name for the card and the records (default: the CPU brand)\n"
           "  --filter   run only entries whose area/op/dtype contains SUBSTR\n"
           "  --list     print the registered entries and exit\n";
 }
@@ -95,19 +98,25 @@ std::string num(double v) {
 std::string id_of(const bp::entry& e) { return e.area + "/" + e.op + "/" + e.dtype; }
 
 /// Returns false if the file could not be opened or a write failed.
-bool write_json(const std::string& path, const std::string& label, bp::size_class cls,
-                const bp::probe_results& pr, const std::vector<bp::record>& rs) {
+bool write_json(const std::string& path, const std::string& label, const std::string& machine,
+                bp::size_class cls, const bp::probe_results& pr, const std::vector<bp::record>& rs) {
     std::ofstream os(path);
     if (!os) return false;
     os << "{\n"
        << "  \"schema\": \"mtl5-bench/1\",\n"
        << "  \"label\": \"" << json_escape(label) << "\",\n"
+       << "  \"machine\": \"" << json_escape(machine) << "\",\n"
        << "  \"class\": \"" << bp::to_string(cls) << "\",\n"
        << "  \"simd_backend\": \"" << json_escape(mtl::simd::backend_name()) << "\",\n"
        << "  \"probes\": {\n"
        << "    \"threads\": " << pr.threads << ",\n"
        << "    \"fma_peak_f64_gflops\": " << num(pr.fma_peak_f64_gflops) << ",\n"
        << "    \"fma_peak_f32_gflops\": " << num(pr.fma_peak_f32_gflops) << ",\n"
+       << "    \"build_fma_peak_f64_gflops\": " << num(pr.build_fma_peak_f64_gflops) << ",\n"
+       << "    \"build_fma_peak_f32_gflops\": " << num(pr.build_fma_peak_f32_gflops) << ",\n"
+       << "    \"hw_fma_isa\": \"" << json_escape(pr.hw_isa) << "\",\n"
+       << "    \"hw_fma_peak_f64_gflops\": " << num(pr.hw_fma_peak_f64_gflops) << ",\n"
+       << "    \"hw_fma_peak_f32_gflops\": " << num(pr.hw_fma_peak_f32_gflops) << ",\n"
        << "    \"triad_gbytes_per_s\": " << num(pr.triad_gbytes_per_s) << ",\n"
        << "    \"read_gbytes_per_s\": " << num(pr.read_gbytes_per_s) << ",\n"
        << "    \"update_gbytes_per_s\": " << num(pr.update_gbytes_per_s) << ",\n"
@@ -139,11 +148,12 @@ bool write_json(const std::string& path, const std::string& label, bp::size_clas
 }
 
 /// Returns false if the file could not be opened or a write failed.
-bool write_sidecar(const std::string& path, const std::string& label, bp::size_class cls,
-                   const bp::probe_results& pr) {
+bool write_sidecar(const std::string& path, const std::string& label, const std::string& machine,
+                   bp::size_class cls, const bp::probe_results& pr) {
     std::ofstream si(path);
     if (!si) return false;
     si << "label=" << label << "\n"
+       << "machine=" << machine << "\n"
        << "benchmark=mtl5_bench\n"
        << "class=" << bp::to_string(cls) << "\n"
        << mtl::util::to_keyvals(mtl::util::identify())
@@ -157,11 +167,77 @@ bool write_sidecar(const std::string& path, const std::string& label, bp::size_c
     return static_cast<bool>(si);
 }
 
+/// A markdown capability card: one run's machine, build, ceilings and results,
+/// in the form docs/benchmarks/systems.md publishes. Area rows are grouped and
+/// summarized (median and best %roof), so a reader sees where the build reaches
+/// the machine and where it does not without reading every row.
+bool write_card(const std::string& path, const std::string& label, const std::string& machine,
+                bp::size_class cls, const bp::probe_results& pr, const std::vector<bp::record>& rs) {
+    std::ofstream md(path);
+    if (!md) return false;
+    const auto si = mtl::util::identify();
+    md << std::fixed;
+    md << "## " << machine << " -- " << label << ", " << pr.threads
+       << (pr.threads == 1 ? " thread" : " threads") << ", class " << bp::to_string(cls) << "\n\n"
+       << "| | |\n|---|---|\n"
+       << "| CPU | " << (si.cpu.brand.empty() ? "unknown" : si.cpu.brand) << " (" << si.cpu.arch
+       << ", " << si.cpu.logical_cores << " logical cores) |\n"
+       << "| OS | " << si.os.name << " " << si.os.version << " |\n"
+       << "| compiler | " << si.compiler.name << " " << si.compiler.version << " |\n"
+       << "| build | `" << mtl::build_cxx_flags << "`, SIMD " << mtl::simd::backend_name() << " |\n"
+       << "| commit | `" << mtl::build_git_commit << "`" << (std::string(mtl::build_git_dirty) == "1" ? " (dirty)" : "")
+       << " |\n" << std::setprecision(1)
+       << "| FMA peak (ceiling) | f64 " << pr.fma_peak_f64_gflops << " GFLOP/s, f32 " << pr.fma_peak_f32_gflops
+       << " GFLOP/s |\n"
+       << "| ... hardware, " << pr.hw_isa << " | f64 " << pr.hw_fma_peak_f64_gflops << ", f32 "
+       << pr.hw_fma_peak_f32_gflops << " GFLOP/s |\n"
+       << "| ... this build, " << mtl::simd::backend_name() << " | f64 " << pr.build_fma_peak_f64_gflops
+       << ", f32 " << pr.build_fma_peak_f32_gflops << " GFLOP/s |\n"
+       << "| bandwidth | read " << pr.read_gbytes_per_s << ", update " << pr.update_gbytes_per_s
+       << ", triad " << pr.triad_gbytes_per_s << " GB/s (ceiling " << pr.bandwidth_gbytes_per_s() << ") |\n"
+       << "| last-level cache | " << (bp::last_level_cache_bytes() >> 20) << " MiB |\n\n";
+
+    // Per-area summary.
+    md << "| area | entries | median %roof | best %roof | failed checks |\n|---|---:|---:|---:|---:|\n";
+    std::vector<std::string> areas;
+    for (const auto& r : rs)
+        if (std::find(areas.begin(), areas.end(), r.area) == areas.end()) areas.push_back(r.area);
+    for (const auto& a : areas) {
+        std::vector<double> pct;
+        int failed = 0;
+        for (const auto& r : rs)
+            if (r.area == a) {
+                pct.push_back(r.roofline_pct);
+                failed += !(r.check.ok && r.error.empty());
+            }
+        std::sort(pct.begin(), pct.end());
+        md << "| " << a << " | " << pct.size() << " | " << std::setprecision(0) << pct[pct.size() / 2]
+           << "% | " << pct.back() << "% | " << failed << " |\n";
+    }
+
+    md << "\n| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |\n"
+          "|---|---|---|---|---:|---:|---:|---:|---|\n";
+    bool any_cached = false;
+    for (const auto& r : rs) {
+        const bool ok = r.check.ok && r.error.empty();
+        any_cached |= r.cache_resident;
+        md << "| " << r.area << " | " << r.op << " | " << r.dtype << " | " << r.shape << " | "
+           << std::setprecision(3) << r.median_s * 1e3 << " ms | " << std::setprecision(2) << r.gflops
+           << " | " << r.gbytes_per_s << " | " << std::setprecision(0) << r.roofline_pct << "%"
+           << (r.cache_resident ? "\\*" : "") << " | " << (ok ? "ok" : "**FAIL**") << " |\n";
+    }
+    if (any_cached)
+        md << "\n\\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.\n";
+    md << "\n";
+    md.flush();
+    return static_cast<bool>(md);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     bp::size_class cls = bp::size_class::medium;
-    std::string json_path, filter, label = kDefaultLabel;
+    std::string json_path, card_path, filter, machine, label = kDefaultLabel;
     bool list = false;
     for (int i = 1; i < argc; ++i) {
         auto need = [&](const char* flag) -> std::string {
@@ -175,7 +251,9 @@ int main(int argc, char** argv) {
             else if (c == "large") cls = bp::size_class::large;
             else { std::cerr << "unknown class '" << c << "'\n"; usage(std::cerr); return 2; }
         } else if (!std::strcmp(argv[i], "--json"))   json_path = need("--json");
+        else if (!std::strcmp(argv[i], "--card"))   card_path = need("--card");
         else if (!std::strcmp(argv[i], "--label"))  label = need("--label");
+        else if (!std::strcmp(argv[i], "--machine")) machine = need("--machine");
         else if (!std::strcmp(argv[i], "--filter")) filter = need("--filter");
         else if (!std::strcmp(argv[i], "--list"))   list = true;
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) { usage(std::cout); return 0; }
@@ -195,6 +273,10 @@ int main(int argc, char** argv) {
     }
     if (selected.empty()) { std::cerr << "no entry matches '" << filter << "'\n"; return 2; }
 
+    if (machine.empty()) {
+        machine = mtl::util::identify().cpu.brand;
+        if (machine.empty()) machine = "unknown machine";
+    }
     const unsigned threads = static_cast<unsigned>(mtl::detail::thread_pool::instance().size());
     std::cout << "mtl5_bench  label=" << label << "  class=" << bp::to_string(cls)
               << "  simd=" << mtl::simd::backend_name() << "  threads=" << threads
@@ -203,8 +285,12 @@ int main(int argc, char** argv) {
     std::cout << "probing the machine..." << std::flush;
     const bp::probe_results pr = bp::run_probes(threads);
     std::cout << "\r" << std::fixed << std::setprecision(1)
-              << "probe  fma peak f64 " << std::setw(8) << pr.fma_peak_f64_gflops << " GFLOP/s\n"
-              << "probe  fma peak f32 " << std::setw(8) << pr.fma_peak_f32_gflops << " GFLOP/s\n"
+              << "probe  fma peak f64 " << std::setw(8) << pr.fma_peak_f64_gflops << " GFLOP/s"
+              << "   (hardware " << pr.hw_isa << " " << pr.hw_fma_peak_f64_gflops
+              << ", this build " << pr.build_fma_peak_f64_gflops << ")\n"
+              << "probe  fma peak f32 " << std::setw(8) << pr.fma_peak_f32_gflops << " GFLOP/s"
+              << "   (hardware " << pr.hw_isa << " " << pr.hw_fma_peak_f32_gflops
+              << ", this build " << pr.build_fma_peak_f32_gflops << ")\n"
               << "probe  read         " << std::setw(8) << pr.read_gbytes_per_s << " GB/s\n"
               << "probe  update       " << std::setw(8) << pr.update_gbytes_per_s << " GB/s\n"
               << "probe  triad        " << std::setw(8) << pr.triad_gbytes_per_s << " GB/s  ("
@@ -248,13 +334,20 @@ int main(int argc, char** argv) {
     if (!json_path.empty()) {
         // A result without its sidecar is the provenance loss check_sidecars.sh
         // exists to prevent, so a failed write of EITHER file fails the run.
-        const bool json_ok = write_json(json_path, label, cls, pr, results);
-        const bool side_ok = json_ok && write_sidecar(json_path + ".sysinfo", label, cls, pr);
+        const bool json_ok = write_json(json_path, label, machine, cls, pr, results);
+        const bool side_ok = json_ok && write_sidecar(json_path + ".sysinfo", label, machine, cls, pr);
         if (!json_ok || !side_ok) {
             std::cerr << "\nerror: could not write " << (json_ok ? json_path + ".sysinfo" : json_path) << "\n";
             return 1;
         }
         std::cout << "\nwrote " << json_path << " and " << json_path << ".sysinfo\n";
+    }
+    if (!card_path.empty()) {
+        if (!write_card(card_path, label, machine, cls, pr, results)) {
+            std::cerr << "\nerror: could not write " << card_path << "\n";
+            return 1;
+        }
+        std::cout << "wrote " << card_path << "\n";
     }
     std::cout << "\n" << results.size() - failures << " of " << results.size() << " checks passed\n";
     return failures == 0 ? 0 : 1;

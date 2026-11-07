@@ -61,6 +61,18 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`benchmarks/platform.sh` and `platform.ps1`: characterize a machine with one command** (#721, milestone M2). After a `git clone`, `benchmarks/platform.sh` does the whole job:
+  - **gates the session** with `preflight`, before the builds and again after them;
+  - **builds `mtl5_bench`** for the `native`, `native-fast` and (if a system BLAS is found) `blas` variants, all before any measurement;
+  - **runs each variant** at 1 thread and at all CPUs, with every vendor library's thread pool pinned to the same count;
+  - **writes per-run JSON**, with `.sysinfo` sidecars that carry the machine state, plus markdown capability cards and a `summary.md`.
+
+  `native-fast` doesn't use `-march=native` on SVE hardware, because of #720, or on macOS. A new CI job runs the script at `--class small` on Linux x64, Linux ARM64, macOS and Windows.
+
+  `mtl5_bench` gains `--card FILE` and `--machine NAME`.
+  - **The FMA ceiling is now the machine's, not the build's.** M1 measured it over `simd::batch`, which is scalar in a build without Highway, so the `native` and `blas` variants reported GEMM at 2,300% and 39,000% of "peak". A hardware probe now picks the widest ISA the CPU and OS support at run time (AVX-512F, AVX2+FMA or SSE2, checking CPUID and XCR0; NEON on AArch64), and the roofline uses the higher of the two peaks.
+  - **`mtl5_bench` is now built in CI.** The `benchmarks` job's target list didn't include it, although the M1 PR said it did.
+
 - **`mtl5_bench`, the platform benchmark: milestone M1** (#721). One binary that characterizes a machine the same way every time.
   - **Probes first:** it measures the FMA peak (f64 and f32) with the build's own SIMD target. It measures memory bandwidth with three-stream read, update (`a += s*b`) and STREAM triad, and takes the best as the ceiling.
   - **Then the registry:** it runs every registered operation at a fixed size for `--class small|medium|large`. Each result is checked against a long-double reference using the `gamma_k` error bound, so a fast wrong answer is a failure. Each rate is reported as a percentage of the roofline for its arithmetic intensity, and a bandwidth-bound result that fits in the last-level cache is flagged.
