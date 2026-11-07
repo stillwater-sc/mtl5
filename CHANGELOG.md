@@ -76,7 +76,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Householder:** H·x = β·e₁.
   - **Element-wise functions:** `std::` per element.
 
-  Every factorization and eigen check was confirmed to fail when its result is corrupted. All 50 pass at every class with GCC and Clang, and on aarch64 (NEON and SVE_256) under QEMU. Run time on an i7-12700K with one thread: `small` about 9 s, `medium` about 45 s, `large` about 4 minutes. Rates use the conventional LAPACK operation counts. The shared check helpers moved to `benchmarks/platform/common.hpp`.
+  Every factorization and eigen check was confirmed to fail when its result is corrupted. All 50 pass at every class (`small`, `medium`, `large`) with GCC 15, and at `small` with Clang 18 and on aarch64 (NEON and SVE_256) under QEMU. Run time on an i7-12700K with one thread: `small` about 9 s, `medium` about 45 s, `large` about 4 minutes. Rates use the conventional LAPACK operation counts. The shared check helpers moved to `benchmarks/platform/common.hpp`.
 
   The first run found these gaps, which aren't addressed here (medium class, generic build):
   - **`qr_factor` is 10× slower than `lq_factor` for the same work:** 217 ms against 22 ms at n = 512.
