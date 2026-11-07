@@ -169,17 +169,24 @@ high-intensity ones against the FMA peak.
 - **The probes and the operations use the same thread count,** MTL5's pool
   size (`MTL5_NUM_THREADS`, default 1).
 
-| class | vectors | matrix–vector | matrix–matrix, factorizations | eigen / SVD | catalogue time (i7-12700K, 1 thread) |
-|---|---|---|---|---|---|
-| `small`  | 2^15 | 512 | 128 | 64 | ~9 s |
-| `medium` | 2^23 | 4096 | 512 | 256 | ~45 s |
-| `large`  | 2^25 | 8192 | 1024 | 512 | ~4 min; peak memory ~1 GiB (`ger`'s two 8192² matrices) |
+| class | vectors | matrix–vector | matrix–matrix, factorizations | eigen / SVD | sparse kernels (grid) | sparse direct, orderings (grid) | catalogue time (i7-12700K, 1 thread) |
+|---|---|---|---|---|---|---|---|
+| `small`  | 2^15 | 512 | 128 | 64 | 64² | 32² | ~10 s |
+| `medium` | 2^23 | 4096 | 512 | 256 | 512² | 96² | ~55 s |
+| `large`  | 2^25 | 8192 | 1024 | 512 | 1024² | 192² | ~5.5 min; peak memory ~1 GiB (`ger`'s two 8192² matrices) |
 
-The registry covers 50 entries so far:
+`sparse_qr` runs on half the direct grid's side (see its entry), because one QR solve at 96² took over 4 s.
+
+The registry covers 66 entries so far:
 - **BLAS levels 1–3** (#721 milestone M1).
 - **Dense factorizations:** LU, Cholesky, LDLᵀ, Bunch–Kaufman, QR, LQ, Hessenberg, the Householder step, `inv`, and f32→f64 LU refinement.
 - **Eigensolvers and matrix functions:** symmetric (tridiagonal QR and Jacobi), general, Schur, SVD, `expm` and `sylvester`.
 - **Element-wise functions:** `exp`, `log`, `sin`, `sqrt` and `erf` (M3).
+- **Sparse kernels:** SpMV, transposed SpMV, CRS×dense, SpGEMM and the level-scheduled lower solve.
+- **Sparse direct solvers:** Cholesky, LDLᵀ, supernodal LDLᵀ, LU, supernodal LU, native KLU and QR.
+- **Orderings:** AMD, COLAMD, RCM and the block-triangular form (M4).
+
+All sparse inputs are generated: 2D Poisson, unsymmetric convection–diffusion, scrambled copies of both, and a planted block-triangular matrix. Nothing is downloaded. The orderings have no work model; they're timed and checked, and reported as `n/a`.
 
 Factorization and eigen rates use the conventional LAPACK operation counts (2/3 n³ for LU, 22 n³ for a full SVD, …), so they compare implementations rather than count what a given algorithm executes. Each entry's check is described at the top of its `entries_*.hpp`. The tracking issue lists the remaining areas. To add an operation, write a `problem`
 factory and register it in `platform/entries_*.hpp`. A factory supplies setup,
