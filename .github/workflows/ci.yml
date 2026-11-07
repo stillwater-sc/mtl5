@@ -783,10 +783,70 @@ jobs:
       - name: Build every benchmark target
         run: >
           cmake --build build-bench --parallel 2
-          --target bench_all bench_klu bench_superlu bench_sparse
+          --target bench_all bench_klu bench_superlu bench_sparse mtl5_bench
 
       # Link/startup check only -- bench_all parses arguments and exits. The
       # other three have no --help and would start a real timed suite, so they
       # are built but not run.
       - name: Smoke check
         run: ./build-bench/benchmarks/bench_all --help
+
+  # -- Platform benchmark: the one command, on every OS (#721 M2) ---------
+  # benchmarks/platform.sh (platform.ps1 on Windows) is what a new machine runs:
+  # preflight, build mtl5_bench per variant, run it at each thread count, write
+  # JSON + sidecars + capability cards. This job runs exactly that, end to end,
+  # at the `small` class, so the scripts and every result check are exercised
+  # on each OS and both architectures. Shared runners cannot time anything
+  # (docs/performance/benchmarking-methodology.md), so nothing here gates on a
+  # rate -- only on the builds and the correctness checks (exit status).
+  #
+  # --no-gate: a shared runner fails preflight's machine-state gates (governor,
+  # load), which exist for real measurements; the state is still recorded.
+  # The results go to the default build-platform/results/, which is gitignored,
+  # so the run cannot dirty the tree that preflight checks.
+  platform:
+    name: Platform benchmark smoke (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: Linux x64
+          - os: ubuntu-24.04-arm
+            name: Linux ARM64
+          - os: macos-15
+            name: macOS ARM64
+          - os: windows-2022
+            name: Windows x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run platform.sh (class small)
+        if: runner.os != 'Windows'
+        run: >
+          benchmarks/platform.sh --class small --variants native,native-fast
+          --threads 1,2 --jobs 2 --no-gate
+
+      - name: Run platform.ps1 (class small)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >
+          ./benchmarks/platform.ps1 -Class small -Variants native,native-fast
+          -Threads 1,2 -Jobs 2 -NoGate
+
+      - name: Show the capability cards and logs
+        if: always()
+        shell: bash
+        run: |
+          for f in build-platform/results/*/summary.md; do
+            [ -f "$f" ] && cat "$f"
+          done
+          # Configure and build logs are long; their tails hold any error.
+          for f in build-platform/results/*/logs/*; do
+            echo "::group::$f"
+            case "$f" in *.configure*|*.build*) tail -n 60 "$f" ;; *) cat "$f" ;; esac
+            echo "::endgroup::"
+          done
