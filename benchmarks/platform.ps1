@@ -41,8 +41,11 @@ failed; 2 on a usage error.
 #>
 param(
     [ValidateSet('small', 'medium', 'large')][string]$Class = 'medium',
-    [string]$Variants = 'native,native-fast',
-    [string]$Threads = '',
+    # [string[]], not [string]: PowerShell parses `-Threads 1,2` as an ARRAY, and
+    # binding that to a [string] joins it with spaces ("1 2"). Either form --
+    # an array or one comma-separated string -- is accepted below.
+    [string[]]$Variants = @('native', 'native-fast'),
+    [string[]]$Threads = @(),
     [int]$Jobs = 0,
     [string]$Out = '',
     [string]$Machine = '',
@@ -54,10 +57,15 @@ $RepoRoot  = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $BuildRoot = Join-Path $RepoRoot 'build-platform'
 $ncpu = [Environment]::ProcessorCount
 if ($Jobs -le 0) { $Jobs = [Math]::Max(1, [int]($ncpu / 2)) }
-if (-not $Threads) { $Threads = if ($ncpu -gt 1) { "1,$ncpu" } else { '1' } }
+function Split-List([string[]]$items) {
+    @($items | ForEach-Object { $_ -split '[,\s]+' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+if (-not $Threads -or $Threads.Count -eq 0) { $Threads = if ($ncpu -gt 1) { @('1', "$ncpu") } else { @('1') } }
+$Threads = Split-List $Threads
+$Variants = Split-List $Variants
 
 $ThreadList = @()
-foreach ($t in ($Threads -split ',')) {
+foreach ($t in $Threads) {
     $n = 0
     if (-not [int]::TryParse($t.Trim(), [ref]$n) -or $n -lt 1) {
         Write-Host "platform.ps1: bad thread count '$t'"; exit 2
@@ -65,7 +73,7 @@ foreach ($t in ($Threads -split ',')) {
     $ThreadList += $n
 }
 $MaxThreads = ($ThreadList | Measure-Object -Maximum).Maximum
-$VariantList = @($Variants -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$VariantList = $Variants
 foreach ($v in $VariantList) {
     if ($v -notin @('native', 'native-fast', 'blas')) { Write-Host "platform.ps1: unknown variant '$v'"; exit 2 }
 }
@@ -78,7 +86,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Out 'logs') | Out-Null
 $Out = (Resolve-Path $Out).Path
 $Logs = Join-Path $Out 'logs'
 
-Write-Host "mtl5 platform benchmark: class=$Class variants=$Variants threads=$Threads jobs=$Jobs"
+Write-Host "mtl5 platform benchmark: class=$Class variants=$($Variants -join ',') threads=$($Threads -join ',') jobs=$Jobs"
 Write-Host "results: $Out"
 
 # Run a native tool with stdout+stderr to files, returning the exit code. Same
@@ -171,7 +179,7 @@ foreach ($v in $Built) {
 
 # --- summary --------------------------------------------------------------------
 $summary = @('# mtl5_bench platform characterization', '',
-             "Class ``$Class``, variants $($Built -join ' '), threads $Threads, $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')).")
+             "Class ``$Class``, variants $($Built -join ' '), threads $($Threads -join ','), $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')).")
 if ($Skipped.Count -gt 0) { $summary += @('', 'Not measured:') + ($Skipped | ForEach-Object { "- $_" }) }
 $summary += ''
 foreach ($r in $Runs) { if (Test-Path "$r.md") { $summary += Get-Content "$r.md" } }

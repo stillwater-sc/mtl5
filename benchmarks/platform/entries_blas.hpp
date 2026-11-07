@@ -31,7 +31,29 @@
 #include <memory>
 #include <string>
 
-#include <mtl/mtl.hpp>
+// The operation headers this file calls, not the <mtl/mtl.hpp> umbrella: with
+// MTL5_HAS_BLAS and MTL5_HAS_SUPERLU both defined, the umbrella pulls in
+// SuperLU's headers, whose dgemm_/dtrsm_ prototypes conflict with MTL5's own
+// BLAS declarations, and the translation unit does not compile.
+#include <mtl/mat/dense2D.hpp>
+#include <mtl/vec/dense_vector.hpp>
+#include <mtl/operation/axpy.hpp>
+#include <mtl/operation/dot.hpp>
+#include <mtl/operation/gemmt.hpp>
+#include <mtl/operation/ger.hpp>
+#include <mtl/operation/kron.hpp>
+#include <mtl/operation/mult.hpp>
+#include <mtl/operation/norms.hpp>
+#include <mtl/operation/scale.hpp>
+#include <mtl/operation/sum.hpp>
+#include <mtl/operation/symm.hpp>
+#include <mtl/operation/symv.hpp>
+#include <mtl/operation/syr2k.hpp>
+#include <mtl/operation/syrk.hpp>
+#include <mtl/operation/trmm.hpp>
+#include <mtl/operation/trmv.hpp>
+#include <mtl/operation/trsm.hpp>
+#include <mtl/operation/trsv.hpp>
 
 #include <benchmarks/harness/generators.hpp>
 #include <benchmarks/platform/registry.hpp>
