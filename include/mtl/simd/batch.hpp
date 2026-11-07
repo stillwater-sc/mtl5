@@ -12,8 +12,9 @@
 // Backends, selected at compile time:
 //   * Google Highway (Apache-2.0 / BSD-3-Clause), when MTL5_HAS_HIGHWAY is
 //     defined AND the target is not vector-length-agnostic (x86 SSE..AVX-512,
-//     NEON, ...). One ISA per build, chosen by the compiler -m flags (static
-//     dispatch). Enable with CMake -DMTL5_WITH_HIGHWAY=ON.
+//     NEON, and SVE with -msve-vector-bits=N, #717). One ISA per build, chosen
+//     by the compiler -m flags (static dispatch). Enable with CMake
+//     -DMTL5_WITH_HIGHWAY=ON.
 //   * Portable scalar fallback (size == 1) otherwise -- correct everywhere and
 //     autovectorizable, so MTL5 stays MIT and dependency-free by default.
 //
@@ -167,6 +168,35 @@ concept QuadPair = requires { typename quad_accumulator<A, B>::type; };
 
 namespace hn = hwy::HWY_NAMESPACE;
 
+namespace detail {
+/// How `batch` stores a Highway vector `V` (#717).
+///
+/// On NEON and x86, `V` is a class (`Vec128<float>`, ...) and is stored as is.
+/// On SVE it is an ACLE type such as `svfloat32_t`, which is SIZELESS: it cannot
+/// be a class member, so `batch` would not compile for any SVE target. The
+/// fixed-length SVE targets (`HWY_SVE2_128`, `HWY_SVE_256`, selected by
+/// `-msve-vector-bits=N`) know the width at compile time, and ACLE lets that
+/// width be attached to the type with `arm_sve_vector_bits(N)`. The result is
+/// an ordinary sized type that converts implicitly to and from the sizeless
+/// one, so a `batch` stores the fixed type and hands Highway the sizeless one.
+/// The SCALABLE targets have no such N; they stay demoted to the scalar batch
+/// above (MTL5_SIMD_USE_HIGHWAY == 0), which is what #427 is about.
+template <typename V> struct vec_storage { using type = V; };
+
+#if HWY_ARCH_ARM_A64 && (HWY_TARGET & (HWY_SVE2_128 | HWY_SVE_256)) && \
+    defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS > 0
+#  define MTL5_SVE_FIXED_STORAGE(SV)                                           \
+    template <> struct vec_storage<SV> {                                       \
+        typedef SV type __attribute__((arm_sve_vector_bits(__ARM_FEATURE_SVE_BITS))); \
+    };
+MTL5_SVE_FIXED_STORAGE(svfloat32_t)
+MTL5_SVE_FIXED_STORAGE(svfloat64_t)
+MTL5_SVE_FIXED_STORAGE(svint32_t)
+MTL5_SVE_FIXED_STORAGE(svuint32_t)
+#  undef MTL5_SVE_FIXED_STORAGE
+#endif
+} // namespace detail
+
 /// SIMD register of `T`, backed by Google Highway (static dispatch).
 template <typename T>
 class batch {
@@ -178,7 +208,7 @@ class batch {
     using D = hn::ScalableTag<T>;
     using V = hn::VFromD<D>;
     static constexpr D d_{};
-    V v_;
+    typename detail::vec_storage<V>::type v_;   // V itself except on fixed-length SVE
     explicit batch(V v) : v_(v) {}
 
     template <typename> friend class batch;   // convert() reads another lane type's register

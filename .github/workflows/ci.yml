@@ -509,7 +509,7 @@ jobs:
           MTL5_NUM_THREADS: 4
           TSAN_OPTIONS: halt_on_error=1
 
-  # -- Highway SIMD backend: the only lane that compiles it ---------------
+  # -- Highway SIMD backend: the only lanes that compile it ---------------
   # No other job sets MTL5_WITH_HIGHWAY, so MTL5_HAS_HIGHWAY is never defined
   # and every other lane builds the portable scalar fallback in simd/batch.hpp
   # (size == 1). The Highway specialization -- the actual SIMD register type
@@ -522,24 +522,82 @@ jobs:
   # mult() fast-path dispatch IS covered elsewhere -- this cannot be faked in a
   # test: it needs Highway's headers and library.
   #
-  # This lane RUNS the suite, not just builds it. Compile coverage alone would
+  # These lanes RUN the suite, not just build it. Compile coverage alone would
   # miss numerical divergence between the SIMD and scalar paths, which is the
   # failure mode that matters.
+  #
+  # ARM64 (#717). The ubuntu-24.04-arm runners are Neoverse N2: NEON, SVE and
+  # SVE2 at a 128-bit vector length (the #427 probe in the build job reports
+  # it). Three ARM targets, because MTL5 does three different things on them
+  # (docs/performance/arm64-simd-neon-sve.md):
+  #   neon      the default build; Highway's NEON_WITHOUT_AES baseline.
+  #   sve2-128  -msve-vector-bits=128: real SVE2 code with a compile-time lane
+  #             count, which batch stores as a fixed-length ACLE type. The
+  #             binary is correct only where the SVE vector length is 128 bits,
+  #             so the lane refuses to run anywhere else. -mcpu=neoverse-n2,
+  #             not -march=armv9-a: Highway compiles SVE2_128 with +i8mm,+bf16
+  #             and armv9-a lacks them ("target specific option mismatch").
+  #             GCC only: Highway 1.4.0 marks SVE2_128 broken before Clang 21.
+  #   native    MTL5_NATIVE_ARCH=ON, i.e. -march=native. With GCC on N2 that is
+  #             SCALABLE SVE2, which batch demotes to one lane: a native build
+  #             has no SIMD at all. Pinned (test_batch asserts size == 1) so it
+  #             cannot change unnoticed; #427 flips it. Only the SIMD tests run:
+  #             the rest of the suite on the scalar path is what the plain
+  #             ARM64 build job already covers.
+  # Every lane names the Highway target it exists to cover, and test_batch
+  # fails to COMPILE on any other (MTL5_TEST_EXPECT_HWY_TARGET), so a lane
+  # cannot go green while testing the wrong code.
   #
   # Ubuntu 24.04 ships Highway 1.0.7, so find_package(hwy 1.4) misses and
   # FetchContent clones and builds 1.4.0. _deps is cached on the pinned tag so
   # that cost is paid once per cache lifetime rather than every run.
   highway:
-    name: Linux x64 Highway SIMD (${{ matrix.cxx }})
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - cc: gcc-13
+          - name: Linux x64 Highway SIMD (g++-13)
+            os: ubuntu-24.04
+            lane: baseline
+            cc: gcc-13
             cxx: g++-13
-          - cc: clang-18
+          - name: Linux x64 Highway SIMD (clang++-18)
+            os: ubuntu-24.04
+            lane: baseline
+            cc: clang-18
             cxx: clang++-18
+          - name: Linux ARM64 Highway NEON (g++-13)
+            os: ubuntu-24.04-arm
+            lane: neon
+            cc: gcc-13
+            cxx: g++-13
+            cxx_flags: -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_NEON_WITHOUT_AES
+          - name: Linux ARM64 Highway NEON (clang++-18)
+            os: ubuntu-24.04-arm
+            lane: neon
+            cc: clang-18
+            cxx: clang++-18
+            cxx_flags: -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_NEON_WITHOUT_AES
+          - name: Linux ARM64 Highway SVE2_128 (g++-13)
+            os: ubuntu-24.04-arm
+            lane: sve2-128
+            cc: gcc-13
+            cxx: g++-13
+            cxx_flags: >-
+              -mcpu=neoverse-n2 -msve-vector-bits=128
+              -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE2_128
+            require_sve_vl_bytes: 16
+          - name: Linux ARM64 Highway native, scalable SVE2 (g++-13)
+            os: ubuntu-24.04-arm
+            lane: native
+            cc: gcc-13
+            cxx: g++-13
+            cxx_flags: -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE2
+            cmake_args: -DMTL5_NATIVE_ARCH=ON
+            require_sve2: true
+            simd_tests_only: true
 
     # Same trusted-run gate as the build job: forked PRs skip sccache so they
     # cannot poison the shared GHA cache.
@@ -551,6 +609,26 @@ jobs:
         with:
           persist-credentials: false
 
+      # A lane whose code is only valid on certain hardware checks the runner
+      # first, so a change of runner fleet fails here, by name, instead of as
+      # wrong answers from code compiled for a vector length the machine lacks.
+      - name: Check the runner supports this lane's target
+        if: matrix.require_sve_vl_bytes || matrix.require_sve2
+        env:
+          REQUIRE_VL: ${{ matrix.require_sve_vl_bytes }}
+          REQUIRE_SVE2: ${{ matrix.require_sve2 }}
+        run: |
+          feats=" $(grep -m1 '^Features' /proc/cpuinfo | cut -d: -f2) "
+          vl=$(cat /proc/sys/abi/sve_default_vector_length 2>/dev/null || echo none)
+          echo "SVE default vector length (bytes): $vl"
+          case "$feats" in *" sve2 "*) ;; *)
+            echo "::error::this lane needs SVE2; the runner has: $feats"; exit 1 ;;
+          esac
+          if [ -n "$REQUIRE_VL" ] && [ "$vl" != "$REQUIRE_VL" ]; then
+            echo "::error::this lane's binary is built for a $REQUIRE_VL-byte SVE vector; the runner's is $vl"
+            exit 1
+          fi
+
       - name: Set up sccache
         if: >-
           github.event_name != 'pull_request' ||
@@ -559,20 +637,25 @@ jobs:
 
       # Keyed on CMakeLists.txt, which carries the pinned Highway GIT_TAG, so
       # bumping the tag invalidates the cache rather than silently reusing the
-      # old checkout.
+      # old checkout. Also keyed on the architecture and the lane: runner.os is
+      # "Linux" on both x64 and ARM64, and each lane builds Highway with its own
+      # flags.
       - name: Cache the fetched Highway build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build-hwy/_deps
-          key: highway-${{ runner.os }}-${{ matrix.cxx }}-${{ hashFiles('CMakeLists.txt') }}
+          key: highway-${{ runner.os }}-${{ runner.arch }}-${{ matrix.lane }}-${{ matrix.cxx }}-${{ hashFiles('CMakeLists.txt') }}
           restore-keys: |
-            highway-${{ runner.os }}-${{ matrix.cxx }}-
+            highway-${{ runner.os }}-${{ runner.arch }}-${{ matrix.lane }}-${{ matrix.cxx }}-
 
-      # MTL5_NATIVE_ARCH is deliberately NOT set: -march=native would pin the
-      # build to whatever microarchitecture the runner happens to be. Highway's
-      # static dispatch still compiles its SIMD path at the baseline target,
-      # which is what this lane exists to cover.
+      # MTL5_NATIVE_ARCH is deliberately NOT set outside the `native` lane:
+      # -march=native would pin the build to whatever microarchitecture the
+      # runner happens to be. Highway's static dispatch still compiles its SIMD
+      # path at the baseline target, which is what the baseline lanes cover.
       - name: Configure
+        env:
+          LANE_CXX_FLAGS: ${{ matrix.cxx_flags }}
+          LANE_CMAKE_ARGS: ${{ matrix.cmake_args }}
         run: >
           cmake -B build-hwy
           -DCMAKE_CXX_STANDARD=20
@@ -581,26 +664,56 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
           -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="$LANE_CXX_FLAGS"
           -DMTL5_WITH_HIGHWAY=ON
           -DMTL5_NATIVE_FAST_GEMM=ON
+          $LANE_CMAKE_ARGS
 
       - name: Build
-        run: cmake --build build-hwy --parallel 2
+        env:
+          SIMD_TESTS_ONLY: ${{ matrix.simd_tests_only }}
+        run: |
+          if [ "$SIMD_TESTS_ONLY" = true ]; then
+            targets=()
+            for f in tests/unit/simd/*.cpp; do
+              targets+=("simd_$(basename "$f" .cpp)")
+            done
+            cmake --build build-hwy --parallel 2 --target "${targets[@]}"
+          else
+            cmake --build build-hwy --parallel 2
+          fi
 
       # Fails loudly if the configure silently fell back to the scalar path --
       # otherwise this lane could go green while covering nothing. The option
       # must be on AND Highway must have actually been built, since a cache
       # restore or a find_package hit are both plausible ways to end up with
       # neither. (simd/test_batch.cpp additionally static-asserts that the batch
-      # is wider than one element under MTL5_HAS_HIGHWAY on x86-64, so a silent
-      # fallback fails the suite too, not just this step.)
+      # is wider than one element under MTL5_HAS_HIGHWAY on x86-64 and AArch64,
+      # and that the target is the lane's MTL5_TEST_EXPECT_HWY_TARGET, so a
+      # silent fallback fails the build too, not just this step.)
       - name: Verify Highway is actually active
         run: |
           grep -q 'MTL5_WITH_HIGHWAY:BOOL=ON' build-hwy/CMakeCache.txt
           find build-hwy -name 'libhwy*' -print -quit | grep -q .
 
+      - name: Report the compiled SIMD target
+        env:
+          LANE_NAME: ${{ matrix.name }}
+        run: |
+          bin=$(find build-hwy -type f -name simd_test_batch -perm -u+x -print -quit)
+          line=$("$bin" "report the compiled SIMD backend" | grep -m1 'hwy=' || true)
+          echo "$line"
+          echo "::notice title=Highway target ($LANE_NAME)::${line:-not reported}"
+
       - name: Test
-        run: ctest --test-dir build-hwy --output-on-failure
+        env:
+          SIMD_TESTS_ONLY: ${{ matrix.simd_tests_only }}
+        run: |
+          if [ "$SIMD_TESTS_ONLY" = true ]; then
+            ctest --test-dir build-hwy -R '^simd_' --output-on-failure
+          else
+            ctest --test-dir build-hwy --output-on-failure
+          fi
 
   # -- Benchmark sources: build only, never timed -----------------------
   # MTL5_BUILD_BENCHMARKS defaults OFF and no other job enables it, so
