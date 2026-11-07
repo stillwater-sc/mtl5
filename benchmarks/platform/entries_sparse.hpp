@@ -363,10 +363,14 @@ inline problem spgemm(size_class c) {
         for (std::size_t i = 0; i < n; ++i) x[i] = xv(i);
         ref_mult(s->A, x, ax, y1);                // A x and |A||x|
         ref_mult(s->A, ax, aax, y2);              // A (A x)
-        ref_mult(s->A, y1, y2, cx);               // |A| (|A||x|): the magnitude bound
+        ref_mult(s->A, y1, y2, cx);               // cx = |A| (|A||x|): the magnitude bound
         ref_mult(s->C, x, acx, y1);               // C x
+        // The scale is cx, the MAGNITUDE |A||A||x| -- not y2, which is the signed
+        // product A (|A||x|) and can cancel to near zero. (Measuring against y2
+        // passed on x86 Linux, where long double's extra bits kept the difference
+        // tiny, and failed on MSVC and Apple ARM64, where long double is double.)
         error_tracker e(tol<double>(2 * max_row_nnz(s->A) * max_row_nnz(s->A)), "C x vs A (A x)");
-        for (std::size_t i = 0; i < n; ++i) e.add(acx[i], aax[i], y2[i]);
+        for (std::size_t i = 0; i < n; ++i) e.add(acx[i], aax[i], cx[i]);
         return e.result();
     };
     return p;
