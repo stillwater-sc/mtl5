@@ -1,6 +1,10 @@
 {
     "version": 3,
-    "cmakeMinimumRequired": { "major": 3, "minor": 22, "patch": 0 },
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 22,
+        "patch": 0
+    },
     "configurePresets": [
         {
             "name": "dev",
@@ -47,6 +51,142 @@
                 "MTL5_BUILD_TESTS": "ON",
                 "MTL5_BUILD_EXAMPLES": "OFF",
                 "MTL5_BUILD_REGRESSION_TESTS": "ON"
+            }
+        },
+        {
+            "name": "aarch64-base",
+            "hidden": true,
+            "displayName": "aarch64 cross + QEMU (base)",
+            "description": "Cross-compile for aarch64 Linux and run ctest under qemu-aarch64 (tools/cmake/toolchains/aarch64-linux-gnu.cmake). Correctness only: emulated timings are meaningless.",
+            "toolchainFile": "${sourceDir}/tools/cmake/toolchains/aarch64-linux-gnu.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CXX_STANDARD": "20",
+                "MTL5_BUILD_TESTS": "ON",
+                "MTL5_BUILD_EXAMPLES": "OFF",
+                "MTL5_BUILD_BENCHMARKS": "OFF",
+                "MTL5_WITH_HIGHWAY": "ON",
+                "MTL5_NATIVE_FAST_GEMM": "ON"
+            }
+        },
+        {
+            "name": "aarch64-neon",
+            "inherits": "aarch64-base",
+            "displayName": "aarch64 NEON (QEMU Neoverse N2)",
+            "description": "Highway's default AArch64 target, NEON_WITHOUT_AES, as the CI NEON lane builds it.",
+            "binaryDir": "${sourceDir}/build-aarch64-neon",
+            "cacheVariables": {
+                "CMAKE_CXX_FLAGS": "-DMTL5_TEST_EXPECT_HWY_TARGET=HWY_NEON_WITHOUT_AES",
+                "MTL5_QEMU_CPU": "neoverse-n2"
+            }
+        },
+        {
+            "name": "aarch64-sve2-128",
+            "inherits": "aarch64-base",
+            "displayName": "aarch64 SVE2_128 (QEMU Neoverse N2, 128-bit)",
+            "description": "Fixed-length SVE2 at 128 bits, as the CI SVE2_128 lane builds it. Correct only at a 128-bit vector length.",
+            "binaryDir": "${sourceDir}/build-aarch64-sve2-128",
+            "cacheVariables": {
+                "CMAKE_CXX_FLAGS": "-mcpu=neoverse-n2 -msve-vector-bits=128 -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE2_128",
+                "MTL5_QEMU_CPU": "neoverse-n2"
+            }
+        },
+        {
+            "name": "aarch64-sve-256",
+            "inherits": "aarch64-base",
+            "displayName": "aarch64 SVE_256 (QEMU Neoverse V1, 256-bit)",
+            "description": "Fixed-length SVE at 256 bits (Graviton 3). No CI runner has this width. Correct only at a 256-bit vector length.",
+            "binaryDir": "${sourceDir}/build-aarch64-sve-256",
+            "cacheVariables": {
+                "CMAKE_CXX_FLAGS": "-mcpu=neoverse-v1 -msve-vector-bits=256 -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE_256",
+                "MTL5_QEMU_CPU": "neoverse-v1"
+            }
+        },
+        {
+            "name": "aarch64-sve2-scalable",
+            "inherits": "aarch64-base",
+            "displayName": "aarch64 scalable SVE2 (QEMU max, 512-bit by default)",
+            "description": "Scalable SVE2, what -march=native gives on SVE hardware with GCC: batch is demoted to one lane until #427. The binary is vector-length agnostic; rerun ctest at other widths with MTL5_QEMU_CPU=max,sve-default-vector-length=<bytes>.",
+            "binaryDir": "${sourceDir}/build-aarch64-sve2-scalable",
+            "cacheVariables": {
+                "CMAKE_CXX_FLAGS": "-mcpu=neoverse-n2 -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE2",
+                "MTL5_QEMU_CPU": "max"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "aarch64-neon",
+            "configurePreset": "aarch64-neon",
+            "jobs": 4
+        },
+        {
+            "name": "aarch64-sve2-128",
+            "configurePreset": "aarch64-sve2-128",
+            "jobs": 4
+        },
+        {
+            "name": "aarch64-sve-256",
+            "configurePreset": "aarch64-sve-256",
+            "jobs": 4
+        },
+        {
+            "name": "aarch64-sve2-scalable",
+            "configurePreset": "aarch64-sve2-scalable",
+            "jobs": 4
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "aarch64-neon-simd",
+            "configurePreset": "aarch64-neon",
+            "displayName": "aarch64-neon: SIMD tests under QEMU",
+            "filter": {
+                "include": {
+                    "name": "^simd_"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "aarch64-sve2-128-simd",
+            "configurePreset": "aarch64-sve2-128",
+            "displayName": "aarch64-sve2-128: SIMD tests under QEMU",
+            "filter": {
+                "include": {
+                    "name": "^simd_"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "aarch64-sve-256-simd",
+            "configurePreset": "aarch64-sve-256",
+            "displayName": "aarch64-sve-256: SIMD tests under QEMU",
+            "filter": {
+                "include": {
+                    "name": "^simd_"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "aarch64-sve2-scalable-simd",
+            "configurePreset": "aarch64-sve2-scalable",
+            "displayName": "aarch64-sve2-scalable: SIMD tests under QEMU",
+            "filter": {
+                "include": {
+                    "name": "^simd_"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
             }
         }
     ]

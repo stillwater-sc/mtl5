@@ -86,6 +86,19 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### CI
 
+- **Build and test aarch64 code on an x86 host, under QEMU.** There's a new toolchain file, `tools/cmake/toolchains/aarch64-linux-gnu.cmake`, that cross-compiles with `aarch64-linux-gnu-g++` (or clang with `MTL5_AARCH64_CLANG=ON`) and makes `ctest` run every test through `qemu-aarch64`. `MTL5_QEMU_CPU` selects the emulated core, and with it the SVE vector length. Four presets go with it, each with a `-simd` test preset:
+  - **`aarch64-neon`:** NEON, emulated Neoverse N2.
+  - **`aarch64-sve2-128`:** fixed-length SVE2 at 128 bits, emulated N2.
+  - **`aarch64-sve-256`:** fixed-length SVE at 256 bits, emulated Neoverse V1.
+  - **`aarch64-sve2-scalable`:** scalable SVE2, at any emulated width.
+
+  All four pass the 11 SIMD tests. `SVE_256` had never been built or run before, because CI's ARM runners are 128-bit. The scalable build passes at 128, 256, 512 and 2048 bits.
+
+  **The emulation is for correctness only:** timings under it say nothing about hardware. Running a fixed-length binary at the wrong width confirmed the hazard in `docs/performance/arm64-simd-neon-sve.md` (R3):
+  - **`SVE_256` at 128 or 512 bits** crashes in every SIMD test.
+  - **`SVE2_128` at 256 bits** fails 6 of 11 tests, and passes the other 5.
+
+
 - **Highway lanes on Linux ARM64** (#717). The `highway` job now also runs on the Neoverse N2 ARM64 runners, in three lanes:
   - **NEON**, the default ARM64 Highway build, on GCC 13 and Clang 18 with the full suite. No CI job compiled it before.
   - **`SVE2_128`**, GCC 13 with the full suite. It refuses to run unless the runner's SVE vector length is 128 bits. GCC only, because Highway 1.4.0 marks `SVE2_128` broken before Clang 21.
