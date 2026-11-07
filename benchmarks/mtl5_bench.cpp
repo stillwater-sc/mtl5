@@ -25,6 +25,7 @@
 #include <benchmarks/platform/entries_blas.hpp>
 #include <benchmarks/platform/entries_dense.hpp>
 #include <benchmarks/platform/entries_sparse.hpp>
+#include <benchmarks/platform/entries_iterative.hpp>
 #include <benchmarks/platform/probes.hpp>
 #include <benchmarks/platform/registry.hpp>
 #include <benchmarks/platform/run.hpp>
@@ -272,6 +273,7 @@ int main(int argc, char** argv) {
     bp::blas::register_all(reg);
     bp::dense::register_all(reg);
     bp::sparse_entries::register_all(reg);
+    bp::iterative::register_all(reg);
 
     std::vector<const bp::entry*> selected;
     for (const auto& e : reg.entries())

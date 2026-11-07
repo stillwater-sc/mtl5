@@ -61,6 +61,21 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`mtl5_bench` covers Krylov solvers, preconditioners, smoothers, multigrid and the sparse eigensolvers** (#721, milestone M5). There are 25 new entries, bringing the catalogue to 91, and each has a check that a wrong result can't pass:
+  - **Krylov solvers (`cg`, `minres`, `bicg`, `bicgstab`, `bicgstab_ell`, `cgs`, `gmres`, `qmr`, `tfqmr`, `idr_s`):** the solver reports convergence, and the *true* residual is ≤ 1e-6.
+  - **Preconditioner setups (`diagonal`, `ilu_0`, `ilut`, `ic_0`, `ildl`, `ssor`, `block_diagonal`):** each must cut the Krylov iteration count to at most ¾, and the diagonal one must also match b_i/a_ii exactly.
+  - **Smoothers (`jacobi`, `gauss_seidel`, `sor`):** each sweep satisfies its defining splitting row by row, within `γ_k`.
+  - **Multigrid:** a 2D Poisson V(1,1) hierarchy with tensor-product transfers and Galerkin coarse operators must reach 1e-6 in 10 cycles.
+  - **Shift-invert:** convergence, and the *analytic* smallest eigenvalues to 1e-10. The generated Laplacian and convection–diffusion matrices have closed-form spectra.
+  - **Lanczos, Arnoldi and power iteration:** a Bauer–Fike enclosure of every returned pair, plus rigorous upper bounds (Cauchy interlacing, and the numerical range for Arnoldi) and an accuracy floor.
+
+  The mutation runs found three checks too weak (a near-correct diagonal preconditioner, and eigenvalues shifted together with their error bars), and those checks were strengthened. All 91 checks then fail on corrupted results. All 91 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double` (as on MSVC and Apple ARM64) and on aarch64 under QEMU. Run time on an i7-12700K with one thread: about 11 s / 70 s / 7.5 min.
+
+  The run found these problems, which aren't addressed here:
+  - **TFQMR fails on unsymmetric systems.** On convection–diffusion it stalls at a 6–9% residual after thousands of iterations with any preconditioner, where BiCGSTAB converges in 13–52. Its unit tests use only symmetric matrices (the "non-symmetric" 3×3 case is symmetric). On the SPD Poisson matrix it converges, but needs 10× BiCGSTAB's iterations; the entry runs there.
+  - **The `pc::ic_0` and `pc::ildl` applies are quadratic in n:** 131 ms and 57 ms per apply at n = 16384, against 0.14 ms for `ilu_0`. CG is therefore paired with ILU(0), the same incomplete factor on an SPD matrix, and the `ic_0`/`ildl` setup entries are capped at a 64² grid.
+  - **The `pc::ilu_0` and `pc::ilut` setups are quadratic in n:** 0.4 ms, 82 ms and 1.3 s at n = 1024, 16384 and 65536.
+
 - **`mtl5_bench` covers sparse kernels, sparse direct solvers and orderings** (#721, milestone M4). There are 16 new entries, bringing the catalogue to 66. Every input is generated (2D Poisson, unsymmetric convection–diffusion, scrambled copies, a planted block-triangular matrix), so nothing is downloaded. Each check is one a wrong result can't pass:
   - **SpMV, transposed SpMV on an unsymmetric matrix, CRS×dense:** per-row error against `γ_k·|A||x|`.
   - **SpGEMM:** C·x against A·(A·x).
