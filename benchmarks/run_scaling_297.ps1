@@ -43,10 +43,23 @@ function Mask-ForThreads {
 
 function Invoke-Native {
     param([string]$Exe, [string[]]$NativeArgs, [string]$LogBase)
-    $p = Start-Process -FilePath $Exe -ArgumentList $NativeArgs -PassThru -NoNewWindow -Wait `
+    # Quote arguments containing spaces: Start-Process joins -ArgumentList with
+    # spaces and quotes NOTHING, so a repo under "C:\Users\Some Name\..." reaches
+    # cmake as two broken arguments (#438). The other harnesses already did this.
+    $quoted = $NativeArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
+    # NOT Start-Process -Wait: -Wait also waits for every DESCENDANT, and an MSVC
+    # build leaves MSBuild's reusable worker nodes alive for ~15 minutes, so each
+    # `cmake --build` blocked until they timed out. Wait on the process itself;
+    # touching .Handle first keeps ExitCode readable in Windows PowerShell 5.1.
+    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow `
                        -RedirectStandardOutput "$LogBase.out.log" -RedirectStandardError "$LogBase.err.log"
+    $null = $p.Handle
+    $p.WaitForExit()
     return $p.ExitCode
 }
+
+# No lingering MSBuild worker nodes after this script's builds (see Invoke-Native).
+$env:MSBUILDDISABLENODEREUSE = '1'
 
 # native-fast build (bench_all + bench_sparse).
 $build = Join-Path $RepoRoot "build-scaling-297"

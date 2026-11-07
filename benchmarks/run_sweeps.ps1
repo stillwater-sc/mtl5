@@ -132,13 +132,20 @@ function Invoke-Native {
     # under "C:\Users\Some Name\..." reaches cmake as two broken arguments and
     # the configure fails with a path that looks correct in the log (#438).
     $quoted = $NativeArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
-    # -Wait is required: without it, Start-Process -PassThru leaves ExitCode
-    # empty in Windows PowerShell 5.1 (disposed process handle).
-    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow -Wait `
+    # NOT Start-Process -Wait: -Wait also waits for every DESCENDANT, and an MSVC
+    # build leaves MSBuild's reusable worker nodes alive for ~15 minutes, so each
+    # `cmake --build` blocked until they timed out. Wait on the process itself;
+    # touching .Handle first keeps ExitCode readable in Windows PowerShell 5.1.
+    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow `
                        -RedirectStandardOutput "$LogBase.out.log" `
                        -RedirectStandardError  "$LogBase.err.log"
+    $null = $p.Handle
+    $p.WaitForExit()
     return $p.ExitCode
 }
+
+# No lingering MSBuild worker nodes after this script's builds (see Invoke-Native).
+$env:MSBUILDDISABLENODEREUSE = '1'
 
 # Clean-configure + build one bench_all variant. Extra cmake args as an array.
 function Build-Variant {
