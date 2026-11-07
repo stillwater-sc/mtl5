@@ -71,6 +71,9 @@ void note_thread() {
 /// Stand-in for a Universal number type: a class scalar with the field
 /// operations MTL5 needs and nothing a hardware kernel can use. Conversion to
 /// double is explicit, so no mixed expression can silently leave the type.
+///
+/// Not mtl5_test::double_shim (#712): the multiply below records the thread
+/// that executed it, which the "distributes its rows" test depends on.
 struct emul {
     double x = 0.0;
     emul() = default;

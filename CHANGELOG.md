@@ -61,6 +61,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Tests
 
+- **Tests that only needed a class wrapping a double now use `double_shim`** (#712). `test_mult_ikj`, `test_cholesky_ordering` and `test_householder_textbook` dropped their local `emul`, and their bit-for-bit comparisons still hold. Each one was checked by breaking, for non-native types only, the code its `double_shim` cases cover: the i-k-j summation order, both Cholesky orderings, the textbook reflector's sums and update, and the textbook QR and LQ falling back to the default reflector. Every break fails a `double_shim` assertion. Four tests keep their own type on purpose, with a comment saying why:
+  - `test_mult_generic_mt` and `test_mult_sparse_mt`: the multiply records which thread ran it, and the tests that check rows are split across threads rely on that.
+  - `itl/test_field_requirement` and `itl/test_pc_field_requirement`: `emul` has only the five field operators, so a solver or preconditioner gate that asks for more than a Field rejects it. Both tests now also assert that every gate accepts `double_shim`, which catches a gate that requires an implicit conversion from double.
+
 - **`native_shim`, a user-defined float for testing genericity over the number type** (#703). `float_shim` and `double_shim` are in `tests/support/mtl5_test/native_shim.hpp`, which every test can include and which is not installed. Each holds a native float or double and rounds exactly as it does, but is a class:
   - it is not `is_floating_point` or `is_arithmetic`;
   - it converts to or from a native type only explicitly, and has no mixed operators;

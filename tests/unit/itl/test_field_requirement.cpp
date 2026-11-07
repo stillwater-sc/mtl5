@@ -28,6 +28,8 @@
 #include <complex>
 #include <cstdint>
 
+#include <mtl5_test/native_shim.hpp>
+
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/vector.hpp>
@@ -45,11 +47,18 @@
 #include <mtl/itl/krylov/tfqmr.hpp>
 
 using namespace mtl;
+using mtl5_test::double_shim;
 
 namespace {
 
 /// Minimal custom Field type, standing in for a posit / cfloat / LNS: a class
 /// type (so no hardware path claims it) that divides.
+///
+/// Deliberately minimal, and not mtl5_test::double_shim (#712): it has the five
+/// field operators and nothing else -- no comparison, no sqrt, no limits -- so a
+/// gate that demands more than Field rejects it and fails the assert below. The
+/// shim has all of those, so it would not notice. It is asserted as a second
+/// accepted type, a realistic one with explicit construction only.
 struct emul {
     double x = 0.0;
     emul() = default;
@@ -62,6 +71,7 @@ inline emul operator*(emul a, emul b) { return emul{a.x * b.x}; }
 inline emul operator/(emul a, emul b) { return emul{a.x / b.x}; }
 
 static_assert(Field<emul>,          "the stand-in must actually be a Field");
+static_assert(Field<double_shim>);
 static_assert(Field<double>);
 static_assert(Field<float>);
 static_assert(Field<std::complex<double>>);
@@ -72,6 +82,7 @@ static_assert(!Field<std::int64_t>);
 static_assert(FieldVector<vec::dense_vector<double>>);
 static_assert(FieldVector<vec::dense_vector<std::complex<double>>>);
 static_assert(FieldVector<vec::dense_vector<emul>>);
+static_assert(FieldVector<vec::dense_vector<double_shim>>);
 static_assert(!FieldVector<vec::dense_vector<int>>);
 static_assert(!FieldVector<vec::dense_vector<std::int64_t>>);
 
@@ -126,6 +137,7 @@ MTL5_SOLVER_CALLABLE_ARG(detail::gmres_inner, GmresInnerOk, 30)
     static_assert(TRAIT<double>,                    #TRAIT " must accept double");        \
     static_assert(TRAIT<std::complex<double>>,      #TRAIT " must accept complex");       \
     static_assert(TRAIT<emul>,                      #TRAIT " must accept a custom Field");\
+    static_assert(TRAIT<double_shim>,               #TRAIT " must accept double_shim");   \
     static_assert(!TRAIT<int>,                      #TRAIT " must reject int");           \
     static_assert(!TRAIT<std::int64_t>,             #TRAIT " must reject int64");
 
