@@ -47,7 +47,8 @@ stale=()     # exempt entry that now HAS a sidecar, or names a file that is gone
 
 # `find | sort` rather than a glob: the data directory is nested per machine, and
 # an unmatched glob would silently scan nothing.
-mapfile -t csvs < <(find "$DATA" -type f -name '*.csv' | sort)
+# JSON too: mtl5_bench (#721) writes its results as JSON with the same sidecar.
+mapfile -t csvs < <(find "$DATA" -type f \( -name '*.csv' -o -name '*.json' \) | sort)
 if [ "${#csvs[@]}" -eq 0 ]; then
     echo "check_sidecars: found no CSVs under $DATA -- the scan is broken, not the tree" >&2
     exit 2

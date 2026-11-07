@@ -61,6 +61,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`mtl5_bench`, the platform benchmark: milestone M1** (#721). One binary that characterizes a machine the same way every time.
+  - **Probes first:** it measures the FMA peak (f64 and f32) with the build's own SIMD target. It measures memory bandwidth with three-stream read, update (`a += s*b`) and STREAM triad, and takes the best as the ceiling.
+  - **Then the registry:** it runs every registered operation at a fixed size for `--class small|medium|large`. Each result is checked against a long-double reference using the `gamma_k` error bound, so a fast wrong answer is a failure. Each rate is reported as a percentage of the roofline for its arithmetic intensity, and a bandwidth-bound result that fits in the last-level cache is flagged.
+  - **Output:** a console table, plus `--json FILE` with a `FILE.sysinfo` provenance sidecar. `benchmarks/check_sidecars.sh` now also requires sidecars for committed JSON results.
+  - **Coverage so far:** 25 entries across BLAS levels 1–3 (`dot`, `axpy`, `scale`, the norms, `sum`, `gemv`, `symv`, `trmv`, `trsv`, `ger`, `gemm`, `gemmt`, `symm`, `syrk`, `syr2k`, `trmm`, `trsm`, `kron`), in f64 and, for the key kernels, f32.
+  - **Run time on an i7-12700K with one thread:** `small` about 5 s, `medium` about 20 s, `large` about 85 s.
+  - **First findings:** in the generic build, `symm`, `trmm` and `trsm` reach 1–2% of the roofline at n = 512, against 25% for `gemm`. `symv` reaches 5% against 46% for `gemv`.
+  - The remaining areas follow in later milestones of #721.
+
 - **Fixed-length SVE support in `simd::batch`** (#717). `batch` previously compiled for no SVE target at all, because Highway's SVE vectors are sizeless ACLE types (`svfloat32_t`, ...) and a sizeless type cannot be a class member. On the fixed-length targets (`-msve-vector-bits=N`, Highway's `SVE2_128` and `SVE_256`), `batch` now stores the register as a fixed-length ACLE type (`arm_sve_vector_bits(N)`). NEON and x86 builds are unchanged. A build with `-mcpu=neoverse-n2 -msve-vector-bits=128` gets real SVE2 code with `batch<float>::size == 4`. Such a binary is correct only on a machine whose SVE vector length is 128 bits. The scalable targets (no `-msve-vector-bits`) are still demoted to the scalar `batch` (#427).
 
 ### CI
