@@ -61,6 +61,28 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`mtl5_bench` covers dense factorizations, eigensolvers, SVD, matrix functions and element-wise kernels** (#721, milestone M3). There are 25 new entries, bringing the catalogue to 50, and each has a check that a wrong result can't pass:
+  - **Factorizations (`lu`, `cholesky`, `ldlt`, `ldlt_bk`, `qr`):** the backward error of a solve.
+  - **`lq`:** L·Lᵀ against A·Aᵀ.
+  - **`hessenberg`:** its structure, plus the trace and Frobenius invariants.
+  - **`inv`:** A·X = I.
+  - **`lu_iterative_refine`:** the f64 backward error it reaches.
+  - **Eigenvalues (symmetric and general):** traces of the powers of A.
+  - **Eigenvectors:** A·v = λ·v and Vᵀ·V = I.
+  - **`schur`:** Q·T·Qᵀ = A, orthogonality, and quasi-triangular structure.
+  - **`svd`:** U·S·Vᵀ = A, orthogonality, and the ordering of S.
+  - **`expm`:** expm(A)·expm(−A) = I.
+  - **`sylvester`:** its residual.
+  - **Householder:** H·x = β·e₁.
+  - **Element-wise functions:** `std::` per element.
+
+  Every factorization and eigen check was confirmed to fail when its result is corrupted. All 50 pass at every class with GCC and Clang, and on aarch64 (NEON and SVE_256) under QEMU. Run time on an i7-12700K with one thread: `small` about 9 s, `medium` about 45 s, `large` about 4 minutes. Rates use the conventional LAPACK operation counts. The shared check helpers moved to `benchmarks/platform/common.hpp`.
+
+  The first run found these gaps, which aren't addressed here (medium class, generic build):
+  - **`qr_factor` is 10× slower than `lq_factor` for the same work:** 217 ms against 22 ms at n = 512.
+  - **Bunch–Kaufman `ldlt_bk` is 7× slower than `ldlt`.**
+  - **`eigenvalue()` defaults to a deflation tolerance of 1e-10.** It therefore stops short of full accuracy, while `schur()` runs the same iteration at machine epsilon. The benchmark calls `eigenvalue` with `tol = eps`.
+
 - **`benchmarks/platform.sh` and `platform.ps1`: characterize a machine with one command** (#721, milestone M2). After a `git clone`, `benchmarks/platform.sh` does the whole job:
   - **gates the session** with `preflight`, before the builds and again after them;
   - **builds `mtl5_bench`** for the `native`, `native-fast` and (if a system BLAS is found) `blas` variants, all before any measurement;

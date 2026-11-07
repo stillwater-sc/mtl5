@@ -23,6 +23,7 @@
 // configuration -- native, native-fast, BLAS -- and run each.
 
 #include <benchmarks/platform/entries_blas.hpp>
+#include <benchmarks/platform/entries_dense.hpp>
 #include <benchmarks/platform/probes.hpp>
 #include <benchmarks/platform/registry.hpp>
 #include <benchmarks/platform/run.hpp>
@@ -262,6 +263,7 @@ int main(int argc, char** argv) {
 
     bp::registry reg;
     bp::blas::register_all(reg);
+    bp::dense::register_all(reg);
 
     std::vector<const bp::entry*> selected;
     for (const auto& e : reg.entries())
@@ -296,7 +298,7 @@ int main(int argc, char** argv) {
               << "probe  triad        " << std::setw(8) << pr.triad_gbytes_per_s << " GB/s  ("
               << (pr.triad_array_bytes >> 20) << " MiB arrays)\n\n";
 
-    std::cout << std::left << std::setw(7) << "area" << std::setw(15) << "op" << std::setw(5) << "type"
+    std::cout << std::left << std::setw(12) << "area" << std::setw(23) << "op" << std::setw(8) << "type"
               << std::setw(16) << "shape" << std::right << std::setw(11) << "median"
               << std::setw(11) << "GFLOP/s" << std::setw(10) << "GB/s" << std::setw(9) << "%roof"
               << "  check\n";
@@ -310,7 +312,7 @@ int main(int argc, char** argv) {
         std::ostringstream t;
         t << std::fixed << std::setprecision(r.median_s < 1e-3 ? 1 : 2)
           << (r.median_s < 1e-3 ? r.median_s * 1e6 : r.median_s * 1e3) << (r.median_s < 1e-3 ? "us" : "ms");
-        std::cout << std::left << std::setw(7) << r.area << std::setw(15) << r.op << std::setw(5) << r.dtype
+        std::cout << std::left << std::setw(12) << r.area << std::setw(23) << r.op << std::setw(8) << r.dtype
                   << std::setw(16) << r.shape << std::right << std::setw(11) << t.str()
                   << std::fixed << std::setprecision(2) << std::setw(11) << r.gflops
                   << std::setw(10) << r.gbytes_per_s << std::setprecision(0) << std::setw(8)
