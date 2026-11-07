@@ -11,6 +11,16 @@ target_include_directories(bench_all PRIVATE
 )
 set_target_properties(bench_all PROPERTIES FOLDER "Benchmarks")
 
+# The platform benchmark (#721): one binary that characterizes a machine --
+# FMA peak and triad bandwidth probes, then every registered operation at a
+# fixed size, each result checked and placed on the machine's roofline. The
+# registry and entries live in platform/.
+add_executable(mtl5_bench mtl5_bench.cpp)
+target_link_libraries(mtl5_bench PRIVATE MTL5::mtl5)
+target_include_directories(mtl5_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_target_properties(mtl5_bench PROPERTIES FOLDER "Benchmarks")
+add_dependencies(mtl5_bench mtl5_build_info)
+
 # Block-scaled integer gemv (#628): per-block reduce_dot_widen vs dequantize +
 # float dot vs reduce_dot_block_scaled, at block 32 and 256. Native-only; the
 # result is only meaningful with MTL5_WITH_HIGHWAY=ON and a -march that names
