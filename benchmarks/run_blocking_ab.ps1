@@ -152,10 +152,19 @@ function Quote-Arg {
 function Invoke-Native {
     param([string]$Exe, [string[]]$NativeArgs, [string]$LogBase)
     $quoted = @($NativeArgs | ForEach-Object { Quote-Arg $_ })
-    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow -Wait `
+    # NOT Start-Process -Wait: -Wait also waits for every DESCENDANT, and an MSVC
+    # build leaves MSBuild's reusable worker nodes alive for ~15 minutes, so each
+    # `cmake --build` blocked until they timed out. Wait on the process itself;
+    # touching .Handle first keeps ExitCode readable in Windows PowerShell 5.1.
+    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow `
                        -RedirectStandardOutput "$LogBase.out.log" -RedirectStandardError "$LogBase.err.log"
+    $null = $p.Handle
+    $p.WaitForExit()
     return $p.ExitCode
 }
+
+# No lingering MSBuild worker nodes after this script's builds (see Invoke-Native).
+$env:MSBUILDDISABLENODEREUSE = '1'
 
 # --- preflight, before the build ---------------------------------------------
 # Gate FIRST, not after the build: a dirty tree or a competing compile should
