@@ -701,7 +701,7 @@ jobs:
           LANE_NAME: ${{ matrix.name }}
         run: |
           bin=$(find build-hwy -type f -name simd_test_batch -perm -u+x -print -quit)
-          line=$("$bin" "report the compiled SIMD backend" | grep -m1 'Highway target' || true)
+          line=$("$bin" "report the compiled SIMD backend" | grep -m1 'hwy=' || true)
           echo "$line"
           echo "::notice title=Highway target ($LANE_NAME)::${line:-not reported}"
 

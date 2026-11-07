@@ -37,8 +37,13 @@ prints it as a check annotation on every run.
 ### What Highway 1.4.0 selects
 
 These were found by compiling Highway 1.4.0's headers and reading `HWY_TARGET`
-and `HWY_HAVE_SCALABLE` (GCC 15 cross compiler and Clang 18). The CI lanes in
-#717 now assert the GCC 13 and Clang 18 results on the runner itself.
+and `HWY_HAVE_SCALABLE` (GCC 15 cross compiler and Clang 18). The #717 CI lanes
+confirm four of the cells on the N2 runner, each with a compile-time assertion:
+- GCC 13 and Clang 18 at the default flags (`NEON_WITHOUT_AES`);
+- GCC 13 with `-mcpu=neoverse-n2 -msve-vector-bits=128` (`SVE2_128`);
+- GCC 13 with `-march=native` (`SVE2`, scalable, so `batch` has one lane).
+
+The Clang SVE cells and both `SVE_256` cells come from preprocessing only.
 
 | flags | GCC | Clang 18 |
 |---|---|---|
@@ -87,17 +92,28 @@ with a different vector length it computes wrong answers. It does not trap.
 - Neoverse V1 (Graviton 3) is 256 bits.
 - A64FX is 512 bits.
 
-CI guards this with a runner check. A library user has no such guard. MTL5 should check
-`svcntb() * 8 == __ARM_FEATURE_SVE_BITS` once at startup in a
-fixed-length build, and refuse to run on a mismatch. This is cheap and turns a
-silent wrong answer into a diagnosis.
+CI guards this with a runner check. A library user has no such guard. A check
+only at startup is not enough either. Linux sets the SVE vector length *per
+thread*, and a thread may change its own with `prctl(PR_SVE_SET_VL)`; a new
+thread inherits the value set by `PR_SVE_SET_VL_ONEXEC`, or the system default.
+So a fixed-length build needs both of the following:
+- **A documented requirement:** the process must not change the SVE vector
+  length of any thread that runs MTL5 code.
+- **A check where the work starts:** compare `svcntb() * 8` with
+  `__ARM_FEATURE_SVE_BITS` on the executing thread, at the entry points that
+  run SIMD kernels, and in each pool worker when the worker starts. Refuse to
+  run on a mismatch.
+
+`svcntb()` is a single instruction, so a check per kernel call costs nothing
+measurable next to a GEMM. It turns a silent wrong answer into a diagnosis.
 
 **R4. `MTL5_NATIVE_ARCH=ON` on an SVE machine with GCC removes SIMD entirely.**
 `-march=native` on N2, V1, V2 or Grace selects a scalable target, and `batch`
 falls to one lane. The user who asks for the *most* tuned build gets the
 *least* vectorized one, slower than the portable default (NEON). Clang users
-don't hit this, but only because Highway refuses SVE for Clang (R2's table). The
-#717 `native` lane pins the behaviour (`size == 1`) so it can't change
+don't hit this, but only because Highway refuses SVE for Clang (the table
+above). CI confirmed it on N2 with GCC 13: `HWY_TARGET` is `SVE2`, scalable,
+and `batch<float>::size` is 1. The #717 `native` lane pins the behaviour (`size == 1`) so it can't change
 unnoticed. Mitigations, in increasing cost:
 1. A configure-time warning when `MTL5_NATIVE_ARCH=ON`, `MTL5_WITH_HIGHWAY=ON`
    and the compiler defines `__ARM_FEATURE_SVE` without
@@ -201,7 +217,7 @@ not SVE2, so the target is `SVE_256` (`-mcpu=neoverse-v1
 -msve-vector-bits=256`), not `SVE2_*`.
 
 **Requirements before shipping fixed-length SVE to users:** R2 (flags), R3
-(vector-length check at startup), and recording the target in every benchmark
+(the per-thread vector-length requirement and check), and recording the target in every benchmark
 sidecar. `simd::backend_name()` already reports `SVE2_128`, so a NEON number
 and an SVE number can't be confused afterwards.
 

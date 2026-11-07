@@ -58,10 +58,10 @@ TEMPLATE_TEST_CASE("batch size is a positive compile-time constant", "[simd]", f
 TEST_CASE("report the compiled SIMD backend", "[simd][target]") {
 #if defined(MTL5_HAS_HIGHWAY)
     // Kept short: Catch wraps a long message, and CI greps the first line.
-    WARN("Highway target " << hwy::TargetName(HWY_TARGET)
+    WARN("hwy=" << hwy::TargetName(HWY_TARGET)
          << " scalable=" << HWY_HAVE_SCALABLE
          << " batch=" << mtl::simd::backend_name()
-         << " float_lanes=" << mtl::simd::batch<float>::size);
+         << " f32_lanes=" << mtl::simd::batch<float>::size);
 #else
     WARN("batch backend " << mtl::simd::backend_name() << " (no Highway)");
 #endif
