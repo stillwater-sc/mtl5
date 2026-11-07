@@ -115,6 +115,7 @@ export default defineConfig({
             { slug: 'performance/blocking-and-scheduling-assessment' },
             { slug: 'performance/mc-critical-panels' },
             { slug: 'performance/hardware-expansion-plan' },
+            { slug: 'performance/arm64-simd-neon-sve' },
             { slug: 'performance/cache-blocking-ab-study' },
             { slug: 'performance/ikj-gemm-and-crs-dense' },
             { slug: 'performance/multicore-scaling-investigation' },

@@ -59,6 +59,29 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Who gets it:** any type whose `std::numeric_limits` declares a binary IEEE format (`is_iec559`, radix 2), including a user-defined one. Tapered types such as posit and takum don't declare it, and keep the scaled path, which keeps their arithmetic near 1, where they are most precise.
   - **Results:** in the interval, the same r as before, and the same c and s except where one of them is subnormal, where the new value is the correctly rounded quotient. `bench_givens`, 20M calls on values in [1, 2): double 0.258 s → 0.062 s, float 0.297 s → 0.044 s.
 
+### Added
+
+- **Fixed-length SVE support in `simd::batch`** (#717). `batch` previously compiled for no SVE target at all, because Highway's SVE vectors are sizeless ACLE types (`svfloat32_t`, ...) and a sizeless type cannot be a class member. On the fixed-length targets (`-msve-vector-bits=N`, Highway's `SVE2_128` and `SVE_256`), `batch` now stores the register as a fixed-length ACLE type (`arm_sve_vector_bits(N)`). NEON and x86 builds are unchanged. A build with `-mcpu=neoverse-n2 -msve-vector-bits=128` gets real SVE2 code with `batch<float>::size == 4`. Such a binary is correct only on a machine whose SVE vector length is 128 bits. The scalable targets (no `-msve-vector-bits`) are still demoted to the scalar `batch` (#427).
+
+### CI
+
+- **Highway lanes on Linux ARM64** (#717). The `highway` job now also runs on the Neoverse N2 ARM64 runners, in three lanes:
+  - **NEON**, the default ARM64 Highway build, on GCC 13 and Clang 18 with the full suite. No CI job compiled it before.
+  - **`SVE2_128`**, GCC 13 with the full suite. It refuses to run unless the runner's SVE vector length is 128 bits. GCC only, because Highway 1.4.0 marks `SVE2_128` broken before Clang 21.
+  - **`native`**, `MTL5_NATIVE_ARCH=ON` with GCC 13, running the SIMD tests. It confirms that `-march=native` on an SVE machine selects scalable SVE2, so `batch` falls to one lane and a "native" build has no SIMD.
+
+  Each lane names the Highway target it exists to cover (`MTL5_TEST_EXPECT_HWY_TARGET`), and `test_batch` fails to compile on any other target. `test_batch` also requires `size > 1` on AArch64, as it already did on x86-64, except on a scalable target, where it pins `size == 1` until #427. The Highway cache key now includes the architecture and the lane.
+
+### Documentation
+
+- **[ARM64 SIMD: NEON, fixed-length SVE2 and scalable SVE2](docs/performance/arm64-simd-neon-sve.md)** (#717). It covers which Highway target each set of compiler flags selects, with GCC and with Clang, and the requirements #716 and #717 found:
+  - sizeless SVE types can't be stored in `batch`;
+  - `SVE2_128` needs I8MM and BF16 in the flags;
+  - a fixed-length binary is tied to its vector length;
+  - `MTL5_NATIVE_ARCH=ON` with GCC on SVE hardware loses SIMD.
+
+  It also sets out the performance work for each target, with the experiment that would test each claim. For scalable SVE (#427) it compares runtime-dispatched fixed-length kernels with fully vector-length-agnostic ones. No number in it has been measured.
+
 ### Tests
 
 - **`mult` with a zero inner dimension, on every kernel path** (#714). `mult` assigns, so an m×0 times 0×n product must be the zero matrix and an m×0 matvec the zero vector, whatever C or y held before. Only the default dense GEMM path had a test for this. `test_mult_ikj` now covers the rest: the generic GEMM's row-major, col-major and `trans()` paths, its accumulator path, the packed-panel accumulator kernel (#587), the matvec with and without an accumulator, and the CRS × dense and CRS × vector products. In each one, making the kernel skip its store when there are no terms fails the matching section. Six of those nine breaks failed no test before.

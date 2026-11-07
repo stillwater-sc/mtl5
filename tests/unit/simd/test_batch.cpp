@@ -33,13 +33,54 @@ TEMPLATE_TEST_CASE("batch size is a positive compile-time constant", "[simd]", f
     // A build configured -DMTL5_WITH_HIGHWAY=ON that still resolves to the
     // size == 1 scalar fallback is silently covering nothing: it compiles and
     // passes every other assertion here while never touching the SIMD path.
-    // On x86-64 the SSE2 baseline is guaranteed, so a vectorized batch must be
-    // wider than one element. Restricted to x86-64 because other targets can
+    // x86-64 guarantees SSE2 and AArch64 guarantees NEON (#717), so on those a
+    // vectorized batch must be wider than one element. Other targets can
     // legitimately have a scalar baseline.
-#if defined(MTL5_HAS_HIGHWAY) && (defined(__x86_64__) || defined(_M_X64))
+    //
+    // The exception is a SCALABLE Highway target (SVE/SVE2 without
+    // -msve-vector-bits, e.g. -march=native on Neoverse N2 or Graviton 3/4 with
+    // GCC): batch has no compile-time lane count for it and demotes to scalar.
+    // That is pinned here so it cannot change unnoticed; #427 is the redesign
+    // that turns this assertion around.
+#if defined(MTL5_HAS_HIGHWAY) && \
+    (defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64))
+#  if HWY_HAVE_SCALABLE
+    STATIC_REQUIRE(B::size == 1);
+#  else
     STATIC_REQUIRE(B::size > 1);
+#  endif
 #endif
 }
+
+// Which SIMD backend this binary compiled. A WARN, so it reaches the log of a
+// passing run: CI's Highway lanes run this test case on its own to record the
+// target (#717). Not a check -- the expectation below is.
+TEST_CASE("report the compiled SIMD backend", "[simd][target]") {
+#if defined(MTL5_HAS_HIGHWAY)
+    // Kept short: Catch wraps a long message, and CI greps the first line.
+    WARN("Highway target " << hwy::TargetName(HWY_TARGET)
+         << " scalable=" << HWY_HAVE_SCALABLE
+         << " batch=" << mtl::simd::backend_name()
+         << " float_lanes=" << mtl::simd::batch<float>::size);
+#else
+    WARN("batch backend " << mtl::simd::backend_name() << " (no Highway)");
+#endif
+    SUCCEED();
+}
+
+// A CI lane that exists to cover one Highway target says which one, so it
+// cannot go green while compiling another -- e.g. a compiler for which Highway
+// marks SVE broken (Clang < 21 for SVE2_128) silently getting NEON instead.
+// The lane passes -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_<name> (#717).
+#if defined(MTL5_TEST_EXPECT_HWY_TARGET)
+TEST_CASE("the build compiled the Highway target its CI lane expects", "[simd][target]") {
+#  if defined(MTL5_HAS_HIGHWAY)
+    STATIC_REQUIRE(HWY_TARGET == (MTL5_TEST_EXPECT_HWY_TARGET));
+#  else
+    FAIL("MTL5_TEST_EXPECT_HWY_TARGET is set but this build has no Highway");
+#  endif
+}
+#endif
 
 TEMPLATE_TEST_CASE("batch load/store round-trip (aligned + unaligned)", "[simd]", float, double) {
     using B = mtl::simd::batch<TestType>;
