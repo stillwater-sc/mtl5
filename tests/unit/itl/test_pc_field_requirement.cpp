@@ -21,6 +21,8 @@
 #include <complex>
 #include <cstdint>
 
+#include <mtl5_test/native_shim.hpp>
+
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -40,10 +42,17 @@
 #include <mtl/itl/smoother/sor.hpp>
 
 using namespace mtl;
+using mtl5_test::double_shim;
 
 namespace {
 
 /// Minimal custom Field type, standing in for a posit / cfloat / LNS.
+///
+/// Deliberately minimal, and not mtl5_test::double_shim (#712): it has the five
+/// field operators and nothing else -- no comparison, no sqrt, no limits -- so a
+/// gate that demands more than Field rejects it and fails the assert below. The
+/// shim has all of those, so it would not notice. It is asserted as a second
+/// accepted type, a realistic one with explicit construction only.
 struct emul {
     double x = 0.0;
     emul() = default;
@@ -56,6 +65,7 @@ inline emul operator*(emul a, emul b) { return emul{a.x * b.x}; }
 inline emul operator/(emul a, emul b) { return emul{a.x / b.x}; }
 
 static_assert(Field<emul>, "the stand-in must actually be a Field");
+static_assert(Field<double_shim>);
 
 // A preconditioner or smoother is a CLASS template, so "is it usable with T?" is
 // asked by naming the type rather than by calling a function -- the constraint is
@@ -88,6 +98,7 @@ MTL5_PC_VALUE_SHAPE(itl::pc::ilut,  IlutOk)
     static_assert(TRAIT<double>,               #TRAIT " must accept double");            \
     static_assert(TRAIT<std::complex<double>>, #TRAIT " must accept complex");           \
     static_assert(TRAIT<emul>,                 #TRAIT " must accept a custom Field");    \
+    static_assert(TRAIT<double_shim>,          #TRAIT " must accept double_shim");       \
     static_assert(!TRAIT<int>,                 #TRAIT " must reject int");               \
     static_assert(!TRAIT<std::int64_t>,        #TRAIT " must reject int64");
 

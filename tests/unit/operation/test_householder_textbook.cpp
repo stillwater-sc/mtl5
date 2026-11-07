@@ -26,6 +26,8 @@
 #include <limits>
 #include <random>
 
+#include <mtl5_test/native_shim.hpp>
+
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -50,28 +52,12 @@ const int g_set_threads = [] {
 }();
 
 /// A class-typed scalar wrapping a double: no BLAS, no LAPACK, no SIMD lane.
-struct emul {
-    double v = 0.0;
-    emul() = default;
-    constexpr emul(double d) : v(d) {}
-    friend emul operator+(emul a, emul b) { return a.v + b.v; }
-    friend emul operator-(emul a, emul b) { return a.v - b.v; }
-    friend emul operator*(emul a, emul b) { return a.v * b.v; }
-    friend emul operator/(emul a, emul b) { return a.v / b.v; }
-    friend emul operator-(emul a) { return -a.v; }
-    emul& operator+=(emul o) { v += o.v; return *this; }
-    emul& operator-=(emul o) { v -= o.v; return *this; }
-    emul& operator*=(emul o) { v *= o.v; return *this; }
-    emul& operator/=(emul o) { v /= o.v; return *this; }
-    friend bool operator==(emul a, emul b) { return a.v == b.v; }
-    friend auto operator<=>(emul a, emul b) { return a.v <=> b.v; }
-    friend emul sqrt(emul a) { return std::sqrt(a.v); }
-    friend emul abs(emul a) { return std::abs(a.v); }
-};
-static_assert(!std::is_arithmetic_v<emul> && Field<emul>);
+/// It rounds each operation as double does, so the bit comparisons hold.
+using mtl5_test::double_shim;
+static_assert(!std::is_arithmetic_v<double_shim> && Field<double_shim>);
 
 double bits_of(double x) { return x; }
-double bits_of(emul x) { return x.v; }
+double bits_of(double_shim x) { return x.native(); }
 float  bits_of(float x) { return x; }
 
 template <typename T>
@@ -245,7 +231,7 @@ TEST_CASE("textbook householder equals the reference reflector bit for bit",
         std::vector<double> xd(1 + s * 7);
         for (auto& e : xd) e = u(g);
         std::vector<float> xf(xd.begin(), xd.end());
-        std::vector<emul> xe(xd.begin(), xd.end());
+        std::vector<double_shim> xe(xd.begin(), xd.end());
         check_reflector(xd);
         check_reflector(xf);
         check_reflector(xe);
@@ -299,7 +285,7 @@ TEST_CASE("textbook apply_householder_left equals the reference update bit for b
     run(double{}, 9, 6, 0, 0, 1);
     run(double{}, 9, 6, 3, 2, 2);
     run(float{}, 17, 11, 4, 1, 3);
-    run(emul{}, 17, 11, 2, 5, 4);
+    run(double_shim{}, 17, 11, 2, 5, 4);
     // The cortex shape: three reflectors applied across an augmented [H_f | H_x | r].
     run(double{}, 40, 3 + 81 + 1, 1, 1, 5);
     // Enough columns that the update splits across the pool.
@@ -313,7 +299,7 @@ TEST_CASE("qr_factor with the textbook reflector produces the reference R bit fo
         INFO("m = " << m << ", n = " << n);
         check_qr<double>(m, n, 559 + m * 100 + n);
         check_qr<float>(m, n, 560 + m * 100 + n);
-        check_qr<emul>(m, n, 561 + m * 100 + n);
+        check_qr<double_shim>(m, n, 561 + m * 100 + n);
     }
     check_qr<double>(256, 200, 5591);
 }
@@ -420,10 +406,10 @@ TEST_CASE("the textbook and default reflectors differ",
           "[operation][qr][textbook][559]") {
     // Otherwise the tag would be selecting the same arithmetic. From 5.22.0
     // the two reflect onto the same sign (#672); they still scale and round
-    // differently. emul keeps the default on the generic path in LAPACK
+    // differently. double_shim keeps the default on the generic path in LAPACK
     // builds too.
-    auto A = random_matrix<emul>(33, 15, 5594), B = A;
-    vec::dense_vector<emul> ta, tb;
+    auto A = random_matrix<double_shim>(33, 15, 5594), B = A;
+    vec::dense_vector<double_shim> ta, tb;
     REQUIRE(qr_factor(A, ta) == 0);
     REQUIRE(qr_factor(B, tb, tag::textbook_reflector{}) == 0);
     REQUIRE(upper_mismatches(A, B) > 0);
@@ -447,7 +433,7 @@ TEST_CASE("textbook apply_householder_right equals the reference update bit for 
     run(double{}, 6, 9, 0, 0, 11);
     run(double{}, 6, 9, 2, 3, 12);
     run(float{}, 11, 17, 1, 4, 13);
-    run(emul{}, 11, 17, 5, 2, 14);
+    run(double_shim{}, 11, 17, 5, 2, 14);
     // Enough rows that the update splits across the pool.
     run(double{}, 2000, 300, 0, 0, 15);
 
@@ -466,7 +452,7 @@ TEST_CASE("lq_factor with the textbook reflector produces the reference L bit fo
         INFO("m = " << m << ", n = " << n);
         check_lq<double>(m, n, 659 + m * 100 + n);
         check_lq<float>(m, n, 660 + m * 100 + n);
-        check_lq<emul>(m, n, 661 + m * 100 + n);
+        check_lq<double_shim>(m, n, 661 + m * 100 + n);
     }
     check_lq<double>(200, 256, 6591);
 
@@ -514,8 +500,8 @@ TEST_CASE("lq_factor's textbook result works with lq_extract_Q",
     REQUIRE(orth < 1e-13);
 
     // Otherwise the tag would be selecting the same arithmetic.
-    auto B = random_matrix<emul>(15, 33, 6594), C = B;
-    vec::dense_vector<emul> tb, tc;
+    auto B = random_matrix<double_shim>(15, 33, 6594), C = B;
+    vec::dense_vector<double_shim> tb, tc;
     REQUIRE(lq_factor(B, tb) == 0);
     REQUIRE(lq_factor(C, tc, tag::textbook_reflector{}) == 0);
     REQUIRE(lower_mismatches(B, C) > 0);

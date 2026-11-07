@@ -28,6 +28,8 @@
 #include <limits>
 #include <random>
 
+#include <mtl5_test/native_shim.hpp>
+
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/cholesky.hpp>
@@ -49,27 +51,12 @@ const int g_set_threads = [] {
 }();
 
 /// A class-typed scalar wrapping a double: no BLAS, no LAPACK, no SIMD lane.
-struct emul {
-    double v = 0.0;
-    emul() = default;
-    constexpr emul(double d) : v(d) {}
-    friend emul operator+(emul a, emul b) { return a.v + b.v; }
-    friend emul operator-(emul a, emul b) { return a.v - b.v; }
-    friend emul operator*(emul a, emul b) { return a.v * b.v; }
-    friend emul operator/(emul a, emul b) { return a.v / b.v; }
-    friend emul operator-(emul a) { return -a.v; }
-    emul& operator+=(emul o) { v += o.v; return *this; }
-    emul& operator-=(emul o) { v -= o.v; return *this; }
-    emul& operator*=(emul o) { v *= o.v; return *this; }
-    emul& operator/=(emul o) { v /= o.v; return *this; }
-    friend bool operator==(emul a, emul b) { return a.v == b.v; }
-    friend auto operator<=>(emul a, emul b) { return a.v <=> b.v; }
-    friend emul sqrt(emul a) { return std::sqrt(a.v); }
-};
-static_assert(!std::is_arithmetic_v<emul> && Field<emul>);
+/// It rounds each operation as double does, so the bit comparisons hold.
+using mtl5_test::double_shim;
+static_assert(!std::is_arithmetic_v<double_shim> && Field<double_shim>);
 
 double bits_of(double x) { return x; }
-double bits_of(emul x) { return x.v; }
+double bits_of(double_shim x) { return x.native(); }
 float  bits_of(float x) { return x; }
 
 template <typename T>
@@ -170,7 +157,7 @@ TEST_CASE("cholesky_factor term by term equals the reference loop bit for bit",
         INFO("n = " << n);
         check_term_by_term<double>(n, 556 + n);
         check_term_by_term<float>(n, 557 + n);
-        check_term_by_term<emul>(n, 558 + n);
+        check_term_by_term<double_shim>(n, 558 + n);
     }
     // Large enough that the column update splits across the pool.
     check_term_by_term<double>(768, 5560);
@@ -178,10 +165,10 @@ TEST_CASE("cholesky_factor term by term equals the reference loop bit for bit",
 
 TEST_CASE("cholesky_factor's default order is unchanged and named by tag::subtract_sum",
           "[operation][cholesky][ordering][556]") {
-    // emul never reaches LAPACK, so the default is the generic loop in every
-    // build, and it must still equal the sum-then-subtract reference.
+    // double_shim never reaches LAPACK, so the default is the generic loop in
+    // every build, and it must still equal the sum-then-subtract reference.
     for (std::size_t n : {1, 7, 81}) {
-        auto A = random_spd<emul>(n, 600 + n), R = A;
+        auto A = random_spd<double_shim>(n, 600 + n), R = A;
         REQUIRE(cholesky_factor(A) == 0);
         REQUIRE(ref_subtract_sum(R) == 0);
         REQUIRE(lower_mismatches(A, R) == 0);
@@ -194,9 +181,9 @@ TEST_CASE("cholesky_factor's default order is unchanged and named by tag::subtra
 }
 
 TEST_CASE("the two orderings round differently", "[operation][cholesky][ordering][556]") {
-    // Otherwise the tag would be selecting the same arithmetic. emul keeps both
-    // calls on the generic loop in LAPACK builds too.
-    auto A = random_spd<emul>(81, 620), B = A;
+    // Otherwise the tag would be selecting the same arithmetic. double_shim
+    // keeps both calls on the generic loop in LAPACK builds too.
+    auto A = random_spd<double_shim>(81, 620), B = A;
     REQUIRE(cholesky_factor(A) == 0);
     REQUIRE(cholesky_factor(B, tag::subtract_term_by_term{}) == 0);
     REQUIRE(lower_mismatches(A, B) > 0);

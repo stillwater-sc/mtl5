@@ -72,6 +72,9 @@ void note_thread() {
 /// operations MTL5 needs and nothing a hardware kernel can use. The conversion
 /// to double is EXPLICIT on purpose -- an implicit one would make `emul + 1.0`
 /// ambiguous and, worse, could let a mixed expression silently leave the type.
+///
+/// Not mtl5_test::double_shim (#712): the multiply below records the thread
+/// that executed it, which the "distributes its rows" test depends on.
 struct emul {
     double x = 0.0;
     emul() = default;

@@ -26,7 +26,10 @@
 #include <mtl/operation/trans.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
+#include <mtl5_test/native_shim.hpp>
+
 using namespace mtl;
+using mtl5_test::double_shim;  // a class scalar: no BLAS, no SIMD lane
 
 namespace {
 
@@ -88,21 +91,6 @@ mat::compressed2D<T> crs_of(const mat::dense2D<T>& d) {
     return mat::compressed2D<T>(d.num_rows(), d.num_cols(), vals.size(), starts.data(), cols.data(), vals.data());
 }
 
-/// A class-typed scalar (no BLAS, no SIMD lane) wrapping a double.
-struct emul {
-    double v = 0.0;
-    emul() = default;
-    emul(double x) : v(x) {}
-    friend emul operator+(emul a, emul b) { return {a.v + b.v}; }
-    friend emul operator-(emul a, emul b) { return {a.v - b.v}; }
-    friend emul operator*(emul a, emul b) { return {a.v * b.v}; }
-    friend emul operator/(emul a, emul b) { return {a.v / b.v}; }
-    friend emul operator-(emul a) { return {-a.v}; }
-    emul& operator+=(emul b) { v += b.v; return *this; }
-    friend bool operator==(emul a, emul b) { return a.v == b.v; }
-    friend bool operator!=(emul a, emul b) { return a.v != b.v; }
-};
-
 } // namespace
 
 TEST_CASE("generic GEMM: the i-k-j kernel is bit-identical to the i-j-k dot product", "[mult][ikj][549]") {
@@ -145,19 +133,19 @@ TEST_CASE("generic GEMM: i-k-j keeps -0, inf and NaN where the dot product puts 
 TEST_CASE("generic GEMM: a class-typed scalar takes the i-k-j path and the same values", "[mult][ikj][549]") {
     std::mt19937 g(5490);
     std::normal_distribution<double> n;
-    mat::dense2D<emul> A(9, 11), B(11, 6);
+    mat::dense2D<double_shim> A(9, 11), B(11, 6);
     for (std::size_t i = 0; i < 9; ++i)
         for (std::size_t j = 0; j < 11; ++j)
-            A(i, j) = emul(n(g));
+            A(i, j) = double_shim(n(g));
     for (std::size_t i = 0; i < 11; ++i)
         for (std::size_t j = 0; j < 6; ++j)
-            B(i, j) = emul(n(g));
-    mat::dense2D<emul> C(9, 6);
+            B(i, j) = double_shim(n(g));
+    mat::dense2D<double_shim> C(9, 6);
     detail::mult_generic(A, B, C);
     const auto R = ijk(A, B);
     for (std::size_t i = 0; i < 9; ++i)
         for (std::size_t j = 0; j < 6; ++j)
-            REQUIRE(std::memcmp(&C(i, j).v, &R(i, j).v, sizeof(double)) == 0);
+            REQUIRE(std::memcmp(&C(i, j), &R(i, j), sizeof(double_shim)) == 0);
 }
 
 TEST_CASE("generic GEMM: a non-row-major operand still takes the dot-product path", "[mult][ikj][549]") {
