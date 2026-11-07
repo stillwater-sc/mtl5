@@ -14,9 +14,10 @@
 // provenance keys bench_all writes (#442), so benchmarks/check_sidecars.sh can
 // hold a committed result to it.
 //
-// Exit status: 0 if every check passed, 1 if any check failed or an entry
-// threw, 2 on a usage error. A failed check prints FAIL in place of the rate's
-// verdict and still reports the timing, so a fast wrong kernel is visible.
+// Exit status: 0 if every check passed, 1 if any check failed, an entry threw,
+// or the JSON or its sidecar could not be written; 2 on a usage error. A
+// failed check prints FAIL in place of the rate's verdict and still reports
+// the timing, so a fast wrong kernel is visible.
 //
 // The build is the backend (benchmarks/README.md): build this binary once per
 // configuration -- native, native-fast, BLAS -- and run each.
@@ -93,9 +94,11 @@ std::string num(double v) {
 
 std::string id_of(const bp::entry& e) { return e.area + "/" + e.op + "/" + e.dtype; }
 
-void write_json(const std::string& path, const std::string& label, bp::size_class cls,
+/// Returns false if the file could not be opened or a write failed.
+bool write_json(const std::string& path, const std::string& label, bp::size_class cls,
                 const bp::probe_results& pr, const std::vector<bp::record>& rs) {
     std::ofstream os(path);
+    if (!os) return false;
     os << "{\n"
        << "  \"schema\": \"mtl5-bench/1\",\n"
        << "  \"label\": \"" << json_escape(label) << "\",\n"
@@ -131,11 +134,15 @@ void write_json(const std::string& path, const std::string& label, bp::size_clas
         os << "}" << (i + 1 < rs.size() ? "," : "") << "\n";
     }
     os << "  ]\n}\n";
+    os.flush();
+    return static_cast<bool>(os);
 }
 
-void write_sidecar(const std::string& path, const std::string& label, bp::size_class cls,
+/// Returns false if the file could not be opened or a write failed.
+bool write_sidecar(const std::string& path, const std::string& label, bp::size_class cls,
                    const bp::probe_results& pr) {
     std::ofstream si(path);
+    if (!si) return false;
     si << "label=" << label << "\n"
        << "benchmark=mtl5_bench\n"
        << "class=" << bp::to_string(cls) << "\n"
@@ -146,6 +153,8 @@ void write_sidecar(const std::string& path, const std::string& label, bp::size_c
        << "cxx_flags=" << mtl::build_cxx_flags << "\n"
        << "cmake_build_type=" << mtl::build_cmake_type << "\n"
        << "pool_size=" << pr.threads << "\n";
+    si.flush();
+    return static_cast<bool>(si);
 }
 
 } // namespace
@@ -237,8 +246,14 @@ int main(int argc, char** argv) {
                   << " MiB): a cache rate, shown as a % of the DRAM roofline\n";
 
     if (!json_path.empty()) {
-        write_json(json_path, label, cls, pr, results);
-        write_sidecar(json_path + ".sysinfo", label, cls, pr);
+        // A result without its sidecar is the provenance loss check_sidecars.sh
+        // exists to prevent, so a failed write of EITHER file fails the run.
+        const bool json_ok = write_json(json_path, label, cls, pr, results);
+        const bool side_ok = json_ok && write_sidecar(json_path + ".sysinfo", label, cls, pr);
+        if (!json_ok || !side_ok) {
+            std::cerr << "\nerror: could not write " << (json_ok ? json_path + ".sysinfo" : json_path) << "\n";
+            return 1;
+        }
         std::cout << "\nwrote " << json_path << " and " << json_path << ".sysinfo\n";
     }
     std::cout << "\n" << results.size() - failures << " of " << results.size() << " checks passed\n";

@@ -23,6 +23,7 @@
 // traffic of each operand once, so a memory-bound op is measured against the
 // triad bandwidth and a compute-bound one against the FMA peak.
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -58,7 +59,23 @@ private:
     check_result r_;
 };
 
-template <typename T> double tol(std::size_t k) { return 4.0 * double(k + 2) * eps<T>(); }
+/// The gamma_k bound, capped at 0.5. Uncapped, 4*k*eps exceeds 1 for f32 once
+/// k reaches about 2^22, and a check whose tolerance exceeds 1 passes a result
+/// of zero. With the cap, a zero result (error 1 whenever the reference is not
+/// dominated by cancellation) always fails.
+template <typename T> double tol(std::size_t k) { return std::min(4.0 * double(k + 2) * eps<T>(), 0.5); }
+
+/// A vector in [0, 1): for the reductions whose check would otherwise be blind.
+/// With mean-zero inputs, |sum x_i y_i| is about sqrt(n) smaller than
+/// sum |x_i y_i|, so a kernel returning 0 has an error of only ~1/sqrt(n) and
+/// passes any tolerance above that. With nonnegative inputs the reference
+/// equals the sum of magnitudes, and a zero result has error 1.
+template <typename T>
+vec::dense_vector<T> nonneg_vec_of(std::size_t n, std::uint64_t seed) {
+    auto v = make_random_vector<T>(n, seed);
+    for (std::size_t i = 0; i < n; ++i) v(i) = v(i) < T(0) ? -v(i) : v(i);
+    return v;
+}
 
 template <typename T>
 vec::dense_vector<T> vec_of(std::size_t n, std::uint64_t seed) { return make_random_vector<T>(n, seed); }
@@ -122,7 +139,7 @@ template <typename T>
 problem dot(size_class c) {
     const std::size_t n = n_vec(c);
     struct S { vec::dense_vector<T> x, y; T r{}; };
-    auto s = std::make_shared<S>(S{vec_of<T>(n, 1), vec_of<T>(n, 2), T(0)});
+    auto s = std::make_shared<S>(S{nonneg_vec_of<T>(n, 1), nonneg_vec_of<T>(n, 2), T(0)});
     problem p{vshape(n), 2.0 * n, 2.0 * n * sizeof(T), [] {}, [s] { s->r = mtl::dot(s->x, s->y); }, {}};
     p.check = [s, n] {
         long double ref = 0, abs = 0;
@@ -180,7 +197,9 @@ template <typename T, int Which>
 problem reduction(size_class c) {
     const std::size_t n = n_vec(c);
     struct S { vec::dense_vector<T> x; long double r = 0; };
-    auto s = std::make_shared<S>(S{vec_of<T>(n, 3)});
+    // sum is the one reduction here whose reference cancels; give it the same
+    // nonnegative inputs as dot so a zero result cannot pass.
+    auto s = std::make_shared<S>(S{Which == 3 ? nonneg_vec_of<T>(n, 3) : vec_of<T>(n, 3)});
     const double flops = Which == 0 ? 2.0 * n : 1.0 * n;
     problem p{vshape(n), flops, 1.0 * n * sizeof(T), [] {},
               [s] {

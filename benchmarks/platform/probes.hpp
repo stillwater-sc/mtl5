@@ -96,26 +96,29 @@ double fma_peak_gflops(unsigned threads) {
     // 12 with 16 registers -- 3/4 of the file, leaving room for the constants.
     constexpr std::size_t ACC = simd::target_vec_registers() >= 32 ? 16 : 12;
     constexpr std::size_t W = simd::batch<T>::size;
-    volatile T sink = T(0);
+    // One result slot per worker: a single shared sink written by every
+    // thread is a data race, which volatile does not prevent.
+    std::vector<T> sink(threads, T(0));
     volatile T seed = T(1);
     std::size_t iters = std::size_t(1) << 16;
     double best = 0.0;
     // Grow the run until it takes ~0.2 s, then keep the best of three.
     for (int round = 0; round < 32; ++round) {
-        const double s = run_on_threads(threads, [&](unsigned) {
-            sink = fma_kernel<T, ACC>(iters, seed);
+        const double s = run_on_threads(threads, [&](unsigned t) {
+            sink[t] = fma_kernel<T, ACC>(iters, seed);
         });
         if (s < 0.2) { iters *= 2; continue; }
         for (int rep = 0; rep < 3; ++rep) {
-            const double sec = run_on_threads(threads, [&](unsigned) {
-                sink = fma_kernel<T, ACC>(iters, seed);
+            const double sec = run_on_threads(threads, [&](unsigned t) {
+                sink[t] = fma_kernel<T, ACC>(iters, seed);
             });
             const double flops = 2.0 * double(W) * double(ACC) * double(iters) * threads;
             best = std::max(best, flops / sec * 1e-9);
         }
         break;
     }
-    (void)sink;
+    volatile T keep = sink[0];   // the results are observable, so no chain is dead code
+    (void)keep;
     return best;
 }
 
