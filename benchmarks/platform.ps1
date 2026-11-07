@@ -89,17 +89,32 @@ $Logs = Join-Path $Out 'logs'
 Write-Host "mtl5 platform benchmark: class=$Class variants=$($Variants -join ',') threads=$($Threads -join ',') jobs=$Jobs"
 Write-Host "results: $Out"
 
-# Run a native tool with stdout+stderr to files, returning the exit code. Same
-# pattern as run_sweeps.ps1: Start-Process -Wait, arguments with spaces quoted
-# (a repo under "C:\Users\Some Name\..." otherwise breaks the configure, #438).
+# Run a native tool with stdout+stderr to files, returning the exit code.
+# Arguments with spaces are quoted: a repo under "C:\Users\Some Name\..."
+# otherwise breaks the configure (#438).
+#
+# NOT Start-Process -Wait. -Wait waits for the process AND ITS DESCENDANTS, and
+# an MSVC build leaves descendants behind: MSBuild keeps reusable worker nodes
+# alive for about 15 minutes after a build. Under -Wait every `cmake --build`
+# blocked until those idle nodes timed out, and the Windows CI job sat in this
+# script for 13-30 minutes while Linux and macOS took one. Waiting on the
+# process itself, plus disabling node reuse below, removes both halves.
+# Touching .Handle before waiting keeps ExitCode readable in Windows
+# PowerShell 5.1, which otherwise loses it once the process exits -- the reason
+# run_sweeps.ps1 used -Wait.
 function Invoke-Native {
     param([string]$Exe, [string[]]$NativeArgs, [string]$LogBase)
     $quoted = $NativeArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
-    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow -Wait `
+    $p = Start-Process -FilePath $Exe -ArgumentList $quoted -PassThru -NoNewWindow `
                        -RedirectStandardOutput "$LogBase.out.log" `
                        -RedirectStandardError  "$LogBase.err.log"
+    $null = $p.Handle
+    $p.WaitForExit()
     return $p.ExitCode
 }
+
+# No lingering MSBuild worker nodes after this script's builds.
+$env:MSBUILDDISABLENODEREUSE = '1'
 
 # --- 1. preflight, before the builds ----------------------------------------
 $PreflightScript = Join-Path $PSScriptRoot 'preflight.ps1'
