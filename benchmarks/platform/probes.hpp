@@ -91,11 +91,13 @@ T fma_kernel(std::size_t iters, T seed) {
     using B = simd::batch<T>;
     B acc[ACC];
     for (std::size_t a = 0; a < ACC; ++a) acc[a] = B(seed + static_cast<T>(a));
-    // x*m + c with m slightly below 1 keeps every chain bounded and normal.
-    const B m(static_cast<T>(0.999999));
-    const B c(static_cast<T>(1e-6));
+    // acc = m*c + acc, the accumulator as the ADDEND: AArch64's FMLA adds only
+    // into its destination, so acc*m + c cost two vector moves per FMA there
+    // (see hw_peak.hpp). Each chain grows by 1e-6 per iteration, bounded.
+    const B m(static_cast<T>(1e-3));
+    const B c(static_cast<T>(1e-3));
     for (std::size_t i = 0; i < iters; ++i)
-        for (std::size_t a = 0; a < ACC; ++a) acc[a] = fma(acc[a], m, c);
+        for (std::size_t a = 0; a < ACC; ++a) acc[a] = fma(m, c, acc[a]);
     B s = acc[0];
     for (std::size_t a = 1; a < ACC; ++a) s = s + acc[a];
     return reduce_add(s);

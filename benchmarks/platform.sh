@@ -96,8 +96,14 @@ host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)
 mkdir -p "$OUT/logs" || { echo "platform.sh: cannot create $OUT" >&2; exit 1; }
 OUT="$(cd "$OUT" && pwd)"
 
+# The board (ARM SBCs), else lscpu's model name. Not the CPU brand alone: on an
+# ARM VM with no device tree, mtl5_bench's brand is the bare MIDR part number
+# ("0xd49" on the Neoverse N2 runners), while lscpu names it ("Neoverse-N2").
 if [ -z "$MACHINE" ] && [ -r /proc/device-tree/model ]; then
     MACHINE=$(tr -d '\0' < /proc/device-tree/model)
+fi
+if [ -z "$MACHINE" ] && [ "$(uname -m)" != x86_64 ] && command -v lscpu >/dev/null 2>&1; then
+    MACHINE=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)
 fi
 
 echo "mtl5 platform benchmark: class=$CLASS variants=$VARIANTS threads=$THREADS jobs=$JOBS"

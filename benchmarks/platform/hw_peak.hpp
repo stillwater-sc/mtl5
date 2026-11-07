@@ -55,6 +55,15 @@ struct isa_kernels {
 
 // Twelve chains: covers FMA latency 4 x 2 ports with headroom, and fits the 16
 // vector registers of SSE/AVX2 with the two constants.
+//
+// Every FMA kernel ACCUMULATES: acc = m*c + acc, the accumulator as the addend.
+// AArch64's FMLA can only add into its destination, so the form acc*m + c
+// (accumulator as a multiplicand) cost two vector moves per FMA there -- 32 movs
+// to 16 fmla in the loop -- and the NEON "peak" on Neoverse N2 came out at 6.8
+// GFLOP/s, below the scalar build's 10.8. x86 FMA has a form for every operand
+// order, so it never showed. Each chain grows by 1e-6 per iteration: bounded and
+// normal over any run length the timing driver chooses. (SSE2 keeps acc*m + c:
+// with no FMA, m*c would be loop-invariant and the loop would time adds only.)
 inline constexpr int kChains = 12;
 
 #if defined(MTL5_HW_PEAK_X86)
@@ -84,9 +93,9 @@ MTL5_HW_TARGET("avx512f")
 inline double avx512_f64(std::size_t iters, double seed) {
     __m512d acc[kChains];
     for (int a = 0; a < kChains; ++a) acc[a] = _mm512_set1_pd(seed + a);
-    const __m512d m = _mm512_set1_pd(0.999999), c = _mm512_set1_pd(1e-6);
+    const __m512d m = _mm512_set1_pd(1e-3), c = _mm512_set1_pd(1e-3);
     for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm512_fmadd_pd(acc[a], m, c);
+        for (int a = 0; a < kChains; ++a) acc[a] = _mm512_fmadd_pd(m, c, acc[a]);
     __m512d s = acc[0];
     for (int a = 1; a < kChains; ++a) s = _mm512_add_pd(s, acc[a]);
     double o[8];
@@ -97,9 +106,9 @@ MTL5_HW_TARGET("avx512f")
 inline double avx512_f32(std::size_t iters, double seed) {
     __m512 acc[kChains];
     for (int a = 0; a < kChains; ++a) acc[a] = _mm512_set1_ps(static_cast<float>(seed + a));
-    const __m512 m = _mm512_set1_ps(0.999999f), c = _mm512_set1_ps(1e-6f);
+    const __m512 m = _mm512_set1_ps(1e-3f), c = _mm512_set1_ps(1e-3f);
     for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm512_fmadd_ps(acc[a], m, c);
+        for (int a = 0; a < kChains; ++a) acc[a] = _mm512_fmadd_ps(m, c, acc[a]);
     __m512 s = acc[0];
     for (int a = 1; a < kChains; ++a) s = _mm512_add_ps(s, acc[a]);
     float o[16];
@@ -112,9 +121,9 @@ MTL5_HW_TARGET("avx2,fma")
 inline double avx2_f64(std::size_t iters, double seed) {
     __m256d acc[kChains];
     for (int a = 0; a < kChains; ++a) acc[a] = _mm256_set1_pd(seed + a);
-    const __m256d m = _mm256_set1_pd(0.999999), c = _mm256_set1_pd(1e-6);
+    const __m256d m = _mm256_set1_pd(1e-3), c = _mm256_set1_pd(1e-3);
     for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm256_fmadd_pd(acc[a], m, c);
+        for (int a = 0; a < kChains; ++a) acc[a] = _mm256_fmadd_pd(m, c, acc[a]);
     __m256d s = acc[0];
     for (int a = 1; a < kChains; ++a) s = _mm256_add_pd(s, acc[a]);
     double o[4];
@@ -125,9 +134,9 @@ MTL5_HW_TARGET("avx2,fma")
 inline double avx2_f32(std::size_t iters, double seed) {
     __m256 acc[kChains];
     for (int a = 0; a < kChains; ++a) acc[a] = _mm256_set1_ps(static_cast<float>(seed + a));
-    const __m256 m = _mm256_set1_ps(0.999999f), c = _mm256_set1_ps(1e-6f);
+    const __m256 m = _mm256_set1_ps(1e-3f), c = _mm256_set1_ps(1e-3f);
     for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChains; ++a) acc[a] = _mm256_fmadd_ps(acc[a], m, c);
+        for (int a = 0; a < kChains; ++a) acc[a] = _mm256_fmadd_ps(m, c, acc[a]);
     __m256 s = acc[0];
     for (int a = 1; a < kChains; ++a) s = _mm256_add_ps(s, acc[a]);
     float o[8];
@@ -196,9 +205,9 @@ inline constexpr int kChainsNeon = 16;
 inline double neon_f64(std::size_t iters, double seed) {
     float64x2_t acc[kChainsNeon];
     for (int a = 0; a < kChainsNeon; ++a) acc[a] = vdupq_n_f64(seed + a);
-    const float64x2_t m = vdupq_n_f64(0.999999), c = vdupq_n_f64(1e-6);
+    const float64x2_t m = vdupq_n_f64(1e-3), c = vdupq_n_f64(1e-3);
     for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChainsNeon; ++a) acc[a] = vfmaq_f64(c, acc[a], m);   // c + acc*m
+        for (int a = 0; a < kChainsNeon; ++a) acc[a] = vfmaq_f64(acc[a], m, c);   // acc + m*c
     float64x2_t s = acc[0];
     for (int a = 1; a < kChainsNeon; ++a) s = vaddq_f64(s, acc[a]);
     return vgetq_lane_f64(s, 0) + vgetq_lane_f64(s, 1);
@@ -206,9 +215,9 @@ inline double neon_f64(std::size_t iters, double seed) {
 inline double neon_f32(std::size_t iters, double seed) {
     float32x4_t acc[kChainsNeon];
     for (int a = 0; a < kChainsNeon; ++a) acc[a] = vdupq_n_f32(static_cast<float>(seed + a));
-    const float32x4_t m = vdupq_n_f32(0.999999f), c = vdupq_n_f32(1e-6f);
+    const float32x4_t m = vdupq_n_f32(1e-3f), c = vdupq_n_f32(1e-3f);
     for (std::size_t i = 0; i < iters; ++i)
-        for (int a = 0; a < kChainsNeon; ++a) acc[a] = vfmaq_f32(c, acc[a], m);
+        for (int a = 0; a < kChainsNeon; ++a) acc[a] = vfmaq_f32(acc[a], m, c);
     float32x4_t s = acc[0];
     for (int a = 1; a < kChainsNeon; ++a) s = vaddq_f32(s, acc[a]);
     return double(vgetq_lane_f32(s, 0)) + vgetq_lane_f32(s, 1) + vgetq_lane_f32(s, 2) +
