@@ -48,6 +48,8 @@ the numbers are what a real app compiled that way would get.
 ```text
 benchmarks/
   bench_all.cpp          dense BLAS/LAPACK driver (sizes/sweeps/suites + --label)
+  mtl5_bench.cpp         the platform benchmark: probes + every registered operation, checked (#721)
+  platform/              mtl5_bench's registry, probes, runner and entries (entries_*.hpp)
   bench_klu.cpp          sparse scoreboard: native KLU vs SuiteSparse KLU (#138)
   bench_superlu.cpp      sparse scoreboard: native LU vs SuperLU (#186)
   bench_sparse.cpp       level-scheduled sparse triangular-solve scaling (#297)
@@ -84,6 +86,57 @@ cmake --preset release && cmake --build build-release -j$(nproc)
 That preset links no external library, so it builds every benchmark in its
 native-only configuration — enough to run them, but the vendor comparison
 columns stay empty. See the per-backend builds below.
+
+## Platform benchmark: `mtl5_bench` (#721)
+
+`mtl5_bench` is the standard characterization of a machine. It runs the same way
+on every machine, so results from a Jetson, a Ventuno Q and an x86 desktop can be
+compared directly. Each run does three things:
+
+1. **Measures the machine's ceilings**, with probes compiled for the build's own
+   SIMD target:
+   - FMA peak in f64 and f32;
+   - memory bandwidth: three-stream read, update (`a += s*b`) and STREAM triad.
+     The best of the three is the bandwidth ceiling.
+2. **Runs every registered operation** at a fixed problem size for the chosen
+   class. Each operation goes through the public `mtl::` API, so the build
+   decides the backend, as described above.
+3. **Checks every result** against a long-double reference, using the standard
+   `gamma_k` error bound. A fast wrong answer prints `FAIL` and makes the exit
+   status 1.
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DMTL5_BUILD_BENCHMARKS=ON
+cmake --build build --target mtl5_bench
+./build/benchmarks/mtl5_bench --class medium --json results.json   # + results.json.sysinfo
+./build/benchmarks/mtl5_bench --list                               # registered entries
+./build/benchmarks/mtl5_bench --class small --filter blas3         # a subset, smoke-sized
+```
+
+`%roof` is the achieved rate as a percentage of the operation's **roofline**:
+the lesser of the FMA peak and bandwidth × arithmetic intensity (flops per
+compulsory byte). Low-intensity operations are judged against bandwidth, and
+high-intensity ones against the FMA peak.
+- **The ceilings are measured sustained rates, not hard limits.** A tuned
+  streaming kernel can beat a plain-loop probe by 10–20%.
+- **`*` marks a bandwidth-bound result whose working set fits in the
+  last-level cache.** Its rate is a cache rate, but its percentage is against
+  DRAM bandwidth. The `small` class is cache-resident on purpose: it is a smoke
+  run. `medium` and `large` are sized well past any LLC, so they measure DRAM.
+- **The probes and the operations use the same thread count,** MTL5's pool
+  size (`MTL5_NUM_THREADS`, default 1).
+
+| class | vectors | matrix–vector | matrix–matrix | catalogue time (i7-12700K, 1 thread) |
+|---|---|---|---|---|
+| `small`  | 2^15 | 512 | 128 | ~5 s |
+| `medium` | 2^23 | 4096 | 512 | ~20 s |
+| `large`  | 2^25 | 8192 | 1024 | ~85 s; peak memory ~1 GiB (`ger`'s two 8192² matrices) |
+
+The registry so far covers BLAS levels 1–3 (#721 milestone M1). The tracking
+issue lists the remaining areas. To add an operation, write a `problem`
+factory and register it in `platform/entries_*.hpp`. A factory supplies setup,
+run, check, and the flop and byte counts. The runner does the timing, so every
+entry is measured the same way.
 
 ## Build & run (reproducible, all variants)
 
