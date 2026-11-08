@@ -76,9 +76,41 @@ With `MTL5_BLAS_HAS_GEMMT`, `gemmt` dispatches when the accumulator allows
 BLAS, `C` is a dense `float` or `double` matrix, and `A` and `B` are dense
 matrices of the same type or `trans()` of one. The operands' orientations
 need not agree: each maps onto `transa` or `transb`, and a row-major `C` is
-computed as `Cᵀ = Bᵀ Aᵀ` with the other triangle. Everything else takes the
-generic path. The vendor's summation order is its own, so a BLAS result is
-not bit-identical to `mult`.
+computed as `Cᵀ = Bᵀ Aᵀ` with the other triangle. The vendor's summation
+order is its own, so a BLAS result is not bit-identical to `mult`.
+
+OpenBLAS is the exception (`MTL5_BLAS_VENDOR_OPENBLAS`, which CMake defines
+from the library's exports). Its `dgemmt` takes about twice as long as a full
+`dgemm` while doing half the work: at n = 512 on one core of an i7-12700K, 7.1 ms
+against 3.7 ms, which is 19 GFLOP/s against 72 (#744). With OpenBLAS, `gemmt`
+calls `dgemmt` only up to 64 rows, where it is as fast as anything else, and
+uses the blocked path below above that. A BLAS build without a working
+`?gemmt` uses the blocked path too, where it used to take the generic loops.
+
+### Blocked path
+
+In a BLAS build that does not call `?gemmt`, and in the `MTL5_NATIVE_FAST_GEMM`
+build, operands of the same shape as above take a blocked path once `n` is
+larger than `detail::gemmt_block`, which is 64. This builds `gemmt` out of a
+full-speed GEMM: `?gemm` in a BLAS build, and `detail::gemm_blocked`
+otherwise.
+
+- **Splitting the triangle:** for the lower triangle, the block below the
+  diagonal, `C[h:n, 0:h] = α A[h:n, :] B[:, 0:h] + β C[h:n, 0:h]`, is one
+  rectangular GEMM. The two triangles on the diagonal, `[0, h)` and `[h, n)`,
+  are split the same way, recursively. The upper triangle is the mirror image.
+- **Diagonal blocks:** a block of at most 64 rows is formed as a square GEMM
+  in a scratch tile. Only its triangle is combined into `C`, so the other
+  triangle of `C` is never written before the mirror. About `n · 64 · k` of the
+  flops go to entries that are discarded, an eighth of the work at n = 512.
+- **The contract is unchanged:** `β = 0` does not read `C`. `α = 0`, `k = 0`
+  and `n ≤ 64` keep the path they had: `?gemmt` where the build calls it, and
+  the generic loop otherwise.
+- **Rounding** is the GEMM's, as for `mult` on these builds.
+
+Above 64 rows, `congruence` hands its second product to this path as
+`trans(A)`, described by its strides, with no copy. At 64 rows and fewer it
+copies `Aᵀ` out as before, because the generic loop is fast only on the copy.
 
 ## congruence
 
@@ -136,16 +168,18 @@ The times are in microseconds per call, the minimum over 15 rounds. They were
 measured on one core of an i7-12700K, pinned, with `MTL5_NUM_THREADS=1` and
 `OPENBLAS_NUM_THREADS=1` and the `powersave` governor. The generic build has
 neither BLAS nor `MTL5_NATIVE_FAST_GEMM`; the BLAS build links OpenBLAS with
-`MTL5_BLAS_HAS_GEMMT`.
+`MTL5_BLAS_HAS_GEMMT`. The BLAS rows for `d ≥ 100` were re-measured after
+#744, where the second product takes the blocked path. The earlier `dgemmt`
+times were 61.5, 224 and 446.
 
 | d | nnz(A) | two_step | copy | congruence | CRS | two_step, BLAS | copy, BLAS | congruence, BLAS | CRS, BLAS |
 |---|---|---|---|---|---|---|---|---|---|
 | 15 | 225 | 1.44 | 1.44 | 1.15 | 1.56 | 1.02 | 0.64 | 0.78 | 1.47 |
 | 30 | 240 | 9.05 | 8.39 | 6.26 | 4.06 | 6.42 | 2.84 | 2.80 | 4.00 |
 | 60 | 270 | 72.9 | 56.2 | 42.1 | 10.0 | 54.4 | 16.8 | 14.3 | 10.2 |
-| 100 | 310 | 388 | 263 | 204 | 20.6 | 293 | 66.7 | 61.5 | 21.1 |
-| 150 | 360 | 1440 | 1091 | 803 | 40.7 | 995 | 217 | 224 | 41.6 |
-| 200 | 410 | 3542 | 2499 | 1819 | 60.1 | 2545 | 490 | 446 | 61.5 |
+| 100 | 310 | 388 | 263 | 204 | 20.6 | 293 | 66.7 | 63.0 | 21.1 |
+| 150 | 360 | 1440 | 1091 | 803 | 40.7 | 995 | 217 | 198 | 41.6 |
+| 200 | 410 | 3542 | 2499 | 1819 | 60.1 | 2545 | 490 | 423 | 61.5 |
 
 - **Generic, dense `A`:** `congruence` takes 0.73–0.78× the time of the copy arm
   from `d = 60` up and half the time of two_step at `d = 200`. The second
@@ -153,8 +187,10 @@ neither BLAS nor `MTL5_NATIVE_FAST_GEMM`; the BLAS build links OpenBLAS with
   it runs in the vectorizable i-k-j form, as `mult` does for row-major
   operands. The first product is a full `mult` in both arms, which is why the
   saving is about a quarter and not a half.
-- **BLAS, dense `A`:** `congruence` takes 0.85–1.03× the time of the copy arm. OpenBLAS's
-  `dgemmt` is barely faster than its `dgemm`, and at `d = 15` it is slower.
+- **BLAS, dense `A`:** `congruence` takes 0.85–1.03× the time of the copy arm
+  from `d = 30` up, and is slower at `d = 15`. The second product is half of a
+  `dgemm`'s work, but the first product, a full `mult`, dominates. Since #744
+  the second product takes the blocked path from `d = 100` up, at 0.87–0.94×.
   The gain over two_step comes from avoiding `trans(A)`, which `mult` cannot
   hand to BLAS.
 - **CRS `A`:** both products walk only the stored entries, so the time follows
@@ -163,6 +199,27 @@ neither BLAS nor `MTL5_NATIVE_FAST_GEMM`; the BLAS build links OpenBLAS with
   dense (`d = 15`), the indirection makes it the slowest arm.
 
 The CSVs are not committed; rerun the benchmark to reproduce the table.
+
+### Square gemmt
+
+`mtl5_bench`'s `blas3/gemmt` entry times `gemmt(1, A, B, 0, C)` for square,
+row-major `double` operands, on one core of an i7-12700K. Its rate counts the
+triangle's n³ flops, half of `gemm`'s 2n³, so equal GFLOP/s means half the time.
+
+| build | n | gemm | gemmt before #744 | gemmt | gemmt time / gemm time |
+|---|---:|---:|---:|---:|---:|
+| BLAS (OpenBLAS 0.3.32) | 512 | 72.8 GFLOP/s | 18.9 GFLOP/s | 52.3 GFLOP/s | 0.70 |
+| BLAS (OpenBLAS 0.3.32) | 1024 | 73.5 GFLOP/s | 19.0 GFLOP/s | 60.4 GFLOP/s | 0.61 |
+| native-fast | 512 | 71.4 GFLOP/s | about 14 GFLOP/s | 51.4 GFLOP/s | 0.69 |
+| native-fast | 1024 | 70.6 GFLOP/s | — | 56.3 GFLOP/s | 0.63 |
+
+- **Why not 0.5:** the recursion ends in GEMMs of 64 rows and fewer, which
+  OpenBLAS runs at 46–64 GFLOP/s rather than 72. The diagonal blocks also do
+  an eighth more work than the triangle needs.
+- **The mirror:** the default `gemmt_fill::mirror` copies the triangle across
+  in 8 × 8 tiles. That is about 0.2 ms at n = 512. A plain loop took 0.33 ms
+  there and 1.4 ms at n = 1024, because with a power-of-two leading dimension
+  the writes down a column all fall in a few L1 cache sets.
 
 ## Limits
 
