@@ -60,6 +60,10 @@ struct problem {
     std::function<void()>         setup;
     std::function<void()>         run;
     std::function<check_result()> check;
+    /// False for work the probes have no ceiling for (integer arithmetic: the
+    /// FMA probes are floating point). The rate is still reported -- as GOP/s --
+    /// but not placed on a roofline.
+    bool roofline = true;
 };
 
 struct entry {

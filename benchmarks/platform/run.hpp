@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstddef>
 #include <exception>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -39,6 +40,13 @@ struct record {
     /// No work model (an ordering, say): timed and checked, but with no
     /// meaningful rate or roofline, so reports show "n/a" rather than 0%.
     bool timed_only() const { return flops <= 0.0 && bytes <= 0.0; }
+    bool roofline = true;          // false: a rate, but no ceiling to compare it with
+    /// No meaningful %roof: timed only, or no ceiling for this kind of work.
+    bool no_roofline() const { return timed_only() || !roofline; }
+    // Thread scaling against a --baseline run of the same entry (NaN if none):
+    // speedup = baseline median / this median; efficiency = speedup / (T / T0).
+    double speedup = std::numeric_limits<double>::quiet_NaN();
+    double efficiency = std::numeric_limits<double>::quiet_NaN();
 };
 
 inline double budget_seconds(size_class c) {
@@ -69,7 +77,7 @@ inline record run_entry(const entry& e, size_class cls, const probe_results& pro
     r.area = e.area; r.op = e.op; r.dtype = e.dtype;
     try {
         problem p = e.make(cls);
-        r.shape = p.shape; r.flops = p.flops; r.bytes = p.bytes;
+        r.shape = p.shape; r.flops = p.flops; r.bytes = p.bytes; r.roofline = p.roofline;
         for (int w = 0; w < 2; ++w) { p.setup(); p.run(); }
 
         std::vector<double> samples;
@@ -106,7 +114,7 @@ inline record run_entry(const entry& e, size_class cls, const probe_results& pro
     // compute-bound one has the FMA peak as its ceiling wherever its data is.
     const bool bandwidth_bound = r.bytes > 0.0 &&
         probes.bandwidth_gbytes_per_s() * (r.flops / r.bytes) < peak_for(probes, r.dtype);
-    r.cache_resident = bandwidth_bound && r.bytes <= double(last_level_cache_bytes());
+    r.cache_resident = r.roofline && bandwidth_bound && r.bytes <= double(last_level_cache_bytes());
     return r;
 }
 

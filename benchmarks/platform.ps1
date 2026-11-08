@@ -178,6 +178,9 @@ foreach ($v in $Built) {
         }
         $runArgs = @('--class', $Class, '--label', $v, '--json', "$base.json", '--card', "$base.md")
         if ($Machine) { $runArgs += @('--machine', $Machine) }
+        # Thread scaling against the 1-thread run of the same variant (see platform.sh).
+        $t1 = Join-Path $Out "$v-t1.json"
+        if ($t -ne 1 -and (Test-Path $t1)) { $runArgs += @('--baseline', $t1) }
         $rc = Invoke-Native $exe $runArgs (Join-Path $Logs "$v-t$t")
         $last = Get-Content (Join-Path $Logs "$v-t$t.out.log") -Tail 1
         if ($rc -eq 0) { Write-Host "   $last" }

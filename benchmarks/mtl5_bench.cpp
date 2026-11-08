@@ -26,6 +26,7 @@
 #include <benchmarks/platform/entries_dense.hpp>
 #include <benchmarks/platform/entries_sparse.hpp>
 #include <benchmarks/platform/entries_iterative.hpp>
+#include <benchmarks/platform/entries_mixed.hpp>
 #include <benchmarks/platform/probes.hpp>
 #include <benchmarks/platform/registry.hpp>
 #include <benchmarks/platform/run.hpp>
@@ -37,10 +38,12 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -65,6 +68,8 @@ void usage(std::ostream& os) {
           "  --card     write a markdown capability card to FILE\n"
           "  --label    build label recorded in the output (default: from the build)\n"
           "  --machine  machine name for the card and the records (default: the CPU brand)\n"
+          "  --baseline FILE.json from the same build at fewer threads (normally 1):\n"
+          "             report each entry's speedup and parallel efficiency against it\n"
           "  --filter   run only entries whose area/op/dtype contains SUBSTR\n"
           "  --list     print the registered entries and exit\n";
 }
@@ -99,6 +104,51 @@ std::string num(double v) {
 }
 
 std::string id_of(const bp::entry& e) { return e.area + "/" + e.op + "/" + e.dtype; }
+
+/// A --baseline run: its thread count and each entry's median, read back from
+/// the JSON this program writes (its own format, so a small scanner suffices).
+struct baseline {
+    unsigned threads = 0;
+    std::string cls;   // the size class it ran at: medians compare only within one
+    std::map<std::string, double> median;   // "area/op/dtype" -> seconds
+};
+
+std::string json_string_after(const std::string& s, const std::string& key, std::size_t& pos) {
+    const std::string k = "\"" + key + "\": \"";
+    const std::size_t a = s.find(k, pos);
+    if (a == std::string::npos) return {};
+    const std::size_t b = s.find('"', a + k.size());
+    pos = b;
+    return s.substr(a + k.size(), b - a - k.size());
+}
+
+bool read_baseline(const std::string& path, baseline& out) {
+    std::ifstream in(path);
+    if (!in) return false;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string s = ss.str();
+    const std::size_t t = s.find("\"threads\": ");
+    if (t == std::string::npos) return false;
+    out.threads = static_cast<unsigned>(std::strtoul(s.c_str() + t + 11, nullptr, 10));
+    std::size_t cp = 0;
+    out.cls = json_string_after(s, "class", cp);
+    std::size_t pos = s.find("\"results\"");
+    while (pos != std::string::npos) {
+        const std::size_t start = s.find("{\"area\": \"", pos);
+        if (start == std::string::npos) break;
+        pos = start;
+        const std::string area = json_string_after(s, "area", pos);
+        const std::string op = json_string_after(s, "op", pos);
+        const std::string dtype = json_string_after(s, "dtype", pos);
+        const std::size_t m = s.find("\"median_s\": ", pos);
+        if (m == std::string::npos) break;
+        const double v = std::strtod(s.c_str() + m + 12, nullptr);   // "null" parses as 0
+        if (v > 0.0) out.median[area + "/" + op + "/" + dtype] = v;
+        pos = m;
+    }
+    return out.threads > 0;
+}
 
 /// Returns false if the file could not be opened or a write failed.
 bool write_json(const std::string& path, const std::string& label, const std::string& machine,
@@ -137,8 +187,9 @@ bool write_json(const std::string& path, const std::string& label, const std::st
            << ", \"flops\": " << num(r.flops) << ", \"bytes\": " << num(r.bytes)
            << ",\n     \"gflops\": " << num(r.gflops) << ", \"gbytes_per_s\": " << num(r.gbytes_per_s)
            << ", \"roofline_gflops\": " << num(r.roofline_gflops)
-           << ", \"roofline_pct\": " << (r.timed_only() ? std::string("null") : num(r.roofline_pct))
+           << ", \"roofline_pct\": " << (r.no_roofline() ? std::string("null") : num(r.roofline_pct))
            << ", \"cache_resident\": " << (r.cache_resident ? "true" : "false")
+           << ", \"speedup\": " << num(r.speedup) << ", \"efficiency\": " << num(r.efficiency)
            << ",\n     \"check\": {\"ok\": " << (r.check.ok ? "true" : "false")
            << ", \"error\": " << num(r.check.error) << ", \"tolerance\": " << num(r.check.tolerance)
            << ", \"metric\": \"" << json_escape(r.check.what) << "\"}";
@@ -201,17 +252,21 @@ bool write_card(const std::string& path, const std::string& label, const std::st
        << "| last-level cache | " << (bp::last_level_cache_bytes() >> 20) << " MiB |\n\n";
 
     // Per-area summary.
-    md << "| area | entries | median %roof | best %roof | failed checks |\n|---|---:|---:|---:|---:|\n";
+    bool scaled = false;
+    for (const auto& r : rs) scaled |= r.speedup == r.speedup;
+    md << "| area | entries | median %roof | best %roof | failed checks |"
+       << (scaled ? " median parallel efficiency |\n|---|---:|---:|---:|---:|---:|\n" : "\n|---|---:|---:|---:|---:|\n");
     std::vector<std::string> areas;
     for (const auto& r : rs)
         if (std::find(areas.begin(), areas.end(), r.area) == areas.end()) areas.push_back(r.area);
     for (const auto& a : areas) {
-        std::vector<double> pct;
+        std::vector<double> pct, eff;
         int failed = 0;
         std::size_t entries = 0;
         for (const auto& r : rs)
             if (r.area == a) {
-                if (!r.timed_only()) pct.push_back(r.roofline_pct);
+                if (!r.no_roofline()) pct.push_back(r.roofline_pct);
+                if (r.efficiency == r.efficiency) eff.push_back(r.efficiency);
                 ++entries;
                 failed += !(r.check.ok && r.error.empty());
             }
@@ -219,11 +274,18 @@ bool write_card(const std::string& path, const std::string& label, const std::st
         md << "| " << a << " | " << entries << " | " << std::setprecision(0);
         if (pct.empty()) md << "n/a | n/a";
         else md << pct[pct.size() / 2] << "% | " << pct.back() << "%";
-        md << " | " << failed << " |\n";
+        md << " | " << failed << " |";
+        if (scaled) {
+            std::sort(eff.begin(), eff.end());
+            if (eff.empty()) md << " n/a |";
+            else md << " " << eff[eff.size() / 2] * 100.0 << "% |";
+        }
+        md << "\n";
     }
 
-    md << "\n| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |\n"
-          "|---|---|---|---|---:|---:|---:|---:|---|\n";
+    md << "\n| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |"
+       << (scaled ? " speedup (efficiency) |\n|---|---|---|---|---:|---:|---:|---:|---|---:|\n"
+                  : "\n|---|---|---|---|---:|---:|---:|---:|---|\n");
     bool any_cached = false;
     for (const auto& r : rs) {
         const bool ok = r.check.ok && r.error.empty();
@@ -231,9 +293,16 @@ bool write_card(const std::string& path, const std::string& label, const std::st
         md << "| " << r.area << " | " << r.op << " | " << r.dtype << " | " << r.shape << " | "
            << std::setprecision(3) << r.median_s * 1e3 << " ms | " << std::setprecision(2) << r.gflops
            << " | " << r.gbytes_per_s << " | " << std::setprecision(0);
-        if (r.timed_only()) md << "n/a";
+        if (r.no_roofline()) md << "n/a";
         else md << r.roofline_pct << "%" << (r.cache_resident ? "\\*" : "");
-        md << " | " << (ok ? "ok" : "**FAIL**") << " |\n";
+        md << " | " << (ok ? "ok" : "**FAIL**") << " |";
+        if (scaled) {
+            if (r.speedup == r.speedup)
+                md << " " << std::setprecision(1) << r.speedup << "x (" << std::setprecision(0)
+                   << r.efficiency * 100.0 << "%) |";
+            else md << " n/a |";
+        }
+        md << "\n";
     }
     if (any_cached)
         md << "\n\\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.\n";
@@ -246,7 +315,7 @@ bool write_card(const std::string& path, const std::string& label, const std::st
 
 int main(int argc, char** argv) {
     bp::size_class cls = bp::size_class::medium;
-    std::string json_path, card_path, filter, machine, label = kDefaultLabel;
+    std::string json_path, card_path, filter, machine, baseline_path, label = kDefaultLabel;
     bool list = false;
     for (int i = 1; i < argc; ++i) {
         auto need = [&](const char* flag) -> std::string {
@@ -263,6 +332,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--card"))   card_path = need("--card");
         else if (!std::strcmp(argv[i], "--label"))  label = need("--label");
         else if (!std::strcmp(argv[i], "--machine")) machine = need("--machine");
+        else if (!std::strcmp(argv[i], "--baseline")) baseline_path = need("--baseline");
         else if (!std::strcmp(argv[i], "--filter")) filter = need("--filter");
         else if (!std::strcmp(argv[i], "--list"))   list = true;
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) { usage(std::cout); return 0; }
@@ -274,6 +344,7 @@ int main(int argc, char** argv) {
     bp::dense::register_all(reg);
     bp::sparse_entries::register_all(reg);
     bp::iterative::register_all(reg);
+    bp::mixed::register_all(reg);
 
     std::vector<const bp::entry*> selected;
     for (const auto& e : reg.entries())
@@ -290,6 +361,24 @@ int main(int argc, char** argv) {
         if (machine.empty()) machine = "unknown machine";
     }
     const unsigned threads = static_cast<unsigned>(mtl::detail::thread_pool::instance().size());
+    baseline base;
+    if (!baseline_path.empty()) {
+        if (!read_baseline(baseline_path, base)) {
+            std::cerr << "error: could not read a baseline from " << baseline_path << "\n";
+            return 2;
+        }
+        if (base.cls != bp::to_string(cls)) {
+            // Different problem sizes: a "speedup" would compare unrelated work.
+            std::cerr << "error: baseline " << baseline_path << " is class '" << base.cls << "', this run is '"
+                      << bp::to_string(cls) << "'\n";
+            return 2;
+        }
+        if (base.threads == threads) {
+            std::cerr << "warning: baseline " << baseline_path << " ran at the same thread count (" << threads
+                      << "); scaling is not reported\n";
+            base.median.clear();
+        }
+    }
     std::cout << "mtl5_bench  label=" << label << "  class=" << bp::to_string(cls)
               << "  simd=" << mtl::simd::backend_name() << "  threads=" << threads
               << "  commit=" << mtl::build_git_commit << "\n\n";
@@ -317,6 +406,10 @@ int main(int argc, char** argv) {
     int failures = 0;
     for (const auto* e : selected) {
         bp::record r = bp::run_entry(*e, cls, pr);
+        if (const auto it = base.median.find(id_of(*e)); it != base.median.end() && r.median_s > 0.0) {
+            r.speedup = it->second / r.median_s;
+            r.efficiency = r.speedup / (double(threads) / double(base.threads));
+        }
         const bool ok = r.check.ok && r.error.empty();
         failures += !ok;
         std::ostringstream t;
@@ -326,9 +419,12 @@ int main(int argc, char** argv) {
                   << std::setw(30) << r.shape << std::right << std::setw(11) << t.str()
                   << std::fixed << std::setprecision(2) << std::setw(11) << r.gflops
                   << std::setw(10) << r.gbytes_per_s << std::setprecision(0) << std::setw(8);
-        if (r.timed_only()) std::cout << "n/a" << "   ";
+        if (r.no_roofline()) std::cout << "n/a" << "   ";
         else std::cout << r.roofline_pct << (r.cache_resident ? "%* " : "%  ");
         std::cout << (ok ? "ok" : "FAIL");
+        if (r.speedup == r.speedup)
+            std::cout << std::setprecision(1) << "  x" << r.speedup << std::setprecision(0) << " ("
+                      << r.efficiency * 100.0 << "% eff.)";
         if (!ok) {
             std::cout << "  (" << (r.error.empty() ? r.check.what : r.error) << ": "
                       << std::scientific << std::setprecision(2) << r.check.error << " > "

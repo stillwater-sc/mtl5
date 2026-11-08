@@ -187,6 +187,11 @@ for v in "${BUILT[@]}"; do
         echo "== run $v, $t thread(s)"
         args=(--class "$CLASS" --label "$v" --json "$base.json" --card "$base.md")
         [ -n "$MACHINE" ] && args+=(--machine "$MACHINE")
+        # Thread scaling (#721 M6): every run after the 1-thread one is compared
+        # with it, entry by entry -- speedup and parallel efficiency in the JSON
+        # and the card. The pool is sized once per process, so scaling can only
+        # be measured across runs.
+        if [ "$t" != 1 ] && [ -f "$OUT/$v-t1.json" ]; then args+=(--baseline "$OUT/$v-t1.json"); fi
         # Every library's pool is pinned to the same count: OpenBLAS, MKL and BLIS
         # start one thread per core by default, so a "1-thread" BLAS run would
         # otherwise use all of them (a 1-thread blas3 measured 202% of the
