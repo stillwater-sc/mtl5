@@ -134,7 +134,7 @@ int main() {
     std::cout << std::setw(20) << "Gauss-Seidel"
               << std::scientific << std::setw(16) << hist_gs.back() << "\n";
     for (std::size_t w = 0; w < omegas.size(); ++w)
-        std::cout << std::setw(14) << ("SOR(w=" + omega_names[w] + ")")
+        std::cout << std::setw(20) << ("SOR(w=" + omega_names[w] + ")")
                   << std::scientific << std::setw(16) << hist_sor[w].back() << "\n";
 
     // -- Commentary -------------------------------------------------------

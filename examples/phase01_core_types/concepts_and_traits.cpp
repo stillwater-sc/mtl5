@@ -81,17 +81,21 @@ int main() {
     using SparseMat = mat::compressed2D<double>;
 
     std::cout << "   dense_vector<double>:\n";
-    std::cout << "     Collection: " << Collection<DenseVec> << '\n';
-    std::cout << "     Vector:     " << Vector<DenseVec> << '\n';
+    std::cout << "     Collection:   " << Collection<DenseVec> << '\n';
+    std::cout << "     Vector:       " << Vector<DenseVec> << '\n';
+	std::cout << "     Natrix:       " << Matrix<DenseVec> << '\n';
 
     std::cout << "   dense2D<double>:\n";
-    std::cout << "     Matrix:      " << Matrix<DenseMat> << '\n';
-    std::cout << "     DenseMatrix: " << DenseMatrix<DenseMat> << '\n';
+	std::cout << "     Vector:       " << Vector<DenseMat> << '\n';
+    std::cout << "     Matrix:       " << Matrix<DenseMat> << '\n';
+    std::cout << "     DenseMatrix:  " << DenseMatrix<DenseMat> << '\n';
+	std::cout << "     SparseMatrix: " << SparseMatrix<DenseMat> << '\n';
 
     std::cout << "   compressed2D<double>:\n";
+	std::cout << "     Vector:       " << Vector<SparseMat> << '\n';
     std::cout << "     Matrix:       " << Matrix<SparseMat> << '\n';
-    std::cout << "     SparseMatrix: " << SparseMatrix<SparseMat> << '\n';
     std::cout << "     DenseMatrix:  " << DenseMatrix<SparseMat> << '\n';
+	std::cout << "     SparseMatrix: " << SparseMatrix<SparseMat> << '\n';
 
     // ---- Type traits for dispatch ----
     std::cout << "\n3. Category Traits (Compile-Time Dispatch)\n\n";

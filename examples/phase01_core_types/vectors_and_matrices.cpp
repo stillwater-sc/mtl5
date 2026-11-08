@@ -106,13 +106,11 @@ int main() {
     // ---- Concepts ----
     std::cout << "\n4. C++20 Concepts\n\n";
 
-    std::cout << "   Scalar<double>:   " << std::boolalpha << Scalar<double> << '\n';
-    std::cout << "   Field<double>:    " << Field<double> << '\n';
-    std::cout << "   Matrix<dense2D>:  " << Matrix<mat::dense2D<double>> << '\n';
-    std::cout << "   SparseMatrix<compressed2D>: "
-              << SparseMatrix<mat::compressed2D<double>> << '\n';
-    std::cout << "   DenseMatrix<dense2D>:       "
-              << DenseMatrix<mat::dense2D<double>> << '\n';
+    std::cout << "   Scalar<double>             :  " << std::boolalpha << Scalar<double> << '\n';
+    std::cout << "   Field<double>              :  " << Field<double> << '\n';
+    std::cout << "   Matrix<dense2D>            :  " << Matrix<mat::dense2D<double>> << '\n';
+    std::cout << "   SparseMatrix<compressed2D> :  " << SparseMatrix<mat::compressed2D<double>> << '\n';
+    std::cout << "   DenseMatrix<dense2D>       :  " << DenseMatrix<mat::dense2D<double>> << '\n';
 
     // ---- Math Identities ----
     std::cout << "\n5. Algebraic Identities\n\n";
