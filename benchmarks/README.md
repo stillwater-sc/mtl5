@@ -169,15 +169,15 @@ high-intensity ones against the FMA peak.
 - **The probes and the operations use the same thread count,** MTL5's pool
   size (`MTL5_NUM_THREADS`, default 1).
 
-| class | vectors | matrix–vector | matrix–matrix, factorizations | eigen / SVD | sparse kernels (grid) | sparse direct, orderings (grid) | catalogue time (i7-12700K, 1 thread) |
-|---|---|---|---|---|---|---|---|
-| `small`  | 2^15 | 512 | 128 | 64 | 64² | 32² | ~10 s |
-| `medium` | 2^23 | 4096 | 512 | 256 | 512² | 96² | ~55 s |
-| `large`  | 2^25 | 8192 | 1024 | 512 | 1024² | 192² | ~5.5 min; peak memory ~1 GiB (`ger`'s two 8192² matrices) |
+| class | vectors | matrix–vector | matrix–matrix, factorizations | eigen / SVD | sparse kernels, smoothers (grid) | sparse direct, orderings (grid) | Krylov, preconditioners (grid) | multigrid (grid) | sparse eigen (grid) | catalogue time (i7-12700K, 1 thread) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `small`  | 2^15 | 512 | 128 | 64 | 64² | 32² | 32² | 63² | 24×25 | ~11 s |
+| `medium` | 2^23 | 4096 | 512 | 256 | 512² | 96² | 128² | 255² | 64×65 | ~70 s |
+| `large`  | 2^25 | 8192 | 1024 | 512 | 1024² | 192² | 256² | 511² | 128×129 | ~7.5 min; peak memory ~1 GiB (`ger`'s two 8192² matrices) |
 
 `sparse_qr` runs on half the direct grid's side (see its entry), because one QR solve at 96² took over 4 s.
 
-The registry covers 66 entries so far:
+The registry covers 94 entries so far:
 - **BLAS levels 1–3** (#721 milestone M1).
 - **Dense factorizations:** LU, Cholesky, LDLᵀ, Bunch–Kaufman, QR, LQ, Hessenberg, the Householder step, `inv`, and f32→f64 LU refinement.
 - **Eigensolvers and matrix functions:** symmetric (tridiagonal QR and Jacobi), general, Schur, SVD, `expm` and `sylvester`.
@@ -185,6 +185,11 @@ The registry covers 66 entries so far:
 - **Sparse kernels:** SpMV, transposed SpMV, CRS×dense, SpGEMM and the level-scheduled lower solve.
 - **Sparse direct solvers:** Cholesky, LDLᵀ, supernodal LDLᵀ, LU, supernodal LU, native KLU and QR.
 - **Orderings:** AMD, COLAMD, RCM and the block-triangular form (M4).
+- **Krylov solvers:** CG, MINRES, BiCG, BiCGSTAB, BiCGSTAB(ℓ), CGS, GMRES(30), QMR, TFQMR and IDR(s) at s = 1, 2, 4 and 8. Each is checked by the true residual it reaches.
+- **Preconditioner setups:** diagonal, ILU(0), ILUT, IC(0), ILDL, SSOR and block-diagonal. Each must cut the Krylov iteration count by at least a quarter.
+- **Smoothers:** Jacobi, Gauss–Seidel and SOR. Each is checked against its defining splitting, row by row.
+- **Multigrid:** a 2D Poisson V(1,1) cycle.
+- **Sparse eigensolvers:** Lanczos, Arnoldi, shift-invert and power iteration. They're checked against the analytic spectrum of the generated matrices (M5).
 
 All sparse inputs are generated: 2D Poisson, unsymmetric convection–diffusion, scrambled copies of both, and a planted block-triangular matrix. Nothing is downloaded. The orderings have no work model; they're timed and checked, and reported as `n/a`.
 
