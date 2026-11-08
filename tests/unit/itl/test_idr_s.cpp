@@ -160,3 +160,39 @@ TEST_CASE("IDR(s): s larger than one cycle's worth of steps to converge (#734)",
     const int its = idr_iterations(A, itl::pc::identity<csr>(A), 16);
     CHECK(its <= 64);
 }
+
+TEST_CASE("IDR(s): float solves the unsymmetric system", "[itl][krylov][idr_s][734]") {
+    // The float instantiation, whose breakdown test once compared the pivot
+    // with 1e-300 -- zero in float, so a zero pivot was never caught.
+    using fcsr = mat::compressed2D<float>;
+    using fvec = vec::dense_vector<float>;
+    const std::size_t g = 16, n = g * g;
+    fcsr A(n, n);
+    {
+        mat::inserter<fcsr> ins(A);
+        for (std::size_t r = 0; r < g; ++r)
+            for (std::size_t c = 0; c < g; ++c) {
+                const std::size_t i = r * g + c;
+                ins[i][i] << 4.0f;
+                if (c > 0)     ins[i][i - 1] << -1.4f;
+                if (c + 1 < g) ins[i][i + 1] << -0.6f;
+                if (r > 0)     ins[i][i - g] << -1.4f;
+                if (r + 1 < g) ins[i][i + g] << -0.6f;
+            }
+    }
+    fvec b(n, 1.0f), x(n, 0.0f);
+    itl::pc::identity<fcsr> M(A);
+    for (const std::size_t s : {1u, 4u}) {
+        for (std::size_t i = 0; i < n; ++i) x(i) = 0.0f;
+        itl::basic_iteration<float> iter(b, 500, 1e-5f);
+        INFO("s = " << s);
+        REQUIRE(itl::idr_s(A, x, b, M, iter, s) == 0);
+        fvec Ax = A * x;
+        float r = 0, nb = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            r  += (b(i) - Ax(i)) * (b(i) - Ax(i));
+            nb += b(i) * b(i);
+        }
+        CHECK(std::sqrt(r / nb) <= 1e-3f);   // float: the updated residual drifts from b - A x
+    }
+}

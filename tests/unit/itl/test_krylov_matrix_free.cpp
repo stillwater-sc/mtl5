@@ -22,6 +22,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <iomanip>
+#include <sstream>
+#include <string>
 #include <type_traits>
 
 #include <mtl/concepts/linear_operator.hpp>
@@ -180,6 +183,25 @@ bool same_bits(const dvec& x, const dvec& y) {
     return true;
 }
 
+/// Where two solutions first differ, and by how much at most, for a failure
+/// message.
+std::string first_difference(const dvec& x, const dvec& y) {
+    if (x.size() != y.size()) return "sizes differ";
+    std::size_t first = x.size(), count = 0;
+    double maxdiff = 0;
+    for (std::size_t i = 0; i < x.size(); ++i)
+        if (std::memcmp(&x(i), &y(i), sizeof(double)) != 0) {
+            if (first == x.size()) first = i;
+            ++count;
+            maxdiff = std::max(maxdiff, std::fabs(x(i) - y(i)));
+        }
+    if (count == 0) return "identical";
+    std::ostringstream os;
+    os << std::setprecision(17) << count << " of " << x.size() << " entries differ, first at " << first
+       << " (" << x(first) << " vs " << y(first) << "), max |diff| " << maxdiff;
+    return os.str();
+}
+
 struct outcome {
     int code;
     int iterations;
@@ -202,11 +224,18 @@ void check_matrix_free(const smat& S, Solve solve) {
     };
     const auto stored = run(S);
     const auto mfree = run(F);
+    // The stored matrix run twice: if these differ, the solve itself is not
+    // reproducible in this process (threading, a vendor kernel), and the
+    // matrix-free comparison below cannot tell an operator fault from that.
+    const auto again = run(S);
     INFO("stored: code " << stored.code << ", " << stored.iterations << " iterations; matrix-free: code "
          << mfree.code << ", " << mfree.iterations << " iterations");
+    INFO("matrix-free vs stored: " << first_difference(mfree.x, stored.x));
+    INFO("stored, second run vs first: " << first_difference(again.x, stored.x));
     CHECK(stored.code == 0);
     CHECK(mfree.code == 0);
     CHECK(mfree.iterations == stored.iterations);
+    CHECK(same_bits(again.x, stored.x));
     CHECK(same_bits(mfree.x, stored.x));
 }
 

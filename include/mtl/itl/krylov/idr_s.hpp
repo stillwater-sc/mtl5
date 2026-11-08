@@ -138,7 +138,10 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
                     std::swap(Mcopy(k, j), Mcopy(pivot, j));
                 std::swap(f(k), f(pivot));
             }
-            if (abs(Mcopy(k, k)) < value_type(1e-300))
+            // maxval is the pivot's magnitude. A zero (or NaN) pivot is a
+            // breakdown; comparing with zero, not a tiny constant, holds for
+            // every value type (1e-300 underflows to 0 in float, #753).
+            if (!(maxval > math::zero<decltype(maxval)>()))
                 return false;
             for (size_type i = k + 1; i < s; ++i) {
                 value_type factor = Mcopy(i, k) / Mcopy(k, k);
