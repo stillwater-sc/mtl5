@@ -148,7 +148,13 @@ macOS and Windows.
    decides the backend, as described above.
 3. **Checks every result** against a long-double reference, using the standard
    `gamma_k` error bound. A fast wrong answer prints `FAIL` and makes the exit
-   status 1.
+   status 1. Matrix results (level-3 BLAS, `inv`, Schur, SVD, `expm`,
+   `sylvester`, mixed GEMM) are checked twice, and both must pass: on 64
+   sampled entries at the entrywise bound, and by Freivalds' check, which
+   compares C·x with A·(B·x) for two probe vectors and so covers every entry
+   in O(n²). In the M7 mutation tests the samples missed a single wrong GEMM
+   entry, a wrong mirrored entry in GEMMT, a partial SYRK row and one Kronecker
+   entry; Freivalds caught all four.
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DMTL5_BUILD_BENCHMARKS=ON
@@ -179,8 +185,8 @@ high-intensity ones against the FMA peak.
 
 `sparse_qr` runs on half the direct grid's side (see its entry), because one QR solve at 96² took over 4 s.
 
-The registry covers 106 entries so far:
-- **BLAS levels 1–3** (#721 milestone M1).
+The registry covers 107 entries:
+- **BLAS levels 1–3** (#721 milestone M1), plus DotK (`dot_k<3>`, M7), checked on an ill-conditioned integer dot product with an exact int64 answer.
 - **Dense factorizations:** LU, Cholesky, LDLᵀ, Bunch–Kaufman, QR, LQ, Hessenberg, the Householder step, `inv`, and f32→f64 LU refinement.
 - **Eigensolvers and matrix functions:** symmetric (tridiagonal QR and Jacobi), general, Schur, SVD, `expm` and `sylvester`.
 - **Element-wise functions:** `exp`, `log`, `sin`, `sqrt` and `erf` (M3).
@@ -196,6 +202,30 @@ The registry covers 106 entries so far:
 - **Integer:** dot and GEMM in int32, int16→int32, int8→int32 and uint8×int8→int32, plus the quad (VNNI/SDOT) GEMM. The checks are exact: GEMM by Freivalds' C·x = A·(B·x) in int64. These entries report GOP/s with no %roof, because the probes measure floating-point peaks (M6).
 
 All sparse inputs are generated: 2D Poisson, unsymmetric convection–diffusion, scrambled copies of both, and a planted block-triangular matrix. Nothing is downloaded. The orderings have no work model; they're timed and checked, and reported as `n/a`.
+
+### Coverage is enforced
+
+`benchmarks/check_coverage.sh path/to/mtl5_bench` checks that the catalogue
+covers the library, and CI runs it in the benchmarks lane (#721 M7).
+`benchmarks/platform/coverage.txt` maps every header under `operation/`, the
+ITL solver, preconditioner, smoother, multigrid and eigensolver directories,
+the sparse factorization, ordering, analysis and eigen directories, and
+`simd/algorithm.hpp` to one of:
+
+| kind | meaning |
+|---|---|
+| `bench <entry>` | an entry calls the header's operation |
+| `via <entry>` | the operation runs inside that entry (`lower_trisolve` inside `trsv`) |
+| `class <entry>` | the same kernel class as that entry (`cos` against `sin`) |
+| `exempt <reason>` | not measured: queries, predicates, I/O, umbrellas, plumbing |
+
+The check fails on:
+- a header with no line, which is the case it exists for;
+- a line for a header that no longer exists;
+- an entry name that matches nothing in `mtl5_bench --list`;
+- an exemption with no reason.
+
+So adding an operation, or renaming an entry, means saying how it is measured.
 
 Factorization and eigen rates use the conventional LAPACK operation counts (2/3 n³ for LU, 22 n³ for a full SVD, …), so they compare implementations rather than count what a given algorithm executes. Each entry's check is described at the top of its `entries_*.hpp`. The tracking issue lists the remaining areas. To add an operation, write a `problem`
 factory and register it in `platform/entries_*.hpp`. A factory supplies setup,

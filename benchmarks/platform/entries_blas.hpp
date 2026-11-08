@@ -13,10 +13,13 @@
 //                         because a faster path reordered the sum.
 //   residual (solves)     |T x - b| / (|T| |x| + |b|), same bound.
 //
-// Level-3 results are checked on 64 sampled entries of C rather than all n^2:
-// the full long-double reference is O(n^3) and would take longer than the
-// benchmark. A wrong kernel is wrong on a block of entries, never on one, so
-// 64 spread samples catch it.
+// Level-3 results get two checks, and both must pass (#721 M7):
+//   - 64 sampled entries of C against a long-double reference, at the gamma_k
+//     bound entry by entry. Tight, but blind to an error confined to a few rows
+//     or one edge tile: the full long-double reference is O(n^3).
+//   - Freivalds' check (common.hpp): C x against the exact product applied
+//     factor by factor, A (B x), for two probe vectors. Every entry of C, at
+//     O(n^2), against the same bound summed along each row.
 //
 // Work model: flops are the conventional useful counts (2n for dot, 2n^2 for
 // gemv, 2n^3 for gemm, n^3 for syrk/trsm/trmm), and bytes are the compulsory
@@ -30,6 +33,8 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 // The operation headers this file calls, not the <mtl/mtl.hpp> umbrella: with
 // MTL5_HAS_BLAS and MTL5_HAS_SUPERLU both defined, the umbrella pulls in
@@ -350,6 +355,19 @@ check_result sampled(const M& C, std::size_t n, std::size_t k, Term term, const 
     return e.result();
 }
 
+/// {P x, |P| x} for P = A op(B), applied factor by factor: never formed.
+template <typename MA, typename MB>
+std::pair<ldvec, ldvec> product_apply(const MA& A, const MB& B, const ldvec& x, bool transB = false) {
+    return {ld_mv(A, ld_mv(B, x, transB)), ld_mv(A, ld_mv(B, x, transB, true), false, true)};
+}
+
+/// Freivalds check of C against an exact product, given ref(x) = {P x, |P| x}.
+/// kref = 3k: C x, B x and A (B x) each sum k terms.
+template <typename T, typename M, typename Ref>
+check_result freivalds_of(const M& C, std::size_t n, std::size_t k, Ref ref, const char* what) {
+    return freivalds<T>(n, k, 3 * k, [&](const ldvec& x) { return ld_mv(C, x); }, ref, what);
+}
+
 template <typename T>
 problem gemm(size_class c) {
     const std::size_t n = n_mm(c);
@@ -358,8 +376,10 @@ problem gemm(size_class c) {
     problem p{mshape(n), 2.0 * n * n * n, 3.0 * n * n * sizeof(T), [] {},
               [s] { mtl::mult(s->A, s->B, s->C); }, {}};
     p.check = [s, n] {
-        return sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
-            return (long double)s->A(i, k) * s->B(k, j); }, "rel err vs sum|a_ik b_kj| (64 samples)");
+        return both(sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
+                        return (long double)s->A(i, k) * s->B(k, j); }, "rel err vs sum|a_ik b_kj| (64 samples)"),
+                    freivalds_of<T>(s->C, n, n, [&](const ldvec& x) { return product_apply(s->A, s->B, x); },
+                                    "Freivalds: C x vs A (B x), per (|A||B| x)_i"));
     };
     return p;
 }
@@ -372,9 +392,32 @@ problem gemmt(size_class c) {
     problem p{mshape(n), 1.0 * n * n * n, 3.0 * n * n * sizeof(T), [] {},
               [s] { mtl::gemmt(T(1), s->A, s->B, T(0), s->C); }, {}};
     p.check = [s, n] {
-        return sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
-            return (long double)s->A(i, k) * s->B(k, j); },
-            "rel err, lower triangle (64 samples)", /*lower_only=*/true);
+        // C is tril(A B) mirrored, so C x = tril(AB) x + stril(AB)^T x. Both
+        // apply in O(n^2) through prefix and suffix sums:
+        //   (tril(AB) x)_i    = sum_k A(i,k) sum_{j<=i} B(k,j) x_j
+        //   (stril(AB)^T x)_j = sum_k B(k,j) sum_{l>j}  A(l,k) x_l
+        const auto ref = [&](const ldvec& x) {
+            std::pair<ldvec, ldvec> r{ldvec(n, 0.0L), ldvec(n, 0.0L)};
+            std::vector<long double> pre(n * n), suf(n * n);
+            for (const bool absval : {false, true}) {
+                const auto f = [absval](T v) { long double a = v; return absval ? std::fabs(a) : a; };
+                for (std::size_t k = 0; k < n; ++k) {
+                    long double run = 0;
+                    for (std::size_t j = 0; j < n; ++j) { run += f(s->B(k, j)) * x[j]; pre[k * n + j] = run; }
+                    run = 0;
+                    for (std::size_t j = n; j-- > 0;) { suf[k * n + j] = run; run += f(s->A(j, k)) * x[j]; }
+                }
+                ldvec& y = absval ? r.second : r.first;
+                for (std::size_t i = 0; i < n; ++i)
+                    for (std::size_t k = 0; k < n; ++k)
+                        y[i] += f(s->A(i, k)) * pre[k * n + i] + f(s->B(k, i)) * suf[k * n + i];
+            }
+            return r;
+        };
+        return both(sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
+                        return (long double)s->A(i, k) * s->B(k, j); },
+                        "rel err, lower triangle (64 samples)", /*lower_only=*/true),
+                    freivalds_of<T>(s->C, n, n, ref, "Freivalds: C x vs (tril(AB) + stril(AB)^T) x"));
     };
     return p;
 }
@@ -387,8 +430,10 @@ problem symm(size_class c) {
     problem p{mshape(n), 2.0 * n * n * n, 3.0 * n * n * sizeof(T), [] {},
               [s] { mtl::symm(T(1), s->A, s->B, T(0), s->C); }, {}};
     p.check = [s, n] {
-        return sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
-            return (long double)s->A(i, k) * s->B(k, j); }, "rel err (64 samples)");
+        return both(sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
+                        return (long double)s->A(i, k) * s->B(k, j); }, "rel err (64 samples)"),
+                    freivalds_of<T>(s->C, n, n, [&](const ldvec& x) { return product_apply(s->A, s->B, x); },
+                                    "Freivalds: C x vs A (B x)"));
     };
     return p;
 }
@@ -401,8 +446,10 @@ problem syrk(size_class c) {
     problem p{mshape(n), 1.0 * n * n * n, 2.0 * n * n * sizeof(T), [] {},
               [s] { mtl::syrk(T(1), s->A, T(0), s->C); }, {}};
     p.check = [s, n] {
-        return sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
-            return (long double)s->A(i, k) * s->A(j, k); }, "rel err vs A A^T (64 samples)");
+        return both(sampled<T>(s->C, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
+                        return (long double)s->A(i, k) * s->A(j, k); }, "rel err vs A A^T (64 samples)"),
+                    freivalds_of<T>(s->C, n, n, [&](const ldvec& x) { return product_apply(s->A, s->A, x, true); },
+                                    "Freivalds: C x vs A (A^T x)"));
     };
     return p;
 }
@@ -416,11 +463,18 @@ problem syr2k(size_class c) {
               [s] { mtl::syr2k(T(1), s->A, s->B, T(0), s->C); }, {}};
     p.check = [s, n] {
         // C = A B^T + B A^T: two terms per k, as one 2n-long sum.
-        return sampled<T>(s->C, n, 2 * n, [&](std::size_t i, std::size_t q, std::size_t j) {
-            const std::size_t k = q / 2;
-            return q % 2 == 0 ? (long double)s->A(i, k) * s->B(j, k)
-                              : (long double)s->B(i, k) * s->A(j, k); },
-            "rel err vs A B^T + B A^T (64 samples)");
+        const auto ref = [&](const ldvec& x) {
+            auto ab = product_apply(s->A, s->B, x, true);
+            const auto ba = product_apply(s->B, s->A, x, true);
+            for (std::size_t i = 0; i < n; ++i) { ab.first[i] += ba.first[i]; ab.second[i] += ba.second[i]; }
+            return ab;
+        };
+        return both(sampled<T>(s->C, n, 2 * n, [&](std::size_t i, std::size_t q, std::size_t j) {
+                        const std::size_t k = q / 2;
+                        return q % 2 == 0 ? (long double)s->A(i, k) * s->B(j, k)
+                                          : (long double)s->B(i, k) * s->A(j, k); },
+                        "rel err vs A B^T + B A^T (64 samples)"),
+                    freivalds_of<T>(s->C, n, 2 * n, ref, "Freivalds: C x vs A (B^T x) + B (A^T x)"));
     };
     return p;
 }
@@ -433,8 +487,12 @@ problem trmm(size_class c) {
     problem p{mshape(n), 1.0 * n * n * n, (0.5 * n * n + 2.0 * n * n) * sizeof(T),
               [s] { s->B = s->B0; }, [s] { mtl::trmm(T(1), s->L, s->B, /*upper=*/false); }, {}};
     p.check = [s, n] {
-        return sampled<T>(s->B, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
-            return k <= i ? (long double)s->L(i, k) * s->B0(k, j) : 0.0L; }, "rel err vs L B (64 samples)");
+        // L is stored with explicit zeros above the diagonal (lower_tri), so
+        // applying all of it is applying its lower triangle.
+        return both(sampled<T>(s->B, n, n, [&](std::size_t i, std::size_t k, std::size_t j) {
+                        return k <= i ? (long double)s->L(i, k) * s->B0(k, j) : 0.0L; }, "rel err vs L B (64 samples)"),
+                    freivalds_of<T>(s->B, n, n, [&](const ldvec& x) { return product_apply(s->L, s->B0, x); },
+                                    "Freivalds: B x vs L (B0 x)"));
     };
     return p;
 }
@@ -457,7 +515,16 @@ problem trsm(size_class c) {
             }
             e.add(lx, s->B0(i, j), abs + std::fabs((long double)s->B0(i, j)));
         });
-        return e.result();
+        // Every entry: L (X x) against B0 x, per |L| (|X| x) + |B0| x.
+        const auto got = [&](const ldvec& x) { return ld_mv(s->L, ld_mv(s->X, x)); };
+        const auto ref = [&](const ldvec& x) {
+            auto r = product_apply(s->L, s->X, x);
+            r.first = ld_mv(s->B0, x);
+            const ldvec b = ld_mv(s->B0, x, false, true);
+            for (std::size_t i = 0; i < n; ++i) r.second[i] += b[i];
+            return r;
+        };
+        return both(e.result(), freivalds<T>(n, n, 3 * n, got, ref, "Freivalds residual: L (X x) - B0 x"));
     };
     return p;
 }
@@ -480,7 +547,30 @@ problem kron(size_class c) {
             const long double t = (long double)s->A(r / m, q / m) * s->B(r % m, q % m);
             e.add(s->K(r, q), t, std::fabs(t));
         });
-        return e.result();
+        // (A (x) B) x = vec(A X B^T) with X(j, l) = x[j m + l]: O(m^3).
+        const auto ref = [&](const ldvec& x) {
+            std::pair<ldvec, ldvec> r{ldvec(N, 0.0L), ldvec(N, 0.0L)};
+            std::vector<long double> W(m * m);
+            for (const bool absval : {false, true}) {
+                const auto f = [absval](T v) { long double a = v; return absval ? std::fabs(a) : a; };
+                for (std::size_t j = 0; j < m; ++j)
+                    for (std::size_t k = 0; k < m; ++k) {
+                        long double w = 0;
+                        for (std::size_t l = 0; l < m; ++l) w += f(s->B(k, l)) * x[j * m + l];
+                        W[j * m + k] = w;
+                    }
+                ldvec& y = absval ? r.second : r.first;
+                for (std::size_t i = 0; i < m; ++i)
+                    for (std::size_t k = 0; k < m; ++k) {
+                        long double v = 0;
+                        for (std::size_t j = 0; j < m; ++j) v += f(s->A(i, j)) * W[j * m + k];
+                        y[i * m + k] = v;
+                    }
+            }
+            return r;
+        };
+        return both(e.result(), freivalds<T>(N, 1, N + 2 * m, [&](const ldvec& x) { return ld_mv(s->K, x); },
+                                             ref, "Freivalds: K x vs vec(A X B^T)"));
     };
     return p;
 }

@@ -27,6 +27,12 @@
 //   householder                          H x = beta e_1
 //   exp, log, sin, sqrt, erf             against std:: element by element
 //
+// The matrix identities (inv, schur, svd, expm, sylvester, and the
+// orthogonality of Q, U and V) are checked twice, and both must pass: on 64
+// sampled entries, and by Freivalds' normwise check on all of the residual,
+// |R x| <= tol * scale * |x| for two probe vectors x (common.hpp). The infinity
+// norm goes with a scale in |.|_inf (inv, expm), the 2-norm with one in |.|_F.
+//
 // Tolerances use gamma_k (common.hpp) with k the problem dimension: a stable
 // algorithm sits orders of magnitude inside it, and a wrong one is O(1) outside.
 //
@@ -158,6 +164,17 @@ void sampled_orthogonality(error_tracker& e, const M& Q) {
         for (std::size_t k = 0; k < Q.num_rows(); ++k) s += (long double)Q(k, i) * Q(k, j);
         e.add(s, i == j ? 1.0L : 0.0L, 1.0L);
     });
+}
+
+/// |Q^T Q - I|_F <= tol, checked on all of it: |Q^T (Q x) - x|_2 <= tol |x|_2.
+template <typename T, typename M>
+check_result probe_orthogonality(const M& Q, const char* what) {
+    const std::size_t n = Q.num_cols();
+    return freivalds_normwise<T>(n, n, 2 * Q.num_rows(), 1.0L, probe_norm::two, [&](const ldvec& x) {
+        ldvec r = ld_mv(Q, ld_mv(Q, x), true);
+        for (std::size_t i = 0; i < n; ++i) r[i] -= x[i];
+        return r;
+    }, what);
 }
 
 // -- solves through a factorization ----------------------------------------
@@ -305,7 +322,11 @@ problem inv(size_class c) {
             for (std::size_t k = 0; k < n; ++k) ax += (long double)s->A(i, k) * s->X(k, j);
             e.add(ax, i == j ? 1.0L : 0.0L, scale);
         });
-        return e.result();
+        return both(e.result(), freivalds_normwise<T>(n, n, 2 * n, scale, probe_norm::inf, [&](const ldvec& x) {
+            ldvec r = ld_mv(s->A, ld_mv(s->X, x));
+            for (std::size_t i = 0; i < n; ++i) r[i] -= x[i];
+            return r;
+        }, "Freivalds: |A (X x) - x|_inf per |A|_inf |X|_inf |x|_inf"));
     };
     return p;
 }
@@ -462,7 +483,13 @@ problem schur(size_class c) {
             if (i + 1 < n && Tm(i, i - 1) != T(0) && Tm(i + 1, i) != T(0)) two_in_a_row = true;
         }
         e.add(below + (two_in_a_row ? fa : 0.0L), 0.0L, fa);
-        return e.result();
+        auto r = both(e.result(), freivalds_normwise<T>(n, n, 3 * n, fa, probe_norm::two, [&](const ldvec& x) {
+            ldvec res = ld_mv(Q, ld_mv(Tm, ld_mv(Q, x, true)));
+            const ldvec ax = ld_mv(s->A, x);
+            for (std::size_t i = 0; i < n; ++i) res[i] -= ax[i];
+            return res;
+        }, "Freivalds: |Q (T (Q^T x)) - A x|_2 per |A|_F |x|_2"));
+        return both(std::move(r), probe_orthogonality<T>(Q, "Freivalds: |Q^T (Q x) - x|_2 per |x|_2"));
     };
     return p;
 }
@@ -495,7 +522,14 @@ problem svd(size_class c) {
         }
         e.add(s2, fa * fa, 2 * fa * fa);
         e.add(bad, 0.0L, fa);
-        return e.result();
+        auto r = both(e.result(), freivalds_normwise<T>(n, n, 3 * n, fa, probe_norm::two, [&](const ldvec& x) {
+            ldvec res = ld_mv(s->U, ld_mv(s->Sg, ld_mv(s->V, x, true)));
+            const ldvec ax = ld_mv(s->A, x);
+            for (std::size_t i = 0; i < n; ++i) res[i] -= ax[i];
+            return res;
+        }, "Freivalds: |U (S (V^T x)) - A x|_2 per |A|_F |x|_2"));
+        r = both(std::move(r), probe_orthogonality<T>(s->U, "Freivalds: |U^T (U x) - x|_2 per |x|_2"));
+        return both(std::move(r), probe_orthogonality<T>(s->V, "Freivalds: |V^T (V x) - x|_2 per |x|_2"));
     };
     return p;
 }
@@ -528,7 +562,11 @@ problem expm(size_class c) {
             for (std::size_t k = 0; k < n; ++k) ef += (long double)s->E(i, k) * F(k, j);
             e.add(ef, i == j ? 1.0L : 0.0L, scale);
         });
-        return e.result();
+        return both(e.result(), freivalds_normwise<T>(n, n, 2 * n, scale, probe_norm::inf, [&](const ldvec& x) {
+            ldvec r = ld_mv(s->E, ld_mv(F, x));
+            for (std::size_t i = 0; i < n; ++i) r[i] -= x[i];
+            return r;
+        }, "Freivalds: |E (F x) - x|_inf per |E|_inf |F|_inf |x|_inf"));
     };
     return p;
 }
@@ -559,7 +597,13 @@ problem sylvester(size_class c) {
                 r += (long double)s->A(i, k) * s->X(k, j) + (long double)s->X(i, k) * s->B(k, j);
             e.add(r, s->C(i, j), scale);
         });
-        return e.result();
+        return both(e.result(), freivalds_normwise<T>(n, n, 2 * n, scale, probe_norm::two, [&](const ldvec& x) {
+            ldvec r = ld_mv(s->A, ld_mv(s->X, x));
+            const ldvec xb = ld_mv(s->X, ld_mv(s->B, x));
+            const ldvec cx = ld_mv(s->C, x);
+            for (std::size_t i = 0; i < n; ++i) r[i] += xb[i] - cx[i];
+            return r;
+        }, "Freivalds: |A (X x) + X (B x) - C x|_2 per scale |x|_2"));
     };
     return p;
 }
