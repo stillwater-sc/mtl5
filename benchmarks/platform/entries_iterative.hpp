@@ -149,14 +149,15 @@ inline long double true_relres(const csr& A, const vec_t& x, const vec_t& b) {
 // -- Krylov solvers ------------------------------------------------------------
 
 /// Solve to rtol 1e-8 from x = 0. CG and MINRES on the SPD Poisson matrix, the
-/// rest on unsymmetric convection-diffusion, with ILU(0) (diagonal for MINRES,
-/// which needs an SPD preconditioner).
+/// rest on unsymmetric convection-diffusion. CG takes IC(0), the textbook
+/// pairing; MINRES takes the diagonal (it needs an SPD preconditioner), and
+/// the rest ILU(0).
 ///
-/// Two deliberate exceptions, both findings of this benchmark:
-///  * CG is paired with ILU(0), not IC(0). pc::ic_0's apply is QUADRATIC in n
-///    (131 ms per apply at n = 16384 against ILU(0)'s 0.14 ms), so CG + IC(0)
-///    would take ~9 s at medium and hours at large. On an SPD matrix ILU(0)
-///    computes the same incomplete factor (CG takes 35 iterations with either).
+/// CG used to take ILU(0) here: pc::ic_0's apply was quadratic in n, 131 ms
+/// per apply at n = 16384, which this benchmark found (#732). It is O(nnz)
+/// now, 0.17 ms there.
+///
+/// One deliberate exception, a finding of this benchmark:
 ///  * TFQMR runs on the SPD Poisson matrix. On unsymmetric convection-diffusion
 ///    it stalls at a 6-9% residual after thousands of iterations with ANY
 ///    preconditioner, where BiCGSTAB converges in 13-52; its unit tests use only
@@ -201,6 +202,9 @@ problem krylov(size_class c) {
     if constexpr (Which == 1) {
         auto M = std::make_shared<itl::pc::diagonal<csr>>(s->A);
         run = [solve, M] { solve(*M); };
+    } else if constexpr (Which == 0) {
+        auto M = std::make_shared<itl::pc::ic_0<double>>(s->A);
+        run = [solve, M] { solve(*M); };
     } else {
         auto M = std::make_shared<itl::pc::ilu_0<double>>(s->A);
         run = [solve, M] { solve(*M); };
@@ -239,15 +243,14 @@ problem pc_setup(size_class c) {
     // ic_0 and ildl are symmetric: CG on Poisson. diagonal and block_diagonal
     // get a ROW-SCALED matrix, the case they exist for (the plain stencil has a
     // constant diagonal, which a diagonal preconditioner cannot improve).
+    // ic_0 and ildl were capped at a 64^2 grid while their apply was quadratic
+    // (#732); the check runs CG with them. They are O(nnz) now and uncapped.
     constexpr bool spd = Which == 3 || Which == 4;
-    // ic_0 and ildl have a quadratic-cost apply (see krylov), and the check runs
-    // CG with them, so they are capped at a 64^2 grid.
-    const std::size_t kk = spd ? std::min<std::size_t>(k, 64) : k;
     struct S { csr A; vec_t b; };
     auto s = std::make_shared<S>();
-    if constexpr (spd) s->A = sparse_entries::poisson2d(kk);
-    else if constexpr (Which == 0 || Which == 6) s->A = row_scaled(sparse_entries::convdiff2d(kk), 311);
-    else s->A = sparse_entries::convdiff2d(kk);
+    if constexpr (spd) s->A = sparse_entries::poisson2d(k);
+    else if constexpr (Which == 0 || Which == 6) s->A = row_scaled(sparse_entries::convdiff2d(k), 311);
+    else s->A = sparse_entries::convdiff2d(k);
     s->b = vec_of<double>(s->A.num_rows(), 312);
     auto build = [s] {
         if constexpr (Which == 0) return itl::pc::diagonal<csr>(s->A);
@@ -260,7 +263,7 @@ problem pc_setup(size_class c) {
     };
     using PC = decltype(build());
     auto slot = std::make_shared<std::unique_ptr<PC>>();
-    problem p{std::to_string(kk) + "^2 grid" + (Which == 0 || Which == 6 ? ", rows scaled" : ""), 0.0, 0.0,
+    problem p{std::to_string(k) + "^2 grid" + (Which == 0 || Which == 6 ? ", rows scaled" : ""), 0.0, 0.0,
               [] {}, [build, slot] { *slot = std::make_unique<PC>(build()); }, {}};
     p.check = [s, slot] {
         // A diagonal preconditioner has an exact answer, b_i / a_ii (one
@@ -642,7 +645,7 @@ inline problem power_iteration(size_class c) {
 }
 
 inline void register_all(registry& r) {
-    r.add("krylov", "cg+ilu0", "f64", krylov<0>);
+    r.add("krylov", "cg+ic0", "f64", krylov<0>);
     r.add("krylov", "minres+diag", "f64", krylov<1>);
     r.add("krylov", "bicg+ilu0", "f64", krylov<2>);
     r.add("krylov", "bicgstab+ilu0", "f64", krylov<3>);
