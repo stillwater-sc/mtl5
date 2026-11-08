@@ -321,4 +321,10 @@ inline constexpr bool row_major_contiguous_v = [] {
         return false;
 }();
 
+
+/// Row block of the blocked trsm and trmm on the native-fast path (#724): the
+/// diagonal blocks run in the row loop, everything else in the blocked GEMM, so
+/// the row loop's share of the flops is about triangular_block / m.
+inline constexpr std::size_t triangular_block = 64;
+
 } // namespace mtl::detail

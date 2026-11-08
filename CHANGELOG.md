@@ -54,6 +54,27 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **On the native-fast build, `trsm`, `trmm` and `symm` run through the blocked GEMM** (#724, part 3 of 3). With `MTL5_NATIVE_FAST_GEMM` and no BLAS, they used a scalar loop at a fifth of the fast GEMM's rate, even after part 2.
+  - **`trsm` / `trmm`:** walk A's diagonal in blocks of 64 rows, the LAPACK/BLIS structure. The row loop handles each diagonal block, and `gemm_blocked` handles the rest: B(I) := αB(I) − A(I, solved)·X(solved) for `trsm`, and B(I) += α·A(I, rest)·B(rest) for `trmm`, in the block order that leaves B(rest) unread. All but about 64/m of the flops run in the GEMM.
+  - **`symm`:** expands A's lower triangle once, at O(m²) cost, and makes one `gemm_blocked` call. `beta == 0` still doesn't read C.
+  - **When it applies:** float or double, a dense A, a row-major B (for `symm`, a row-major C), and m > 64. Other cases keep part 2's row loops.
+  - **Rounding** is the blocked GEMM's, as for `mult` on this build.
+  - **Results:** `mtl5_bench --class medium`, native-fast build (Highway, `-march=native`), one thread, i7-12700K, in GFLOP/s:
+
+    | op | before | after | share of reference |
+    |---|---:|---:|---:|
+    | `trsm` | 1.74 | 49.2 | 69% of `gemm` (71.4) |
+    | `trmm` | 1.77 | 43.5 | 61% of `gemm` |
+    | `symm` | 1.00 | 67.1 | 94% of `gemm` |
+    | `symv` | 0.50 | 5.44 | 54% of `gemv` (10.0), from part 2 |
+  - **Test:** `test_blas_blocked_native_fast` checks against a long-double reference:
+    - shapes of one block, one block plus one row, and several blocks with a remainder;
+    - upper and lower, unit and non-unit diagonal;
+    - A in both orientations, f32 and f64;
+    - NaN in the unread triangle, and in C at `beta == 0`;
+    - `static_assert`s on the `*_uses_blocked_v` traits.
+
+    Each of 9 mutations of the block offsets, betas, ranges and order makes it fail.
 - **The generic `trsm`, `trmm`, `symm`, `symv`, `syrk` and `syr2k` walk row-major matrices row by row, with bit-identical results** (#724, part 2 of 3). The old loops read a row-major operand down a column, one stride of n per access, so nothing vectorized.
   - **The fix:** the i-k-j forms that `mult` (#549) and `gemmt` already use:
     - **`trsm` / `trmm`:** subtract or add A(i,j) × B.row(j), one whole row at a time;

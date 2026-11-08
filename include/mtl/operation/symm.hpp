@@ -38,6 +38,9 @@
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+#include <mtl/detail/gemm_blocked.hpp>
+#endif
 
 namespace mtl {
 
@@ -53,6 +56,24 @@ inline constexpr bool symm_dispatches_blas_v = [] {
         return std::is_same_v<typename MC::value_type, typename MA::value_type> &&
                std::is_same_v<typename MC::value_type, typename MB::value_type> &&
                interface::is_row_major_v<MB> == interface::is_row_major_v<MC>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+/// Whether symm<void> on this build expands A and calls the native blocked GEMM
+/// (#724): MTL5_NATIVE_FAST_GEMM, float or double, dense A and B, row-major C.
+template <typename MA, typename MB, typename MC>
+inline constexpr bool symm_uses_blocked_v = [] {
+#ifdef MTL5_NATIVE_FAST_GEMM
+    if constexpr (interface::SimdDenseMatrix<MA> && interface::SimdDenseMatrix<MB> &&
+                  interface::SimdDenseMatrix<MC> && requires { typename MB::orientation; })
+        return interface::is_blas_scalar_v<typename MC::value_type> &&
+               std::is_same_v<typename MA::value_type, typename MC::value_type> &&
+               std::is_same_v<typename MB::value_type, typename MC::value_type> &&
+               row_major_contiguous_v<MC>;
     else
         return false;
 #else
@@ -115,6 +136,27 @@ void symm(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
                 interface::blas::symm('L', uplo, mi, ni, static_cast<T>(alpha), A.data(), lda,
                                       B.data(), lda, static_cast<T>(beta), C.data(), lda);
             }
+            return;
+        }
+    }
+#endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+    if constexpr (detail::symm_uses_blocked_v<MA, MB, MC>) {
+        if (!alpha_zero && m > 0 && n > 0) {
+            // Expand A's lower triangle to the full symmetric matrix (O(m^2)),
+            // then one blocked GEMM, C := beta C + alpha F B (#724). beta == 0
+            // does not read C, as on the other paths. The rounding is the
+            // blocked GEMM's, as for mult on this build.
+            using T = typename MC::value_type;
+            const std::size_t ms = static_cast<std::size_t>(m), ns = static_cast<std::size_t>(n);
+            std::vector<T> F(ms * ms);
+            for (size_type i = 0; i < m; ++i)
+                for (size_type k = 0; k < m; ++k) F[static_cast<std::size_t>(i) * ms + k] = a(i, k);
+            const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(ns) : 1;
+            const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(ms);
+            detail::gemm_blocked<T>(ms, ns, ms, static_cast<T>(alpha), F.data(), static_cast<std::ptrdiff_t>(ms), 1,
+                                    B.data(), b_rs, b_cs, static_cast<T>(beta), C.data(), ns,
+                                    detail::gemm_default_threads());
             return;
         }
     }
