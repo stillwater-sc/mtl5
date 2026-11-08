@@ -266,6 +266,10 @@ jobs:
   # checked, on one thread (#640); OpenBLAS has no per-thread control to check.
   # It runs on Ubuntu 26.04 for BLIS 1.x: 24.04's BLIS 0.9 has only a
   # process-wide setting, which MTL5 does not cap.
+  # The OpenBLAS entries also link SuperLU, so the suite -- the umbrella
+  # header and iface_test_superlu_blas among it -- is built with BLAS and
+  # SuperLU in one translation unit; SuperLU's own BLAS prototypes used to
+  # conflict with MTL5's there (#725).
   lapack:
     name: Linux x64 LAPACK (${{ matrix.cxx }}${{ matrix.vendor && format(', {0}', matrix.vendor) || '' }})
     runs-on: ${{ matrix.os || 'ubuntu-24.04' }}
@@ -275,12 +279,12 @@ jobs:
         include:
           - cc: gcc-13
             cxx: g++-13
-            packages: liblapack-dev libopenblas-dev
-            cmake_extra: -DMTL5_WITH_LAPACK=ON
+            packages: liblapack-dev libopenblas-dev libsuperlu-dev
+            cmake_extra: -DMTL5_WITH_LAPACK=ON -DMTL5_WITH_SUPERLU=ON
           - cc: clang-18
             cxx: clang++-18
-            packages: liblapack-dev libopenblas-dev
-            cmake_extra: -DMTL5_WITH_LAPACK=ON
+            packages: liblapack-dev libopenblas-dev libsuperlu-dev
+            cmake_extra: -DMTL5_WITH_LAPACK=ON -DMTL5_WITH_SUPERLU=ON
           - cc: gcc
             cxx: g++
             os: ubuntu-26.04
