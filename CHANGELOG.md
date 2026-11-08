@@ -59,6 +59,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **`trmv` and `trsv` reach the bandwidth roofline on BLAS and native-fast builds, up from 41%** (#747). They had run at about 3.8 GFLOP/s in every build, while `gemv` reached the roofline in the BLAS and native-fast builds.
+  - **BLAS build:** the dispatch took only a column-major A, so the default row-major `dense2D` never reached BLAS. A row-major A is now passed to `?trmv`/`?trsv` as its buffer read column-major, which is Aᵀ: the other triangle, with `trans = 'T'`. This is the same mapping #724 gave the Level 3 operations.
+  - **Native-fast build without BLAS:** above 64 rows (`detail::triangular_block`), A's diagonal is walked in blocks of 64. The SIMD gemv forms each block's off-diagonal panel into a buffer, and the row loop forms the diagonal block and adds the buffer. For `trmv` the blocks go bottom-up (lower) or top-down (upper), so every x(j) read still holds its original value. For `trsv` they go the other way, so every x(j) read is already solved. Either orientation of A works.
+  - **When it applies:** float or double A and x of the same type, with the default accumulator. Rounding is BLAS's or the SIMD gemv's.
+  - **Results:** `mtl5_bench --filter blas2`, f64, one thread, i7-12700K, in GFLOP/s with the share of the roofline:
+
+    | build | n | gemv | trmv before → after | trsv before → after |
+    |---|---:|---:|---:|---:|
+    | BLAS (OpenBLAS 0.3.32) | 4096 | 9.50 (110%) | 3.79 (41%) → 8.81 (102%) | 3.80 (41%) → 9.22 (107%) |
+    | BLAS (OpenBLAS 0.3.32) | 8192 | 9.32 (102%) | → 8.84 (96%) | → 9.09 (99%) |
+    | native-fast | 4096 | 9.69 (100%) | 3.81 (41%) → 9.15 (94%) | 3.85 (41%) → 9.10 (94%) |
+    | native-fast | 8192 | 9.61 (102%) | → 9.13 (96%) | → 9.11 (96%) |
+
+  - **Generic build:** unchanged, at 41%. That matches the generic `gemv` (43%): both are serial per-row reductions, limited by FMA latency.
+  - **Test:** `test_trmv_trsv_fast` compares against a long-double reference for both orientations, both triangles and unit and non-unit diagonals, in float and double. It covers n = 64, 65 and 214, and both in-place and separate-b `trsv`. The triangle that must not be read holds NaN. `static_assert`s cover the traits. Mutations to the BLAS uplo and trans mapping and to the blocked path's panel width, panel orientation and panel subtraction each fail it.
+
 - **`gemmt` runs through a full-speed GEMM on BLAS and native-fast builds, 2.8–3.7× faster** (#744). It forms half of `gemm`'s product, but it was slower than a full `gemm` on every build. With OpenBLAS it called `dgemmt`, which takes about twice as long as OpenBLAS's own `dgemm`. On the native-fast build it had no fast path at all.
   - **The blocked path:** the triangle is halved recursively. The off-diagonal half is one rectangular GEMM, and each diagonal block of at most 64 rows is a square GEMM into a scratch tile, of which only the triangle is copied into C. The GEMM is `?gemm` in a BLAS build and `gemm_blocked` otherwise.
   - **When it applies:** dense `float` or `double` operands of one type, in any orientation or as `trans()` views, with the default accumulator, `n > 64`, `k > 0` and `α ≠ 0`. With a BLAS library other than OpenBLAS that has a working `?gemmt` (MKL, BLIS), `gemmt` still calls it. With OpenBLAS, `dgemmt` is still used at 64 rows and fewer, where it is as fast as the alternatives. A BLAS build without `?gemmt` now takes the blocked path instead of the generic loops.
