@@ -106,4 +106,17 @@ void gemv_colmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
     }
 }
 
+/// t[m] := A(r0 : r0+m, c0 : c0+k) * x[k] for a sub-panel of an n-column
+/// (row-major) or n-row (column-major) dense matrix at A: the off-diagonal
+/// panel of the blocked trmv and trsv (#747). k may be 0 (t is then zero).
+template <typename T>
+    requires mtl::Scalar<T>
+void gemv_panel(bool row_major, std::size_t ld, const T* A, std::size_t r0, std::size_t c0,
+                std::size_t m, std::size_t k, const T* x, T* t) {
+    if (row_major)
+        gemv_rowmajor<T>(m, k, A + r0 * ld + c0, ld, x, t);
+    else
+        gemv_colmajor<T>(m, k, A + c0 * ld + r0, ld, x, t);
+}
+
 } // namespace mtl::detail

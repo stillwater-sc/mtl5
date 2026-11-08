@@ -225,7 +225,10 @@ if constexpr (interface::is_row_major_v<MC>) {
 ```
 
 The same trick appears in the GEMV path as a choice of the `'T'`/`'N'` transpose
-flag. The orientation identity the container carries (`is_row_major_v`) is thus
+flag. For a triangular or symmetric operand it also flips which triangle is
+stored: a row-major lower `A` is, read column-major, the upper triangle of `Aᵀ`.
+So `trmv` and `trsv` on it call `?trmv`/`?trsv('U', 'T', …)` (#747), and `trsm`,
+`trmm`, `symm`, `syrk`, `syr2k` and `symv` use the same mapping (#724). The orientation identity the container carries (`is_row_major_v`) is thus
 consumed *here*, in the dispatch, to bridge to a fixed-layout library at zero data
 movement — the layout algebra lives in the traffic controller, not in the kernels
 and not in the container. (It is also the subtlest code in the layer, which is why
