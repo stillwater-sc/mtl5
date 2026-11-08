@@ -72,6 +72,9 @@ foreach ($t in $Threads) {
     }
     $ThreadList += $n
 }
+# Ascending and de-duplicated: the 1-thread run, when requested, comes first,
+# so every later run has this session's baseline (see platform.sh).
+$ThreadList = @($ThreadList | Sort-Object -Unique)
 $MaxThreads = ($ThreadList | Measure-Object -Maximum).Maximum
 $VariantList = $Variants
 foreach ($v in $VariantList) {
@@ -168,9 +171,14 @@ foreach ($v in $Built) {
     # Visual Studio generators put the binary under Release\; Ninja does not.
     $exe = Join-Path $BuildRoot "$v\benchmarks\Release\mtl5_bench.exe"
     if (-not (Test-Path $exe)) { $exe = Join-Path $BuildRoot "$v\benchmarks\mtl5_bench.exe" }
+    $t1Json = $null   # this invocation's 1-thread result for $v, once it exists
     foreach ($t in $ThreadList) {
         $base = Join-Path $Out "$v-t$t"
         Write-Host "== run $v, $t thread(s)"
+        # Remove a previous session's files for this run (a reused -Out).
+        foreach ($f in "$base.json", "$base.json.sysinfo", "$base.md") {
+            if (Test-Path $f) { Remove-Item -Force $f }
+        }
         # Every library's pool pinned to the same count (see platform.sh).
         foreach ($name in 'MTL5_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
                           'BLIS_NUM_THREADS', 'OMP_NUM_THREADS') {
@@ -178,9 +186,8 @@ foreach ($v in $Built) {
         }
         $runArgs = @('--class', $Class, '--label', $v, '--json', "$base.json", '--card', "$base.md")
         if ($Machine) { $runArgs += @('--machine', $Machine) }
-        # Thread scaling against the 1-thread run of the same variant (see platform.sh).
-        $t1 = Join-Path $Out "$v-t1.json"
-        if ($t -ne 1 -and (Test-Path $t1)) { $runArgs += @('--baseline', $t1) }
+        # Thread scaling against THIS invocation's 1-thread run of the variant.
+        if ($t -ne 1 -and $t1Json) { $runArgs += @('--baseline', $t1Json) }
         $rc = Invoke-Native $exe $runArgs (Join-Path $Logs "$v-t$t")
         $last = Get-Content (Join-Path $Logs "$v-t$t.out.log") -Tail 1
         if ($rc -eq 0) { Write-Host "   $last" }
@@ -191,6 +198,7 @@ foreach ($v in $Built) {
             if (-not ($after -match 'thermal_after_c=')) { $after = 'thermal_after_c=unavailable' }
             Add-Content -Encoding ascii -Path "$base.json.sysinfo" -Value ($PreflightKv + $after)
             $Runs += $base
+            if ($t -eq 1 -and (Test-Path "$base.json")) { $t1Json = "$base.json" }
         }
     }
 }
