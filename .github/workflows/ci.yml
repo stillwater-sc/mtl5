@@ -791,6 +791,14 @@ jobs:
       - name: Smoke check
         run: ./build-bench/benchmarks/bench_all --help
 
+      # mtl5_bench promises to measure ALL of MTL5 (#721 M7). Every header in the
+      # operation, solver, preconditioner, factorization and ordering
+      # directories must be mapped in benchmarks/platform/coverage.txt to the
+      # entry that measures it, or to a written exemption, and every entry it
+      # names must exist in this binary's --list.
+      - name: Registry coverage
+        run: benchmarks/check_coverage.sh ./build-bench/benchmarks/mtl5_bench
+
   # -- Platform benchmark: the one command, on every OS (#721 M2) ---------
   # benchmarks/platform.sh (platform.ps1 on Windows) is what a new machine runs:
   # preflight, build mtl5_bench per variant, run it at each thread count, write

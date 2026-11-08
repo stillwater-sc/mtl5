@@ -46,6 +46,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/scale.hpp>
 #include <mtl/operation/sum.hpp>
+#include <mtl/operation/sum_dot_k.hpp>
 #include <mtl/operation/symm.hpp>
 #include <mtl/operation/symv.hpp>
 #include <mtl/operation/syr2k.hpp>
@@ -149,6 +150,69 @@ problem reduction(size_class c) {
         error_tracker e(tol<T>(n), "rel err vs reference");
         e.add(s->r, ref, abs);
         return e.result();
+    };
+    return p;
+}
+
+/// DotK with K = 3 (sum_dot_k.hpp): the dot product as if in triple precision,
+/// on a dot product built to be ill conditioned, so that the accuracy it is for
+/// is what the check sees.
+///
+/// INPUTS. Integers, so the exact answer is an int64 sum and needs no extended
+/// reference. In the first half x_i, y_i are in [2^(b-1), 2^b); the second
+/// half repeats x and sets y_(h+i) = -y_i + delta_i, delta_i in {1, 2}. The halves
+/// cancel to s = sum x_i delta_i ~ n 2^b, while S = sum |x_i y_i| ~ n 2^(2b): a
+/// condition number S/|s| ~ 2^b. b is chosen so S < 2^62 (exact in int64) and
+/// every product is exact in double; the running sum of the first half reaches
+/// ~2^61, far past 2^53, so a plain dot rounds and is wrong by many ulps of s.
+///
+/// CHECK. Ogita, Rump and Oishi, Proposition 5.11: |res - s| <= (u + 2 g^2)|s|
+/// + g^3 S, with g = gamma_(4n-2). The reported error is |res - s| over that
+/// bound, so it must be <= 1. A plain dot misses it by a factor of ~10^7
+/// (error ~ n u S). Dot2 meets it on this input, and that is a limit of the
+/// test, not of the bound: K = 2 and K = 3 differ only once the condition number
+/// passes ~1/u^2 = 2^106, and an int64-exact reference stops at ~2^62.
+///
+/// WORK. (12K - 14) n = 22 n flops (the header's cost model), which is what the
+/// rate is in; 2 n of them are the dot product the user asked for.
+inline problem dot_k3(size_class c) {
+    const std::size_t n = n_vec(c) & ~std::size_t(1);
+    int lg = 0;
+    while ((std::size_t(1) << lg) < n) ++lg;
+    const int b = (62 - lg) / 2;            // n 2^(2b) <= 2^62
+    struct S { vec::dense_vector<double> x, y; double r = 0; };
+    auto s = std::make_shared<S>(S{vec::dense_vector<double>(n), vec::dense_vector<double>(n)});
+    xorshift64 g(0xD07C3);
+    const double lo = std::ldexp(1.0, b - 1);
+    const std::size_t h = n / 2;
+    for (std::size_t i = 0; i < h; ++i) {
+        const double xi = lo + std::floor(g.next_double() * lo);
+        const double yi = lo + std::floor(g.next_double() * lo);
+        s->x(i) = xi;      s->y(i) = yi;
+        s->x(h + i) = xi;  s->y(h + i) = -yi + (g.next_double() < 0.5 ? 1.0 : 2.0);
+    }
+    problem p{vshape(n), 22.0 * n, 2.0 * n * sizeof(double), [] {},
+              [s] { s->r = mtl::dot_k<3>(s->x, s->y); }, {}};
+    p.check = [s, n] {
+        std::int64_t exact = 0, mag = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto t = static_cast<std::int64_t>(s->x(i)) * static_cast<std::int64_t>(s->y(i));
+            exact += t;
+            mag += t < 0 ? -t : t;
+        }
+        const long double u = eps<double>() / 2;
+        const long double ku = (4.0L * n - 2) * u;
+        const long double gm = ku / (1 - ku);
+        const long double bound = (u + 2 * gm * gm) * std::fabs((long double)exact)
+                                + gm * gm * gm * (long double)mag;
+        check_result res;
+        res.what = "|res - s| / Ogita-Rump-Oishi DotK bound (exact int64 s, cond ~2^b)";
+        res.tolerance = 1.0;
+        const long double err = std::fabs((long double)s->r - (long double)exact);
+        res.error = std::isfinite(s->r) ? static_cast<double>(err / bound)
+                                        : std::numeric_limits<double>::infinity();
+        res.ok = res.error <= res.tolerance;
+        return res;
     };
     return p;
 }
@@ -434,6 +498,7 @@ inline void register_all(registry& r) {
     r.add("blas1", "one_norm", "f64", reduction<double, 1>);
     r.add("blas1", "infinity_norm", "f64", reduction<double, 2>);
     r.add("blas1", "sum", "f64", reduction<double, 3>);
+    r.add("blas1", "dot_k3", "f64", dot_k3);
 
     r.add("blas2", "gemv", "f64", gemv<double>);
     r.add("blas2", "gemv", "f32", gemv<float>);

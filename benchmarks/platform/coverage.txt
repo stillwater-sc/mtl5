@@ -1,0 +1,214 @@
+# mtl5_bench coverage manifest (#721 M7).
+#
+# Every public header in the directories named by a `scan` line must have a
+# line here, and every line here must name a header that exists. That is what
+# keeps "the benchmark covers ALL of MTL5" true as the library grows: adding an
+# operation header without saying how it is measured fails CI
+# (benchmarks/check_coverage.sh, run in the benchmarks lane).
+#
+# Line format:  <header under include/mtl>  <kind>  <target>
+#
+#   bench   an entry calls this header's operation directly. <target> is an
+#           entry-name prefix that must match at least one line of
+#           `mtl5_bench --list` (area/op/dtype).
+#   via     the operation is measured inside the entry named, which calls it
+#           (lower_trisolve inside trsv, restriction inside the V-cycle, ...).
+#           <target> must match a --list line, as for bench.
+#   class   not called by the entry named, but the same kernel class: the same
+#           loop shape and the same roofline (exp2 against exp, cos against
+#           sin). <target> must match a --list line. Use it only where a
+#           separate entry would add a row to the card and no information.
+#   exempt  not measured. <target> is the reason, which is required. Exempt
+#           headers are queries, I/O, umbrellas, type plumbing and predicates:
+#           nothing whose rate characterizes a machine.
+#
+# A `#` starts a comment, so a note can follow any line.
+
+scan operation
+scan itl/krylov
+scan itl/pc
+scan itl/smoother
+scan itl/mg
+scan itl/eigen
+scan sparse/factorization
+scan sparse/ordering
+scan sparse/eigen
+scan sparse/analysis
+scan sparse/iterative_refine.hpp
+scan simd/algorithm.hpp
+
+# -- BLAS 1 -------------------------------------------------------------------
+operation/dot.hpp                   bench   blas1/dot/
+operation/axpy.hpp                  bench   blas1/axpy/
+operation/scale.hpp                 bench   blas1/scale/
+operation/norms.hpp                 bench   blas1/two_norm/      # also one_norm, infinity_norm
+operation/sum.hpp                   bench   blas1/sum/
+operation/sum_dot_k.hpp             bench   blas1/dot_k3/
+operation/product.hpp               class   blas1/sum/           # the same reduction, * for +
+operation/trace.hpp                 class   blas1/sum/           # a strided reduction over n entries
+operation/max.hpp                   class   blas1/infinity_norm/ # a max-reduction
+operation/min.hpp                   class   blas1/infinity_norm/ # a max-reduction
+operation/abs.hpp                   class   blas1/scale/         # element-wise load-op-store stream
+operation/negate.hpp                class   blas1/scale/
+operation/conj.hpp                  class   blas1/scale/
+operation/real.hpp                  class   blas1/scale/
+operation/imag.hpp                  class   blas1/scale/
+operation/signum.hpp                class   blas1/scale/
+operation/ceil.hpp                  class   blas1/scale/
+operation/floor.hpp                 class   blas1/scale/
+operation/round.hpp                 class   blas1/scale/
+
+# -- BLAS 2 -------------------------------------------------------------------
+operation/symv.hpp                  bench   blas2/symv/
+operation/trmv.hpp                  bench   blas2/trmv/
+operation/trsv.hpp                  bench   blas2/trsv/
+operation/lower_trisolve.hpp        via     blas2/trsv/          # trsv(upper=false)
+operation/upper_trisolve.hpp        class   blas2/trsv/          # the mirror-image loop
+operation/ger.hpp                   bench   blas2/ger/
+
+# -- BLAS 3 -------------------------------------------------------------------
+operation/mult.hpp                  bench   blas3/gemm/          # also gemv, mixed and integer gemm
+operation/gemmt.hpp                 bench   blas3/gemmt/
+operation/symm.hpp                  bench   blas3/symm/
+operation/syrk.hpp                  bench   blas3/syrk/
+operation/syr2k.hpp                 bench   blas3/syr2k/
+operation/trmm.hpp                  bench   blas3/trmm/
+operation/trsm.hpp                  bench   blas3/trsm/
+operation/kron.hpp                  bench   blas3/kron/
+
+# -- dense factorizations -----------------------------------------------------
+operation/lu.hpp                    bench   factor/lu/
+operation/cholesky.hpp              bench   factor/cholesky/
+operation/ldlt.hpp                  bench   factor/ldlt/
+operation/ldlt_bk.hpp               bench   factor/ldlt_bk/
+operation/qr.hpp                    bench   factor/qr/
+operation/lq.hpp                    bench   factor/lq/
+operation/hessenberg.hpp            bench   factor/hessenberg/
+operation/householder.hpp           bench   factor/householder/
+operation/inv.hpp                   bench   factor/inv/
+operation/lu_iterative_refine.hpp   bench   factor/lu_iterative_refine/
+operation/givens.hpp                via     krylov/gmres30       # GMRES's Hessenberg QR step; its only caller
+operation/factorization_properties.hpp  via  factor/lu/          # determinant, is_spd: an LU or Cholesky and a scan
+
+# -- dense eigen, SVD, matrix functions --------------------------------------
+operation/eigenvalue.hpp            bench   eigen/eigenvalue/
+operation/eigenvalue_symmetric.hpp  bench   eigen/eigenvalue_symmetric/
+operation/eigenvalue_symmetric_jacobi.hpp  bench  eigen/eigen_symmetric_jacobi/
+operation/schur.hpp                 bench   eigen/schur/
+operation/svd.hpp                   bench   eigen/svd/
+operation/expm.hpp                  bench   eigen/expm/
+operation/sylvester.hpp             bench   eigen/sylvester/
+operation/spectral_properties.hpp   via     eigen/svd/           # condition_number, rank: an SVD or eigensolve
+
+# -- element-wise transcendentals: one entry per kernel class -----------------
+operation/exp.hpp                   bench   elementwise/exp/
+operation/log.hpp                   bench   elementwise/log/
+operation/sin.hpp                   bench   elementwise/sin/
+operation/sqrt.hpp                  bench   elementwise/sqrt/
+operation/erf.hpp                   bench   elementwise/erf/
+operation/exp2.hpp                  class   elementwise/exp/
+operation/sinh.hpp                  class   elementwise/exp/
+operation/cosh.hpp                  class   elementwise/exp/
+operation/tanh.hpp                  class   elementwise/exp/
+operation/log2.hpp                  class   elementwise/log/
+operation/log10.hpp                 class   elementwise/log/
+operation/pow.hpp                   class   elementwise/log/     # exp(y log x)
+operation/asinh.hpp                 class   elementwise/log/
+operation/acosh.hpp                 class   elementwise/log/
+operation/atanh.hpp                 class   elementwise/log/
+operation/cos.hpp                   class   elementwise/sin/
+operation/tan.hpp                   class   elementwise/sin/
+operation/asin.hpp                  class   elementwise/sin/
+operation/acos.hpp                  class   elementwise/sin/
+operation/atan.hpp                  class   elementwise/sin/
+operation/cbrt.hpp                  class   elementwise/sqrt/
+operation/erfc.hpp                  class   elementwise/erf/
+
+# -- sparse kernels and direct solvers ----------------------------------------
+operation/spgemm.hpp                bench   sparse/spgemm/
+operation/sparse_solve.hpp          via     direct/sparse_lu/    # solve() dispatches to the direct solvers
+sparse/factorization/level_schedule.hpp     bench  sparse/lower_solve_level/
+sparse/factorization/triangular_solve.hpp   via    sparse/lower_solve_level/
+sparse/factorization/sparse_cholesky.hpp    bench  direct/sparse_cholesky/
+sparse/factorization/sparse_ldlt.hpp        bench  direct/sparse_ldlt/
+sparse/factorization/supernodal_ldlt.hpp    bench  direct/supernodal_ldlt/
+sparse/factorization/sparse_lu.hpp          bench  direct/sparse_lu/
+sparse/factorization/supernodal_lu.hpp      bench  direct/supernodal_lu/
+sparse/factorization/native_klu.hpp         bench  direct/native_klu/
+sparse/factorization/sparse_qr.hpp          bench  direct/sparse_qr/
+sparse/iterative_refine.hpp         class   factor/lu_iterative_refine/  # the same solve + residual loop, sparse
+sparse/analysis/elimination_tree.hpp  via   direct/sparse_cholesky/  # inside every symbolic factorization
+sparse/analysis/column_etree.hpp      via   direct/sparse_qr/
+sparse/analysis/postorder.hpp         via   direct/sparse_cholesky/
+sparse/analysis/supernodes.hpp        via   direct/supernodal_ldlt/
+
+# -- orderings -----------------------------------------------------------------
+sparse/ordering/amd.hpp             bench   ordering/amd/
+sparse/ordering/colamd.hpp          bench   ordering/colamd/
+sparse/ordering/rcm.hpp             bench   ordering/rcm/
+sparse/ordering/dulmage_mendelsohn.hpp  bench  ordering/block_triangular_form/
+sparse/ordering/minimum_degree.hpp  via     ordering/amd/        # the engine inside amd and colamd
+sparse/ordering/ordering_concepts.hpp  exempt  concepts only
+
+# -- Krylov solvers --------------------------------------------------------------
+itl/krylov/cg.hpp                   bench   krylov/cg+
+itl/krylov/bicg.hpp                 bench   krylov/bicg+
+itl/krylov/bicgstab.hpp             bench   krylov/bicgstab+
+itl/krylov/bicgstab_ell.hpp         bench   krylov/bicgstab_ell+
+itl/krylov/cgs.hpp                  bench   krylov/cgs+
+itl/krylov/gmres.hpp                bench   krylov/gmres30+
+itl/krylov/minres.hpp               bench   krylov/minres+
+itl/krylov/qmr.hpp                  bench   krylov/qmr+
+itl/krylov/tfqmr.hpp                bench   krylov/tfqmr+
+itl/krylov/idr_s.hpp                bench   krylov/idr_s
+itl/krylov/apply_operator.hpp       via     krylov/cg+           # the A*x every solver calls
+
+# -- preconditioners, smoothers, multigrid --------------------------------------
+itl/pc/diagonal.hpp                 bench   pc/diagonal/
+itl/pc/ilu_0.hpp                    bench   pc/ilu_0/
+itl/pc/ilut.hpp                     bench   pc/ilut/
+itl/pc/ic_0.hpp                     bench   pc/ic_0/
+itl/pc/ildl.hpp                     bench   pc/ildl/
+itl/pc/ssor.hpp                     bench   pc/ssor/
+itl/pc/block_diagonal.hpp           bench   pc/block_diagonal
+itl/pc/identity.hpp                 exempt  the no-op preconditioner: a copy
+itl/pc/solver.hpp                   exempt  solve(P, x, b) forwarding wrappers
+itl/smoother/jacobi.hpp             bench   smoother/jacobi/
+itl/smoother/gauss_seidel.hpp       bench   smoother/gauss_seidel/
+itl/smoother/sor.hpp                bench   smoother/sor
+itl/mg/multigrid.hpp                bench   mg/poisson2d_vcycle/
+itl/mg/restriction.hpp              via     mg/poisson2d_vcycle/
+itl/mg/prolongation.hpp             via     mg/poisson2d_vcycle/
+
+# -- sparse eigen ---------------------------------------------------------------
+itl/eigen/lanczos.hpp               bench   sparse_eig/lanczos/
+itl/eigen/arnoldi.hpp               bench   sparse_eig/arnoldi/
+itl/eigen/power_iteration.hpp       bench   sparse_eig/power_iteration/
+sparse/eigen/shift_invert.hpp       bench   sparse_eig/shift_invert/
+itl/eigen/eigen_common.hpp          exempt  result types and helpers shared by the eigensolvers
+itl/eigen/eigensolvers.hpp          exempt  umbrella include
+
+# -- mixed precision and integer kernels ------------------------------------------
+simd/algorithm.hpp                  bench   mixed/block_scaled_dot/  # the dot/gemm kernels run via mtl::dot, mtl::mult
+operation/projection.hpp            class   mixed/dot/           # f64 <-> f32 conversion streams
+operation/convert.hpp               class   mixed/dot/           # element-type conversion streams
+
+# -- exempt: nothing whose rate characterizes a machine -------------------------
+operation/backward_error.hpp        exempt  an accuracy metric: one matvec, which gemv measures
+operation/diagonal.hpp              exempt  extract or build a diagonal: an O(n) copy
+operation/fill.hpp                  exempt  initialization
+operation/set_to_zero.hpp           exempt  initialization
+operation/random.hpp                exempt  input generation, <random>-bound
+operation/print.hpp                 exempt  I/O
+operation/size.hpp                  exempt  a query
+operation/num_rows.hpp              exempt  a query
+operation/num_cols.hpp              exempt  a query
+operation/resource.hpp              exempt  a query
+operation/matrix_properties.hpp     exempt  structural predicates (is_symmetric, is_banded, ...)
+operation/vector_properties.hpp     exempt  predicates (is_finite, has_nan, ...)
+operation/trans.hpp                 exempt  a view: no work until it is used, and then the user's op is measured
+operation/reorder.hpp               exempt  permuted copies: data movement, as the STREAM probes measure
+operation/lazy.hpp                  exempt  expression materialization: the expression's ops are measured
+operation/fuse.hpp                  exempt  expression evaluation into a target: likewise
+operation/operators.hpp             exempt  umbrella include for the operator overloads
+operation/transcendental.hpp        exempt  umbrella include
