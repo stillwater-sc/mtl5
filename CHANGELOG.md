@@ -7,6 +7,17 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **IDR(s) keeps one ω per cycle, so a larger s no longer costs more iterations** (#734). `mtl5_bench` found `itl::idr_s`'s iteration counts irregular in s: 80, 77, 101 and 59 at s = 1, 2, 4 and 8 on 128² convection–diffusion with ILU(0).
+  - **The cause:** after its s initial steps, IDR(s) runs in cycles of s + 1 steps that must share one ω. That puts their residuals in the same space G_j, which is the dimension reduction (Sonneveld and van Gijzen, SISC 31, 2008, Alg. 3.1). The implementation recomputed ω at every step.
+    - Unpreconditioned 128² Poisson failed to converge at four of s = 1, 2, 4, 8 and 16.
+    - With ILU(0), 128² Poisson took 551, 205, 153, 932 and 253 iterations and ended at a residual of 2e-2.
+  - **The fix:** ω is chosen at the first step of each cycle, and the other s steps reuse it, with dR = −A·dX. Each step still costs one product with A and one preconditioner solve.
+  - **What was ruled out:** the issue's other hypotheses were measured over 20 seeds for P and s = 1–16, on convection–diffusion and Poisson, with and without ILU(0). With ω fixed per cycle, the median falls with s on every problem, and the spread across seeds is 5–15%. Orthonormalizing P, or the κ = 0.7 ω safeguard, moved the medians by at most about 6%, so neither was adopted. The fixed seed stays, so runs are reproducible.
+  - **Results:** all 40 runs (32² and 128², s = 1–16, four problems) converge to a true residual ≤ 1e-8.
+    - The `mtl5_bench` entries now take 28, 24, 23 and 23 iterations (small) and 71, 63, 59 and 54 (medium) at s = 1, 2, 4 and 8.
+    - Unpreconditioned 128² Poisson takes 374, 327, 327, 324 and 330 iterations for s = 1, 2, 4, 8 and 16.
+  - **Test:** `test_idr_s` runs s = 1, 2, 4, 8 on convection–diffusion, with and without ILU(0), and on unpreconditioned Poisson. Each s must reach a true residual within 10× rtol, s = 8 must not exceed s = 1, and no s may exceed the best smaller s by more than 10%. Against the old header, the Poisson case fails: 245, 198, 214 and 735 iterations.
+
 - **TFQMR converges on unsymmetric systems, and its reported convergence is the true residual's** (#731). `itl::tfqmr` stalled at a 5–9% residual on a mild 2D convection–diffusion matrix with any preconditioner, where BiCGSTAB converged in 13–60 iterations. On SPD matrices it took up to 16× BiCGSTAB's iterations.
   - **The cause:** each iteration's two half-steps need two search vectors, u_m and u_{m+1} = u_m − α·v_m, and the next pair starts from u_{m+2} = w + β·u_{m+1} (Freund 1993; Saad, Algorithm 7.8). The implementation had no u recurrence, so w stood in for both vectors. Both unit tests used symmetric matrices, so nothing caught it.
   - **The fix:** the u recurrence is restored, with u kept preconditioned (right preconditioning, `y = M⁻¹u`). The cost per iteration is unchanged: two products with A and two preconditioner solves.
