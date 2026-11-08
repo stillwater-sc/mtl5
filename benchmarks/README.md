@@ -129,6 +129,77 @@ stopping on it.
 CI runs the script end to end at `--class small` on Linux x64, Linux ARM64,
 macOS and Windows.
 
+### Publishing a session
+
+A results directory under `build-platform/` is not kept: it is ignored by git.
+To publish a session, run `publish_platform.cmake` with the machine's name from
+`docs/benchmarks/systems.md`, in lower case. Run it on the machine that produced
+the session; CMake is the only thing it needs.
+
+```bash
+cmake -DRESULTS=build-platform/results/<host>-<UTC time> -DMACHINE=ryzen-9-8945hs \
+      -P benchmarks/publish_platform.cmake
+```
+
+```powershell
+cmake "-DRESULTS=build-platform\results\<host>-<UTC time>" -DMACHINE=ryzen-9-8945hs `
+      -P benchmarks\publish_platform.cmake
+```
+
+The `-D` options go before `-P`. Anything after `-P <script>` is passed to the
+script as an argument, not defined as a variable.
+
+The script checks the session before it writes anything:
+- every run has its JSON (schema `mtl5-bench/1`), its sidecar and its card;
+- `summary.md` exists, so the session finished;
+- every run is the same commit and the same class;
+- no run has a failed check (a `FAIL` blocks a card: file it, fix it, re-run);
+- no run was built from a dirty tree.
+
+Then it does three things:
+1. **Copies the session** to `benchmarks/data/<machine>/mtl5_bench/<session>/`.
+   `<session>` is `YYYYMMDDTHHMMSSZ`: the UTC start time in the results
+   directory's default name, or, if the directory was renamed (`--out`), the
+   time `summary.md` was written at the end. The files are the JSON, sidecars,
+   cards, `summary.md` and the two preflight records.
+   - This directory is **append-only**. A new run is a new session directory,
+     and earlier sessions are never replaced.
+   - Publishing the same session twice is a no-op. Publishing different files
+     under an existing session's name is refused.
+   - `check_sidecars.sh` enforces the sidecars in CI.
+   - These files are what stillwater-sc/mtl5-python#121 ingests for graphs and
+     trends.
+2. **Writes the machine's card page,** `docs/benchmarks/<machine>-mtl5-bench.md`.
+   - The page opens with a provenance table: session, commit, class, runs, failed
+     checks, CPUs, clock policy, a link to the raw data, and the earlier sessions.
+   - The session's cards follow.
+   - The page always shows the **latest** published session. Publishing an older
+     one archives its data and leaves the page alone.
+   - The page is generated, so don't edit it by hand. Publish a new session
+     instead.
+3. **Registers the page** in `docs-site/sync-content.mjs`'s `FILE_MAP`, if it
+   isn't there yet.
+
+It warns if `systems.md` doesn't link the page. The first time a machine is
+published, add a `[Card](<machine>-mtl5-bench.md)` cell to its row in the
+Systems table. Then review and commit what the script lists:
+
+```bash
+git add benchmarks/data/<machine>/mtl5_bench/<session> \
+        docs/benchmarks/<machine>-mtl5-bench.md docs-site/sync-content.mjs
+```
+
+Options, each a `-D` before `-P`:
+
+| option | effect |
+|---|---|
+| `DRY_RUN=ON` | validate and report what would be written; write nothing |
+| `PRELIMINARY=ON` | mark the page preliminary: measured outside #737's methodology (cores not pinned, clock policy not applied, one session) |
+| `NOTE="..."` | a sentence for the page, after the preliminary mark |
+| `ALLOW_DIRTY=ON` | accept runs built from a dirty tree; the page says so |
+| `ALLOW_FAIL=ON` | accept runs with failed checks; the page says so |
+| `SESSION=YYYYMMDDTHHMMSSZ` | name the session, if neither the directory name nor `summary.md` carries a time |
+
 ### What one run does
 
 1. **Measures the machine's ceilings:**

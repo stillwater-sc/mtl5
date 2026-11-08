@@ -1,6 +1,25 @@
-# mtl5_bench platform characterization
+# mtl5_bench capability card -- xeon-e5-2420v2
 
-Class `medium`, variants native native-fast, threads 1,12, 2026-11-08T22:17:25Z.
+<!-- Written before benchmarks/publish_platform.cmake existed; its raw session is
+     not yet in benchmarks/data/. Publishing that session with the script
+     replaces this page. -->
+
+The platform benchmark's capability cards for the `xeon-e5-2420v2` machine described on the
+[benchmark systems](systems.md) page: every operation family, measured against this
+machine's FMA peak and memory bandwidth (#721).
+
+> **Preliminary.** Measured outside #737's methodology: cores not pinned, the machine's
+> clock policy not applied, one session, so no repeatability band. The session's raw
+> results (JSON and sidecars) are not yet committed under `benchmarks/data/xeon-e5-2420v2/mtl5_bench/`.
+
+| | |
+|---|---|
+| session | `20261108T221725Z` (UTC) |
+| commit | `e096dbbc6788` |
+| class | `medium` |
+| runs | native, native-fast, at 1, 12 threads |
+| failed checks | 0 |
+| raw data | not yet committed |
 
 Not measured:
 - blas: no BLAS/LAPACK found
@@ -139,15 +158,15 @@ Not measured:
 | mixed | dot | f32>f64 | n=8388608 | 194.423 ms | 0.09 | 0.35 | 4% | ok |
 | mixed | gemm | f32>f64 | 512x512x512 | 118.046 ms | 2.27 | 0.04 | 23% | ok |
 | mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 2.438 ms | 6.88 | 7.31 | 76% | ok |
-| integer | dot | i32 | n=8388608, |v| <= 15 | 6.788 ms | 2.47 | 9.89 | n/a | ok |
-| integer | dot | i16>i32 | n=8388608, |v| <= 15 | 3.229 ms | 5.20 | 10.39 | n/a | ok |
-| integer | dot | i8>i32 | n=8388608, |v| <= 15 | 5.217 ms | 3.22 | 3.22 | n/a | ok |
-| integer | dot | u8i8>i32 | n=8388608, |v| <= 15 | 5.211 ms | 3.22 | 3.22 | n/a | ok |
-| integer | gemm | i32 | 512^3, |v| <= 2047 | 59.721 ms | 4.49 | 0.05 | n/a | ok |
-| integer | gemm | i16>i32 | 512^3, |v| <= 2047 | 46.640 ms | 5.76 | 0.04 | n/a | ok |
-| integer | gemm | i8>i32 | 512^3, |v| <= 127 | 24.664 ms | 10.88 | 0.06 | n/a | ok |
-| integer | gemm_quad | i8>i32 | 512^3, |v| <= 127 | 52.650 ms | 5.10 | 0.03 | n/a | ok |
-| integer | gemm_quad | u8i8>i32 | 512^3, |v| <= 127 | 73.823 ms | 3.64 | 0.02 | n/a | ok |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 6.788 ms | 2.47 | 9.89 | n/a | ok |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 3.229 ms | 5.20 | 10.39 | n/a | ok |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 5.217 ms | 3.22 | 3.22 | n/a | ok |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 5.211 ms | 3.22 | 3.22 | n/a | ok |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 59.721 ms | 4.49 | 0.05 | n/a | ok |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 46.640 ms | 5.76 | 0.04 | n/a | ok |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 24.664 ms | 10.88 | 0.06 | n/a | ok |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 52.650 ms | 5.10 | 0.03 | n/a | ok |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 73.823 ms | 3.64 | 0.02 | n/a | ok |
 
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
@@ -285,15 +304,15 @@ Not measured:
 | mixed | dot | f32>f64 | n=8388608 | 200.069 ms | 0.08 | 0.34 | 3% | ok | 1.0x (8%) |
 | mixed | gemm | f32>f64 | 512x512x512 | 20.582 ms | 13.04 | 0.20 | 22% | ok | 5.7x (48%) |
 | mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 2.820 ms | 5.95 | 6.32 | 56% | ok | 0.9x (7%) |
-| integer | dot | i32 | n=8388608, |v| <= 15 | 6.812 ms | 2.46 | 9.85 | n/a | ok | 1.0x (8%) |
-| integer | dot | i16>i32 | n=8388608, |v| <= 15 | 3.267 ms | 5.13 | 10.27 | n/a | ok | 1.0x (8%) |
-| integer | dot | i8>i32 | n=8388608, |v| <= 15 | 5.192 ms | 3.23 | 3.23 | n/a | ok | 1.0x (8%) |
-| integer | dot | u8i8>i32 | n=8388608, |v| <= 15 | 5.211 ms | 3.22 | 3.22 | n/a | ok | 1.0x (8%) |
-| integer | gemm | i32 | 512^3, |v| <= 2047 | 9.707 ms | 27.65 | 0.32 | n/a | ok | 6.2x (51%) |
-| integer | gemm | i16>i32 | 512^3, |v| <= 2047 | 8.312 ms | 32.30 | 0.25 | n/a | ok | 5.6x (47%) |
-| integer | gemm | i8>i32 | 512^3, |v| <= 127 | 4.586 ms | 58.53 | 0.34 | n/a | ok | 5.4x (45%) |
-| integer | gemm_quad | i8>i32 | 512^3, |v| <= 127 | 4.194 ms | 64.00 | 0.38 | n/a | ok | 12.6x (105%) |
-| integer | gemm_quad | u8i8>i32 | 512^3, |v| <= 127 | 14.037 ms | 19.12 | 0.11 | n/a | ok | 5.3x (44%) |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 6.812 ms | 2.46 | 9.85 | n/a | ok | 1.0x (8%) |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 3.267 ms | 5.13 | 10.27 | n/a | ok | 1.0x (8%) |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 5.192 ms | 3.23 | 3.23 | n/a | ok | 1.0x (8%) |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 5.211 ms | 3.22 | 3.22 | n/a | ok | 1.0x (8%) |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 9.707 ms | 27.65 | 0.32 | n/a | ok | 6.2x (51%) |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 8.312 ms | 32.30 | 0.25 | n/a | ok | 5.6x (47%) |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 4.586 ms | 58.53 | 0.34 | n/a | ok | 5.4x (45%) |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 4.194 ms | 64.00 | 0.38 | n/a | ok | 12.6x (105%) |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 14.037 ms | 19.12 | 0.11 | n/a | ok | 5.3x (44%) |
 
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
@@ -431,15 +450,15 @@ Not measured:
 | mixed | dot | f32>f64 | n=8388608 | 7.413 ms | 2.26 | 9.05 | 90% | ok |
 | mixed | gemm | f32>f64 | 512x512x512 | 63.805 ms | 4.21 | 0.07 | 43% | ok |
 | mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 2.390 ms | 7.02 | 7.46 | 74% | ok |
-| integer | dot | i32 | n=8388608, |v| <= 15 | 6.216 ms | 2.70 | 10.80 | n/a | ok |
-| integer | dot | i16>i32 | n=8388608, |v| <= 15 | 3.084 ms | 5.44 | 10.88 | n/a | ok |
-| integer | dot | i8>i32 | n=8388608, |v| <= 15 | 2.182 ms | 7.69 | 7.69 | n/a | ok |
-| integer | dot | u8i8>i32 | n=8388608, |v| <= 15 | 1.725 ms | 9.73 | 9.73 | n/a | ok |
-| integer | gemm | i32 | 512^3, |v| <= 2047 | 19.474 ms | 13.78 | 0.16 | n/a | ok |
-| integer | gemm | i16>i32 | 512^3, |v| <= 2047 | 22.814 ms | 11.77 | 0.09 | n/a | ok |
-| integer | gemm | i8>i32 | 512^3, |v| <= 127 | 22.770 ms | 11.79 | 0.07 | n/a | ok |
-| integer | gemm_quad | i8>i32 | 512^3, |v| <= 127 | 16.782 ms | 16.00 | 0.09 | n/a | ok |
-| integer | gemm_quad | u8i8>i32 | 512^3, |v| <= 127 | 12.847 ms | 20.90 | 0.12 | n/a | ok |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 6.216 ms | 2.70 | 10.80 | n/a | ok |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 3.084 ms | 5.44 | 10.88 | n/a | ok |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 2.182 ms | 7.69 | 7.69 | n/a | ok |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.725 ms | 9.73 | 9.73 | n/a | ok |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 19.474 ms | 13.78 | 0.16 | n/a | ok |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 22.814 ms | 11.77 | 0.09 | n/a | ok |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 22.770 ms | 11.79 | 0.07 | n/a | ok |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 16.782 ms | 16.00 | 0.09 | n/a | ok |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 12.847 ms | 20.90 | 0.12 | n/a | ok |
 
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
@@ -577,15 +596,15 @@ Not measured:
 | mixed | dot | f32>f64 | n=8388608 | 7.379 ms | 2.27 | 9.09 | 81% | ok | 1.0x (8%) |
 | mixed | gemm | f32>f64 | 512x512x512 | 11.935 ms | 22.49 | 0.35 | 38% | ok | 5.3x (45%) |
 | mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 2.424 ms | 6.92 | 7.35 | 65% | ok | 1.0x (8%) |
-| integer | dot | i32 | n=8388608, |v| <= 15 | 6.190 ms | 2.71 | 10.84 | n/a | ok | 1.0x (8%) |
-| integer | dot | i16>i32 | n=8388608, |v| <= 15 | 3.056 ms | 5.49 | 10.98 | n/a | ok | 1.0x (8%) |
-| integer | dot | i8>i32 | n=8388608, |v| <= 15 | 2.179 ms | 7.70 | 7.70 | n/a | ok | 1.0x (8%) |
-| integer | dot | u8i8>i32 | n=8388608, |v| <= 15 | 1.739 ms | 9.65 | 9.65 | n/a | ok | 1.0x (8%) |
-| integer | gemm | i32 | 512^3, |v| <= 2047 | 3.925 ms | 68.40 | 0.80 | n/a | ok | 5.0x (41%) |
-| integer | gemm | i16>i32 | 512^3, |v| <= 2047 | 4.350 ms | 61.71 | 0.48 | n/a | ok | 5.2x (44%) |
-| integer | gemm | i8>i32 | 512^3, |v| <= 127 | 4.432 ms | 60.57 | 0.35 | n/a | ok | 5.1x (43%) |
-| integer | gemm_quad | i8>i32 | 512^3, |v| <= 127 | 3.485 ms | 77.02 | 0.45 | n/a | ok | 4.8x (40%) |
-| integer | gemm_quad | u8i8>i32 | 512^3, |v| <= 127 | 2.928 ms | 91.67 | 0.54 | n/a | ok | 4.4x (37%) |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 6.190 ms | 2.71 | 10.84 | n/a | ok | 1.0x (8%) |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 3.056 ms | 5.49 | 10.98 | n/a | ok | 1.0x (8%) |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 2.179 ms | 7.70 | 7.70 | n/a | ok | 1.0x (8%) |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.739 ms | 9.65 | 9.65 | n/a | ok | 1.0x (8%) |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 3.925 ms | 68.40 | 0.80 | n/a | ok | 5.0x (41%) |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 4.350 ms | 61.71 | 0.48 | n/a | ok | 5.2x (44%) |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 4.432 ms | 60.57 | 0.35 | n/a | ok | 5.1x (43%) |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 3.485 ms | 77.02 | 0.45 | n/a | ok | 4.8x (40%) |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 2.928 ms | 91.67 | 0.54 | n/a | ok | 4.4x (37%) |
 
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 

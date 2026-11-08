@@ -11,14 +11,24 @@ with the system description here.
 
 ## Systems
 
-| System | CPU | Cores used | Results |
-|--------|-----|-----------|---------|
-| `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) |
-| `ryzen-7-2700x` | AMD Ryzen 7 2700X (Zen+) | 8 cores (SMT) | [Results](ryzen-7-2700x.md) |
-| `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) [2nd run](ryzen-9-8945hs-2.md) |
-| `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | [Results](xeon-e5-2420v2.md) |
-| `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | pending — #430 |
-| `arduino-ventuno-q` | Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55 | 4 A78C cores (A55 excluded) | null run (no cache sizes exposed); see its section |
+| System | CPU | Cores used | Results | mtl5_bench card |
+|--------|-----|-----------|---------|-----------------|
+| `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) | pending — #737 |
+| `ryzen-7-2700x` | AMD Ryzen 7 2700X (Zen+) | 8 cores (SMT) | — | [Card](ryzen-7-2700x-mtl5-bench.md) (preliminary) |
+| `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) | [Card](ryzen-9-8945hs-mtl5-bench.md) (preliminary) |
+| `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | — | [Card](xeon-e5-2420v2-mtl5-bench.md) (preliminary) |
+| `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | pending — #430 | pending — #737 |
+| `arduino-ventuno-q` | Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55 | 4 A78C cores (A55 excluded) | null run (no cache sizes exposed); see its section | pending — #737 |
+
+**Results** pages are written analyses of the suites in `benchmarks/README.md`
+(GEMM against the vendors, factorizations, threading, sparse direct).
+**mtl5_bench cards** are the platform benchmark's generated capability cards
+(#721): every operation family against this machine's measured FMA peak and
+bandwidth. A card page is written by `benchmarks/publish_platform.cmake` from a
+session committed under `benchmarks/data/<machine>/mtl5_bench/`, and shows the
+latest published session; earlier sessions stay in the data directory. A card
+marked *preliminary* was not measured under #737's methodology (pinned cores,
+the machine's clock policy, two sessions).
 
 A machine is registered here as soon as it is part of an experiment, which can
 precede its first result page: the bottom two rows exist because #430 needs the
