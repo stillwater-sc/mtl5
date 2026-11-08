@@ -15,7 +15,7 @@ with the system description here.
 |--------|-----|-----------|---------|
 | `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) |
 | `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) |
-| `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | pending — #430 |
+| `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | [Results](xeon-e5-2420v2.md) |
 | `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | pending — #430 |
 | `arduino-ventuno-q` | Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55 | 4 A78C cores (A55 excluded) | null run (no cache sizes exposed); see its section |
 
