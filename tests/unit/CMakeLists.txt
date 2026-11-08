@@ -175,6 +175,13 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # native type underneath, bit for bit where both run the same code (#703).
 # Contraction can fuse an operation in one and not the other.
 #
+# itl_test_krylov_matrix_free asserts that each Krylov solver gives the same
+# bits on a stored matrix and on a matrix-free operator wrapping it (#278).
+# Those are two instantiations of the solver, and contraction can fuse an
+# operation in one and not the other, as for concept_test_shim_genericity: with
+# -march=x86-64-v3, idr_s's two instantiations differed in 25 of 40 entries
+# while the stored matrix run twice was identical (#753).
+#
 # math_test_pow2_scaling asserts that inside the old band the power-of-two
 # scaled Givens rotation (#671) gives the unscaled formula's bits: scaling by
 # 2^-e is exact and commutes with every rounding. Contraction can fuse a*a or
@@ -200,6 +207,7 @@ if(NOT MSVC)
                       op_test_ogita_rump_oishi
                       math_test_pow2_scaling
                       concept_test_shim_genericity
+                      itl_test_krylov_matrix_free
                       sparse_test_solve_accumulator_policy)
         if(TARGET ${mt_target})
             target_compile_options(${mt_target} PRIVATE -ffp-contract=off)

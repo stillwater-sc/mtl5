@@ -164,6 +164,13 @@ TEST_CASE("IDR(s): s larger than one cycle's worth of steps to converge (#734)",
 TEST_CASE("IDR(s): float solves the unsymmetric system", "[itl][krylov][idr_s][734]") {
     // The float instantiation, whose breakdown test once compared the pivot
     // with 1e-300 -- zero in float, so a zero pivot was never caught.
+    //
+    // rtol 1e-4, not tighter: in float the updated residual drifts from
+    // b - A x, and the true residual levels off near 1e-4 here. At rtol 1e-5,
+    // whether the updated residual gets there depends on code generation:
+    // s = 1 and s = 4 ran to the iteration cap with FMA contraction
+    // (x86-64-v3) and s = 8 without it, while the rest converged. At 1e-4
+    // every s converges in 40-54 iterations, under both.
     using fcsr = mat::compressed2D<float>;
     using fvec = vec::dense_vector<float>;
     const std::size_t g = 16, n = g * g;
@@ -182,9 +189,9 @@ TEST_CASE("IDR(s): float solves the unsymmetric system", "[itl][krylov][idr_s][7
     }
     fvec b(n, 1.0f), x(n, 0.0f);
     itl::pc::identity<fcsr> M(A);
-    for (const std::size_t s : {1u, 4u}) {
+    for (const std::size_t s : {1u, 2u, 4u, 8u}) {
         for (std::size_t i = 0; i < n; ++i) x(i) = 0.0f;
-        itl::basic_iteration<float> iter(b, 500, 1e-5f);
+        itl::basic_iteration<float> iter(b, 500, 1e-4f);
         INFO("s = " << s);
         REQUIRE(itl::idr_s(A, x, b, M, iter, s) == 0);
         fvec Ax = A * x;
