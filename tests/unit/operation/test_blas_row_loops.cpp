@@ -9,7 +9,11 @@
 //
 // In a BLAS build, row-major float and double now go to BLAS (#724 part 1), so
 // those cases are only checked to be close; long double never reaches BLAS and
-// exercises the row loops in every build. The *_uses_row_loop_v traits are
+// exercises the row loops in every build. With MTL5_NATIVE_FAST_GEMM on for
+// the whole suite (the Highway CI lanes), row-major float and double symm
+// goes to the blocked GEMM at any size (#724 part 3) and is likewise checked
+// to be close; trsm and trmm block only above detail::triangular_block rows,
+// so at these shapes they stay on the row loop. The *_uses_row_loop_v traits are
 // static_asserted, so a fallback to the old loops fails to compile.
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -294,7 +298,8 @@ TEMPLATE_TEST_CASE("symm and symv row loops are bit-identical to the old loops",
         M X = C0, Y = C0;
         symm(TestType(1.25), A, B, beta, X);
         old_symm(TestType(1.25), A, B, beta, Y);
-        require_same<detail::symm_dispatches_blas_v<void, M, M, M>>(X, Y, M_, N_);
+        require_same<detail::symm_dispatches_blas_v<void, M, M, M> || detail::symm_uses_blocked_v<M, M, M>>(
+            X, Y, M_, N_);
 
         V x(M_), y0(M_);
         for (std::size_t i = 0; i < M_; ++i) { x(i) = TestType(val(8, i, 0)); y0(i) = TestType(val(9, i, 0)); }
