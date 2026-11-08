@@ -54,6 +54,32 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **`trsm`, `trmm`, `symm`, `symv`, `syrk` and `syr2k` call BLAS for row-major matrices** (#724, part 1 of 3). Each gated its BLAS call on every operand being column-major, so the default row-major `dense2D` never reached BLAS, even in a BLAS build.
+  - **The fix:** a row-major buffer is the column-major transpose, so the call is made on the transposed problem, as `gemv` and `gemmt` already do:
+    - a row-major B makes `trsm` and `trmm` side `'R'`;
+    - a row-major A flips op and uplo;
+    - row-major B and C make `symm` side `'R'`;
+    - a symmetric operand's lower triangle is its row-major buffer's upper one.
+  - **Mixed orientations:** `symm` needs B and C in the same orientation, and `syr2k` needs A and B in the same orientation. Other mixes keep the generic path.
+  - **Results:** `mtl5_bench --class medium`, OpenBLAS, one thread, i7-12700K:
+
+    | op | before (GFLOP/s) | after (GFLOP/s) | gemm |
+    |---|---:|---:|---:|
+    | `symm` | 1.0 | 72.7 | 72.7 |
+    | `trsm` | 1.75 | 63.1 | 72.7 |
+    | `trmm` | 1.76 | 63.8 | 72.7 |
+    | `syr2k` | 10.9 | 57.2 | 72.7 |
+    | `syrk` | 5.7 | 53.2 | 72.7 |
+    | `symv` | 0.45 | 17.5 | 9.8 (gemv) |
+
+    `trsm` f32 went from 3.7 to 140 GFLOP/s.
+  - **Builds without BLAS are unchanged.** Parts 2 and 3 address them.
+  - **Test:** `test_blas_layout_dispatch`:
+    - `static_assert`s on the new `*_dispatches_blas_v` traits, so a return to the column-major-only gate fails to compile;
+    - every orientation combination in f64 and f32, on non-square shapes, against a long-double reference;
+    - NaN in the triangle that must not be read.
+
+    A mutation test of each mapping (uplo, op, side, dimensions, leading dimension) fails it.
 - **`math::givens_rotation` takes the plain formula for ordinary magnitudes, about 4x faster for double and 6x for float** (#697). Since #671 every call extracted an exponent and made three power-of-two scalings, even when nothing needed scaling. The rotation is in the inner loops of GMRES, MINRES and the implicit QR sweep.
   - **The fix:** when the larger magnitude lies in an interval where `a*a + b*b` can neither overflow nor lose a term to underflow, about (2^-483, 2^510) for double, the rotation is `r = sqrt(a*a + b*b)`, `c = a/r`, `s = b/r`. Outside it, the scaled path is unchanged.
   - **Who gets it:** any type whose `std::numeric_limits` declares a binary IEEE format (`is_iec559`, radix 2), including a user-defined one. Tapered types such as posit and takum don't declare it, and keep the scaled path, which keeps their arithmetic near 1, where they are most precise.

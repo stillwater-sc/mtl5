@@ -1,8 +1,9 @@
 #pragma once
 // MTL5 -- syr2k: C <- alpha*(A*B^T + B*A^T) + beta*C  (BLAS level-3 symmetric
 // rank-2k). C is m x m and treated as symmetric; the full symmetric result is
-// produced (both triangles set). A, B are m x k. BLAS dispatch for column-major
-// dense float/double when available (writes the lower triangle, then mirrored).
+// produced (both triangles set). A, B are m x k. BLAS dispatch for dense
+// float/double when available, for A and B of one orientation and C of any
+// (#724); BLAS writes the lower triangle, which is then mirrored.
 //
 // Mixed precision: pass an explicit `Accumulator` to form each lower-triangle
 // reduction in a precision distinct from the operand type (#261, Part C).
@@ -34,6 +35,27 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Whether syr2k<Accumulator>(alpha, A, B, beta, C) calls ?syr2k (for sizes that
+/// fit an int). A and B must share an orientation; C's may be either (#724).
+template <typename Accumulator, typename MA, typename MB, typename MC>
+inline constexpr bool syr2k_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> &&
+                  interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB> && interface::BlasDenseMatrix<MC>)
+        return std::is_same_v<typename MC::value_type, typename MA::value_type> &&
+               std::is_same_v<typename MC::value_type, typename MB::value_type> &&
+               interface::is_row_major_v<MA> == interface::is_row_major_v<MB>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
 
 /// Symmetric rank-2k update: C = alpha*(A*B^T + B*A^T) + beta*C, C symmetric.
 template <typename Accumulator = void, Scalar S, Matrix MA, Matrix MB, Matrix MC>
@@ -72,18 +94,18 @@ void syr2k(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB> &&
-                  interface::BlasDenseMatrix<MC> && !interface::is_row_major_v<MA> &&
-                  !interface::is_row_major_v<MB> && !interface::is_row_major_v<MC> &&
-                  std::is_same_v<value_type, typename MA::value_type> &&
-                  std::is_same_v<value_type, typename MB::value_type>) {
+    if constexpr (detail::syr2k_dispatches_blas_v<Accumulator, MA, MB, MC>) {
         using T = value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m <= imax && k <= imax) {
-            const int ld = std::max(1, static_cast<int>(m));
-            interface::blas::syr2k('L', 'N', static_cast<int>(m), static_cast<int>(k),
-                                   static_cast<T>(alpha), A.data(), ld, B.data(), ld,
-                                   static_cast<T>(beta), C.data(), ld);
+            // As syrk: row-major A and B are their k x m transposes (trans 'T',
+            // ld = k), and a row-major C's lower triangle is its buffer's upper.
+            const int mi = static_cast<int>(m), ki = static_cast<int>(k);
+            constexpr bool ab_rm = interface::is_row_major_v<MA>;
+            const int ldab = std::max(1, ab_rm ? ki : mi);
+            interface::blas::syr2k(interface::blas_lower_uplo<MC>(), ab_rm ? 'T' : 'N', mi, ki,
+                                   static_cast<T>(alpha), A.data(), ldab, B.data(), ldab,
+                                   static_cast<T>(beta), C.data(), std::max(1, mi));
             for (size_type i = 0; i < m; ++i)
                 for (size_type j = 0; j < i; ++j)
                     C(j, i) = C(i, j);

@@ -2,7 +2,8 @@
 // MTL5 -- trmm: B <- alpha * A * B  for triangular A  (BLAS level-3, left side)
 // A is m x m upper (upper=true) or lower triangular; B is m x n. unit_diag treats
 // A's diagonal as all ones. Left side, no transpose in this variant. BLAS
-// dispatch for column-major dense float/double when available.
+// dispatch for dense float/double when available, in either orientation (#724):
+// see interface::blas_triangular_describe.
 //
 // alpha == 0 follows the BLAS convention (#692): A and B are not read and B is
 // set to zero, so a NaN or uninitialized B does not propagate.
@@ -22,6 +23,25 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Whether trmm<Accumulator>(alpha, A, B, ...) calls ?trmm (for sizes that fit
+/// an int and a nonzero alpha). Every orientation of A and B qualifies.
+template <typename Accumulator, typename MA, typename MB>
+inline constexpr bool trmm_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> &&
+                  interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB>)
+        return std::is_same_v<typename MB::value_type, typename MA::value_type>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
 
 /// Triangular matrix-matrix product: B = alpha * A * B, A upper/lower triangular.
 ///
@@ -87,16 +107,14 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB> &&
-                  !interface::is_row_major_v<MA> && !interface::is_row_major_v<MB> &&
-                  std::is_same_v<value_type, typename MA::value_type>) {
+    if constexpr (detail::trmm_dispatches_blas_v<Accumulator, MA, MB>) {
         using T = value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m <= imax && n <= imax) {
-            const int ld = std::max(1, static_cast<int>(m));
-            interface::blas::trmm('L', upper ? 'U' : 'L', 'N', unit_diag ? 'U' : 'N',
-                                  static_cast<int>(m), static_cast<int>(n),
-                                  static_cast<T>(alpha), A.data(), ld, B.data(), ld);
+            const auto d = interface::blas_triangular_describe<MA, MB>(upper, m, n);
+            interface::blas::trmm(d.side, d.uplo, d.trans, unit_diag ? 'U' : 'N', d.m, d.n,
+                                  static_cast<T>(alpha), A.data(), std::max(1, static_cast<int>(m)),
+                                  B.data(), d.ldb);
             return;
         }
     }

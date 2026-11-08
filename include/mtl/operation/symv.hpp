@@ -4,7 +4,8 @@
 // reads it (#692): A(i,j) for j > i is taken as A(j,i), so the strict upper
 // triangle may hold anything. Before #692 the generic path read the full
 // matrix and so disagreed with the BLAS path for a non-symmetric A. BLAS
-// dispatch for column-major dense float/double when available.
+// dispatch for dense float/double when available, in either orientation of A
+// (#724): a row-major A's lower triangle is its buffer's upper one.
 //
 // alpha/beta follow the BLAS convention, as gemmt does (#692): beta == 0 does
 // not read y, so a NaN or uninitialized y does not propagate, and alpha == 0
@@ -26,6 +27,27 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Whether symv<Accumulator>(alpha, A, x, beta, y) calls ?symv (for sizes that
+/// fit an int). Either orientation of A: a symmetric matrix's row-major buffer
+/// holds its lower triangle where the column-major view has the upper one (#724).
+template <typename Accumulator, typename M, typename VX, typename VY>
+inline constexpr bool symv_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> &&
+                  interface::BlasDenseMatrix<M> && interface::BlasDenseVector<VX> && interface::BlasDenseVector<VY>)
+        return std::is_same_v<typename VY::value_type, typename M::value_type> &&
+               std::is_same_v<typename VY::value_type, typename VX::value_type>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
 
 /// Symmetric matrix-vector product: y = alpha*A*x + beta*y, A assumed symmetric.
 ///
@@ -71,16 +93,14 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseMatrix<M> && interface::BlasDenseVector<VX> &&
-                  interface::BlasDenseVector<VY> && !interface::is_row_major_v<M> &&
-                  std::is_same_v<value_type, typename M::value_type> &&
-                  std::is_same_v<value_type, typename VX::value_type>) {
+    if constexpr (detail::symv_dispatches_blas_v<Accumulator, M, VX, VY>) {
         using T = value_type;
         if (n == 0) return;   // y is empty; skip BLAS (#693)
         if (n <= static_cast<size_type>(std::numeric_limits<int>::max())) {
-            // 'L' reads the lower triangle, as the generic paths do. BLAS
-            // requires lda >= 1 even for an empty A (#693).
-            interface::blas::symv('L', static_cast<int>(n), static_cast<T>(alpha),
+            // The lower triangle, as the generic paths read it: 'L' in a
+            // column-major buffer, 'U' in a row-major one. BLAS requires
+            // lda >= 1 even for an empty A (#693).
+            interface::blas::symv(interface::blas_lower_uplo<M>(), static_cast<int>(n), static_cast<T>(alpha),
                                   A.data(), std::max(1, static_cast<int>(n)), x.data(), 1,
                                   static_cast<T>(beta), y.data(), 1);
             return;

@@ -264,6 +264,36 @@ template <typename M>
 inline constexpr bool is_row_major_v =
     std::is_same_v<typename M::orientation, tag::row_major>;
 
+/// The BLAS ?trsm / ?trmm description of the left-side problem A X = B (or
+/// B := A B) on dense buffers that may be row-major (#724). A row-major m x n
+/// buffer IS the column-major n x m transpose, so:
+///   - a row-major B turns A X = B into X^T A^T = B^T: side 'R', and the
+///     dimensions are B^T's (n x m, ld = n);
+///   - a row-major A is the column-major buffer A^T: op flips ('N' <-> 'T') and
+///     the stored triangle flips with it (A lower is A^T upper).
+struct blas_triangular_call {
+    char side, uplo, trans;
+    int  m, n, ldb;
+};
+template <typename MA, typename MB>
+blas_triangular_call blas_triangular_describe(bool upper, std::size_t m, std::size_t n) {
+    const bool a_rm = interface::is_row_major_v<MA>;
+    const bool b_rm = interface::is_row_major_v<MB>;
+    const bool buf_upper = a_rm ? !upper : upper;
+    // side L needs op(buf) = A; side R needs op(buf) = A^T. buf is A or A^T.
+    const bool transpose = b_rm ? !a_rm : a_rm;
+    const int mi = static_cast<int>(m), ni = static_cast<int>(n);
+    if (b_rm)
+        return {'R', buf_upper ? 'U' : 'L', transpose ? 'T' : 'N', ni, mi, std::max(1, ni)};
+    return {'L', buf_upper ? 'U' : 'L', transpose ? 'T' : 'N', mi, ni, std::max(1, mi)};
+}
+
+/// For a symmetric operand whose LOWER triangle holds the data: the uplo that
+/// names that triangle in the column-major view of its buffer. A row-major
+/// buffer is the transpose, whose upper triangle is the matrix's lower one.
+template <typename M>
+constexpr char blas_lower_uplo() { return is_row_major_v<M> ? 'U' : 'L'; }
+
 /// Check if a matrix type is a sparse compressed2D (for sparse solver dispatch).
 template <typename M>
 inline constexpr bool is_compressed2D_v = false;
