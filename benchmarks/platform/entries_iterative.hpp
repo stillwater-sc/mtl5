@@ -451,7 +451,10 @@ check_result against_spectrum(const V& got, const std::vector<double>& want, dou
         auto it = std::min_element(remaining.begin(), remaining.end(),
                                    [re](double a, double b) { return std::fabs(a - re) < std::fabs(b - re); });
         if (it == remaining.end()) { worst = 1e300; break; }
-        worst = std::max({worst, std::fabs(*it - re) / scale, std::fabs(im) / scale});
+        // std::max drops a NaN argument, so a non-finite candidate must fail
+        // explicitly rather than vanish.
+        const double cand = std::max(std::fabs(*it - re), std::fabs(im)) / scale;
+        worst = std::isfinite(cand) ? std::max(worst, cand) : 1e300;
         remaining.erase(it);   // each analytic value may be matched once
     }
     r.error = got.size() == want.size() ? worst : 1e300;
@@ -498,7 +501,9 @@ check_result enclosure(const csr& A, const Values& vals, const Vectors& Y, const
         for (double lam : spectrum) d = std::min(d, std::abs(std::complex<double>(lam) - th));
         dist_max = std::max(dist_max, d);
         const double floor = 64.0 * std::numeric_limits<double>::epsilon() * spectrum.back();
-        worst = std::max(worst, d / (radius + floor));
+        // A zero or NaN vector makes the radius NaN; std::max would drop it.
+        const double ratio = d / (radius + floor);
+        worst = std::isfinite(ratio) ? std::max(worst, ratio) : 1e300;
     }
     r.error = vals.size() == wanted ? worst : 1e300;
     r.what += "; max distance to the analytic spectrum " + std::to_string(dist_max);
@@ -527,6 +532,8 @@ void top_bounds(check_result& r, const Values& vals, std::vector<double> upper, 
     std::sort(want.begin(), want.end(), std::greater<>());
     const double scale = want.front();
     bool bad = got.size() != want.size();
+    for (double g : got)   // every comparison with NaN is false: reject it outright
+        if (!std::isfinite(g)) { bad = true; r.what += "; a Ritz value is not finite"; }
     for (std::size_t i = 0; !bad && i < got.size(); ++i) {
         if (got[i] > upper[i] * (1.0 + 1e-12)) { bad = true; r.what += "; a Ritz value exceeds its upper bound"; }
         else if (want[i] - got[i] > rel * scale) { bad = true; r.what += "; a Ritz value is far below the analytic top"; }
