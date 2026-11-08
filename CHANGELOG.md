@@ -7,6 +7,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`mtl5_bench` charges symv for one triangle of A, not all of it, and flags results far above their roofline** (#743). The `blas2/symv` entry counted n² elements of A, but every symv path reads only the stored triangle: BLAS `?symv`, and the generic single pass since #724. So BLAS symv showed 184–203% of the DRAM roofline on an i7-12700K.
+  - **The fix:** the byte model is `0.5·n² + 2n` elements, as `trmv` and `trsv` already use. BLAS symv now reads 97%.
+  - **The guard:** a bandwidth-bound result that is not cache-resident and exceeds 150% of its roofline is marked `!` in the console and card output, and `suspect_model` in the JSON. It is a warning, not a failed check. It is not raised for compute-bound results, or when the cache size is unknown. The threshold leaves room for tuned kernels beating the measured ceilings, and for noise in the bandwidth probe: axpy read 120% and 137% in two `--class medium` runs on the same machine. A byte model that counts a triangle as the full matrix still reads about 200%.
+  - **What changes:** symv `%roof` and `GB/s` figures from earlier runs are twice what this build reports for the same speed, so they aren't comparable. No other entry's model changed.
+
 - **Three generic-type defects found by the new `native_shim` test type** (#703). Each one broke a user-defined number type that has no implicit conversions to or from the built-in types:
   - **The symmetric eigensolvers compared `delta >= 0`**, an int. `eigenvalue_symmetric` and `eigen_symmetric` did not compile for such a type. They now compare with `math::zero<real_t>()`.
   - **The property predicates defaulted `tol` to an int literal** (`tol = 0`, or the sentinel `-1`). This affected 22 functions in `matrix_properties.hpp`, `factorization_properties.hpp`, `vector_properties.hpp`, `spectral_properties.hpp` and `tensor/properties.hpp`, so a call that relied on the default did not compile. The default is now `magnitude_t<T>(0)` or `magnitude_t<T>(-1)`.

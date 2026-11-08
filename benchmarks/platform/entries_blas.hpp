@@ -251,7 +251,10 @@ problem symv(size_class c) {
     const std::size_t n = n_mv(c);
     struct S { mat::dense2D<T> A; vec::dense_vector<T> x, y; };
     auto s = std::make_shared<S>(S{symmetric<T>(n, 6), vec_of<T>(n, 7), vec::dense_vector<T>(n)});
-    problem p{vshape(n), 2.0 * n * n, (1.0 * n * n + 2.0 * n) * sizeof(T), [] {},
+    // Bytes: one triangle of A, as trmv and trsv. Every path reads only the
+    // stored triangle (BLAS ?symv, and the generic single pass since #724), so
+    // charging all of A put BLAS symv at 184% of the DRAM roofline (#743).
+    problem p{vshape(n), 2.0 * n * n, (0.5 * n * n + 2.0 * n) * sizeof(T), [] {},
               [s] { mtl::symv(T(1), s->A, s->x, T(0), s->y); }, {}};
     p.check = [s, n] {
         error_tracker e(tol<T>(n), "componentwise rel err vs |A||x|");

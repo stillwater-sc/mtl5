@@ -35,6 +35,9 @@ struct record {
     double roofline_gflops = 0.0; // attainable at this intensity
     double roofline_pct = 0.0;    // gflops / roofline_gflops * 100
     bool   cache_resident = false; // bytes <= last-level cache: the DRAM roofline does not apply
+    /// A bandwidth-bound, DRAM-resident result far above its roofline: the
+    /// entry's byte model, not the kernel, is the likely cause (#743).
+    bool   suspect_model = false;
     check_result check;
     std::string error;            // non-empty if the entry threw
     /// No work model (an ordering, say): timed and checked, but with no
@@ -66,6 +69,15 @@ inline std::size_t last_level_cache_bytes() {
     const auto& ci = util::cached_cache_info();
     return ci.l3_bytes ? ci.l3_bytes : ci.l2_bytes;
 }
+
+/// %roof above which a bandwidth-bound, DRAM-resident result is flagged as a
+/// model error (#743). The ceilings are measured sustained rates: a tuned
+/// kernel beats them by 10-20%, and the bandwidth probe itself varies by
+/// ~10% run to run (axpy read 120% and 137% of it in two runs on one
+/// machine). A byte model off by a factor of two, the usual slip (a
+/// triangle counted as the full matrix), reads ~200% and is still caught
+/// whenever the kernel's true efficiency is above 75%.
+inline constexpr double kSuspectRooflinePct = 150.0;
 
 inline double peak_for(const probe_results& p, const std::string& dtype) {
     return dtype == "f32" ? p.fma_peak_f32_gflops : p.fma_peak_f64_gflops;
@@ -115,6 +127,13 @@ inline record run_entry(const entry& e, size_class cls, const probe_results& pro
     const bool bandwidth_bound = r.bytes > 0.0 &&
         probes.bandwidth_gbytes_per_s() * (r.flops / r.bytes) < peak_for(probes, r.dtype);
     r.cache_resident = r.roofline && bandwidth_bound && r.bytes <= double(last_level_cache_bytes());
+    // Only where the DRAM roofline is known to apply: bandwidth-bound, and
+    // not resident in a cache of KNOWN size (an undetected cache reports 0
+    // bytes, which would make every result look DRAM-resident). A
+    // compute-bound result above the FMA peak can be a probe that misses the
+    // kernel's SIMD width (SVE against a NEON probe), not a wrong model.
+    r.suspect_model = !r.no_roofline() && bandwidth_bound && last_level_cache_bytes() > 0 &&
+                      !r.cache_resident && r.roofline_pct > kSuspectRooflinePct;
     return r;
 }
 
