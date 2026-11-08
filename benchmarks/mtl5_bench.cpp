@@ -189,6 +189,7 @@ bool write_json(const std::string& path, const std::string& label, const std::st
            << ", \"roofline_gflops\": " << num(r.roofline_gflops)
            << ", \"roofline_pct\": " << (r.no_roofline() ? std::string("null") : num(r.roofline_pct))
            << ", \"cache_resident\": " << (r.cache_resident ? "true" : "false")
+           << ", \"suspect_model\": " << (r.suspect_model ? "true" : "false")
            << ", \"speedup\": " << num(r.speedup) << ", \"efficiency\": " << num(r.efficiency)
            << ",\n     \"check\": {\"ok\": " << (r.check.ok ? "true" : "false")
            << ", \"error\": " << num(r.check.error) << ", \"tolerance\": " << num(r.check.tolerance)
@@ -286,15 +287,16 @@ bool write_card(const std::string& path, const std::string& label, const std::st
     md << "\n| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |"
        << (scaled ? " speedup (efficiency) |\n|---|---|---|---|---:|---:|---:|---:|---|---:|\n"
                   : "\n|---|---|---|---|---:|---:|---:|---:|---|\n");
-    bool any_cached = false;
+    bool any_cached = false, any_suspect = false;
     for (const auto& r : rs) {
         const bool ok = r.check.ok && r.error.empty();
         any_cached |= r.cache_resident;
+        any_suspect |= r.suspect_model;
         md << "| " << r.area << " | " << r.op << " | " << r.dtype << " | " << r.shape << " | "
            << std::setprecision(3) << r.median_s * 1e3 << " ms | " << std::setprecision(2) << r.gflops
            << " | " << r.gbytes_per_s << " | " << std::setprecision(0);
         if (r.no_roofline()) md << "n/a";
-        else md << r.roofline_pct << "%" << (r.cache_resident ? "\\*" : "");
+        else md << r.roofline_pct << "%" << (r.cache_resident ? "\\*" : r.suspect_model ? " !" : "");
         md << " | " << (ok ? "ok" : "**FAIL**") << " |";
         if (scaled) {
             if (r.speedup == r.speedup)
@@ -306,6 +308,9 @@ bool write_card(const std::string& path, const std::string& label, const std::st
     }
     if (any_cached)
         md << "\n\\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.\n";
+    if (any_suspect)
+        md << "\n! more than " << std::setprecision(0) << bp::kSuspectRooflinePct
+           << "% of a DRAM roofline: the entry's flop or byte model is probably wrong.\n";
     md << "\n";
     md.flush();
     return static_cast<bool>(md);
@@ -420,7 +425,7 @@ int main(int argc, char** argv) {
                   << std::fixed << std::setprecision(2) << std::setw(11) << r.gflops
                   << std::setw(10) << r.gbytes_per_s << std::setprecision(0) << std::setw(8);
         if (r.no_roofline()) std::cout << "n/a" << "   ";
-        else std::cout << r.roofline_pct << (r.cache_resident ? "%* " : "%  ");
+        else std::cout << r.roofline_pct << (r.cache_resident ? "%* " : r.suspect_model ? "%! " : "%  ");
         std::cout << (ok ? "ok" : "FAIL");
         if (r.speedup == r.speedup)
             std::cout << std::setprecision(1) << "  x" << r.speedup << std::setprecision(0) << " ("
@@ -434,12 +439,15 @@ int main(int argc, char** argv) {
         results.push_back(std::move(r));
     }
 
-    bool any_cached = false;
-    for (const auto& r : results) any_cached |= r.cache_resident;
+    bool any_cached = false, any_suspect = false;
+    for (const auto& r : results) { any_cached |= r.cache_resident; any_suspect |= r.suspect_model; }
     if (any_cached)
         std::cout << "\n* working set fits in the last-level cache ("
                   << (bp::last_level_cache_bytes() >> 20)
                   << " MiB): a cache rate, shown as a % of the DRAM roofline\n";
+    if (any_suspect)
+        std::cout << "\n! more than " << std::setprecision(0) << bp::kSuspectRooflinePct
+                  << "% of a DRAM roofline: the entry's flop or byte model is probably wrong\n";
 
     if (!json_path.empty()) {
         // A result without its sidecar is the provenance loss check_sidecars.sh

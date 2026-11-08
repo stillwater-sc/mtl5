@@ -35,6 +35,9 @@ struct record {
     double roofline_gflops = 0.0; // attainable at this intensity
     double roofline_pct = 0.0;    // gflops / roofline_gflops * 100
     bool   cache_resident = false; // bytes <= last-level cache: the DRAM roofline does not apply
+    /// A DRAM-resident result far above its roofline: the entry's flop or byte
+    /// model, not the kernel, is the likely cause (#743).
+    bool   suspect_model = false;
     check_result check;
     std::string error;            // non-empty if the entry threw
     /// No work model (an ordering, say): timed and checked, but with no
@@ -66,6 +69,11 @@ inline std::size_t last_level_cache_bytes() {
     const auto& ci = util::cached_cache_info();
     return ci.l3_bytes ? ci.l3_bytes : ci.l2_bytes;
 }
+
+/// %roof above which a result that is not cache-resident is flagged as a
+/// model error (#743). The ceilings are measured sustained rates that a tuned
+/// kernel can beat by 10-20%, so the margin is wider than that.
+inline constexpr double kSuspectRooflinePct = 130.0;
 
 inline double peak_for(const probe_results& p, const std::string& dtype) {
     return dtype == "f32" ? p.fma_peak_f32_gflops : p.fma_peak_f64_gflops;
@@ -115,6 +123,7 @@ inline record run_entry(const entry& e, size_class cls, const probe_results& pro
     const bool bandwidth_bound = r.bytes > 0.0 &&
         probes.bandwidth_gbytes_per_s() * (r.flops / r.bytes) < peak_for(probes, r.dtype);
     r.cache_resident = r.roofline && bandwidth_bound && r.bytes <= double(last_level_cache_bytes());
+    r.suspect_model = !r.no_roofline() && !r.cache_resident && r.roofline_pct > kSuspectRooflinePct;
     return r;
 }
 
