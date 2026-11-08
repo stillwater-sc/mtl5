@@ -12,7 +12,25 @@
 namespace mtl::itl {
 
 /// TFQMR solver for non-symmetric systems A*x = b.
-/// Does not require A^T (transpose-free). Left preconditioner M.
+/// Does not require A^T (transpose-free). Right preconditioner M: it solves
+/// (A M^-1) z = b with x = M^-1 z, so the residual it tracks is b - A x.
+///
+/// Freund (SIAM J. Sci. Comput. 14, 1993); Saad, Iterative Methods for Sparse
+/// Linear Systems, 2nd ed., Algorithm 7.8. Each iteration is two half-steps
+/// with two search vectors, u_m and u_{m+1} = u_m - alpha v_m; the next pair
+/// starts from u_{m+2} = w + beta u_{m+1}, and v carries A M^-1 u through the
+/// recurrence v_{m+2} = A M^-1 u_{m+2} + beta (A M^-1 u_{m+1} + beta v_m).
+/// The u vectors are kept preconditioned (y = M^-1 u), so the update
+/// direction d lives in x-space. Before #731 the u recurrence was missing --
+/// w stood in for u_{m+1} and for u_{m+2} -- so the method stalled on
+/// unsymmetric systems and converged slowly on SPD ones.
+///
+/// The convergence test is on tau, the quasi-residual norm, which bounds the
+/// true residual by sqrt(m + 1) tau after m half-steps; in practice the two
+/// are close.
+///
+/// Cost per iteration: two products with A, two preconditioner solves, three
+/// dot products and two norms.
 ///
 /// Accumulator (optional): accumulation type for the dot products and the
 /// matrix-vector products (see math/accumulator_traits.hpp, #158).
@@ -28,106 +46,115 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;
     using std::sqrt;
-    using std::abs;
     const size_type n = x.size();
 
-    vec::dense_vector<value_type> r(n), r_star(n), w(n), y1(n), y2(n);
-    vec::dense_vector<value_type> d(n), v(n), u1(n), u2(n), tmp(n);
+    // u1 = u_m and u2 = u_{m+1}; y1, y2 their preconditioned images M^-1 u;
+    // Au1, Au2 = A y1, A y2.
+    vec::dense_vector<value_type> r_star(n), w(n), d(n), v(n);
+    vec::dense_vector<value_type> u1(n), u2(n), y1(n), y2(n), Au1(n), Au2(n);
 
-    // r = b - A*x
-    vec::dense_vector<value_type> Ax(n);
-    apply_operator<Accumulator>(A, x, Ax);
-    for (size_type i = 0; i < n; ++i) {
-        r(i) = b(i) - Ax(i);
-        r_star(i) = r(i);
-        w(i) = r(i);
-        d(i) = value_type(0);
-    }
 
-    // y1 = M^{-1} r
-    M.solve(y1, r);
+    value_type tau = value_type(0), theta = value_type(0), eta = value_type(0), rho = value_type(0);
 
-    apply_operator<Accumulator>(A, y1, u1);
-    for (size_type i = 0; i < n; ++i)
-        v(i) = u1(i);
+    // w = b - A x, the true residual; returns its norm.
+    auto true_residual = [&]() {
+        apply_operator<Accumulator>(A, x, Au1);
+        for (size_type i = 0; i < n; ++i)
+            w(i) = b(i) - Au1(i);
+        return mtl::two_norm(w);
+    };
 
-    value_type tau = mtl::two_norm(r);
-    value_type theta = value_type(0);
-    value_type eta = value_type(0);
-    value_type rho = mtl::dot<Accumulator, value_type>(r_star, r);
-
-    while (!iter.finished(tau)) {
-        ++iter;
-
-        value_type sigma = mtl::dot<Accumulator, value_type>(r_star, v);
-        if (sigma == value_type(0)) {
-            iter.fail(2, "tfqmr breakdown: sigma == 0");
-            return iter;
+    // (Re)start the recurrences from w = b - A x: u_0 = r* = w, d = 0,
+    // v_0 = A M^-1 u_0.
+    auto restart = [&]() {
+        for (size_type i = 0; i < n; ++i) {
+            r_star(i) = w(i);
+            u1(i)     = w(i);
+            d(i)      = value_type(0);
         }
-        value_type alpha = rho / sigma;
-
-        // Odd half-step
+        M.solve(y1, u1);
+        apply_operator<Accumulator>(A, y1, Au1);
         for (size_type i = 0; i < n; ++i)
-            w(i) -= alpha * u1(i);
+            v(i) = Au1(i);
+        tau   = mtl::two_norm(w);
+        theta = value_type(0);
+        eta   = value_type(0);
+        rho   = mtl::dot<Accumulator, value_type>(r_star, w);
+    };
 
-        // d = y1 + (theta^2 * eta / alpha) * d
-        value_type factor = theta * theta * eta / alpha;
+    // One half-step: w -= alpha A M^-1 u; d = M^-1 u + (theta^2 eta / alpha) d;
+    // the quasi-residual update; x += eta d.
+    auto half_step = [&](const vec::dense_vector<value_type>& y,
+                         const vec::dense_vector<value_type>& Au, value_type alpha) {
         for (size_type i = 0; i < n; ++i)
-            d(i) = y1(i) + factor * d(i);
-
+            w(i) -= alpha * Au(i);
+        const value_type factor = theta * theta * eta / alpha;
+        for (size_type i = 0; i < n; ++i)
+            d(i) = y(i) + factor * d(i);
         theta = mtl::two_norm(w) / tau;
-        value_type c = value_type(1) / sqrt(value_type(1) + theta * theta);
+        const value_type c = value_type(1) / sqrt(value_type(1) + theta * theta);
         tau *= theta * c;
         eta = c * c * alpha;
-
-        // x += eta * d
         for (size_type i = 0; i < n; ++i)
             x(i) += eta * d(i);
+    };
 
-        if (iter.finished(tau)) return iter;
+    // Each pass runs until tau meets the tolerance (or the iteration limit),
+    // then checks the true residual. tau tracks the recursively updated w,
+    // which drifts from b - A x by rounding; like CGS, whose polynomial it
+    // shares, TFQMR can stall there well above the tolerance (2e-7 for an
+    // unpreconditioned 32x32 convection-diffusion problem at rtol 1e-8).
+    // If the true residual has not converged, restart from the current x
+    // with fresh recurrences -- as MATLAB's tfqmr does. The check costs one
+    // product with A per pass, a restart one more and a preconditioner solve. The returned iter reflects the true residual.
+    if (iter.finished(true_residual())) return iter;
+    restart();
+    for (;;) {
+        bool tau_done = false;
+        while (!tau_done && !iter.finished(tau)) {
+            ++iter;
 
-        // y2 = M^{-1} w
-        M.solve(y2, w);
+            const value_type sigma = mtl::dot<Accumulator, value_type>(r_star, v);
+            if (sigma == value_type(0)) {
+                iter.fail(2, "tfqmr breakdown: sigma == 0");
+                return iter;
+            }
+            const value_type alpha = rho / sigma;
 
-        apply_operator<Accumulator>(A, y2, u2);
+            // First half-step, along u_m.
+            half_step(y1, Au1, alpha);
+            if (iter.finished(tau)) { tau_done = true; break; }
 
-        // Even half-step
-        for (size_type i = 0; i < n; ++i)
-            w(i) -= alpha * u2(i);
+            // Second half-step, along u_{m+1} = u_m - alpha v_m.
+            for (size_type i = 0; i < n; ++i)
+                u2(i) = u1(i) - alpha * v(i);
+            M.solve(y2, u2);
+            apply_operator<Accumulator>(A, y2, Au2);
+            half_step(y2, Au2, alpha);
 
-        // d = y2 + (theta^2 * eta / alpha) * d
-        factor = theta * theta * eta / alpha;
-        for (size_type i = 0; i < n; ++i)
-            d(i) = y2(i) + factor * d(i);
+            // u_{m+2} = w + beta u_{m+1};
+            // v_{m+2} = A M^-1 u_{m+2} + beta (A M^-1 u_{m+1} + beta v_m).
+            if (rho == value_type(0)) {
+                iter.fail(2, "tfqmr breakdown: rho == 0");
+                return iter;
+            }
+            const value_type rho_new = mtl::dot<Accumulator, value_type>(r_star, w);
+            const value_type beta = rho_new / rho;
+            rho = rho_new;
 
-        theta = mtl::two_norm(w) / tau;
-        c = value_type(1) / sqrt(value_type(1) + theta * theta);
-        tau *= theta * c;
-        eta = c * c * alpha;
-
-        // x += eta * d
-        for (size_type i = 0; i < n; ++i)
-            x(i) += eta * d(i);
-
-        value_type rho_new = mtl::dot<Accumulator, value_type>(r_star, w);
-        if (rho == value_type(0)) {
-            iter.fail(2, "tfqmr breakdown: rho == 0");
-            return iter;
+            for (size_type i = 0; i < n; ++i)
+                u1(i) = w(i) + beta * u2(i);
+            M.solve(y1, u1);
+            apply_operator<Accumulator>(A, y1, Au1);
+            for (size_type i = 0; i < n; ++i)
+                v(i) = Au1(i) + beta * (Au2(i) + beta * v(i));
         }
-        value_type beta = rho_new / rho;
-        rho = rho_new;
-
-        // y1 = M^{-1} w
-        M.solve(y1, w);
-
-        apply_operator<Accumulator>(A, y1, u1);
-
-        // v = u1 + beta * (u2 + beta * v)
-        for (size_type i = 0; i < n; ++i)
-            v(i) = u1(i) + beta * (u2(i) + beta * v(i));
+        // tau converged, or the iteration limit was reached: judge by the
+        // true residual. finished() returning true means converged or out
+        // of iterations; false means restart.
+        if (iter.finished(true_residual())) return iter;
+        restart();
     }
-
-    return iter;
 }
 
 } // namespace mtl::itl

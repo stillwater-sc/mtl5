@@ -157,15 +157,14 @@ inline long double true_relres(const csr& A, const vec_t& x, const vec_t& b) {
 /// per apply at n = 16384, which this benchmark found (#732). It is O(nnz)
 /// now, 0.17 ms there.
 ///
-/// One deliberate exception, a finding of this benchmark:
-///  * TFQMR runs on the SPD Poisson matrix. On unsymmetric convection-diffusion
-///    it stalls at a 6-9% residual after thousands of iterations with ANY
-///    preconditioner, where BiCGSTAB converges in 13-52; its unit tests use only
-///    symmetric matrices, so nothing caught it.
+/// TFQMR used to run on the Poisson matrix: on convection-diffusion it stalled
+/// at a 6-9% residual with any preconditioner, where BiCGSTAB converged in
+/// 13-52 iterations. Its u recurrence was missing, which this benchmark found
+/// (#731); it now runs on convection-diffusion with the others.
 template <int Which>
 problem krylov(size_class c) {
     const std::size_t k = grid_krylov(c);
-    const bool spd = Which == 0 || Which == 1 || Which == 8;
+    const bool spd = Which == 0 || Which == 1;
     struct S {
         csr A;
         vec_t b, x;
