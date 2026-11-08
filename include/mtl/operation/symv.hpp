@@ -15,12 +15,14 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/detail/same_object.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -46,6 +48,11 @@ inline constexpr bool symv_dispatches_blas_v = [] {
     return false;
 #endif
 }();
+
+/// Whether the generic symv<void> makes one row-wise pass over a row-major A's
+/// lower triangle (#724).
+template <typename M>
+inline constexpr bool symv_uses_row_loop_v = row_major_contiguous_v<M>;
 
 } // namespace detail
 
@@ -107,6 +114,38 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
         }
     }
 #endif
+    if constexpr (detail::symv_uses_row_loop_v<M>) {
+        // Row-major A: one pass over the stored lower triangle, row by row
+        // (#724). The row loop below reads A(j, i) down a column for every
+        // j > i. Here each stored A(i, j), j < i, is read once, from a
+        // contiguous row, and feeds both y(i) (as a(i,j) x(j)) and y(j) (as
+        // a(j,i) x(i)). Every y(i) still receives its terms in ascending j: j <= i
+        // from row i itself, then j > i from rows j = i+1, i+2, ... in turn. Each
+        // term is the same product and acc[] holds what the row loop's `acc`
+        // held, so the result is bit-identical
+        // (contraction aside: see detail::trsm_rows).
+        assert(!detail::same_object(x, y) && "symv: y must not alias x");
+        if (n == 0) return;
+        if (alpha_zero) {
+            for (size_type i = 0; i < n; ++i)
+                y(i) = beta_zero ? math::zero<value_type>() : value_type(beta * y(i));
+            return;
+        }
+        std::vector<value_type> acc(static_cast<std::size_t>(n), math::zero<value_type>());
+        for (size_type i = 0; i < n; ++i) {
+            const auto* ai = &A(i, 0);
+            const auto& xi = x(i);
+            for (size_type j = 0; j < i; ++j)       // y(j) += a(j,i) x(i), j < i
+                acc[j] += ai[j] * xi;
+            value_type s = acc[i];                  // untouched so far: zero
+            for (size_type j = 0; j <= i; ++j)      // y(i) += a(i,j) x(j), j <= i
+                s += ai[j] * x(j);
+            acc[i] = s;
+        }
+        for (size_type i = 0; i < n; ++i)
+            y(i) = beta_zero ? value_type(alpha * acc[i]) : value_type(alpha * acc[i] + beta * y(i));
+        return;
+    }
     for (size_type i = 0; i < n; ++i) {
         if (alpha_zero) {
             y(i) = beta_zero ? math::zero<value_type>() : value_type(beta * y(i));

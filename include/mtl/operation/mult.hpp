@@ -33,15 +33,7 @@ namespace mtl {
 
 namespace detail {
 
-/// Row-major storage with contiguous rows: `data()` and a row-major
-/// orientation. False (not an error) for views without an orientation.
-template <typename M>
-inline constexpr bool row_major_contiguous_v = [] {
-    if constexpr (interface::ContiguousMatrixData<M> && requires { typename M::orientation; })
-        return interface::is_row_major_v<M>;
-    else
-        return false;
-}();
+// row_major_contiguous_v: interface/dispatch_traits.hpp.
 
 /// Generic mat*vec over the OUTPUT ROW RANGE [rb, re): the loop body of
 /// `mult_generic` below, split out so a threaded caller can hand one contiguous

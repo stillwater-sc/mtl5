@@ -119,6 +119,12 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # i-k-j loop contracts every term to an FMA while the i-j-k reference contracts
 # only some, so the bits differ even though the order does not.
 #
+# op_test_blas_row_loops asserts the same for the row forms of trsm, trmm, symm,
+# symv, syrk and syr2k against their old column loops (#724). With contraction
+# on, GCC can fuse a product into the next statement's add in the scalar loop
+# (alpha*B(i,c) into the first subtraction, say) where the vector loop has
+# stored it to the row buffer first: an ulp apart, in the same order.
+#
 # op_test_gemmt asserts that gemmt's triangle and congruence's result are
 # bit-identical to mult_generic, and that a CRS and a dense A give the same bits
 # (#656): the same terms in the same order, which the i-k-j, dot-product and
@@ -178,6 +184,7 @@ if(NOT MSVC)
                       sparse_test_supernodal_lu_mt
                       sparse_test_trisolve_level_schedule_mt
                       op_test_mult_ikj
+                      op_test_blas_row_loops
                       op_test_gemmt
                       op_test_cholesky_ordering
                       op_test_householder_textbook

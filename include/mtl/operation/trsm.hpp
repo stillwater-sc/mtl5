@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/matrix.hpp>
@@ -48,6 +49,51 @@ inline constexpr bool trsm_dispatches_blas_v = [] {
     return false;
 #endif
 }();
+
+/// Whether the generic trsm<void> solves a row-major B row by row (#724).
+template <typename MB>
+inline constexpr bool trsm_uses_row_loop_v = row_major_contiguous_v<MB>;
+
+/// The generic solve on a row-major B, a whole row of B at a time (#724).
+///
+/// The column-by-column loop reads B(j, c) down a column, a stride of n per
+/// access. This form subtracts A(i, j) * B.row(j) from row i for each solved
+/// j: a contiguous, independent inner loop the compiler vectorizes. Every
+/// X(i, c) is still alpha*B(i, c), minus A(i, j)*X(j, c) in ascending j, then
+/// divided by A(i, i), with the same expressions in the same types (`row`
+/// holds what the column loop's `s` held), so the result is bit-identical --
+/// unless the compiler contracts across statements (GCC's -ffp-contract=fast
+/// with an FMA), which may fuse a different product in each form: same order,
+/// an ulp apart. That caveat applies to every row loop here, as to mult's.
+template <typename S, typename MA, typename MB>
+void trsm_rows(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag) {
+    using size_type  = typename MA::size_type;
+    using value_type = typename MB::value_type;
+    using Acc = std::remove_cvref_t<decltype(alpha * std::declval<value_type&>())>;
+    const size_type m = A.num_rows();
+    const auto n = B.num_cols();
+    if (m == 0 || n == 0) return;
+    std::vector<Acc> row(static_cast<std::size_t>(n));
+    const auto solve_row = [&](size_type i, size_type jb, size_type je) {
+        value_type* bi = &B(i, 0);
+        for (decltype(+n) c = 0; c < n; ++c) row[c] = alpha * bi[c];
+        for (size_type j = jb; j < je; ++j) {
+            const auto& a = A(i, j);
+            const value_type* bj = &B(j, 0);
+            for (decltype(+n) c = 0; c < n; ++c) row[c] -= a * bj[c];
+        }
+        if (unit_diag) {
+            for (decltype(+n) c = 0; c < n; ++c) bi[c] = row[c];
+        } else {
+            const auto& d = A(i, i);
+            for (decltype(+n) c = 0; c < n; ++c) bi[c] = row[c] / d;
+        }
+    };
+    if (upper)
+        for (size_type ii = m; ii-- > 0; ) solve_row(ii, ii + 1, m);   // back substitution
+    else
+        for (size_type i = 0; i < m; ++i) solve_row(i, 0, i);           // forward substitution
+}
 
 } // namespace detail
 
@@ -105,6 +151,10 @@ void trsm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
         }
     }
 #endif
+    if constexpr (detail::trsm_uses_row_loop_v<MB>) {
+        detail::trsm_rows(alpha, A, B, upper, unit_diag);
+        return;
+    }
     for (size_type c = 0; c < n; ++c) {
         if (upper) {
             // Back substitution.

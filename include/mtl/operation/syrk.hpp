@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/matrix.hpp>
@@ -52,6 +53,11 @@ inline constexpr bool syrk_dispatches_blas_v = [] {
     return false;
 #endif
 }();
+
+/// Whether the generic syrk<void> forms C's lower triangle row by row over a
+/// transposed copy of a row-major A (#724).
+template <typename MA>
+inline constexpr bool syrk_uses_row_loop_v = row_major_contiguous_v<MA>;
 
 } // namespace detail
 
@@ -110,6 +116,36 @@ void syrk(const S& alpha, const MA& A, const S& beta, MC& C) {
         }
     }
 #endif
+    if constexpr (detail::syrk_uses_row_loop_v<MA>) {
+        if (!alpha_zero && m > 0) {
+            // Row-major A: the i-l-j form over At = A^T (#724), an O(m k) copy.
+            // C(i, j) = sum_l A(i,l) A(j,l) reads A(j, l) down a column of A for
+            // each j; At's row l is that column, contiguous. Each C(i, j), j <= i,
+            // is still zero, + A(i,0)*A(j,0), + A(i,1)*A(j,1), ... in ascending l,
+            // then the same alpha/beta combine, so the result is bit-identical
+            // (contraction aside: see detail::trsm_rows).
+            using TA = typename MA::value_type;
+            const std::size_t ms = static_cast<std::size_t>(m);
+            std::vector<TA> At(static_cast<std::size_t>(k) * ms);
+            for (size_type j = 0; j < m; ++j)
+                for (size_type l = 0; l < k; ++l) At[static_cast<std::size_t>(l) * ms + j] = A(j, l);
+            std::vector<value_type> row(ms);
+            for (size_type i = 0; i < m; ++i) {
+                for (size_type j = 0; j <= i; ++j) row[j] = math::zero<value_type>();
+                for (size_type l = 0; l < k; ++l) {
+                    const auto& ail = A(i, l);
+                    const TA* atl = &At[static_cast<std::size_t>(l) * ms];
+                    for (size_type j = 0; j <= i; ++j) row[j] += ail * atl[j];
+                }
+                for (size_type j = 0; j <= i; ++j)
+                    C(i, j) = beta_zero ? value_type(alpha * row[j]) : value_type(alpha * row[j] + beta * C(i, j));
+            }
+            for (size_type i = 0; i < m; ++i)
+                for (size_type j = 0; j < i; ++j)
+                    C(j, i) = C(i, j);
+            return;
+        }
+    }
     // Compute the lower triangle, then mirror.
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j <= i; ++j) {
