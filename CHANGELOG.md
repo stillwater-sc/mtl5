@@ -54,6 +54,31 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **The generic `trsm`, `trmm`, `symm`, `symv`, `syrk` and `syr2k` walk row-major matrices row by row, with bit-identical results** (#724, part 2 of 3). The old loops read a row-major operand down a column, one stride of n per access, so nothing vectorized.
+  - **The fix:** the i-k-j forms that `mult` (#549) and `gemmt` already use:
+    - **`trsm` / `trmm`:** subtract or add A(i,j) × B.row(j), one whole row at a time;
+    - **`symm`:** adds a(i,k) × B.row(k) into each row of C;
+    - **`symv`:** makes one pass over the stored triangle. Each A(i,j) is read once and feeds both y(i) and y(j);
+    - **`syrk` / `syr2k`:** read a transposed copy of A (and B), made once at O(m·k) cost.
+  - **Results are unchanged.** Every entry keeps its terms, their order and its expression types, so the result is bit-identical to the old loop. The exception is a compiler that contracts across statements (GCC's `-ffp-contract=fast` with an FMA target), which can fuse a different product in each form, as it can for `mult`'s i-k-j loop.
+  - **Results:** `mtl5_bench --class medium`, generic build (no BLAS, no Highway), one thread, i7-12700K, in GFLOP/s:
+
+    | op | before | after | reference |
+    |---|---:|---:|---:|
+    | `trsm` | 1.70 | 14.5 | `gemm` 14.2 |
+    | `trmm` | 1.73 | 13.7 | `gemm` 14.2 |
+    | `symm` | 1.01 | 16.0 | `gemm` 14.2 |
+    | `syrk` | 5.57 | 11.5 | `gemm` 14.2 |
+    | `syr2k` | 10.2 | 13.0 | `gemm` 14.2 |
+    | `symv` | 0.49 | 5.18 | `gemv` 4.05 |
+
+    `trsm` f32 went from 3.78 to 27.1 GFLOP/s.
+  - **Test:** `test_blas_row_loops`:
+    - compares each operation with a verbatim copy of its old loop, in f32, f64 and `long double`, with a double alpha over float matrices, at beta 0 and nonzero, and on odd shapes;
+    - `static_assert`s on the new `*_uses_row_loop_v` traits;
+    - covers alpha 0 and empty shapes.
+
+    The test is built with `-ffp-contract=off`, like `op_test_mult_ikj`. `symv` now asserts that y doesn't alias x.
 - **`trsm`, `trmm`, `symm`, `symv`, `syrk` and `syr2k` call BLAS for row-major matrices** (#724, part 1 of 3). Each gated its BLAS call on every operand being column-major, so the default row-major `dense2D` never reached BLAS, even in a BLAS build.
   - **The fix:** a row-major buffer is the column-major transpose, so the call is made on the transposed problem, as `gemv` and `gemmt` already do:
     - a row-major B makes `trsm` and `trmm` side `'R'`;

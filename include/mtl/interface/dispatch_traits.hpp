@@ -308,3 +308,17 @@ inline constexpr bool is_suitesparse_eligible_v =
     is_compressed2D_v<M> && is_blas_scalar_v<typename M::value_type>;
 
 } // namespace mtl::interface
+
+namespace mtl::detail {
+
+/// Row-major storage with contiguous rows: `data()` and a row-major
+/// orientation. False (not an error) for views without an orientation.
+template <typename M>
+inline constexpr bool row_major_contiguous_v = [] {
+    if constexpr (interface::ContiguousMatrixData<M> && requires { typename M::orientation; })
+        return interface::is_row_major_v<M>;
+    else
+        return false;
+}();
+
+} // namespace mtl::detail

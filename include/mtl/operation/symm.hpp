@@ -28,6 +28,7 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/matrix.hpp>
@@ -58,6 +59,10 @@ inline constexpr bool symm_dispatches_blas_v = [] {
     return false;
 #endif
 }();
+
+/// Whether the generic symm<void> forms C row by row over a row-major B (#724).
+template <typename MB>
+inline constexpr bool symm_uses_row_loop_v = row_major_contiguous_v<MB>;
 
 } // namespace detail
 
@@ -114,6 +119,33 @@ void symm(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
         }
     }
 #endif
+    if constexpr (detail::symm_uses_row_loop_v<MB>) {
+        // Row-major B: the i-k-j form (#724), as mult's generic GEMM (#549).
+        // `row` is row i's accumulator and each k adds a(i, k) * B.row(k): a
+        // contiguous inner loop, where the i-j-k loop below reads B(k, j) down
+        // a column and a(i, k) once per (i, j, k). Every C(i, j) is still
+        // zero, + a(i,0)*B(0,j), + a(i,1)*B(1,j), ... in ascending k, then the
+        // same alpha/beta combine, so the result is bit-identical
+        // (contraction aside: see detail::trsm_rows).
+        if (n == 0) return;
+        std::vector<value_type> row(static_cast<std::size_t>(n));
+        for (size_type i = 0; i < m; ++i) {
+            if (alpha_zero) {
+                for (size_type j = 0; j < n; ++j)
+                    C(i, j) = beta_zero ? math::zero<value_type>() : value_type(beta * C(i, j));
+                continue;
+            }
+            for (size_type j = 0; j < n; ++j) row[j] = math::zero<value_type>();
+            for (size_type k = 0; k < m; ++k) {
+                const auto& aik = a(i, k);
+                const auto* bk = &B(k, 0);
+                for (size_type j = 0; j < n; ++j) row[j] += aik * bk[j];
+            }
+            for (size_type j = 0; j < n; ++j)
+                C(i, j) = beta_zero ? value_type(alpha * row[j]) : value_type(alpha * row[j] + beta * C(i, j));
+        }
+        return;
+    }
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < n; ++j) {
             if (alpha_zero) {

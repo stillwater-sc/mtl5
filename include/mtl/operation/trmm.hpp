@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/matrix.hpp>
@@ -40,6 +41,50 @@ inline constexpr bool trmm_dispatches_blas_v = [] {
     return false;
 #endif
 }();
+
+/// Whether the generic trmm<void> forms a row-major B row by row (#724).
+template <typename MB>
+inline constexpr bool trmm_uses_row_loop_v = row_major_contiguous_v<MB>;
+
+/// The generic product on a row-major B, a whole row of B at a time (#724).
+///
+/// The column-by-column loop reads B(j, c) down a column. This form builds row
+/// i of the result as (A(i, i) or 1) * B.row(i) plus A(i, j) * B.row(j) for each
+/// j in the triangle, in ascending j: contiguous inner loops. Rows are formed
+/// in the order that leaves every B.row(j) still unwritten when it is read
+/// (ascending i for upper, descending for lower), as the column loop does, and
+/// each entry is the same expression in the same type, so the result is
+/// bit-identical (contraction aside: see trsm_rows).
+template <typename S, typename MA, typename MB>
+void trmm_rows(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag) {
+    using size_type  = typename MA::size_type;
+    using value_type = typename MB::value_type;
+    using Acc = std::remove_cvref_t<decltype(unit_diag ? std::declval<value_type&>()
+                                                       : A(0, 0) * std::declval<value_type&>())>;
+    const size_type m = A.num_rows();
+    const auto n = B.num_cols();
+    if (m == 0 || n == 0) return;
+    std::vector<Acc> row(static_cast<std::size_t>(n));
+    const auto form_row = [&](size_type i, size_type jb, size_type je) {
+        value_type* bi = &B(i, 0);
+        if (unit_diag) {
+            for (decltype(+n) c = 0; c < n; ++c) row[c] = bi[c];
+        } else {
+            const auto& d = A(i, i);
+            for (decltype(+n) c = 0; c < n; ++c) row[c] = d * bi[c];
+        }
+        for (size_type j = jb; j < je; ++j) {
+            const auto& a = A(i, j);
+            const value_type* bj = &B(j, 0);
+            for (decltype(+n) c = 0; c < n; ++c) row[c] += a * bj[c];
+        }
+        for (decltype(+n) c = 0; c < n; ++c) bi[c] = alpha * row[c];
+    };
+    if (upper)
+        for (size_type i = 0; i < m; ++i) form_row(i, i + 1, m);
+    else
+        for (size_type ii = m; ii-- > 0; ) form_row(ii, 0, ii);
+}
 
 } // namespace detail
 
@@ -119,6 +164,10 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
         }
     }
 #endif
+    if constexpr (detail::trmm_uses_row_loop_v<MB>) {
+        detail::trmm_rows(alpha, A, B, upper, unit_diag);
+        return;
+    }
     for (size_type c = 0; c < n; ++c) {
         if (upper) {
             for (size_type i = 0; i < m; ++i) {

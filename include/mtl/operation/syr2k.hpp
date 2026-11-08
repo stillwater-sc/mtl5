@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/matrix.hpp>
@@ -54,6 +55,11 @@ inline constexpr bool syr2k_dispatches_blas_v = [] {
     return false;
 #endif
 }();
+
+/// Whether the generic syr2k<void> forms C's lower triangle row by row over
+/// transposed copies of row-major A and B (#724).
+template <typename MA, typename MB>
+inline constexpr bool syr2k_uses_row_loop_v = row_major_contiguous_v<MA> && row_major_contiguous_v<MB>;
 
 } // namespace detail
 
@@ -113,6 +119,42 @@ void syr2k(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
         }
     }
 #endif
+    if constexpr (detail::syr2k_uses_row_loop_v<MA, MB>) {
+        if (!alpha_zero && m > 0) {
+            // Row-major A and B: the i-l-j form over At = A^T and Bt = B^T
+            // (#724), as syrk. Each C(i, j), j <= i, still adds
+            // A(i,l)*B(j,l) + B(i,l)*A(j,l) in ascending l, as one term per l,
+            // then the same alpha/beta combine, so the result is bit-identical
+            // (contraction aside: see detail::trsm_rows).
+            using TA = typename MA::value_type;
+            using TB = typename MB::value_type;
+            const std::size_t ms = static_cast<std::size_t>(m);
+            std::vector<TA> At(static_cast<std::size_t>(k) * ms);
+            std::vector<TB> Bt(static_cast<std::size_t>(k) * ms);
+            for (size_type j = 0; j < m; ++j)
+                for (size_type l = 0; l < k; ++l) {
+                    At[static_cast<std::size_t>(l) * ms + j] = A(j, l);
+                    Bt[static_cast<std::size_t>(l) * ms + j] = B(j, l);
+                }
+            std::vector<value_type> row(ms);
+            for (size_type i = 0; i < m; ++i) {
+                for (size_type j = 0; j <= i; ++j) row[j] = math::zero<value_type>();
+                for (size_type l = 0; l < k; ++l) {
+                    const auto& ail = A(i, l);
+                    const auto& bil = B(i, l);
+                    const TA* atl = &At[static_cast<std::size_t>(l) * ms];
+                    const TB* btl = &Bt[static_cast<std::size_t>(l) * ms];
+                    for (size_type j = 0; j <= i; ++j) row[j] += ail * btl[j] + bil * atl[j];
+                }
+                for (size_type j = 0; j <= i; ++j)
+                    C(i, j) = beta_zero ? value_type(alpha * row[j]) : value_type(alpha * row[j] + beta * C(i, j));
+            }
+            for (size_type i = 0; i < m; ++i)
+                for (size_type j = 0; j < i; ++j)
+                    C(j, i) = C(i, j);
+            return;
+        }
+    }
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j <= i; ++j) {
             if (alpha_zero) {
