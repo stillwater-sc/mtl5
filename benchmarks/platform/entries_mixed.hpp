@@ -85,7 +85,11 @@ inline problem gemm_f32_f64(size_class c) {
             }
             e.add(s->C(i, j), ref, abs);
         });
-        return e.result();
+        return both(e.result(), freivalds<double>(n, n, 3 * n, [&](const ldvec& x) { return ld_mv(s->C, x); },
+            [&](const ldvec& x) {
+                return std::pair<ldvec, ldvec>{ld_mv(s->A, ld_mv(s->B, x)),
+                                               ld_mv(s->A, ld_mv(s->B, x, false, true), false, true)};
+            }, "Freivalds: C x vs A (B x) at the f64 bound"));
     };
     return p;
 }

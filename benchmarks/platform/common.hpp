@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -115,6 +117,111 @@ void for_samples(std::size_t n, Fn fn) {
         const auto j = static_cast<std::size_t>(g.next_double() * double(n));
         fn(std::min(i, n - 1), std::min(j, n - 1));
     }
+}
+
+/// Both checks must pass. The one reported is the one that failed, or, when
+/// both passed, the one nearer its tolerance.
+inline check_result both(check_result a, check_result b) {
+    const auto ratio = [](const check_result& r) {
+        return r.tolerance > 0 ? r.error / r.tolerance : r.error;
+    };
+    const bool ok = a.ok && b.ok;
+    check_result r = (!b.ok && a.ok) || (a.ok == b.ok && ratio(b) > ratio(a)) ? std::move(b) : std::move(a);
+    r.ok = ok;
+    return r;
+}
+
+// -- Freivalds' check -----------------------------------------------------------
+//
+// A sampled check reads 64 entries of an n x n result, so an error confined to
+// a few rows or one edge tile -- the remainder handling of a blocked kernel, a
+// wrong mirror of one triangle -- passes with high probability. The integer
+// GEMM check missed exactly that in M6. Freivalds' check (1977) covers every
+// entry at O(n^2) cost: for a probe vector x, compare C x with P x, where P is
+// the exact product applied factor by factor (A (B x) for P = A B), never
+// formed.
+//
+// COMPONENTWISE (freivalds). With the probe's entries positive,
+//   |(C x - P x)_i| <= sum_j |C - P|_ij x_j <= gamma_k (|A| |B| x)_i,
+// so the gamma_k bound on every entry of C is checked, row by row, against
+// |P| x = |A| (|B| x). A single wrong entry d at (i, j) moves row i by d x_j,
+// with x_j >= 1; the price of covering every entry is that the row's
+// denominator sums n terms, so the smallest error seen is ~n times larger than
+// an entrywise check's. The entries that have a sampled check keep it: the
+// samples are tight, the probe is complete, and `both` requires each.
+//
+// NORMWISE (freivalds_normwise). For a residual R that must be small in norm --
+// A X - I for inv, Q T Q^T - A for Schur -- |R x| <= |R| |x| in the matching
+// norm: the infinity norm for a bound in |.|_inf, the 2-norm for a bound in
+// |.|_F (|R|_2 <= |R|_F). That checks the normwise bound itself, which is what
+// the backward-error theorems state, on all of R.
+//
+// The reference rounds too: C x, B x and A (B x) are long-double sums of
+// length up to kref. That adds tol<long double>(kref) to the tolerance, which
+// is negligible where long double is wider than double and is the honest bound
+// where it is not (MSVC, Apple ARM64).
+
+using ldvec = std::vector<long double>;
+
+/// A deterministic probe vector with entries in [1, 2).
+inline ldvec probe(std::size_t n, std::uint64_t seed) {
+    xorshift64 g(seed);
+    ldvec x(n);
+    for (auto& v : x) v = 1.0L + g.next_double();
+    return x;
+}
+
+/// op(M) x in long double, op(M) one of M, M^T, |M|, |M|^T.
+template <typename M>
+ldvec ld_mv(const M& A, const ldvec& x, bool trans = false, bool absval = false) {
+    const std::size_t r = A.num_rows(), c = A.num_cols();
+    ldvec y(trans ? c : r, 0.0L);
+    for (std::size_t i = 0; i < r; ++i)
+        for (std::size_t j = 0; j < c; ++j) {
+            long double a = A(i, j);
+            if (absval) a = std::fabs(a);
+            if (trans) y[j] += a * x[i];
+            else       y[i] += a * x[j];
+        }
+    return y;
+}
+
+inline const std::uint64_t freivalds_seeds[2] = {0xF2E1u, 0xF2E2u};
+
+/// Componentwise Freivalds check. got(x) is C x; ref(x) is {P x, |P| x}.
+template <typename T, typename Got, typename Ref>
+check_result freivalds(std::size_t n, std::size_t k, std::size_t kref, Got got, Ref ref, std::string what) {
+    error_tracker e(tol<T>(k) + tol<long double>(kref), std::move(what));
+    for (const auto seed : freivalds_seeds) {
+        const ldvec x = probe(n, seed);
+        const ldvec cx = got(x);
+        const auto [px, ax] = ref(x);
+        for (std::size_t i = 0; i < cx.size(); ++i) e.add(cx[i], px[i], ax[i]);
+    }
+    return e.result();
+}
+
+enum class probe_norm { inf, two };
+
+/// Normwise Freivalds check: |R x| <= tol * scale * |x| in the chosen norm,
+/// where residual(x) is R x.
+template <typename T, typename Res>
+check_result freivalds_normwise(std::size_t n, std::size_t k, std::size_t kref, long double scale,
+                                probe_norm nrm, Res residual, std::string what) {
+    error_tracker e(tol<T>(k) + tol<long double>(kref), std::move(what));
+    const auto norm = [nrm](const ldvec& v) {
+        long double r = 0;
+        for (const long double a : v) {
+            if (!std::isfinite(a)) return std::numeric_limits<long double>::infinity();
+            r = nrm == probe_norm::inf ? std::max(r, std::fabs(a)) : r + a * a;
+        }
+        return nrm == probe_norm::inf ? r : std::sqrt(r);
+    };
+    for (const auto seed : freivalds_seeds) {
+        const ldvec x = probe(n, seed);
+        e.add(norm(residual(x)), 0.0L, scale * norm(x));
+    }
+    return e.result();
 }
 
 } // namespace mtl::bench::platform

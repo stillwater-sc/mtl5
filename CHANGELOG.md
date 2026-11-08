@@ -61,6 +61,17 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **CI checks that `mtl5_bench` covers all of MTL5, and matrix results are checked on every entry** (#721, milestone M7).
+  - **Coverage manifest:** `benchmarks/platform/coverage.txt` maps each of the 150 public headers in the operation, solver, preconditioner, factorization, ordering and eigensolver directories to one of four things: the entry that measures it, the entry it runs inside, an entry of the same kernel class, or a written exemption. 23 headers are exempt, all of them queries, predicates, I/O, umbrella includes or plumbing.
+  - **`benchmarks/check_coverage.sh`** fails in the benchmarks CI lane on any of these:
+    - a header with no line;
+    - a line for a header that is gone;
+    - an entry name that `mtl5_bench --list` doesn't have;
+    - an exemption with no reason.
+  - **DotK:** a new entry, `blas1/dot_k3`, brings the catalogue to 107. It runs `dot_k<3>` on an integer dot product built to cancel, so the exact answer is an int64 sum, and checks it against the Ogita–Rump–Oishi bound. A plain dot misses that bound by a factor of about 10⁷.
+  - **Freivalds' check for matrix results:** level-3 BLAS (gemm, gemmt, symm, syrk, syr2k, trmm, trsm, kron), `inv`, Schur, SVD, `expm`, `sylvester` and the f32→f64 GEMM keep their 64-sample check and add Freivalds' check. It compares C·x with the product applied factor by factor, such as A·(B·x), for two probe vectors, so it covers every entry in O(n²). For residuals (A·X − I, Q·T·Qᵀ − A, ...) it checks the normwise bound in the matching norm. Both checks must pass.
+    - **What the samples missed:** in mutation tests, the 64 samples missed a single wrong GEMM entry, one wrong entry in GEMMT's mirrored triangle, a partial SYRK row and one Kronecker entry. Freivalds caught all four, and every other mutation tried.
+    - **Platforms:** the tolerances hold with `long double` the same as `double` (tested with `g++ -mlong-double-64`), as on MSVC and Apple ARM64.
 - **`mtl5_bench` covers mixed precision, integer kernels and thread scaling** (#721, milestone M6). There are 12 new entries, bringing the catalogue to 106:
   - **Mixed precision:** f32→f64 dot and GEMM, checked at the f64 bound so that a kernel accumulating in f32 fails; and the block-scaled int8 dot (Q8_0), with each block checked on its own.
   - **Integer:** dot and GEMM at i32, i16→i32, i8→i32 and u8×i8→i32, plus `mult_quad`. These are exact, with GEMM checked by Freivalds' C·x = A·(B·x) in int64. They report GOP/s and no %roof.
