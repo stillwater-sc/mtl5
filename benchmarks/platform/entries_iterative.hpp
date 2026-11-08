@@ -187,7 +187,13 @@ problem krylov(size_class c) {
         else if constexpr (Which == 6) e = itl::gmres(s->A, s->x, s->b, M, iter, 30);
         else if constexpr (Which == 7) e = itl::qmr(s->A, s->x, s->b, M, iter);
         else if constexpr (Which == 8) e = itl::tfqmr(s->A, s->x, s->b, M, iter);
-        else e = itl::idr_s(s->A, s->x, s->b, M, iter, 4);
+        else {
+            // IDR(s) at s = 1, 2, 4, 8 (Which 10, 11, 9, 12): s = 1 is close to
+            // BiCGSTAB; a larger s needs fewer iterations but costs s + 1 matvecs
+            // and O(s n) memory per cycle, so the best s depends on the machine.
+            constexpr std::size_t sv = Which == 10 ? 1 : Which == 11 ? 2 : Which == 12 ? 8 : 4;
+            e = itl::idr_s(s->A, s->x, s->b, M, iter, sv);
+        }
         s->err = e;
         s->iters = iter.iterations();
     };
@@ -645,7 +651,10 @@ inline void register_all(registry& r) {
     r.add("krylov", "gmres30+ilu0", "f64", krylov<6>);
     r.add("krylov", "qmr+ilu0", "f64", krylov<7>);
     r.add("krylov", "tfqmr+ilu0", "f64", krylov<8>);
+    r.add("krylov", "idr_s1+ilu0", "f64", krylov<10>);
+    r.add("krylov", "idr_s2+ilu0", "f64", krylov<11>);
     r.add("krylov", "idr_s4+ilu0", "f64", krylov<9>);
+    r.add("krylov", "idr_s8+ilu0", "f64", krylov<12>);
 
     r.add("pc", "diagonal", "f64", pc_setup<0>);
     r.add("pc", "ilu_0", "f64", pc_setup<1>);

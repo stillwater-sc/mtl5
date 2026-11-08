@@ -61,15 +61,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
-- **`mtl5_bench` covers Krylov solvers, preconditioners, smoothers, multigrid and the sparse eigensolvers** (#721, milestone M5). There are 25 new entries, bringing the catalogue to 91, and each has a check that a wrong result can't pass:
-  - **Krylov solvers (`cg`, `minres`, `bicg`, `bicgstab`, `bicgstab_ell`, `cgs`, `gmres`, `qmr`, `tfqmr`, `idr_s`):** the solver reports convergence, and the *true* residual is ≤ 1e-6.
+- **`mtl5_bench` covers Krylov solvers, preconditioners, smoothers, multigrid and the sparse eigensolvers** (#721, milestone M5). There are 28 new entries, bringing the catalogue to 94, and each has a check that a wrong result can't pass:
+  - **Krylov solvers (`cg`, `minres`, `bicg`, `bicgstab`, `bicgstab_ell`, `cgs`, `gmres`, `qmr`, `tfqmr`, and `idr_s` at s = 1, 2, 4 and 8):** the solver reports convergence, and the *true* residual is ≤ 1e-6.
   - **Preconditioner setups (`diagonal`, `ilu_0`, `ilut`, `ic_0`, `ildl`, `ssor`, `block_diagonal`):** each must cut the Krylov iteration count to at most ¾, and the diagonal one must also match b_i/a_ii exactly.
   - **Smoothers (`jacobi`, `gauss_seidel`, `sor`):** each sweep satisfies its defining splitting row by row, within `γ_k`.
   - **Multigrid:** a 2D Poisson V(1,1) hierarchy with tensor-product transfers and Galerkin coarse operators must reach 1e-6 in 10 cycles.
   - **Shift-invert:** convergence, and the *analytic* smallest eigenvalues to 1e-10. The generated Laplacian and convection–diffusion matrices have closed-form spectra.
   - **Lanczos, Arnoldi and power iteration:** a Bauer–Fike enclosure of every returned pair, plus rigorous upper bounds (Cauchy interlacing, and the numerical range for Arnoldi) and an accuracy floor.
 
-  The mutation runs found three checks too weak (a near-correct diagonal preconditioner, and eigenvalues shifted together with their error bars), and those checks were strengthened. All 91 checks then fail on corrupted results. All 91 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double` (as on MSVC and Apple ARM64) and on aarch64 under QEMU. Run time on an i7-12700K with one thread: about 11 s / 70 s / 7.5 min.
+  The mutation runs found three checks too weak (a near-correct diagonal preconditioner, and eigenvalues shifted together with their error bars), and those checks were strengthened. All checks then fail on corrupted results. All 94 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double` (as on MSVC and Apple ARM64) and on aarch64 under QEMU. Run time on an i7-12700K with one thread: about 11 s / 70 s / 7.5 min.
 
   The run found these problems, which aren't addressed here:
   - **TFQMR fails on unsymmetric systems.** On convection–diffusion it stalls at a 6–9% residual after thousands of iterations with any preconditioner, where BiCGSTAB converges in 13–52. Its unit tests use only symmetric matrices (the "non-symmetric" 3×3 case is symmetric). On the SPD Poisson matrix it converges, but needs 10× BiCGSTAB's iterations; the entry runs there.

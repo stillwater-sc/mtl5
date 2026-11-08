@@ -177,7 +177,7 @@ high-intensity ones against the FMA peak.
 
 `sparse_qr` runs on half the direct grid's side (see its entry), because one QR solve at 96² took over 4 s.
 
-The registry covers 91 entries so far:
+The registry covers 94 entries so far:
 - **BLAS levels 1–3** (#721 milestone M1).
 - **Dense factorizations:** LU, Cholesky, LDLᵀ, Bunch–Kaufman, QR, LQ, Hessenberg, the Householder step, `inv`, and f32→f64 LU refinement.
 - **Eigensolvers and matrix functions:** symmetric (tridiagonal QR and Jacobi), general, Schur, SVD, `expm` and `sylvester`.
@@ -185,7 +185,7 @@ The registry covers 91 entries so far:
 - **Sparse kernels:** SpMV, transposed SpMV, CRS×dense, SpGEMM and the level-scheduled lower solve.
 - **Sparse direct solvers:** Cholesky, LDLᵀ, supernodal LDLᵀ, LU, supernodal LU, native KLU and QR.
 - **Orderings:** AMD, COLAMD, RCM and the block-triangular form (M4).
-- **Krylov solvers:** CG, MINRES, BiCG, BiCGSTAB, BiCGSTAB(ℓ), CGS, GMRES(30), QMR, TFQMR and IDR(s). Each is checked by the true residual it reaches.
+- **Krylov solvers:** CG, MINRES, BiCG, BiCGSTAB, BiCGSTAB(ℓ), CGS, GMRES(30), QMR, TFQMR and IDR(s) at s = 1, 2, 4 and 8. Each is checked by the true residual it reaches.
 - **Preconditioner setups:** diagonal, ILU(0), ILUT, IC(0), ILDL, SSOR and block-diagonal. Each must cut the Krylov iteration count by at least a quarter.
 - **Smoothers:** Jacobi, Gauss–Seidel and SOR. Each is checked against its defining splitting, row by row.
 - **Multigrid:** a 2D Poisson V(1,1) cycle.
