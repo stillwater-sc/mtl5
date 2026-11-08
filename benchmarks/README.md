@@ -174,10 +174,13 @@ high-intensity ones against the FMA peak.
   last-level cache.** Its rate is a cache rate, but its percentage is against
   DRAM bandwidth. The `small` class is cache-resident on purpose: it is a smoke
   run. `medium` and `large` are sized well past any LLC, so they measure DRAM.
-- **`!` marks a result above 130% of a DRAM roofline.** No kernel beats a
-  measured ceiling by that much, so the entry's flop or byte model is the
-  likely cause. It is a warning, not a failed check. The JSON field is
-  `suspect_model`. symv was the first case: it charged all of A where it
+- **`!` marks a bandwidth-bound result above 150% of the DRAM roofline.**
+  Tuned kernels beat the measured ceilings by 10–20%, and the bandwidth probe
+  varies by about 10% between runs, but not by that much, so the entry's
+  byte model is the likely cause. It is a warning, not a failed check, and the JSON
+  field is `suspect_model`. It is not raised for compute-bound results, whose
+  FMA-peak probe may not cover the kernel's SIMD width, or when the
+  last-level cache size is unknown. symv was the first case: it charged all of A where it
   reads one triangle, and showed 184% (#743).
 - **The probes and the operations use the same thread count,** MTL5's pool
   size (`MTL5_NUM_THREADS`, default 1).

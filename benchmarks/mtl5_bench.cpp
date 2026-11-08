@@ -310,7 +310,7 @@ bool write_card(const std::string& path, const std::string& label, const std::st
         md << "\n\\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.\n";
     if (any_suspect)
         md << "\n! more than " << std::setprecision(0) << bp::kSuspectRooflinePct
-           << "% of a DRAM roofline: the entry's flop or byte model is probably wrong.\n";
+           << "% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong.\n";
     md << "\n";
     md.flush();
     return static_cast<bool>(md);
@@ -447,7 +447,7 @@ int main(int argc, char** argv) {
                   << " MiB): a cache rate, shown as a % of the DRAM roofline\n";
     if (any_suspect)
         std::cout << "\n! more than " << std::setprecision(0) << bp::kSuspectRooflinePct
-                  << "% of a DRAM roofline: the entry's flop or byte model is probably wrong\n";
+                  << "% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong\n";
 
     if (!json_path.empty()) {
         // A result without its sidecar is the provenance loss check_sidecars.sh
