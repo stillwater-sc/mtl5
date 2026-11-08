@@ -59,6 +59,24 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **`pc::ic_0` and `pc::ildl` apply in O(nnz), and `pc::ilu_0` and `pc::ilut` set up in O(nnz), with results unchanged bit for bit** (#732, #733). Each had a loop that was quadratic in n however sparse the matrix: IC(0) was about 1,000× slower per apply than ILU(0) at n = 16,384, and the ILU(0)/ILUT setup took longer than the Krylov solve that followed.
+  - **`ic_0` and `ildl` apply** (`solve` and `adjoint_solve`): the Lᵀ back substitution found column i of L by scanning every later row. It now gathers from a transposed (CSC) copy of the strictly lower L, built once at factorization. Each column lists its rows in ascending order, the order the scan found them, so every x(i) subtracts the same terms in the same order.
+  - **`ilu_0` setup:** each row's elimination visited every column k < i to find the few that are nonzero. ILU(0) has no fill, so it now loops over the row's own sorted columns k < i, the same k in the same order.
+  - **`ilut` setup:** the same scan, kept because ILUT's fill must be eliminated in ascending column order. The pending lower columns are now a min-heap (Saad, *Iterative Methods for Sparse Linear Systems*, §10.4). Each column is pushed when it first becomes nonzero, from A or as fill, and the smallest is popped next. Fill from step k lands only above k, and a column is dropped only when it is popped, so the heap yields exactly the k the scan did, in the same order. This applies to the accumulator path too, which shares the loop.
+  - **Bit identity:** the four headers from before the change, compiled side by side with the new ones, agree bit for bit in all 37 combinations tried. These cover SPD, nonsymmetric, random-pattern and complex-symmetric matrices, `solve` and `adjoint_solve`, the default and a `long double` accumulator, and three ILUT fill and threshold settings.
+  - **Results** on the 2D 5-point stencil, one thread, i7-12700K:
+
+    | n | `ic_0` apply | `ildl` apply | `ilu_0` setup | `ilut` setup |
+    |---:|---:|---:|---:|---:|
+    | 4,096 | 9.3 → 0.037 ms | 3.7 → 0.021 ms | 5.5 → 0.39 ms | 9.0 → 4.1 ms |
+    | 16,384 | 129 → 0.17 ms | 57 → 0.095 ms | 84 → 1.5 ms | 99 → 17.9 ms |
+    | 65,536 | — → 0.74 ms | — → 0.41 ms | — → 6.1 ms | — → 76 ms |
+
+    Each 4× step in n now costs 4.0–4.4×, where it cost 10–16×.
+  - **`mtl5_bench`:** `krylov/cg+ilu0` becomes `cg+ic0`, CG with IC(0) as the textbook pairs them, which ILU(0) had stood in for. The `pc/ic_0` and `pc/ildl` setup entries lose their 64² grid cap.
+  - **Memory:** `ic_0` and `ildl` with the default accumulator hold a second copy of L, by column. The accumulator path scatters and keeps none.
+  - **Test:** `test_pc_sparse_cost` times each operation at n = 64² and 256², a 16× step, and requires a ratio under 64×. Linear code gives 18–21×; the old loops gave 214× (`ic_0`) and 240× (`ilu_0`) when restored. It also checks the four factorizations are exact on a tridiagonal at n = 65,536.
+
 - **`trmv` and `trsv` reach the bandwidth roofline on BLAS and native-fast builds, up from 41%** (#747). They had run at about 3.8 GFLOP/s in every build, while `gemv` reached the roofline in the BLAS and native-fast builds.
   - **BLAS build:** the dispatch took only a column-major A, so the default row-major `dense2D` never reached BLAS. A row-major A is now passed to `?trmv`/`?trsv` as its buffer read column-major, which is Aᵀ: the other triangle, with `trans = 'T'`. This is the same mapping #724 gave the Level 3 operations.
   - **Native-fast build without BLAS:** above 64 rows (`detail::triangular_block`), A's diagonal is walked in blocks of 64. The SIMD gemv forms each block's off-diagonal panel into a buffer, and the row loop forms the diagonal block and adds the buffer. For `trmv` the blocks go bottom-up (lower) or top-down (upper), so every x(j) read still holds its original value. For `trsv` they go the other way, so every x(j) read is already solved. Either orientation of A works.

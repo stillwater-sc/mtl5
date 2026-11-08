@@ -260,21 +260,26 @@ private:
         // Copy A into row-indexed structure
         std::vector<value_type> row_work(n_, math::zero<value_type>());
         std::vector<bool> row_nz(n_, false);
-        std::vector<size_type> nz_cols;
+        std::vector<size_type> nz_cols, lower;
 
         for (size_type i = 0; i < n_; ++i) {
             // Clear work arrays
             nz_cols.clear();
+            lower.clear();
             for (size_type k = a_starts[i]; k < a_starts[i + 1]; ++k) {
                 size_type j = a_indices[k];
                 row_work[j] = a_data[k];
                 row_nz[j] = true;
                 nz_cols.push_back(j);
+                if (j < i) lower.push_back(j);
             }
+            std::sort(lower.begin(), lower.end());
 
-            // IKJ elimination: for each k < i where A(i,k) is nonzero
-            for (size_type k = 0; k < i; ++k) {
-                if (!row_nz[k]) continue;
+            // IKJ elimination over the row's stored k < i, ascending (#733).
+            // ILU(0) has no fill, so these are exactly the k a scan of every
+            // column 0..i-1 would stop at, in the same order -- the factor is
+            // bit-identical -- for O(nnz) per row instead of O(i).
+            for (const size_type k : lower) {
                 row_work[k] /= u_diag_[k];
 
                 // Update: row(j) -= row(k) * U(k,j) for j > k, only at existing positions

@@ -21,7 +21,10 @@
 // L(j,k) D(k).) A(i,j) is assigned into the
 // accumulator rather than subtracted from a rounded sum. The forward solve
 // forms b(i) - sum inside the accumulator; the L^T solve scatters into one
-// accumulator per component (workspace n) where the void path scans later rows.
+// accumulator per component (workspace n). The void path gathers from a
+// transposed copy of L built at factorization (#732): column i's rows j > i in
+// ascending order, the order the original scan of every later row found them,
+// so the bits are unchanged and an apply is O(nnz(L)) instead of O(n * nnz).
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <cassert>
 #include <type_traits>
@@ -101,19 +104,12 @@ private:
         for (size_type i = 0; i < n_; ++i)
             x(i) /= c(d_[i]);
 
-        // Back substitution: L^T*x = z
+        // Back substitution: L^T*x = z, column i of L -- its rows j > i,
+        // ascending -- from the transposed copy (#732).
         for (size_type ii = 0; ii < n_; ++ii) {
             size_type i = n_ - 1 - ii;
-            // Scan rows j > i for L(j,i) entries
-            for (size_type j = i + 1; j < n_; ++j) {
-                for (size_type k = l_starts_[j]; k < l_starts_[j + 1]; ++k) {
-                    if (l_indices_[k] == i) {
-                        x(i) -= c(l_data_[k]) * x(j);
-                        break;
-                    }
-                    if (l_indices_[k] > i) break;
-                }
-            }
+            for (size_type p = lt_starts_[i]; p < lt_starts_[i + 1]; ++p)
+                x(i) -= c(lt_data_[p]) * x(lt_rows_[p]);
         }
     }
 
@@ -266,12 +262,33 @@ private:
                 }
             }
         }
+        if constexpr (std::is_void_v<Accumulator>)
+            build_transpose();
+    }
+
+    /// L by column (CSC), for the void back substitution (#732). Filling row
+    /// by row in ascending i lists each column's rows in ascending order.
+    void build_transpose() {
+        lt_starts_.assign(n_ + 1, 0);
+        for (size_type k = 0; k < l_indices_.size(); ++k) ++lt_starts_[l_indices_[k] + 1];
+        for (size_type j = 0; j < n_; ++j) lt_starts_[j + 1] += lt_starts_[j];
+        lt_rows_.resize(lt_starts_[n_]);
+        lt_data_.resize(lt_starts_[n_]);
+        std::vector<size_type> next(lt_starts_.begin(), lt_starts_.end() - 1);
+        for (size_type i = 0; i < n_; ++i)
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k) {
+                const size_type j = l_indices_[k];
+                lt_rows_[next[j]] = i;
+                lt_data_[next[j]++] = l_data_[k];
+            }
     }
 
     size_type n_;
     std::vector<size_type> l_starts_, l_indices_;
     std::vector<value_type> l_data_;
     std::vector<value_type> d_;
+    std::vector<size_type> lt_starts_, lt_rows_;   // L by column (void path)
+    std::vector<value_type> lt_data_;
 };
 
 } // namespace mtl::itl::pc

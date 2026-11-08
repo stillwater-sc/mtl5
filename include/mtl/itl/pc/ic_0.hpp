@@ -19,10 +19,13 @@
 // round-out. The void path rounds the sum first and then subtracts it, so the
 // two agree bit for bit only where a reduction has at most one term.
 //
-// The back substitution needs L by column. The void path finds each L(j,i) by
-// scanning every later row (O(n * nnz)); the accumulator path scatters instead,
-// into one live accumulator per component (workspace n, the shape of the
-// transposed SpMV in operation/mult.hpp; see the workspace note in
+// The back substitution needs L by column. The void path reads a transposed
+// copy of the strictly lower L, built once at factorization (#732): column i
+// lists its rows j > i in ascending order, so each x(i) gathers its terms in
+// the order the original scan of every later row found them -- bit for bit --
+// in O(nnz(L)) per apply instead of O(n * nnz). The accumulator path scatters
+// instead, into one live accumulator per component (workspace n, the shape of
+// the transposed SpMV in operation/mult.hpp; see the workspace note in
 // math/accumulator_traits.hpp).
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <cassert>
@@ -101,20 +104,13 @@ private:
             }
             x(i) = (b(i) - sum) / c(l_diag_[i]);
         }
-        // Back substitution: L^T*x = y
-        // L^T is upper triangular. We use the stored L in column-access pattern.
+        // Back substitution: L^T*x = y, gathering column i of L -- its rows
+        // j > i, ascending -- from the transposed copy (#732).
         for (size_type ii = 0; ii < n_; ++ii) {
             size_type i = n_ - 1 - ii;
             auto sum = math::zero<value_type>();
-            // Scan all rows j > i for entries L(j, i)
-            for (size_type j = i + 1; j < n_; ++j) {
-                for (size_type k = l_starts_[j]; k < l_starts_[j + 1]; ++k) {
-                    if (l_indices_[k] == i) {
-                        sum += c(l_data_[k]) * x(j);
-                        break;
-                    }
-                }
-            }
+            for (size_type p = lt_starts_[i]; p < lt_starts_[i + 1]; ++p)
+                sum += c(lt_data_[p]) * x(lt_rows_[p]);
             x(i) = (x(i) - sum) / c(l_diag_[i]);
         }
     }
@@ -230,6 +226,28 @@ private:
                 ++pos;
             }
         }
+        if constexpr (std::is_void_v<Accumulator>)
+            build_transpose();
+    }
+
+    /// The strictly lower L by column (CSC), for the void back substitution
+    /// (#732). Filling row by row in ascending i lists each column's rows in
+    /// ascending order.
+    void build_transpose() {
+        lt_starts_.assign(n_ + 1, 0);
+        for (size_type i = 0; i < n_; ++i)
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                if (l_indices_[k] < i) ++lt_starts_[l_indices_[k] + 1];
+        for (size_type j = 0; j < n_; ++j) lt_starts_[j + 1] += lt_starts_[j];
+        lt_rows_.resize(lt_starts_[n_]);
+        lt_data_.resize(lt_starts_[n_]);
+        std::vector<size_type> next(lt_starts_.begin(), lt_starts_.end() - 1);
+        for (size_type i = 0; i < n_; ++i)
+            for (size_type k = l_starts_[i]; k < l_starts_[i + 1]; ++k)
+                if (const size_type j = l_indices_[k]; j < i) {
+                    lt_rows_[next[j]] = i;
+                    lt_data_[next[j]++] = l_data_[k];
+                }
     }
 
     /// The factorization above with each entry one accumulator: A(i,j) is
@@ -272,6 +290,8 @@ private:
     std::vector<size_type> l_starts_, l_indices_;
     std::vector<value_type> l_data_;
     std::vector<value_type> l_diag_;
+    std::vector<size_type> lt_starts_, lt_rows_;   // strictly lower L by column (void path)
+    std::vector<value_type> lt_data_;
 };
 
 } // namespace mtl::itl::pc

@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <functional>
 #include <type_traits>
 #include <vector>
 #include <utility>
@@ -188,7 +189,7 @@ private:
         // Dense work row for accumulation
         std::vector<value_type> w(n_, math::zero<value_type>());
         std::vector<bool> w_nz(n_, false);
-        std::vector<size_type> nz_cols;
+        std::vector<size_type> nz_cols, pending;
         // One accumulator per column of the work row; empty for void.
         std::vector<acc_type> wa(accumulated ? n_ : 0);
 
@@ -216,13 +217,28 @@ private:
             }
 
             // IKJ elimination: for each k < i where w[k] is nonzero.
-            // Process columns in strictly ascending order (k = 0, 1, ..., i-1)
-            // so that fill-in at lower columns is incorporated before higher
-            // columns are finalized.  A nz_cols-indexed loop would process
-            // fill-in entries appended by push_back out of order, producing
-            // incorrect L/U factors.
-            for (size_type k = 0; k < i; ++k) {
-                if (!w_nz[k]) continue;
+            // Process columns in strictly ascending order so that fill-in at
+            // lower columns is incorporated before higher columns are
+            // finalized. A nz_cols-indexed loop would process fill-in entries
+            // appended by push_back out of order, producing incorrect L/U
+            // factors.
+            //
+            // The pending columns k < i are a min-heap (#733; Saad, Iterative
+            // Methods for Sparse Linear Systems, 10.4): each enters when it
+            // first becomes nonzero -- from A, or as fill -- and the smallest
+            // is taken next. Fill from step k lands only at columns > k, and a
+            // column is dropped only when it is itself taken, so the heap
+            // yields exactly the k a scan of every column 0..i-1 would stop
+            // at, in the same order: the factor is bit-identical, and a row
+            // costs O(nnz log nnz) instead of O(i).
+            pending.clear();
+            for (auto j : nz_cols)
+                if (j < i) pending.push_back(j);
+            std::make_heap(pending.begin(), pending.end(), std::greater<>{});
+            while (!pending.empty()) {
+                std::pop_heap(pending.begin(), pending.end(), std::greater<>{});
+                const size_type k = pending.back();
+                pending.pop_back();
 
                 if constexpr (accumulated) w[k] = AT::template value<value_type>(wa[k]);
                 w[k] /= u_diag_[k];
@@ -243,6 +259,10 @@ private:
                         w[uj] = math::zero<value_type>();
                         if constexpr (accumulated) AT::clear(wa[uj]);
                         nz_cols.push_back(uj);
+                        if (uj < i) {   // a lower column still to eliminate
+                            pending.push_back(uj);
+                            std::push_heap(pending.begin(), pending.end(), std::greater<>{});
+                        }
                     }
                     if constexpr (accumulated) AT::add_product(wa[uj], -w[k], uv);
                     else                       w[uj] -= w[k] * uv;
