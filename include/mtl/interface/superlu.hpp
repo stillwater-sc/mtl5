@@ -3,7 +3,7 @@
 // SuperLU uses a supernodal left-looking LU algorithm for general
 // unsymmetric sparse systems.
 //
-// Guarded by MTL5_HAS_SUPERLU (set by CMake when MTL5_ENABLE_SUPERLU=ON)
+// Guarded by MTL5_HAS_SUPERLU (set by CMake when MTL5_WITH_SUPERLU=ON)
 //
 // Reference: Demmel et al., "A Supernodal Approach to Sparse Partial
 //            Pivoting", SIAM J. Matrix Anal. Appl., 20(3), 1999.

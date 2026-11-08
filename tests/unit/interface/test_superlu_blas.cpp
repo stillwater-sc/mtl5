@@ -25,11 +25,65 @@ using namespace mtl;
 #if defined(MTL5_HAS_SUPERLU) && defined(MTL5_HAS_BLAS)
 
 // The renaming must not leak: after the headers, the BLAS names are the real
-// symbols again (for the usual trailing-underscore Fortran convention, the
+// symbols again and the bookkeeping macros are gone. The list is the one
+// superlu.hpp renames (for the usual trailing-underscore Fortran convention, the
 // one slu_Cnames.h leaves unmapped).
-#  if defined(dgemm_) || defined(dgemv_) || defined(dtrsv_) || defined(dtrsm_) || \
-      defined(daxpy_) || defined(dcopy_) || defined(ddot_)
-#    error "superlu.hpp leaked a BLAS-name macro"
+#  if defined(daxpy_) || defined(MTL5_SLU_HID_daxpy_)
+#    error "superlu.hpp leaked the renaming of daxpy_"
+#  endif
+#  if defined(dcopy_) || defined(MTL5_SLU_HID_dcopy_)
+#    error "superlu.hpp leaked the renaming of dcopy_"
+#  endif
+#  if defined(ddot_) || defined(MTL5_SLU_HID_ddot_)
+#    error "superlu.hpp leaked the renaming of ddot_"
+#  endif
+#  if defined(dscal_) || defined(MTL5_SLU_HID_dscal_)
+#    error "superlu.hpp leaked the renaming of dscal_"
+#  endif
+#  if defined(dnrm2_) || defined(MTL5_SLU_HID_dnrm2_)
+#    error "superlu.hpp leaked the renaming of dnrm2_"
+#  endif
+#  if defined(dasum_) || defined(MTL5_SLU_HID_dasum_)
+#    error "superlu.hpp leaked the renaming of dasum_"
+#  endif
+#  if defined(idamax_) || defined(MTL5_SLU_HID_idamax_)
+#    error "superlu.hpp leaked the renaming of idamax_"
+#  endif
+#  if defined(dgemv_) || defined(MTL5_SLU_HID_dgemv_)
+#    error "superlu.hpp leaked the renaming of dgemv_"
+#  endif
+#  if defined(dger_) || defined(MTL5_SLU_HID_dger_)
+#    error "superlu.hpp leaked the renaming of dger_"
+#  endif
+#  if defined(dsymv_) || defined(MTL5_SLU_HID_dsymv_)
+#    error "superlu.hpp leaked the renaming of dsymv_"
+#  endif
+#  if defined(dtrmv_) || defined(MTL5_SLU_HID_dtrmv_)
+#    error "superlu.hpp leaked the renaming of dtrmv_"
+#  endif
+#  if defined(dtrsv_) || defined(MTL5_SLU_HID_dtrsv_)
+#    error "superlu.hpp leaked the renaming of dtrsv_"
+#  endif
+#  if defined(dgemm_) || defined(MTL5_SLU_HID_dgemm_)
+#    error "superlu.hpp leaked the renaming of dgemm_"
+#  endif
+#  if defined(dgemmt_) || defined(MTL5_SLU_HID_dgemmt_)
+#    error "superlu.hpp leaked the renaming of dgemmt_"
+#  endif
+#  if defined(dsymm_) || defined(MTL5_SLU_HID_dsymm_)
+#    error "superlu.hpp leaked the renaming of dsymm_"
+#  endif
+#  if defined(dsyrk_) || defined(MTL5_SLU_HID_dsyrk_)
+#    error "superlu.hpp leaked the renaming of dsyrk_"
+#  endif
+#  if defined(dsyr2k_) || defined(MTL5_SLU_HID_dsyr2k_)
+#    error "superlu.hpp leaked the renaming of dsyr2k_"
+#  endif
+#  if defined(dtrmm_) || defined(MTL5_SLU_HID_dtrmm_)
+#    error "superlu.hpp leaked the renaming of dtrmm_"
+#  endif
+#  if defined(dtrsm_) || defined(MTL5_SLU_HID_dtrsm_)
+#    error "superlu.hpp leaked the renaming of dtrsm_"
 #  endif
 
 TEST_CASE("SuperLU solve and BLAS-dispatched operations in one translation unit", "[interface][superlu][blas][725]") {
