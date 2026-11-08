@@ -61,6 +61,23 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`mtl5_bench` covers mixed precision, integer kernels and thread scaling** (#721, milestone M6). There are 12 new entries, bringing the catalogue to 106:
+  - **Mixed precision:** f32→f64 dot and GEMM, checked at the f64 bound so that a kernel accumulating in f32 fails; and the block-scaled int8 dot (Q8_0), with each block checked on its own.
+  - **Integer:** dot and GEMM at i32, i16→i32, i8→i32 and u8×i8→i32, plus `mult_quad`. These are exact, with GEMM checked by Freivalds' C·x = A·(B·x) in int64. They report GOP/s and no %roof.
+
+  **Thread scaling:** `mtl5_bench --baseline FILE` reports each entry's speedup and parallel efficiency against a run at fewer threads, and refuses a baseline from another size class. The card adds a scaling column and a per-area median efficiency. `platform.sh` and `platform.ps1` pass each variant's 1-thread JSON as the baseline for its other runs.
+
+  The mutation runs found two blind spots, both fixed:
+  - **Integer GEMM checks sampled 64 entries.** Corrupting every third diagonal entry passed. They now use Freivalds, which sees every entry.
+  - **The block-scaled total is bound by f32 summation.** It now also checks every block against `γ_32`.
+
+  All 106 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double`, and on aarch64 under QEMU.
+
+  Findings, not addressed here (i7-12700K):
+  - **Plain `mult(A, B, C)` with f32 A and B and an f64 C is only f32-product accurate** (about 1e-8), because C++ promotion rounds each product in f32. `mult<double>` is accurate to 1e-16, and the entry uses it.
+  - **`mult<double>` on f32 operands runs at 4.3 GFLOP/s,** against about 20 for f64 GEMM. It doesn't reach the blocked kernel.
+  - **The 4-thread median parallel efficiency of the BLAS level-3 entries is 25%,** because most of them run serially. The cause is the same as #724.
+
 - **`mtl5_bench` covers Krylov solvers, preconditioners, smoothers, multigrid and the sparse eigensolvers** (#721, milestone M5). There are 28 new entries, bringing the catalogue to 94, and each has a check that a wrong result can't pass:
   - **Krylov solvers (`cg`, `minres`, `bicg`, `bicgstab`, `bicgstab_ell`, `cgs`, `gmres`, `qmr`, `tfqmr`, and `idr_s` at s = 1, 2, 4 and 8):** the solver reports convergence, and the *true* residual is ≤ 1e-6.
   - **Preconditioner setups (`diagonal`, `ilu_0`, `ilut`, `ic_0`, `ildl`, `ssor`, `block_diagonal`):** each must cut the Krylov iteration count to at most ¾, and the diagonal one must also match b_i/a_ii exactly.

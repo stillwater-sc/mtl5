@@ -86,6 +86,9 @@ for t in "${THREAD_LIST[@]}"; do
     case "$t" in ''|*[!0-9]*|0) echo "platform.sh: bad thread count '$t'" >&2; exit 2 ;; esac
     [ "$t" -gt "$max_threads" ] && max_threads=$t
 done
+# Ascending and de-duplicated: the 1-thread run, when requested, comes first,
+# so every later run has this session's baseline to compare against.
+THREAD_LIST=($(printf '%s\n' "${THREAD_LIST[@]}" | sort -n -u))
 for v in "${VARIANT_LIST[@]}"; do
     case "$v" in native|native-fast|blas) ;; *) echo "platform.sh: unknown variant '$v'" >&2; exit 2 ;; esac
 done
@@ -182,11 +185,22 @@ fi
 RUNS=()
 for v in "${BUILT[@]}"; do
     exe="$BUILD_ROOT/$v/benchmarks/mtl5_bench"
+    t1_json=""   # this invocation's 1-thread result for $v, once it exists
     for t in "${THREAD_LIST[@]}"; do
         base="$OUT/$v-t$t"
         echo "== run $v, $t thread(s)"
+        # A reused --out may hold a previous session's files for this run: remove
+        # them, so neither the summary nor a baseline can pick up stale data.
+        rm -f "$base.json" "$base.json.sysinfo" "$base.md"
         args=(--class "$CLASS" --label "$v" --json "$base.json" --card "$base.md")
         [ -n "$MACHINE" ] && args+=(--machine "$MACHINE")
+        # Thread scaling (#721 M6): every run after the 1-thread one is compared
+        # with it, entry by entry -- speedup and parallel efficiency in the JSON
+        # and the card. The pool is sized once per process, so scaling can only
+        # be measured across runs.
+        # Only a baseline THIS invocation produced: a file left by an earlier session
+        # could come from another build.
+        if [ "$t" != 1 ] && [ -n "$t1_json" ]; then args+=(--baseline "$t1_json"); fi
         # Every library's pool is pinned to the same count: OpenBLAS, MKL and BLIS
         # start one thread per core by default, so a "1-thread" BLAS run would
         # otherwise use all of them (a 1-thread blas3 measured 202% of the
@@ -205,6 +219,7 @@ for v in "${BUILT[@]}"; do
               case "$after" in *thermal_after_c=*) echo "$after" ;; *) echo "thermal_after_c=unavailable" ;; esac
             } >> "$base.json.sysinfo"
             RUNS+=("$base")
+            [ "$t" = 1 ] && [ -f "$base.json" ] && t1_json="$base.json"
         fi
     done
 done

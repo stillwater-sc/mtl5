@@ -112,6 +112,8 @@ benchmarks/platform.sh                # Windows: .\benchmarks\platform.ps1
 4. Runs each variant at 1 thread and at all CPUs. MTL5's pool and every
    vendor library's pool are pinned to the same count.
 
+**Thread scaling.** The thread pool is sized once per process, so scaling is measured across runs. Every run after a variant's 1-thread run is compared with it (`mtl5_bench --baseline <variant>-t1.json`), and the JSON and card then report each entry's speedup and parallel efficiency, plus a per-area median. A baseline from another size class is refused.
+
 Results go to `build-platform/results/<host>-<UTC time>/`:
 - `<variant>-t<T>.json`, with its `.sysinfo` sidecar, to which `preflight`'s
   machine-state record is appended;
@@ -171,13 +173,13 @@ high-intensity ones against the FMA peak.
 
 | class | vectors | matrix–vector | matrix–matrix, factorizations | eigen / SVD | sparse kernels, smoothers (grid) | sparse direct, orderings (grid) | Krylov, preconditioners (grid) | multigrid (grid) | sparse eigen (grid) | catalogue time (i7-12700K, 1 thread) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `small`  | 2^15 | 512 | 128 | 64 | 64² | 32² | 32² | 63² | 24×25 | ~11 s |
-| `medium` | 2^23 | 4096 | 512 | 256 | 512² | 96² | 128² | 255² | 64×65 | ~70 s |
-| `large`  | 2^25 | 8192 | 1024 | 512 | 1024² | 192² | 256² | 511² | 128×129 | ~7.5 min; peak memory ~1 GiB (`ger`'s two 8192² matrices) |
+| `small`  | 2^15 | 512 | 128 | 64 | 64² | 32² | 32² | 63² | 24×25 | ~12 s |
+| `medium` | 2^23 | 4096 | 512 | 256 | 512² | 96² | 128² | 255² | 64×65 | ~80 s |
+| `large`  | 2^25 | 8192 | 1024 | 512 | 1024² | 192² | 256² | 511² | 128×129 | ~8 min; peak memory ~1 GiB (`ger`'s two 8192² matrices) |
 
 `sparse_qr` runs on half the direct grid's side (see its entry), because one QR solve at 96² took over 4 s.
 
-The registry covers 94 entries so far:
+The registry covers 106 entries so far:
 - **BLAS levels 1–3** (#721 milestone M1).
 - **Dense factorizations:** LU, Cholesky, LDLᵀ, Bunch–Kaufman, QR, LQ, Hessenberg, the Householder step, `inv`, and f32→f64 LU refinement.
 - **Eigensolvers and matrix functions:** symmetric (tridiagonal QR and Jacobi), general, Schur, SVD, `expm` and `sylvester`.
@@ -190,6 +192,8 @@ The registry covers 94 entries so far:
 - **Smoothers:** Jacobi, Gauss–Seidel and SOR. Each is checked against its defining splitting, row by row.
 - **Multigrid:** a 2D Poisson V(1,1) cycle.
 - **Sparse eigensolvers:** Lanczos, Arnoldi, shift-invert and power iteration. They're checked against the analytic spectrum of the generated matrices (M5).
+- **Mixed precision:** f32→f64 dot and GEMM (via `mult<double>`), and the block-scaled int8 dot (the Q8_0 layout). Each is checked at the wide precision's bound, so a kernel that silently accumulates in f32 fails.
+- **Integer:** dot and GEMM in int32, int16→int32, int8→int32 and uint8×int8→int32, plus the quad (VNNI/SDOT) GEMM. The checks are exact: GEMM by Freivalds' C·x = A·(B·x) in int64. These entries report GOP/s with no %roof, because the probes measure floating-point peaks (M6).
 
 All sparse inputs are generated: 2D Poisson, unsymmetric convection–diffusion, scrambled copies of both, and a planted block-triangular matrix. Nothing is downloaded. The orderings have no work model; they're timed and checked, and reported as `n/a`.
 
