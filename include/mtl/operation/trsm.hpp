@@ -2,8 +2,10 @@
 // MTL5 -- trsm: solve A * X = alpha * B for triangular A  (BLAS level-3, left side)
 // A is m x m upper (upper=true) or lower triangular; B is m x n and is
 // overwritten with the solution X. unit_diag treats A's diagonal as all ones.
-// Left side, no transpose in this variant. BLAS dispatch for column-major dense
-// float/double when available.
+// Left side, no transpose in this variant. BLAS dispatch for dense float/double
+// when available, in either orientation (#724): a row-major buffer is the
+// column-major transpose, so a row-major B is solved as X^T op(A)^T = alpha B^T
+// (side 'R'), and a row-major A is passed as its transpose with uplo flipped.
 //
 // Mixed precision: pass an explicit `Accumulator` to form each row's
 // already-solved-columns reduction in a precision distinct from the operand
@@ -29,6 +31,25 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Whether trsm<Accumulator>(alpha, A, B, ...) calls ?trsm (for sizes that fit
+/// an int). Every orientation of A and B qualifies.
+template <typename Accumulator, typename MA, typename MB>
+inline constexpr bool trsm_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> &&
+                  interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB>)
+        return std::is_same_v<typename MB::value_type, typename MA::value_type>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
 
 /// Triangular solve with multiple RHS: solve A * X = alpha * B, B := X.
 template <typename Accumulator = void, Scalar S, Matrix MA, Matrix MB>
@@ -71,17 +92,15 @@ void trsm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB> &&
-                  !interface::is_row_major_v<MA> && !interface::is_row_major_v<MB> &&
-                  std::is_same_v<value_type, typename MA::value_type>) {
+    if constexpr (detail::trsm_dispatches_blas_v<Accumulator, MA, MB>) {
         using T = value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m <= imax && n <= imax) {
-            // BLAS requires lda,ldb >= max(1,m) even for empty (m==0) matrices.
-            const int ld = std::max(1, static_cast<int>(m));
-            interface::blas::trsm('L', upper ? 'U' : 'L', 'N', unit_diag ? 'U' : 'N',
-                                  static_cast<int>(m), static_cast<int>(n),
-                                  static_cast<T>(alpha), A.data(), ld, B.data(), ld);
+            // BLAS requires lda,ldb >= max(1, rows) even for empty matrices.
+            const auto d = interface::blas_triangular_describe<MA, MB>(upper, m, n);
+            interface::blas::trsm(d.side, d.uplo, d.trans, unit_diag ? 'U' : 'N', d.m, d.n,
+                                  static_cast<T>(alpha), A.data(), std::max(1, static_cast<int>(m)),
+                                  B.data(), d.ldb);
             return;
         }
     }

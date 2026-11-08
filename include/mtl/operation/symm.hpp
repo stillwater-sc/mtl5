@@ -4,8 +4,10 @@
 // read, on every path, as BLAS symm with uplo 'L' reads it (#692): A(i,k) for
 // k > i is taken as A(k,i), so the strict upper triangle may hold anything.
 // Before #692 the generic path read the full matrix and so disagreed with the
-// BLAS path for a non-symmetric A. BLAS dispatch for column-major dense
-// float/double when available.
+// BLAS path for a non-symmetric A. BLAS dispatch for dense float/double when
+// available (#724): any orientation of A (a row-major A's lower triangle is its
+// buffer's upper one), and B and C both column-major (side 'L') or both
+// row-major (side 'R' on the transposes: C^T = alpha B^T A + beta C^T).
 //
 // Mixed precision: pass an explicit `Accumulator` to form each (row, col)
 // reduction sum_k A(i,k)*B(k,j) in a precision distinct from the operand type
@@ -37,6 +39,27 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Whether symm<Accumulator>(alpha, A, B, beta, C) calls ?symm (for sizes that
+/// fit an int). B and C must share an orientation; A's may be either.
+template <typename Accumulator, typename MA, typename MB, typename MC>
+inline constexpr bool symm_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> &&
+                  interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB> && interface::BlasDenseMatrix<MC>)
+        return std::is_same_v<typename MC::value_type, typename MA::value_type> &&
+               std::is_same_v<typename MC::value_type, typename MB::value_type> &&
+               interface::is_row_major_v<MB> == interface::is_row_major_v<MC>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
 
 /// Symmetric matrix-matrix product: C = alpha*A*B + beta*C, A assumed symmetric.
 template <typename Accumulator = void, Scalar S, Matrix MA, Matrix MB, Matrix MC>
@@ -72,18 +95,21 @@ void symm(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB> &&
-                  interface::BlasDenseMatrix<MC> && !interface::is_row_major_v<MA> &&
-                  !interface::is_row_major_v<MB> && !interface::is_row_major_v<MC> &&
-                  std::is_same_v<value_type, typename MA::value_type> &&
-                  std::is_same_v<value_type, typename MB::value_type>) {
+    if constexpr (detail::symm_dispatches_blas_v<Accumulator, MA, MB, MC>) {
         using T = value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m <= imax && n <= imax) {
-            const int ld = std::max(1, static_cast<int>(m));
-            interface::blas::symm('L', 'L', static_cast<int>(m), static_cast<int>(n),
-                                  static_cast<T>(alpha), A.data(), ld, B.data(), ld,
-                                  static_cast<T>(beta), C.data(), ld);
+            const int mi = static_cast<int>(m), ni = static_cast<int>(n);
+            const int lda = std::max(1, mi);
+            constexpr char uplo = interface::blas_lower_uplo<MA>();
+            if constexpr (interface::is_row_major_v<MC>) {
+                const int ld = std::max(1, ni);
+                interface::blas::symm('R', uplo, ni, mi, static_cast<T>(alpha), A.data(), lda,
+                                      B.data(), ld, static_cast<T>(beta), C.data(), ld);
+            } else {
+                interface::blas::symm('L', uplo, mi, ni, static_cast<T>(alpha), A.data(), lda,
+                                      B.data(), lda, static_cast<T>(beta), C.data(), lda);
+            }
             return;
         }
     }

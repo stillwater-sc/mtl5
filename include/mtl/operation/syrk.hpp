@@ -1,8 +1,9 @@
 #pragma once
 // MTL5 -- syrk: C <- alpha*A*A^T + beta*C  (BLAS level-3 symmetric rank-k)
 // C is m x m and treated as symmetric; the full symmetric result is produced
-// (both triangles set). A is m x k. BLAS dispatch for column-major dense
-// float/double when available (writes the lower triangle, then mirrored).
+// (both triangles set). A is m x k. BLAS dispatch for dense float/double when
+// available, in any orientation of A and C (#724); BLAS writes the lower
+// triangle, which is then mirrored.
 //
 // Mixed precision: pass an explicit `Accumulator` to form each lower-triangle
 // reduction sum_l A(i,l)*A(j,l) in a precision distinct from the operand type
@@ -34,6 +35,25 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Whether syrk<Accumulator>(alpha, A, beta, C) calls ?syrk (for sizes that fit
+/// an int). Every orientation of A and C (#724).
+template <typename Accumulator, typename MA, typename MC>
+inline constexpr bool syrk_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> &&
+                  interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MC>)
+        return std::is_same_v<typename MC::value_type, typename MA::value_type>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
 
 /// Symmetric rank-k update: C = alpha*A*A^T + beta*C, C symmetric (full result).
 template <typename Accumulator = void, Scalar S, Matrix MA, Matrix MC>
@@ -70,16 +90,18 @@ void syrk(const S& alpha, const MA& A, const S& beta, MC& C) {
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MC> &&
-                  !interface::is_row_major_v<MA> && !interface::is_row_major_v<MC> &&
-                  std::is_same_v<value_type, typename MA::value_type>) {
+    if constexpr (detail::syrk_dispatches_blas_v<Accumulator, MA, MC>) {
         using T = value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m <= imax && k <= imax) {
-            const int lda = std::max(1, static_cast<int>(m));
-            interface::blas::syrk('L', 'N', static_cast<int>(m), static_cast<int>(k),
-                                  static_cast<T>(alpha), A.data(), lda,
-                                  static_cast<T>(beta), C.data(), lda);
+            // C's lower triangle is its buffer's upper one when C is row-major.
+            // A row-major A is the column-major k x m buffer A^T, so
+            // A A^T = buf^T buf: trans 'T', lda = k.
+            const int mi = static_cast<int>(m), ki = static_cast<int>(k);
+            constexpr bool a_rm = interface::is_row_major_v<MA>;
+            interface::blas::syrk(interface::blas_lower_uplo<MC>(), a_rm ? 'T' : 'N', mi, ki,
+                                  static_cast<T>(alpha), A.data(), std::max(1, a_rm ? ki : mi),
+                                  static_cast<T>(beta), C.data(), std::max(1, mi));
             // BLAS wrote the lower triangle; mirror to the upper for a full result.
             for (size_type i = 0; i < m; ++i)
                 for (size_type j = 0; j < i; ++j)
