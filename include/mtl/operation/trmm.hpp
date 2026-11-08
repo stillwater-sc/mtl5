@@ -22,6 +22,9 @@
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+#include <mtl/detail/gemm_blocked.hpp>
+#endif
 
 namespace mtl {
 
@@ -55,15 +58,17 @@ inline constexpr bool trmm_uses_row_loop_v = row_major_contiguous_v<MB>;
 /// (ascending i for upper, descending for lower), as the column loop does, and
 /// each entry is the same expression in the same type, so the result is
 /// bit-identical (contraction aside: see trsm_rows).
+///
+/// [b0, b1) restricts the product to one diagonal block, as for trsm_rows.
 template <typename S, typename MA, typename MB>
-void trmm_rows(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag) {
+void trmm_rows(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag,
+               typename MA::size_type b0, typename MA::size_type b1) {
     using size_type  = typename MA::size_type;
     using value_type = typename MB::value_type;
     using Acc = std::remove_cvref_t<decltype(unit_diag ? std::declval<value_type&>()
                                                        : A(0, 0) * std::declval<value_type&>())>;
-    const size_type m = A.num_rows();
     const auto n = B.num_cols();
-    if (m == 0 || n == 0) return;
+    if (b0 >= b1 || n == 0) return;
     std::vector<Acc> row(static_cast<std::size_t>(n));
     const auto form_row = [&](size_type i, size_type jb, size_type je) {
         value_type* bi = &B(i, 0);
@@ -81,10 +86,75 @@ void trmm_rows(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag) {
         for (decltype(+n) c = 0; c < n; ++c) bi[c] = alpha * row[c];
     };
     if (upper)
-        for (size_type i = 0; i < m; ++i) form_row(i, i + 1, m);
+        for (size_type i = b0; i < b1; ++i) form_row(i, i + 1, b1);
     else
-        for (size_type ii = m; ii-- > 0; ) form_row(ii, 0, ii);
+        for (size_type ii = b1; ii-- > b0; ) form_row(ii, b0, ii);
 }
+
+template <typename S, typename MA, typename MB>
+void trmm_rows(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag) {
+    trmm_rows(alpha, A, B, upper, unit_diag, typename MA::size_type{0}, A.num_rows());
+}
+
+/// Whether trmm<void> on this build takes the blocked product over the native
+/// GEMM (#724): as trsm_uses_blocked_v.
+template <typename MA, typename MB>
+inline constexpr bool trmm_uses_blocked_v = [] {
+#ifdef MTL5_NATIVE_FAST_GEMM
+    if constexpr (interface::SimdDenseMatrix<MA> && interface::SimdDenseMatrix<MB> &&
+                  requires { typename MA::orientation; })
+        return interface::is_blas_scalar_v<typename MB::value_type> &&
+               std::is_same_v<typename MA::value_type, typename MB::value_type> &&
+               row_major_contiguous_v<MB>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+#ifdef MTL5_NATIVE_FAST_GEMM
+/// Blocked triangular product (#724). Each block of rows I is formed from its
+/// diagonal block by the row loop, B(I) := alpha A(I,I) B(I), and from the rest
+/// of its triangle by GEMM, B(I) += alpha A(I, rest) B(rest). Blocks go in the
+/// order that leaves B(rest) unwritten: bottom-up for lower, top-down for upper.
+/// The rounding differs from the row loop's, as native-fast GEMM's does.
+template <typename S, typename MA, typename MB>
+void trmm_blocked(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag) {
+    using T = typename MB::value_type;
+    const std::size_t m = A.num_rows();
+    const std::size_t n = B.num_cols();
+    const T a = static_cast<T>(alpha);
+    constexpr std::size_t nb = triangular_block;
+    const std::ptrdiff_t a_rs = interface::is_row_major_v<MA> ? static_cast<std::ptrdiff_t>(m) : 1;
+    const std::ptrdiff_t a_cs = interface::is_row_major_v<MA> ? 1 : static_cast<std::ptrdiff_t>(m);
+    const T* ap = A.data();
+    T* bp = B.data();
+    const auto at = [&](std::size_t i, std::size_t j) { return ap + static_cast<std::ptrdiff_t>(i) * a_rs +
+                                                               static_cast<std::ptrdiff_t>(j) * a_cs; };
+    const std::ptrdiff_t ldb = static_cast<std::ptrdiff_t>(n);
+    const unsigned nt = gemm_default_threads();
+    using sz = typename MA::size_type;
+    if (!upper) {
+        for (std::size_t i1 = m; i1 > 0; ) {
+            const std::size_t i0 = i1 > nb ? i1 - nb : 0;
+            trmm_rows(a, A, B, false, unit_diag, static_cast<sz>(i0), static_cast<sz>(i1));
+            if (i0 > 0)   // B(I) += alpha A(I, 0:i0) B(0:i0)
+                gemm_blocked<T>(i1 - i0, n, i0, a, at(i0, 0), a_rs, a_cs, bp, ldb, 1,
+                                T(1), bp + i0 * n, n, nt);
+            i1 = i0;
+        }
+    } else {
+        for (std::size_t i0 = 0; i0 < m; i0 += nb) {
+            const std::size_t i1 = std::min(m, i0 + nb);
+            trmm_rows(a, A, B, true, unit_diag, static_cast<sz>(i0), static_cast<sz>(i1));
+            if (i1 < m)   // B(I) += alpha A(I, i1:m) B(i1:m)
+                gemm_blocked<T>(i1 - i0, n, m - i1, a, at(i0, i1), a_rs, a_cs, bp + i1 * n, ldb, 1,
+                                T(1), bp + i0 * n, n, nt);
+        }
+    }
+}
+#endif
 
 } // namespace detail
 
@@ -160,6 +230,14 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
             interface::blas::trmm(d.side, d.uplo, d.trans, unit_diag ? 'U' : 'N', d.m, d.n,
                                   static_cast<T>(alpha), A.data(), std::max(1, static_cast<int>(m)),
                                   B.data(), d.ldb);
+            return;
+        }
+    }
+#endif
+#ifdef MTL5_NATIVE_FAST_GEMM
+    if constexpr (detail::trmm_uses_blocked_v<MA, MB>) {
+        if (m > detail::triangular_block && n > 0) {
+            detail::trmm_blocked(alpha, A, B, upper, unit_diag);
             return;
         }
     }
