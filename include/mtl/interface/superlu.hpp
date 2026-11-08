@@ -3,7 +3,7 @@
 // SuperLU uses a supernodal left-looking LU algorithm for general
 // unsymmetric sparse systems.
 //
-// Guarded by MTL5_HAS_SUPERLU (set by CMake when MTL5_ENABLE_SUPERLU=ON)
+// Guarded by MTL5_HAS_SUPERLU (set by CMake when MTL5_WITH_SUPERLU=ON)
 //
 // Reference: Demmel et al., "A Supernodal Approach to Sparse Partial
 //            Pivoting", SIAM J. Matrix Anal. Appl., 20(3), 1999.
@@ -17,8 +17,177 @@
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
-// Include SuperLU headers directly
+// SuperLU's slu_ddefs.h declares its own extern "C" prototypes for the BLAS
+// routines SuperLU calls (dgemm_, dgemv_, dtrsv_, dtrsm_ and, from 6.x, dcopy_
+// and daxpy_). Their signatures differ between SuperLU versions (int or void
+// returns, with or without const) and from MTL5's const-correct ones in
+// interface/blas.hpp, and two different declarations of one C function are
+// ill-formed -- so a translation unit with both headers, <mtl/mtl.hpp> among
+// them, did not compile (#725). While SuperLU's header is parsed, each name
+// is renamed, so its prototypes declare names nothing references. That is
+// safe: the header only declares them (it has no inline bodies calling them),
+// and the calls are made inside the already compiled libsuperlu, which links
+// against the real BLAS as before.
+//
+// The list is every double-precision BLAS routine MTL5 declares, a superset
+// of what any SuperLU version declares; renaming a name the header does not
+// mention is harmless. slu_Cnames.h is included first because, for Fortran
+// name-mangling conventions other than the usual trailing underscore (Add_),
+// it maps these names itself; a name it has already defined is left alone.
+#include <slu_Cnames.h>
+#  ifndef daxpy_
+#    define daxpy_ mtl5_superlu_hidden_daxpy_
+#    define MTL5_SLU_HID_daxpy_
+#  endif
+#  ifndef dcopy_
+#    define dcopy_ mtl5_superlu_hidden_dcopy_
+#    define MTL5_SLU_HID_dcopy_
+#  endif
+#  ifndef ddot_
+#    define ddot_ mtl5_superlu_hidden_ddot_
+#    define MTL5_SLU_HID_ddot_
+#  endif
+#  ifndef dscal_
+#    define dscal_ mtl5_superlu_hidden_dscal_
+#    define MTL5_SLU_HID_dscal_
+#  endif
+#  ifndef dnrm2_
+#    define dnrm2_ mtl5_superlu_hidden_dnrm2_
+#    define MTL5_SLU_HID_dnrm2_
+#  endif
+#  ifndef dasum_
+#    define dasum_ mtl5_superlu_hidden_dasum_
+#    define MTL5_SLU_HID_dasum_
+#  endif
+#  ifndef idamax_
+#    define idamax_ mtl5_superlu_hidden_idamax_
+#    define MTL5_SLU_HID_idamax_
+#  endif
+#  ifndef dgemv_
+#    define dgemv_ mtl5_superlu_hidden_dgemv_
+#    define MTL5_SLU_HID_dgemv_
+#  endif
+#  ifndef dger_
+#    define dger_ mtl5_superlu_hidden_dger_
+#    define MTL5_SLU_HID_dger_
+#  endif
+#  ifndef dsymv_
+#    define dsymv_ mtl5_superlu_hidden_dsymv_
+#    define MTL5_SLU_HID_dsymv_
+#  endif
+#  ifndef dtrmv_
+#    define dtrmv_ mtl5_superlu_hidden_dtrmv_
+#    define MTL5_SLU_HID_dtrmv_
+#  endif
+#  ifndef dtrsv_
+#    define dtrsv_ mtl5_superlu_hidden_dtrsv_
+#    define MTL5_SLU_HID_dtrsv_
+#  endif
+#  ifndef dgemm_
+#    define dgemm_ mtl5_superlu_hidden_dgemm_
+#    define MTL5_SLU_HID_dgemm_
+#  endif
+#  ifndef dgemmt_
+#    define dgemmt_ mtl5_superlu_hidden_dgemmt_
+#    define MTL5_SLU_HID_dgemmt_
+#  endif
+#  ifndef dsymm_
+#    define dsymm_ mtl5_superlu_hidden_dsymm_
+#    define MTL5_SLU_HID_dsymm_
+#  endif
+#  ifndef dsyrk_
+#    define dsyrk_ mtl5_superlu_hidden_dsyrk_
+#    define MTL5_SLU_HID_dsyrk_
+#  endif
+#  ifndef dsyr2k_
+#    define dsyr2k_ mtl5_superlu_hidden_dsyr2k_
+#    define MTL5_SLU_HID_dsyr2k_
+#  endif
+#  ifndef dtrmm_
+#    define dtrmm_ mtl5_superlu_hidden_dtrmm_
+#    define MTL5_SLU_HID_dtrmm_
+#  endif
+#  ifndef dtrsm_
+#    define dtrsm_ mtl5_superlu_hidden_dtrsm_
+#    define MTL5_SLU_HID_dtrsm_
+#  endif
 #include <slu_ddefs.h>
+#  ifdef MTL5_SLU_HID_daxpy_
+#    undef daxpy_
+#    undef MTL5_SLU_HID_daxpy_
+#  endif
+#  ifdef MTL5_SLU_HID_dcopy_
+#    undef dcopy_
+#    undef MTL5_SLU_HID_dcopy_
+#  endif
+#  ifdef MTL5_SLU_HID_ddot_
+#    undef ddot_
+#    undef MTL5_SLU_HID_ddot_
+#  endif
+#  ifdef MTL5_SLU_HID_dscal_
+#    undef dscal_
+#    undef MTL5_SLU_HID_dscal_
+#  endif
+#  ifdef MTL5_SLU_HID_dnrm2_
+#    undef dnrm2_
+#    undef MTL5_SLU_HID_dnrm2_
+#  endif
+#  ifdef MTL5_SLU_HID_dasum_
+#    undef dasum_
+#    undef MTL5_SLU_HID_dasum_
+#  endif
+#  ifdef MTL5_SLU_HID_idamax_
+#    undef idamax_
+#    undef MTL5_SLU_HID_idamax_
+#  endif
+#  ifdef MTL5_SLU_HID_dgemv_
+#    undef dgemv_
+#    undef MTL5_SLU_HID_dgemv_
+#  endif
+#  ifdef MTL5_SLU_HID_dger_
+#    undef dger_
+#    undef MTL5_SLU_HID_dger_
+#  endif
+#  ifdef MTL5_SLU_HID_dsymv_
+#    undef dsymv_
+#    undef MTL5_SLU_HID_dsymv_
+#  endif
+#  ifdef MTL5_SLU_HID_dtrmv_
+#    undef dtrmv_
+#    undef MTL5_SLU_HID_dtrmv_
+#  endif
+#  ifdef MTL5_SLU_HID_dtrsv_
+#    undef dtrsv_
+#    undef MTL5_SLU_HID_dtrsv_
+#  endif
+#  ifdef MTL5_SLU_HID_dgemm_
+#    undef dgemm_
+#    undef MTL5_SLU_HID_dgemm_
+#  endif
+#  ifdef MTL5_SLU_HID_dgemmt_
+#    undef dgemmt_
+#    undef MTL5_SLU_HID_dgemmt_
+#  endif
+#  ifdef MTL5_SLU_HID_dsymm_
+#    undef dsymm_
+#    undef MTL5_SLU_HID_dsymm_
+#  endif
+#  ifdef MTL5_SLU_HID_dsyrk_
+#    undef dsyrk_
+#    undef MTL5_SLU_HID_dsyrk_
+#  endif
+#  ifdef MTL5_SLU_HID_dsyr2k_
+#    undef dsyr2k_
+#    undef MTL5_SLU_HID_dsyr2k_
+#  endif
+#  ifdef MTL5_SLU_HID_dtrmm_
+#    undef dtrmm_
+#    undef MTL5_SLU_HID_dtrmm_
+#  endif
+#  ifdef MTL5_SLU_HID_dtrsm_
+#    undef dtrsm_
+#    undef MTL5_SLU_HID_dtrsm_
+#  endif
 
 namespace mtl::interface {
 
