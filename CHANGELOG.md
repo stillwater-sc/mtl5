@@ -59,6 +59,23 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **`gemmt` runs through a full-speed GEMM on BLAS and native-fast builds, 2.8–3.7× faster** (#744). It forms half of `gemm`'s product, but it was slower than a full `gemm` on every build. With OpenBLAS it called `dgemmt`, which takes about twice as long as OpenBLAS's own `dgemm`. On the native-fast build it had no fast path at all.
+  - **The blocked path:** the triangle is halved recursively. The off-diagonal half is one rectangular GEMM, and each diagonal block of at most 64 rows is a square GEMM into a scratch tile, of which only the triangle is copied into C. The GEMM is `?gemm` in a BLAS build and `gemm_blocked` otherwise.
+  - **When it applies:** dense `float` or `double` operands of one type, in any orientation or as `trans()` views, with the default accumulator, `n > 64`, `k > 0` and `α ≠ 0`. With a BLAS library other than OpenBLAS that has a working `?gemmt` (MKL, BLIS), `gemmt` still calls it. With OpenBLAS, `dgemmt` is still used at 64 rows and fewer, where it is as fast as the alternatives. A BLAS build without `?gemmt` now takes the blocked path instead of the generic loops.
+  - **Contract:** the other triangle of C is never written before the mirror, and `beta == 0` does not read C. Rounding is the GEMM's, as for `mult` on these builds.
+  - **The mirror:** `gemmt_fill::mirror` copies in 8 × 8 tiles, which every path uses. A plain loop cost 1.4 ms at n = 1024, because a power-of-two leading dimension sends a column's writes to a few L1 sets.
+  - **`congruence`:** above 64 rows, passes its second product to the blocked path as `trans(A)`, with no copy. Below that it copies `Aᵀ` as before. With OpenBLAS it is unchanged up to `d = 60` and 6–11% faster from `d = 150`.
+  - **Results:** `mtl5_bench` `blas3/gemmt`, f64, one thread, i7-12700K, counting n³ flops:
+
+    | build | n | before | after | time vs `gemm` |
+    |---|---:|---:|---:|---:|
+    | BLAS (OpenBLAS 0.3.32) | 512 | 18.9 GFLOP/s | 52.3 GFLOP/s | 0.70× |
+    | BLAS (OpenBLAS 0.3.32) | 1024 | 19.0 GFLOP/s | 60.4 GFLOP/s | 0.61× |
+    | native-fast | 512 | about 14 GFLOP/s | 51.4 GFLOP/s | 0.69× |
+
+    The issue aimed for 0.6×. The remainder is OpenBLAS's rate on the recursion's small GEMMs (46–64 GFLOP/s at 64 rows and fewer) and the eighth of extra work in the diagonal blocks.
+  - **Test:** `test_gemmt_blocked` checks every orientation of A, B and C, transposed views, both triangles and both fills, at shapes on both sides of the block size and with several levels of recursion, against a long-double reference. It also checks exactly that the other triangle keeps its sentinels, that a NaN C with `beta == 0` does not reach the result, and that `alpha == 0` reads neither A nor B. Mutations of the leaf range, a panel offset, a panel's beta and the transposition for column-major and row-major C each fail it.
+
 - **On the native-fast build, `trsm`, `trmm` and `symm` run through the blocked GEMM** (#724, part 3 of 3). With `MTL5_NATIVE_FAST_GEMM` and no BLAS, they used a scalar loop at a fifth of the fast GEMM's rate, even after part 2.
   - **`trsm` / `trmm`:** walk A's diagonal in blocks of 64 rows, the LAPACK/BLIS structure. The row loop handles each diagonal block, and `gemm_blocked` handles the rest: B(I) := αB(I) − A(I, solved)·X(solved) for `trsm`, and B(I) += α·A(I, rest)·B(rest) for `trmm`, in the block order that leaves B(rest) unread. All but about 64/m of the flops run in the GEMM.
   - **`symm`:** expands A's lower triangle once, at O(m²) cost, and makes one `gemm_blocked` call. `beta == 0` still doesn't read C.

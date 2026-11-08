@@ -25,7 +25,22 @@
 // needs MTL5_BLAS_HAS_GEMMT, which CMake defines when the library exports
 // dgemmt_. Dense float/double operands of any orientation, and transposed
 // views of them, map onto its transa/transb arguments. Gated on
-// `interface::accumulator_allows_blas_v`, like the rest of L3.
+// `interface::accumulator_allows_blas_v`, like the rest of L3. With OpenBLAS
+// (MTL5_BLAS_VENDOR_OPENBLAS) only up to detail::gemmt_block rows: above that
+// its dgemmt takes about twice as long as a full dgemm for half the work
+// (#744), so larger problems take the blocked path below instead. Below it,
+// dgemmt is as fast as anything else on offer.
+//
+// Blocked path (#744): in a BLAS build that does not call ?gemmt, and in the
+// MTL5_NATIVE_FAST_GEMM build, dense float/double operands with n above
+// detail::gemmt_block go through a full-speed GEMM. The triangle is halved
+// recursively: the off-diagonal half is one rectangular GEMM, written straight
+// into C, and each half on the diagonal is split again down to a block of at
+// most gemmt_block rows, formed as a square GEMM in a scratch tile of which
+// only the triangle is copied out. The other triangle of C is never written
+// (before the mirror), and beta == 0 still does not read C. The GEMM is ?gemm
+// in a BLAS build and detail::gemm_blocked otherwise, and the rounding is
+// that GEMM's, as for mult on those builds.
 //
 // B may be trans(compressed2D): entry (i,j) is then the sum over the stored
 // entries of row j of the CRS matrix, in ascending column order. That is the
@@ -35,6 +50,7 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <mtl/concepts/scalar.hpp>
@@ -52,6 +68,9 @@
 #include <mtl/operation/trans.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
+#endif
+#if defined(MTL5_NATIVE_FAST_GEMM) && !defined(MTL5_HAS_BLAS)
+#include <mtl/detail/gemm_blocked.hpp>
 #endif
 
 namespace mtl {
@@ -78,17 +97,33 @@ template <typename V, typename P>
 inline constexpr bool is_transposed_crs_v<mat::view::transposed_view<mat::compressed2D<V, P>>> = true;
 
 /// Copy the `t` triangle of the n x n matrix C across the diagonal.
+///
+/// In 8 x 8 tiles, so that the side read along a row and the side written down
+/// a column stay in cache together (#744). A plain double loop writes one cache
+/// line per element on the column side, and when the leading dimension is a
+/// power of two those lines all fall in the same few L1 sets: at n = 1024 it
+/// took 1.4 ms, against 0.25 ms at n = 1000, more than a tenth of a blocked
+/// gemmt. Small tiles cut that by a third at n = 512 and 1024 and lose little
+/// elsewhere; larger ones did worse at powers of two. The entries copied are
+/// the same.
 template <typename MC>
 void mirror_triangle(MC& C, uplo t) {
     using size_type = typename MC::size_type;
+    constexpr size_type tile = 8;
     const size_type n = C.num_rows();
-    for (size_type i = 0; i < n; ++i)
-        for (size_type j = 0; j < i; ++j) {
-            if (t == uplo::lower)
-                C(j, i) = C(i, j);
-            else
-                C(i, j) = C(j, i);
-        }
+    for (size_type ib = 0; ib < n; ib += tile) {
+        const size_type ie = ib + tile < n ? ib + tile : n;
+        for (size_type jb = 0; jb <= ib; jb += tile)
+            for (size_type i = ib; i < ie; ++i) {
+                const size_type je = jb + tile < i ? jb + tile : i;
+                for (size_type j = jb; j < je; ++j) {
+                    if (t == uplo::lower)
+                        C(j, i) = C(i, j);
+                    else
+                        C(i, j) = C(j, i);
+                }
+            }
+    }
 }
 
 /// The generic triangle loop. `terms(i, j, f)` calls f(a, b) for each product
@@ -180,7 +215,8 @@ inline blas_operand flip(blas_operand d) { return {d.op == 'N' ? 'T' : 'N', d.ld
 #endif
 
 /// Whether gemmt<Accumulator>(alpha, A, B, beta, C) calls ?gemmt (for sizes
-/// that fit an int).
+/// that fit an int; with OpenBLAS, only for n <= gemmt_block -- see
+/// gemmt_uses_blocked_v).
 template <typename Accumulator, typename MA, typename MB, typename MC>
 inline constexpr bool gemmt_dispatches_blas_v = [] {
 #if defined(MTL5_HAS_BLAS) && defined(MTL5_BLAS_HAS_GEMMT)
@@ -195,6 +231,154 @@ inline constexpr bool gemmt_dispatches_blas_v = [] {
     return false;
 #endif
 }();
+
+/// Rows of the diagonal blocks of the blocked gemmt (#744). Each is formed as
+/// a full square GEMM, so about n * gemmt_block * k flops go to entries that
+/// are thrown away, against n^2 k for the triangle itself: an eighth at
+/// n = 512. Measured with OpenBLAS at n = 256 to 1024, 32 and 64 are within
+/// 3% of each other and 128 and 256 are slower: the smaller GEMMs lose about
+/// what the saved work gains.
+inline constexpr std::size_t gemmt_block = 64;
+
+/// A dense operand as a base pointer and strides: X(i, j) == p[i*rs + j*cs].
+/// `row` says whether the unit stride is cs (row-major storage): BLAS needs it
+/// to choose 'N' or 'T' when a dimension is 1 and both strides are 1.
+template <typename T>
+struct gemmt_strided {
+    T* p;
+    std::ptrdiff_t rs, cs;
+    bool row;
+    gemmt_strided at(std::size_t i, std::size_t j) const {
+        return {p + static_cast<std::ptrdiff_t>(i) * rs + static_cast<std::ptrdiff_t>(j) * cs, rs, cs, row};
+    }
+    gemmt_strided transposed() const { return {p, cs, rs, !row}; }
+};
+
+/// Dense float/double with contiguous storage and an orientation: the
+/// operands the blocked gemmt describes by strides.
+template <typename M>
+inline constexpr bool gemmt_strided_dense_v = [] {
+    if constexpr (interface::BlasDenseMatrix<M>)
+        return requires { typename M::orientation; };
+    else
+        return false;
+}();
+
+template <typename M>
+inline constexpr bool gemmt_strided_operand_v = [] {
+    if constexpr (is_transposed_view_v<M>)
+        return gemmt_strided_dense_v<std::remove_cvref_t<decltype(std::declval<const M&>().base())>>;
+    else
+        return gemmt_strided_dense_v<M>;
+}();
+
+template <typename M>
+auto gemmt_describe(const M& X) {
+    if constexpr (is_transposed_view_v<M>) {
+        return gemmt_describe(X.base()).transposed();
+    } else {
+        using T = const typename M::value_type;
+        if constexpr (interface::is_row_major_v<M>)
+            return gemmt_strided<T>{X.data(), static_cast<std::ptrdiff_t>(X.num_cols()), 1, true};
+        else
+            return gemmt_strided<T>{X.data(), 1, static_cast<std::ptrdiff_t>(X.num_rows()), false};
+    }
+}
+
+template <typename M>
+auto gemmt_describe_mut(M& X) {
+    using T = typename M::value_type;
+    if constexpr (interface::is_row_major_v<M>)
+        return gemmt_strided<T>{X.data(), static_cast<std::ptrdiff_t>(X.num_cols()), 1, true};
+    else
+        return gemmt_strided<T>{X.data(), 1, static_cast<std::ptrdiff_t>(X.num_rows()), false};
+}
+
+/// Whether gemmt<Accumulator>(alpha, A, B, beta, C) takes the blocked path
+/// for n > gemmt_block (#744): wherever ?gemmt is not called, and with
+/// OpenBLAS in place of its dgemmt.
+template <typename Accumulator, typename MA, typename MB, typename MC>
+inline constexpr bool gemmt_uses_blocked_v = [] {
+#if defined(MTL5_HAS_BLAS) || defined(MTL5_NATIVE_FAST_GEMM)
+#ifdef MTL5_BLAS_VENDOR_OPENBLAS
+    constexpr bool vendor_gemmt = false;
+#else
+    constexpr bool vendor_gemmt = gemmt_dispatches_blas_v<Accumulator, MA, MB, MC>;
+#endif
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> && !vendor_gemmt &&
+                  gemmt_strided_dense_v<MC> && gemmt_strided_operand_v<MA> && gemmt_strided_operand_v<MB>)
+        return std::is_same_v<typename MA::value_type, typename MC::value_type> &&
+               std::is_same_v<typename MB::value_type, typename MC::value_type>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+#if defined(MTL5_HAS_BLAS) || defined(MTL5_NATIVE_FAST_GEMM)
+/// C := alpha A B + beta C for an m x n block of C, A m x k, B k x n, all
+/// strided; k > 0. ?gemm in a BLAS build, gemm_blocked otherwise. Neither
+/// reads C when beta == 0.
+template <typename T>
+void gemmt_panel(std::size_t m, std::size_t n, std::size_t k, T alpha,
+                 gemmt_strided<const T> A, gemmt_strided<const T> B, T beta, gemmt_strided<T> C) {
+#ifdef MTL5_HAS_BLAS
+    if (C.row) {   // ?gemm writes a column-major C: form C^T = B^T A^T
+        const auto At = A.transposed();
+        A = B.transposed();
+        B = At;
+        C = C.transposed();
+        std::swap(m, n);
+    }
+    // A column-major view of X's buffer is X ('N', ld = cs) or X^T ('T', ld = rs).
+    const auto op = [](const gemmt_strided<const T>& X) { return X.row ? 'T' : 'N'; };
+    const auto ld = [](const gemmt_strided<const T>& X) { return static_cast<int>(X.row ? X.rs : X.cs); };
+    interface::blas::gemm(op(A), op(B), static_cast<int>(m), static_cast<int>(n), static_cast<int>(k),
+                          alpha, A.p, ld(A), B.p, ld(B), beta, C.p, static_cast<int>(C.cs));
+#else
+    if (C.row)
+        gemm_blocked<T>(m, n, k, alpha, A.p, A.rs, A.cs, B.p, B.rs, B.cs, beta, C.p,
+                        static_cast<std::size_t>(C.rs), gemm_default_threads());
+    else           // gemm_blocked writes a row-major C: form C^T = B^T A^T
+        gemm_blocked<T>(n, m, k, alpha, B.p, B.cs, B.rs, A.p, A.cs, A.rs, beta, C.p,
+                        static_cast<std::size_t>(C.cs), gemm_default_threads());
+#endif
+}
+
+/// The `t` triangle of rows and columns [i0, i0 + s) of C, recursively: the
+/// off-diagonal half in one GEMM, then each diagonal half. A leaf of at most
+/// gemmt_block rows is a square GEMM into `tile`, whose triangle is combined
+/// into C.
+template <typename T>
+void gemmt_blocked(std::size_t i0, std::size_t s, std::size_t k, T alpha,
+                   gemmt_strided<const T> A, gemmt_strided<const T> B, T beta,
+                   gemmt_strided<T> C, uplo t, std::vector<T>& tile) {
+    if (s <= gemmt_block) {
+        tile.resize(s * s);
+        const gemmt_strided<T> D{tile.data(), static_cast<std::ptrdiff_t>(s), 1, true};
+        gemmt_panel<T>(s, s, k, alpha, A.at(i0, 0), B.at(0, i0), T(0), D);
+        const bool beta_zero = (beta == T(0));
+        for (std::size_t i = 0; i < s; ++i) {
+            const std::size_t jb = (t == uplo::lower) ? 0 : i;
+            const std::size_t je = (t == uplo::lower) ? i + 1 : s;
+            for (std::size_t j = jb; j < je; ++j) {
+                T& c = *C.at(i0 + i, i0 + j).p;
+                const T d = tile[i * s + j];
+                c = beta_zero ? d : T(d + beta * c);
+            }
+        }
+        return;
+    }
+    const std::size_t h = s / 2;
+    if (t == uplo::lower)   // rows [i0+h, i0+s) x columns [i0, i0+h)
+        gemmt_panel<T>(s - h, h, k, alpha, A.at(i0 + h, 0), B.at(0, i0), beta, C.at(i0 + h, i0));
+    else                    // rows [i0, i0+h) x columns [i0+h, i0+s)
+        gemmt_panel<T>(h, s - h, k, alpha, A.at(i0, 0), B.at(0, i0 + h), beta, C.at(i0, i0 + h));
+    gemmt_blocked<T>(i0, h, k, alpha, A, B, beta, C, t, tile);
+    gemmt_blocked<T>(i0 + h, s - h, k, alpha, A, B, beta, C, t, tile);
+}
+#endif
 
 } // namespace detail
 
@@ -228,6 +412,24 @@ void gemmt(const S& alpha_in, const MA& A, const MB& B, const S& beta_in, MC& C,
             detail::mirror_triangle(C, t);
     };
 
+#if defined(MTL5_HAS_BLAS) || defined(MTL5_NATIVE_FAST_GEMM)
+    if constexpr (detail::gemmt_uses_blocked_v<Accumulator, MA, MB, MC>) {
+        const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        const std::size_t ns = static_cast<std::size_t>(n);
+        // alpha == 0 and k == 0 are C = beta C: the loop below does that
+        // without reading A or B.
+        if (ns > detail::gemmt_block && k > 0 && alpha != math::zero<value_type>() &&
+            ns <= imax && k <= imax) {
+            std::vector<value_type> tile;
+            detail::gemmt_blocked<value_type>(0, ns, k, alpha, detail::gemmt_describe(A),
+                                              detail::gemmt_describe(B), beta,
+                                              detail::gemmt_describe_mut(C), t, tile);
+            finish();
+            return;
+        }
+    }
+#endif
+
 #if defined(MTL5_HAS_BLAS) && defined(MTL5_BLAS_HAS_GEMMT)
     if constexpr (detail::gemmt_dispatches_blas_v<Accumulator, MA, MB, MC>) {
         const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
@@ -257,7 +459,6 @@ void gemmt(const S& alpha_in, const MA& A, const MB& B, const S& beta_in, MC& C,
         }
     }
 #endif
-
     using Value = std::common_type_t<typename MA::value_type, typename MB::value_type>;
     if constexpr (std::is_void_v<Accumulator> &&
                   detail::row_major_contiguous_v<MB> && detail::row_major_contiguous_v<MC>) {
@@ -321,16 +522,26 @@ using congruence_temp_t = mat::dense2D<typename MC::value_type,
 
 /// The second product of a congruence, C = alpha * T*A^T + beta*C, lower
 /// triangle mirrored. A CRS A goes to gemmt as trans(A), which walks its rows.
-/// So does a dense A that ?gemmt takes, through its transb argument. Any
+/// So does a dense A that ?gemmt takes, through its transb argument, and one
+/// the blocked path takes above gemmt_block rows, by its strides (#744). Any
 /// other dense A is copied out as A^T first: an O(mn) copy that lets a
 /// row-major C take gemmt's i-k-j form, where trans(A) would walk a column of
 /// A per entry. The entries summed, and their order, are the same either way.
 template <typename Accumulator = void, typename S, typename MT, typename MA, typename MC>
 void congruence_second(const S& alpha, const MT& T, const MA& A, const S& beta, MC& C) {
+    using At_view = mat::view::transposed_view<MA>;
     if constexpr (interface::is_compressed2D_v<MA> ||
-                  gemmt_dispatches_blas_v<Accumulator, MT, mat::view::transposed_view<MA>, MC>) {
+                  gemmt_dispatches_blas_v<Accumulator, MT, At_view, MC>) {
         gemmt<Accumulator>(alpha, T, trans(A), beta, C);
     } else {
+        // The blocked path takes trans(A) by its strides, but only above
+        // gemmt_block rows; below that the copy's i-k-j loop is the fast one.
+        if constexpr (gemmt_uses_blocked_v<Accumulator, MT, At_view, MC>) {
+            if (static_cast<std::size_t>(C.num_rows()) > gemmt_block) {
+                gemmt<Accumulator>(alpha, T, trans(A), beta, C);
+                return;
+            }
+        }
         using At_type = mat::dense2D<typename MA::value_type,
                                      mat::parameters<typename MC::orientation>>;
         using size_type = typename At_type::size_type;
