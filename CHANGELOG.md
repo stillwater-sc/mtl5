@@ -19,7 +19,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - It registers the page in the site's `FILE_MAP`.
     - It links the page from `docs/benchmarks/systems.md`: the machine's "mtl5_bench card" cell becomes `[Card](<machine>-mtl5-bench.md)`, marked `(preliminary)` when the page is. Before, it only warned, and the cell had to be edited by hand.
   - **CI:** the platform smoke job now publishes its session into the runner's checkout on all four OSes, then checks the files, the page, the sidecars, and that a second publish is a no-op.
+    It takes the session it checks from the results directory's name (#763), because once a real i7-12700K session was committed, listing the data directory returned two.
   - **Docs:** `benchmarks/README.md` has a "Publishing a session" section.
+
+- **Benchmark data: the first four `mtl5_bench` sessions are in the repository** (#760, #762, #764, #765, #737). Each was published with `publish_platform.cmake` and is marked preliminary: unpinned cores, no clock policy, one session. All four are class `medium`.
+  - **Ryzen 7 2700X:** `benchmarks/data/ryzen-7-2700x/mtl5_bench/20261108T223729Z/`, built at `e096dbbc6788`.
+  - **Ryzen 9 8945HS:** `benchmarks/data/ryzen-9-8945hs/mtl5_bench/20261108T231039Z/`, built at `685e2711d5ff`.
+  - **i7-12700K:** `benchmarks/data/i7-12700k/mtl5_bench/20261109T025123Z/`, built at `e7497e6e4c47`. Its threaded runs used 20 threads, E-cores included, though the Systems table lists 8 P-cores for this machine.
+  - **Xeon E5-2420 v2:** `benchmarks/data/xeon-e5-2420v2/mtl5_bench/20261109T035023Z/`, built at `73d11400a0e3`.
+  - Each card page (`docs/benchmarks/<machine>-mtl5-bench.md`) now links its raw data, and each machine's Systems-table row links its card.
 
 ### Fixed
 
@@ -98,7 +106,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
-- **A PR that only publishes benchmark data no longer runs the build matrix.** `ci.yml` and `regression.yml` now ignore `benchmarks/data/**`, which no build or test reads. The sidecar check (#477) moved from `ci.yml` into a new `bench-data.yml`, which runs when `benchmarks/data/`, `check_sidecars.sh` or the workflow itself changes. A session published with `publish_platform.cmake` (data, card page, `FILE_MAP` entry) now runs that check and the docs build. The benchmark sources elsewhere under `benchmarks/` still run full CI.
+- **A PR that only publishes benchmark data no longer runs the build matrix** (#761). `ci.yml` and `regression.yml` now ignore `benchmarks/data/**`, which no build or test reads. The sidecar check (#477) moved from `ci.yml` into a new `bench-data.yml`, which runs when `benchmarks/data/`, `check_sidecars.sh` or the workflow itself changes. A session published with `publish_platform.cmake` (data, card page, `FILE_MAP` entry) now runs that check and the docs build. The benchmark sources elsewhere under `benchmarks/` still run full CI.
 - **BREAKING: `trans` and the other view factories reject a temporary at compile time** (#695). Every view in `mat/view/` holds a reference to its matrix, and the factories took `const M&`, so `auto t = trans(A * B);` compiled and `t` read freed memory once the product was destroyed.
   - **The fix:** `trans`, `upper`, `lower`, `strict_upper`, `strict_lower`, `triu`, `tril`, `banded`, `hermitian` and `mapped` each have a deleted `const M&&` overload, which an rvalue prefers over `const M&`.
   - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
