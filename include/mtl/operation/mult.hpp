@@ -62,7 +62,31 @@ void mult_generic_rows(const M& A, const VIn& x, VOut& y,
     using size_type = typename M::size_type;
     const size_type ncols = A.num_cols();
     if constexpr (std::is_void_v<Accumulator>) {
-        for (std::size_t r = rb; r < re; ++r) {
+        // Four rows at a time, one accumulator each (#749): four independent
+        // chains instead of one serial reduction, which hides the add latency
+        // a single row is bound by. Each row sums the same terms in ascending
+        // c with the same expression, so y is bit-identical to the one-row
+        // loop that finishes the band.
+        std::size_t r = rb;
+        for (; re - r >= 4; r += 4) {
+            const auto r0 = static_cast<size_type>(r), r1 = static_cast<size_type>(r + 1),
+                       r2 = static_cast<size_type>(r + 2), r3 = static_cast<size_type>(r + 3);
+            auto a0 = math::zero<Result>();
+            auto a1 = math::zero<Result>();
+            auto a2 = math::zero<Result>();
+            auto a3 = math::zero<Result>();
+            for (size_type c = 0; c < ncols; ++c) {
+                a0 = generic_fma<Result>(a0, A(r0, c), x(c));
+                a1 = generic_fma<Result>(a1, A(r1, c), x(c));
+                a2 = generic_fma<Result>(a2, A(r2, c), x(c));
+                a3 = generic_fma<Result>(a3, A(r3, c), x(c));
+            }
+            y(static_cast<typename VOut::size_type>(r)) = a0;
+            y(static_cast<typename VOut::size_type>(r + 1)) = a1;
+            y(static_cast<typename VOut::size_type>(r + 2)) = a2;
+            y(static_cast<typename VOut::size_type>(r + 3)) = a3;
+        }
+        for (; r < re; ++r) {
             auto acc = math::zero<Result>();
             for (size_type c = 0; c < ncols; ++c) {
                 acc = generic_fma<Result>(acc, A(static_cast<size_type>(r), c), x(c));
