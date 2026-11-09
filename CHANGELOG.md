@@ -120,6 +120,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **The generic `trmv` and forward substitution take four rows at a time, with results unchanged bit for bit** (#749). Without BLAS or `MTL5_NATIVE_FAST_GEMM`, each row was one serial reduction, so the loop ran at one add per FMA latency, whatever the memory bandwidth.
+  - **The change:** four rows share one pass over their common columns, with one accumulator each: four independent chains instead of one. Each row still sums the same terms in the same order, so the bits don't change. The terms inside the 4×4 diagonal block are added per row, in order.
+  - **Where:** `trmv` (both triangles) and `lower_trisolve` (both overloads), so `trsv` with a lower A as well. The `Accumulator` paths are unchanged.
+  - **Not `upper_trisolve`:** row i sums in ascending j, so its first term needs x(i+1), and no two rows' reductions can overlap without reordering them, which would change the bits. Upper `trsv` keeps its one-row loop.
+  - **Speed:** `mtl5_bench --class medium --filter blas2` in the generic build (f64, n = 4096, one thread) went from 42% to 87–92% of the bandwidth roofline for `trmv` and `trsv`, from 4.4 ms to 2.1 ms.
+  - **Test:** `op_test_trmv_trsv_interleaved` compares both against verbatim copies of the old loops, in f32, f64 and long double, row- and column-major, unit and non-unit, for n from 0 to 64. It is built with `-ffp-contract=off`.
+
 - **`pc::ic_0` and `pc::ildl` apply in O(nnz), and `pc::ilu_0` and `pc::ilut` set up in O(nnz), with results unchanged bit for bit** (#732, #733). Each had a loop that was quadratic in n however sparse the matrix: IC(0) was about 1,000× slower per apply than ILU(0) at n = 16,384, and the ILU(0)/ILUT setup took longer than the Krylov solve that followed.
   - **`ic_0` and `ildl` apply** (`solve` and `adjoint_solve`): the Lᵀ back substitution found column i of L by scanning every later row. It now gathers from a transposed (CSC) copy of the strictly lower L, built once at factorization. Each column lists its rows in ascending order, the order the scan found them, so every x(i) subtracts the same terms in the same order.
   - **`ilu_0` setup:** each row's elimination visited every column k < i to find the few that are nonzero. ILU(0) has no fill, so it now loops over the row's own sorted columns k < i, the same k in the same order.
