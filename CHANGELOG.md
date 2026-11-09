@@ -17,6 +17,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - It copies the session to `benchmarks/data/<machine>/mtl5_bench/<UTC session>/`. That directory is append-only: republishing identical files is a no-op, and different files under an existing session are refused. These files are what stillwater-sc/mtl5-python#121 ingests.
     - It writes the card page `docs/benchmarks/<machine>-mtl5-bench.md`: a provenance table, then the session's cards. The page shows the latest session.
     - It registers the page in the site's `FILE_MAP`.
+    - It links the page from `docs/benchmarks/systems.md`: the machine's "mtl5_bench card" cell becomes `[Card](<machine>-mtl5-bench.md)`, marked `(preliminary)` when the page is. Before, it only warned, and the cell had to be edited by hand.
   - **CI:** the platform smoke job now publishes its session into the runner's checkout on all four OSes, then checks the files, the page, the sidecars, and that a second publish is a no-op.
   - **Docs:** `benchmarks/README.md` has a "Publishing a session" section.
 

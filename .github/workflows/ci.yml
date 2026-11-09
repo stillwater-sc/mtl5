@@ -854,7 +854,10 @@ jobs:
           cmake "-DRESULTS=$results" -DMACHINE=i7-12700k -DPRELIMINARY=ON -DALLOW_DIRTY=ON \
                 -P benchmarks/publish_platform.cmake
           data=benchmarks/data/i7-12700k/mtl5_bench
-          session=$(ls "$data")
+          # The session is the results directory's stamp (<host>-<UTC stamp>), not
+          # `ls "$data"`: once a real i7-12700k session is committed there are two.
+          session=${results##*-}
+          test -d "$data/$session"
           ls -l "$data/$session"
           for f in native-t1 native-t2 native-fast-t1 native-fast-t2; do
             test -f "$data/$session/$f.json" && test -f "$data/$session/$f.json.sysinfo" && test -f "$data/$session/$f.md"
@@ -862,6 +865,7 @@ jobs:
           grep -q '^# mtl5_bench capability card -- i7-12700k' docs/benchmarks/i7-12700k-mtl5-bench.md
           grep -q "^| session | \`$session\` (UTC) |" docs/benchmarks/i7-12700k-mtl5-bench.md
           grep -q "'benchmarks/i7-12700k-mtl5-bench.md'" docs-site/sync-content.mjs
+          grep -q '^| `i7-12700K` |.*| \[Card\](i7-12700k-mtl5-bench.md) (preliminary) |$' docs/benchmarks/systems.md
           if [ "$RUNNER_OS" != macOS ]; then benchmarks/check_sidecars.sh; fi
           # Publishing the same session again is a no-op.
           cmake "-DRESULTS=$results" -DMACHINE=i7-12700k -DPRELIMINARY=ON -DALLOW_DIRTY=ON \

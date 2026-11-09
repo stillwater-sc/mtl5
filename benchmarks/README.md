@@ -179,14 +179,19 @@ Then it does three things:
      instead.
 3. **Registers the page** in `docs-site/sync-content.mjs`'s `FILE_MAP`, if it
    isn't there yet.
+4. **Links the page from `systems.md`.** It sets the last cell of the machine's
+   Systems-table row, the "mtl5_bench card" column, to
+   `[Card](<machine>-mtl5-bench.md)`, followed by `(preliminary)` when the page
+   is. That cell belongs to the script: it follows the page, so a later final
+   session drops the mark. Publishing an older session leaves the cell alone,
+   like the page. If the row or the column isn't there, it warns instead.
 
-It warns if `systems.md` doesn't link the page. The first time a machine is
-published, add a `[Card](<machine>-mtl5-bench.md)` cell to its row in the
-Systems table. Then review and commit what the script lists:
+Then review and commit what the script lists:
 
 ```bash
 git add benchmarks/data/<machine>/mtl5_bench/<session> \
-        docs/benchmarks/<machine>-mtl5-bench.md docs-site/sync-content.mjs
+        docs/benchmarks/<machine>-mtl5-bench.md docs-site/sync-content.mjs \
+        docs/benchmarks/systems.md
 ```
 
 Options, each a `-D` before `-P`:
