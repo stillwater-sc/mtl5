@@ -25,7 +25,10 @@
 #      Table cells are repaired if the cards came from an mtl5_bench that did
 #      not escape `|` (before #758).
 #   4. Registers the page in docs-site/sync-content.mjs's FILE_MAP if it is
-#      not there, and warns if systems.md does not link it.
+#      not there.
+#   5. Sets the machine's "mtl5_bench card" cell in systems.md's Systems table
+#      to [Card](<MACHINE>-mtl5-bench.md), marked (preliminary) if the page is.
+#      Only with the page: publishing an older session leaves both alone.
 #
 # Options (-D before -P):
 #   PRELIMINARY=ON     mark the page preliminary: measured outside #737's
@@ -37,8 +40,8 @@
 #                      summary.md carries a time.
 #   DRY_RUN=ON         validate and report what would be written; write nothing.
 #
-# Then review and commit the data directory, the page and sync-content.mjs; the
-# script prints the paths.
+# Then review and commit the data directory, the page, sync-content.mjs and
+# systems.md; the script prints the paths.
 
 cmake_minimum_required(VERSION 3.22)
 
@@ -392,13 +395,64 @@ if(have EQUAL -1)
     endif()
 endif()
 
-string(FIND "${systems_text}" "(${MACHINE}-mtl5-bench.md)" linked)
-if(linked EQUAL -1)
-    message(WARNING "publish_platform: docs/benchmarks/systems.md does not link ${MACHINE}-mtl5-bench.md -- "
-                    "add a [Card](${MACHINE}-mtl5-bench.md) cell to its Systems table")
+# -- 5. link the page from the Systems table -------------------------------------
+# The machine's row is the line that starts "| `<machine>` |"; its LAST cell is
+# the "mtl5_bench card" column, which this script owns. It is set to
+# "[Card](<machine>-mtl5-bench.md)", plus " (preliminary)" when the page is,
+# so it follows the page: only when the page was rewritten (latest session).
+set(changed_files "docs-site/sync-content.mjs")
+set(card_column "| mtl5_bench card |")
+string(FIND "${systems_text}" "${card_column}" have_column)
+string(FIND "${systems_lower}" "\n| `${MACHINE}` |" row_at)
+if(have_column EQUAL -1 OR row_at EQUAL -1)
+    string(FIND "${systems_text}" "(${MACHINE}-mtl5-bench.md)" linked)
+    if(linked EQUAL -1)
+        message(WARNING "publish_platform: docs/benchmarks/systems.md has no Systems-table row "
+                        "\"| `${MACHINE}` |\" with an \"mtl5_bench card\" column -- add a "
+                        "[Card](${MACHINE}-mtl5-bench.md) cell to its row by hand")
+    endif()
+elseif(SESSION STREQUAL latest)
+    math(EXPR row_at "${row_at} + 1")
+    string(SUBSTRING "${systems_text}" ${row_at} -1 rest)
+    string(FIND "${rest}" "\n" row_len)
+    if(row_len EQUAL -1)
+        string(LENGTH "${rest}" row_len)
+    endif()
+    string(SUBSTRING "${rest}" 0 ${row_len} row)
+    string(SUBSTRING "${rest}" ${row_len} -1 after)
+    string(SUBSTRING "${systems_text}" 0 ${row_at} before)
+    # Trailing blanks stay out of the cell arithmetic. (No CR to handle:
+    # file(READ) drops them, and the files are written with LF.)
+    string(REGEX MATCH "[ \t]*$" row_end "${row}")
+    string(LENGTH "${row}" n)
+    string(LENGTH "${row_end}" e)
+    math(EXPR n "${n} - ${e}")
+    string(SUBSTRING "${row}" 0 ${n} row)
+    if(NOT row MATCHES "\\|$")
+        fail("the systems.md row for ${MACHINE} does not end in '|': ${row}")
+    endif()
+    math(EXPR n "${n} - 1")
+    string(SUBSTRING "${row}" 0 ${n} row_open)
+    string(FIND "${row_open}" "|" last_bar REVERSE)
+    math(EXPR last_bar "${last_bar} + 1")
+    string(SUBSTRING "${row_open}" 0 ${last_bar} row_head)
+    set(cell "[Card](${MACHINE}-mtl5-bench.md)")
+    if(PRELIMINARY)
+        string(APPEND cell " (preliminary)")
+    endif()
+    set(new_row "${row_head} ${cell} |")
+    if(new_row STREQUAL row)
+        note("docs/benchmarks/systems.md already links the page")
+    elseif(DRY_RUN)
+        note("would set the systems.md card cell for ${MACHINE} to: ${cell}")
+    else()
+        file(WRITE "${SYSTEMS_MD}" "${before}${new_row}${row_end}${after}")
+        note("set the systems.md card cell for ${MACHINE} to: ${cell}")
+        string(APPEND changed_files " docs/benchmarks/systems.md")
+    endif()
 endif()
 
 if(NOT DRY_RUN)
     message(STATUS "publish_platform: done. Review, then commit:\n"
-                   "  git add ${DATA_REL} ${PAGE_REL} docs-site/sync-content.mjs")
+                   "  git add ${DATA_REL} ${PAGE_REL} ${changed_files}")
 endif()
