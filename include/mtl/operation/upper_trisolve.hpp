@@ -13,6 +13,11 @@
 // overwrite hazard: x(j) for j > i must already be SOLVED (not merely
 // original) before row i can be computed. Unrelated to accumulator choice,
 // unchanged by this patch.
+//
+// Unlike lower_trisolve (#749), the default path stays one row at a time. Row
+// i sums its terms in ascending j, so the first one, U(i,i+1)*x(i+1), needs
+// row i+1 finished: each reduction starts only after the previous one ends.
+// Overlapping rows would mean summing in descending j, which changes the bits.
 #include <cassert>
 #include <type_traits>
 #include <mtl/concepts/matrix.hpp>

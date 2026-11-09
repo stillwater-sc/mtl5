@@ -181,9 +181,37 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
         }
     }
 #endif
+    // Four rows at a time, one accumulator each (#749). Every row sums the
+    // same terms in the same order as the one-row loop at the bottom, so the
+    // bits are the same; the four chains are independent, which hides the
+    // add latency a single serial reduction is bound by. Each block reads x
+    // before it writes any of its four entries, and the blocks go in the
+    // overwrite-safe order, so every x(j) read still holds its original value.
     if (upper) {
         // x_i depends on x_j for j >= i; forward order is safe.
-        for (size_type i = 0; i < n; ++i) {
+        size_type i = 0;
+        for (; n - i >= 4; i += 4) {
+            const size_type r1 = i + 1, r2 = i + 2, r3 = i + 3, j0 = i + 4;
+            // Each row's terms inside the 4x4 diagonal block come first.
+            auto a0 = unit_diag ? x(i) : A(i, i) * x(i);
+            a0 += A(i, r1) * x(r1);
+            a0 += A(i, r2) * x(r2);
+            a0 += A(i, r3) * x(r3);
+            auto a1 = unit_diag ? x(r1) : A(r1, r1) * x(r1);
+            a1 += A(r1, r2) * x(r2);
+            a1 += A(r1, r3) * x(r3);
+            auto a2 = unit_diag ? x(r2) : A(r2, r2) * x(r2);
+            a2 += A(r2, r3) * x(r3);
+            auto a3 = unit_diag ? x(r3) : A(r3, r3) * x(r3);
+            for (size_type j = j0; j < n; ++j) {
+                a0 += A(i, j) * x(j);
+                a1 += A(r1, j) * x(j);
+                a2 += A(r2, j) * x(j);
+                a3 += A(r3, j) * x(j);
+            }
+            x(i) = a0; x(r1) = a1; x(r2) = a2; x(r3) = a3;
+        }
+        for (; i < n; ++i) {
             auto acc = unit_diag ? x(i) : A(i, i) * x(i);
             for (size_type j = i + 1; j < n; ++j)
                 acc += A(i, j) * x(j);
@@ -191,7 +219,29 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
         }
     } else {
         // x_i depends on x_j for j <= i; reverse order is safe.
-        for (size_type ii = n; ii-- > 0; ) {
+        size_type ii = n;
+        for (; ii >= 4; ii -= 4) {
+            const size_type r0 = ii - 4, r1 = ii - 3, r2 = ii - 2, r3 = ii - 1;
+            auto a0 = unit_diag ? x(r0) : A(r0, r0) * x(r0);
+            auto a1 = unit_diag ? x(r1) : A(r1, r1) * x(r1);
+            auto a2 = unit_diag ? x(r2) : A(r2, r2) * x(r2);
+            auto a3 = unit_diag ? x(r3) : A(r3, r3) * x(r3);
+            for (size_type j = 0; j < r0; ++j) {
+                a0 += A(r0, j) * x(j);
+                a1 += A(r1, j) * x(j);
+                a2 += A(r2, j) * x(j);
+                a3 += A(r3, j) * x(j);
+            }
+            // Then each row's terms inside the 4x4 diagonal block, in order.
+            a1 += A(r1, r0) * x(r0);
+            a2 += A(r2, r0) * x(r0);
+            a2 += A(r2, r1) * x(r1);
+            a3 += A(r3, r0) * x(r0);
+            a3 += A(r3, r1) * x(r1);
+            a3 += A(r3, r2) * x(r2);
+            x(r0) = a0; x(r1) = a1; x(r2) = a2; x(r3) = a3;
+        }
+        while (ii-- > 0) {
             auto acc = unit_diag ? x(ii) : A(ii, ii) * x(ii);
             for (size_type j = 0; j < ii; ++j)
                 acc += A(ii, j) * x(j);
