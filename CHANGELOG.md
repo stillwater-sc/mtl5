@@ -97,6 +97,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- **A PR that only publishes benchmark data no longer runs the build matrix.** `ci.yml` and `regression.yml` now ignore `benchmarks/data/**`, which no build or test reads. The sidecar check (#477) moved from `ci.yml` into a new `bench-data.yml`, which runs when `benchmarks/data/`, `check_sidecars.sh` or the workflow itself changes. A session published with `publish_platform.cmake` (data, card page, `FILE_MAP` entry) now runs that check and the docs build. The benchmark sources elsewhere under `benchmarks/` still run full CI.
 - **BREAKING: `trans` and the other view factories reject a temporary at compile time** (#695). Every view in `mat/view/` holds a reference to its matrix, and the factories took `const M&`, so `auto t = trans(A * B);` compiled and `t` read freed memory once the product was destroyed.
   - **The fix:** `trans`, `upper`, `lower`, `strict_upper`, `strict_lower`, `triu`, `tril`, `banded`, `hermitian` and `mapped` each have a deleted `const M&&` overload, which an rvalue prefers over `const M&`.
   - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
