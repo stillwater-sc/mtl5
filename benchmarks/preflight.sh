@@ -303,9 +303,12 @@ if command -v pgrep >/dev/null 2>&1; then
             for c in "${CANDIDATES[@]}"; do
                 pid=${c%% *}; name=${c#* }
                 t1=$(cpu_ticks "$pid")
-                [ -z "$t1" ] && continue              # exited between the samples
-                if [ -z "${T0[$pid]:-}" ]; then
-                    BUSY="$BUSY $name($pid)"          # no first sample: assume busy
+                # A sample that cannot be read never makes a process idle: it
+                # is busy unless it is gone.
+                if [ -z "$t1" ] && [ ! -d "/proc/$pid" ]; then
+                    continue                          # exited between the samples
+                elif [ -z "$t1" ] || [ -z "${T0[$pid]:-}" ]; then
+                    BUSY="$BUSY $name($pid)"          # cannot tell: assume busy
                 elif [ $(( (t1 - T0[$pid]) * 1000 / TCK )) -gt 50 ]; then
                     BUSY="$BUSY $name($pid)"
                 else

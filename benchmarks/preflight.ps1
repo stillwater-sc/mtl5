@@ -216,19 +216,20 @@ $candidates = @(foreach ($n in $busyNames) { Get-Process -Name $n -ErrorAction S
 $busy = @()
 $idle = @()
 if ($candidates.Count -gt 0) {
+    # A sample that cannot be read -- access denied throws, or the getter
+    # yields $null -- never makes a process idle: it is busy unless it is gone.
     $cpu0 = @{}
     foreach ($p in $candidates) {
-        try { $cpu0[$p.Id] = $p.TotalProcessorTime } catch { }   # access denied: no sample
+        try { $t = $p.TotalProcessorTime } catch { $t = $null }
+        if ($null -ne $t) { $cpu0[$p.Id] = $t }
     }
     Start-Sleep -Milliseconds 1000
     foreach ($p in $candidates) {
         $tag = "$($p.ProcessName)($($p.Id))"
-        if (-not $cpu0.ContainsKey($p.Id)) { $busy += $tag; continue }   # cannot tell: assume busy
-        try {
-            $p.Refresh()
-            if ($p.HasExited) { continue }
-            $ms = ($p.TotalProcessorTime - $cpu0[$p.Id]).TotalMilliseconds
-        } catch { continue }   # exited between the samples
+        if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) { continue }   # exited
+        try { $p.Refresh(); $t1 = $p.TotalProcessorTime } catch { $t1 = $null }
+        if (-not $cpu0.ContainsKey($p.Id) -or $null -eq $t1) { $busy += $tag; continue }   # cannot tell
+        $ms = ($t1 - $cpu0[$p.Id]).TotalMilliseconds
         if ($ms -gt 50) { $busy += $tag } else { $idle += $tag }
     }
 }
