@@ -18,6 +18,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - It writes the card page `docs/benchmarks/<machine>-mtl5-bench.md`: a provenance table, then the session's cards. The page shows the latest session.
     - It registers the page in the site's `FILE_MAP`.
     - It links the page from `docs/benchmarks/systems.md`: the machine's "mtl5_bench card" cell becomes `[Card](<machine>-mtl5-bench.md)`, marked `(preliminary)` when the page is. Before, it only warned, and the cell had to be edited by hand.
+      Its first version failed on every publish under CMake 3.x, the versions on the Linux and Windows runners, which broke the platform smoke job there: a trailing-blank regex, `[ \t]*$`, matched an empty string, which CMake before 4.x rejects. It now strips with `[ \t]+$`, and runs under CMake 3.22, the script's declared minimum.
   - **CI:** the platform smoke job now publishes its session into the runner's checkout on all four OSes, then checks the files, the page, the sidecars, and that a second publish is a no-op.
     It takes the session it checks from the results directory's name (#763), because once a real i7-12700K session was committed, listing the data directory returned two.
   - **Docs:** `benchmarks/README.md` has a "Publishing a session" section.
