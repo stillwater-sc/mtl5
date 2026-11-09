@@ -202,6 +202,7 @@ The `main` branch is protected:
 
 Which changes run CI:
 - **Docs-only changes run no CI.** A commit that touches only `docs/`, `docs-site/`, Markdown, images, `LICENSE`, `.coderabbit.yaml` or `.nojekyll` skips `ci.yml` and `regression.yml` entirely; `docs.yml` builds the site for those. If a PR mixes docs with anything else, the full workflow runs.
+- **Benchmark-data-only changes run no build CI either.** `benchmarks/data/**` is in the same ignore list, so a PR that only publishes a session (data, its card page, the `FILE_MAP` entry) skips `ci.yml` and `regression.yml`. `bench-data.yml` runs the sidecar check (`benchmarks/check_sidecars.sh`) on those changes instead. The rest of `benchmarks/` is code and runs full CI.
 - **Feature branches are tested through their PR, not on push.** Pushing to a branch without a PR runs nothing. Open it as a draft PR to get Tier 1, or run `gh workflow run ci.yml --ref <branch>`.
 - **Promoting a draft runs only Tier 2.** Tier 1 already ran on that commit while it was a draft, so `ci.yml` does not trigger on `ready_for_review`; `regression.yml` does. Tier 2 is a separate workflow, so it starts alongside Tier 1 rather than after it.
 - **A new commit on a PR cancels that PR's in-progress runs** (each workflow its own).

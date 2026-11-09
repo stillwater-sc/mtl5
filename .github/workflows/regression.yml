@@ -15,13 +15,15 @@ name: Regression
 # so a commit that breaks Tier 1 also spends one regression run. Promotion, the
 # common case, is the one this saves on.
 #
-# PATHS: the same list as ci.yml; keep the three copies the same.
+# PATHS: the same list as ci.yml (see the comment there); keep the three
+# copies the same.
 on:
   pull_request:
     branches: [ main ]
     paths-ignore:
       - 'docs/**'
       - 'docs-site/**'
+      - 'benchmarks/data/**'
       - '**/*.md'
       - '**/*.png'
       - '**/*.svg'

@@ -1,0 +1,50 @@
+name: Benchmark data
+
+# Checks committed benchmark results, and nothing else.
+#
+# ci.yml and regression.yml ignore benchmarks/data/: no build and no test reads
+# it. So a PR that only publishes a benchmark session (the session under
+# benchmarks/data/, its card page under docs/benchmarks/, the FILE_MAP entry)
+# runs this check and docs.yml, not the 20-job build matrix.
+#
+# This was the `sidecar-check` job of ci.yml. It lives here so that it runs on
+# the changes it checks: every committed CSV or JSON must carry its .sysinfo
+# (#477). See benchmarks/check_sidecars.sh.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'benchmarks/data/**'
+      - 'benchmarks/check_sidecars.sh'
+      - '.github/workflows/bench-data.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'benchmarks/data/**'
+      - 'benchmarks/check_sidecars.sh'
+      - '.github/workflows/bench-data.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-data-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  # Every committed CSV must carry its .sysinfo (#477). A benchmark result
+  # without provenance cannot be traced to a commit, a build configuration or a
+  # machine state -- 28 such files reached the repository before anyone noticed,
+  # and they were found by auditing an open issue rather than by anything
+  # failing. Those are grandfathered in benchmarks/data/.sidecar-exempt; this
+  # job forbids adding another, and also fails on a stale exemption so the list
+  # cannot rot into a permanent amnesty.
+  sidecar-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check every committed CSV has a provenance sidecar
+        run: benchmarks/check_sidecars.sh
