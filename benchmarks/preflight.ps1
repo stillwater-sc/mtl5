@@ -194,15 +194,50 @@ Emit 'tree_git_dirty'  $treeDirty
 # Matched on process NAME. Matching command lines caught the shell that had
 # merely typed the benchmark's path on the POSIX side, which failed every clean
 # run.
+#
+# A matched build process counts only if it is USING CPU (#756). MSBuild keeps
+# reusable worker nodes (/nodemode:1 /nodeReuse:true) alive and idle after a
+# build -- about 15 minutes from the command line, as long as the IDE is open
+# from Visual Studio -- and an idle devenv matches by name as well. By name
+# alone, each of those failed the gate with no build running. So every matched
+# build process is sampled twice, a second apart: more than 50 ms of CPU in that
+# second (5% of one core) is competing load; less is recorded under
+# idle_build_processes and does not fail the gate. A build that is really
+# running has a process over the line -- the compiler or linker even when the
+# driver is waiting on it. The sample costs a second, only when a candidate
+# exists. A build that starts after it is missed, as before; the second
+# preflight, after platform.ps1's builds, narrows that window.
+#
+# A benchmark is always competing load, sampled or not: bench_* (the ad-hoc
+# harnesses) and *_bench (mtl5_bench, the platform harness itself, so a second
+# platform.ps1 cannot measure alongside the first).
 $busyNames = @('make', 'ninja', 'cmake', 'MSBuild', 'cl', 'link', 'devenv', 'cc1plus')
+$candidates = @(foreach ($n in $busyNames) { Get-Process -Name $n -ErrorAction SilentlyContinue })
 $busy = @()
-foreach ($n in $busyNames) {
-    Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object { $busy += "$($_.ProcessName)($($_.Id))" }
+$idle = @()
+if ($candidates.Count -gt 0) {
+    # A sample that cannot be read -- access denied throws, or the getter
+    # yields $null -- never makes a process idle: it is busy unless it is gone.
+    $cpu0 = @{}
+    foreach ($p in $candidates) {
+        try { $t = $p.TotalProcessorTime } catch { $t = $null }
+        if ($null -ne $t) { $cpu0[$p.Id] = $t }
+    }
+    Start-Sleep -Milliseconds 1000
+    foreach ($p in $candidates) {
+        $tag = "$($p.ProcessName)($($p.Id))"
+        if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) { continue }   # exited
+        try { $p.Refresh(); $t1 = $p.TotalProcessorTime } catch { $t1 = $null }
+        if (-not $cpu0.ContainsKey($p.Id) -or $null -eq $t1) { $busy += $tag; continue }   # cannot tell
+        $ms = ($t1 - $cpu0[$p.Id]).TotalMilliseconds
+        if ($ms -gt 50) { $busy += $tag } else { $idle += $tag }
+    }
 }
-Get-Process -Name 'bench_*' -ErrorAction SilentlyContinue |
+Get-Process -Name 'bench_*', '*_bench' -ErrorAction SilentlyContinue |
     Where-Object { $_.Id -ne $PID } |
     ForEach-Object { $busy += "$($_.ProcessName)($($_.Id))" }
 
+Emit 'idle_build_processes' ($(if ($idle.Count -gt 0) { $idle -join ',' } else { 'none' }))
 if ($busy.Count -gt 0) {
     Emit 'competing_load' ($busy -join ',')
     GateFailed "a build or benchmark is already running: $($busy -join ' ')"

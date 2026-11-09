@@ -259,21 +259,80 @@ emit tree_git_dirty  "$TREE_DIRTY"
 # competing compile does not make the run noisy, it makes it wrong: the arms are
 # interleaved, so a build that finishes mid-session penalises whichever arm was
 # running at the time and the difference is reported as a result.
+#
+# A matched build process counts only if it is USING CPU (#756), the same test
+# as preflight.ps1: each is sampled twice, a second apart, from
+# /proc/<pid>/stat, and more than 50 ms of CPU in that second (5% of one core)
+# is competing load. Less is recorded under idle_build_processes and does not
+# fail the gate. A build that is really running has a process over the line --
+# cc1plus or ld even while make waits on them. Without /proc (macOS) there is
+# no cheap sample, so every match is competing load, as before, and
+# idle_build_processes is `unavailable`.
+#
+# A benchmark is always competing load: bench_* (the ad-hoc harnesses) and
+# *_bench (mtl5_bench, the platform harness itself, so a second platform.sh
+# cannot measure alongside the first).
 BUSY=""
+IDLE=none
+cpu_ticks() {   # pid -> utime + stime in clock ticks, or nothing if it is gone
+    local stat
+    stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+    # The name field is parenthesised and may hold spaces: cut past its ")".
+    stat=${stat##*) }
+    # shellcheck disable=SC2086
+    set -- $stat
+    # Fields from 3 (state) on: utime is field 14, stime 15.
+    [ $# -ge 13 ] && echo $(( ${12} + ${13} ))
+}
 if command -v pgrep >/dev/null 2>&1; then
     # Record NAMES, not bare pids: a pid in a sidecar read weeks later says
     # nothing, while "make(12345)" says the session raced a build.
+    CANDIDATES=()
     while read -r pid name _rest; do
-        [ -n "${pid:-}" ] && BUSY="$BUSY $name($pid)"
+        [ -n "${pid:-}" ] && CANDIDATES+=("$pid $name")
     done < <(pgrep -xl "make|ninja|cmake|cc1|cc1plus|lto1|ld|conftest" 2>/dev/null)
+    if [ "${#CANDIDATES[@]}" -gt 0 ]; then
+        if [ -r /proc/self/stat ]; then
+            TCK=$(getconf CLK_TCK 2>/dev/null || echo 100)
+            declare -A T0=()
+            for c in "${CANDIDATES[@]}"; do
+                pid=${c%% *}; T0[$pid]=$(cpu_ticks "$pid")
+            done
+            sleep 1
+            IDLE=""
+            for c in "${CANDIDATES[@]}"; do
+                pid=${c%% *}; name=${c#* }
+                t1=$(cpu_ticks "$pid")
+                # A sample that cannot be read never makes a process idle: it
+                # is busy unless it is gone.
+                if [ -z "$t1" ] && [ ! -d "/proc/$pid" ]; then
+                    continue                          # exited between the samples
+                elif [ -z "$t1" ] || [ -z "${T0[$pid]:-}" ]; then
+                    BUSY="$BUSY $name($pid)"          # cannot tell: assume busy
+                elif [ $(( (t1 - T0[$pid]) * 1000 / TCK )) -gt 50 ]; then
+                    BUSY="$BUSY $name($pid)"
+                else
+                    IDLE="$IDLE,$name($pid)"
+                fi
+            done
+            IDLE=${IDLE#,}
+            [ -z "$IDLE" ] && IDLE=none
+        else
+            IDLE=unavailable
+            for c in "${CANDIDATES[@]}"; do BUSY="$BUSY ${c#* }(${c%% *})"; done
+        fi
+    fi
     # Match the process NAME, never the command line: -f matched the shell that
     # had merely typed the benchmark's path, so preflight reported the session
     # it was running inside as competing load and failed every clean run.
     while read -r pid name _rest; do
         [ -n "${pid:-}" ] && [ "$pid" != "$$" ] && BUSY="$BUSY $name($pid)"
-    done < <(pgrep -xl "bench_[a-z0-9_]+" 2>/dev/null)
+    done < <(pgrep -xl "bench_[a-z0-9_]+|[a-z0-9_]+_bench" 2>/dev/null)
+else
+    IDLE=unavailable
 fi
 BUSY=$(echo "$BUSY" | tr -s ' ' | sed 's/^ *//;s/ *$//')
+emit idle_build_processes "$IDLE"
 if [ -n "$BUSY" ]; then
     emit competing_load "$(echo "$BUSY" | tr ' ' ',')"
     gate_failed "a build or benchmark is already running: $BUSY"

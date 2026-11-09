@@ -23,7 +23,7 @@
 set(REQUIRED_KEYS
     preflight_version preflight_host preflight_kernel
     tree_git_commit tree_git_dirty
-    competing_load
+    competing_load idle_build_processes
     cpu_online cpu_affinity
     governor turbo power_mode
     thermal_sensor thermal_before_c thermal_limit_c thermal_headroom_c
