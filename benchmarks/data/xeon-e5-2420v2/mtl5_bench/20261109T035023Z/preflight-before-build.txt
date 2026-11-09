@@ -1,0 +1,17 @@
+preflight_version=1
+preflight_host=sw-12
+preflight_kernel=Linux 7.0.0-42-generic
+tree_git_commit=73d11400a0e3
+tree_git_dirty=0
+competing_load=none
+loadavg_1m=0.12
+cpu_online=12
+cpu_affinity=12
+governor=schedutil
+turbo=enabled
+power_mode=n/a
+thermal_sensor=coretemp:Package id 0
+thermal_before_c=43.0
+thermal_limit_c=76.0
+thermal_headroom_c=33.0
+preflight_gates=enforced
