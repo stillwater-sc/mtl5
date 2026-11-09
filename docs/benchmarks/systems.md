@@ -904,8 +904,15 @@ independently of the others:
 | Source | Keys | Answers |
 |---|---|---|
 | The **binary** (`mtl/build_info.hpp`, `mtl/util/system_info.hpp`) | `git_commit` `git_dirty` `cxx_flags` `cmake_type` `build_isa` `cpu_*` `os_*` `compiler*` | What was built, and for which ISA |
-| **Preflight** | `tree_git_commit` `tree_git_dirty` `competing_load` `loadavg_1m` `cpu_online` `cpu_affinity` `governor` `turbo` `power_mode` `thermal_before_c` `thermal_limit_c` `thermal_headroom_c` | What the machine was doing |
+| **Preflight** | `tree_git_commit` `tree_git_dirty` `competing_load` `idle_build_processes` `loadavg_1m` `cpu_online` `cpu_affinity` `governor` `turbo` `power_mode` `thermal_before_c` `thermal_limit_c` `thermal_headroom_c` | What the machine was doing |
 | The **harness** | `binary_stale` `thermal_after_c` `harness` `harness_rounds` `harness_reps` | Whether the run was self-consistent |
+
+`competing_load` lists the build tools and benchmarks that were running, and
+fails the gate. A build tool counts only if it used more than 50 ms of CPU in a
+one-second sample (#756). An idle one, such as a reusable MSBuild node left by an
+earlier build or an open Visual Studio, is listed in `idle_build_processes` and
+doesn't fail it. On macOS, which has no `/proc` to sample, every match counts,
+and `idle_build_processes` is `unavailable`.
 
 Two pairs are worth understanding, since each pair looks redundant and is not:
 

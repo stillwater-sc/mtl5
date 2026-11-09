@@ -31,6 +31,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **The benchmark preflight no longer fails on idle build processes, and it detects a running `mtl5_bench`** (#756). `preflight.ps1` matched build tools by name only, so an idle reusable MSBuild worker node failed the gate. Command-line builds leave those nodes for about 15 minutes, and Visual Studio leaves them while it is open. An open Visual Studio failed it too. On Windows, that blocked `platform.ps1` with no build running.
+  - **The fix:** a matched build process counts as competing load only if it uses more than 50 ms of CPU in a one-second sample, 5% of one core. An idle one is recorded in the new sidecar key `idle_build_processes` and passes. A build that is really running still fails, since its compiler or linker is busy even while the driver waits. The sample costs a second, and only when a build process exists.
+  - **`preflight.sh`** applies the same test on Linux, from `/proc/<pid>/stat`. On macOS every match still counts, and `idle_build_processes` is `unavailable`.
+  - **`mtl5_bench`:** both preflights looked for `bench_*`, which the platform harness doesn't match, so a second `platform.sh` or `platform.ps1` could measure alongside a running one. `*_bench` is now matched too. Benchmarks always count, without sampling.
+  - **Test:** `bench_preflight_contract` requires `idle_build_processes` from both scripts.
+
 - **`mtl5_bench` capability cards escape `|` in table cells** (#758). Shapes such as `|v| <= 15`, from the integer entries, added two columns to their rows, so those rows' figures sat under the wrong headings. The three published cards are corrected, and `publish_platform.cmake` repairs cards written by an older binary.
 - **The `mtl5_bench` card pages are on the docs site** (#758). The Ryzen 7 2700X and Xeon E5-2420 v2 pages, and the new Ryzen 9 8945HS one, weren't in `FILE_MAP`, so the site didn't build them and `systems.md`'s links to them were dead.
   - The pages are now `docs/benchmarks/<machine>-mtl5-bench.md`, each with its own title. A bare `<machine>.md` stays the written analysis page, as for the i7-12700K and the Ryzen 9.
