@@ -95,6 +95,11 @@ const FILE_MAP = {
   'benchmarks/systems.md':                      'benchmarks/systems.md',
   'benchmarks/i7-12700k.md':                    'benchmarks/i7-12700k.md',
   'benchmarks/ryzen-9-8945hs.md':               'benchmarks/ryzen-9-8945hs.md',
+  // mtl5_bench capability cards, one page per machine, written by
+  // benchmarks/publish_platform.cmake (which also adds the entry here).
+  'benchmarks/ryzen-7-2700x-mtl5-bench.md':     'benchmarks/ryzen-7-2700x-mtl5-bench.md',
+  'benchmarks/ryzen-9-8945hs-mtl5-bench.md':    'benchmarks/ryzen-9-8945hs-mtl5-bench.md',
+  'benchmarks/xeon-e5-2420v2-mtl5-bench.md':    'benchmarks/xeon-e5-2420v2-mtl5-bench.md',
 
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',

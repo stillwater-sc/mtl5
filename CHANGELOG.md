@@ -5,8 +5,28 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`benchmarks/publish_platform.cmake` publishes an `mtl5_bench` platform session** (#758, #737). Copying a `platform.sh`/`platform.ps1` results directory into the repository by hand left the raw JSON behind and produced card pages the docs site didn't know about.
+  - **Running it:** `cmake -DRESULTS=<results dir> -DMACHINE=<systems.md name> -P benchmarks/publish_platform.cmake`. It needs only CMake, so it runs on the machine that made the session, Windows included.
+  - **What it checks first:**
+    - every run's JSON (`mtl5-bench/1`), sidecar and card are present;
+    - all runs are one commit and one class;
+    - no check failed, and no run was built from a dirty tree. Either can be overridden, and the page then says so.
+  - **What it writes:**
+    - It copies the session to `benchmarks/data/<machine>/mtl5_bench/<UTC session>/`. That directory is append-only: republishing identical files is a no-op, and different files under an existing session are refused. These files are what stillwater-sc/mtl5-python#121 ingests.
+    - It writes the card page `docs/benchmarks/<machine>-mtl5-bench.md`: a provenance table, then the session's cards. The page shows the latest session.
+    - It registers the page in the site's `FILE_MAP`.
+  - **CI:** the platform smoke job now publishes its session into the runner's checkout on all four OSes, then checks the files, the page, the sidecars, and that a second publish is a no-op.
+  - **Docs:** `benchmarks/README.md` has a "Publishing a session" section.
+
 ### Fixed
 
+- **`mtl5_bench` capability cards escape `|` in table cells** (#758). Shapes such as `|v| <= 15`, from the integer entries, added two columns to their rows, so those rows' figures sat under the wrong headings. The three published cards are corrected, and `publish_platform.cmake` repairs cards written by an older binary.
+- **The `mtl5_bench` card pages are on the docs site** (#758). The Ryzen 7 2700X and Xeon E5-2420 v2 pages, and the new Ryzen 9 8945HS one, weren't in `FILE_MAP`, so the site didn't build them and `systems.md`'s links to them were dead.
+  - The pages are now `docs/benchmarks/<machine>-mtl5-bench.md`, each with its own title. A bare `<machine>.md` stays the written analysis page, as for the i7-12700K and the Ryzen 9.
+  - `systems.md` lists both kinds in separate columns.
+  - Each card page is marked preliminary, because none was measured under #737's methodology.
 - **IDR(s) keeps one ω per cycle, so a larger s no longer costs more iterations** (#734). `mtl5_bench` found `itl::idr_s`'s iteration counts irregular in s: 80, 77, 101 and 59 at s = 1, 2, 4 and 8 on 128² convection–diffusion with ILU(0).
   - **The cause:** after its s initial steps, IDR(s) runs in cycles of s + 1 steps that must share one ω. That puts their residuals in the same space G_j, which is the dimension reduction (Sonneveld and van Gijzen, SISC 31, 2008, Alg. 3.1). The implementation recomputed ω at every step.
     - Unpreconditioned 128² Poisson failed to converge at four of s = 1, 2, 4, 8 and 16.

@@ -222,6 +222,18 @@ bool write_sidecar(const std::string& path, const std::string& label, const std:
     return static_cast<bool>(si);
 }
 
+/// A string as a markdown table cell: `|` escaped, so a shape such as
+/// "|v| <= 15" stays in one cell instead of adding two columns (#758).
+std::string md_cell(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (const char ch : s) {
+        if (ch == '|') out += "\\|";
+        else out += ch;
+    }
+    return out;
+}
+
 /// A markdown capability card: one run's machine, build, ceilings and results,
 /// in the form docs/benchmarks/systems.md publishes. Area rows are grouped and
 /// summarized (median and best %roof), so a reader sees where the build reaches
@@ -232,13 +244,13 @@ bool write_card(const std::string& path, const std::string& label, const std::st
     if (!md) return false;
     const auto si = mtl::util::identify();
     md << std::fixed;
-    md << "## " << machine << " -- " << label << ", " << pr.threads
+    md << "## " << machine << " -- " << md_cell(label) << ", " << pr.threads
        << (pr.threads == 1 ? " thread" : " threads") << ", class " << bp::to_string(cls) << "\n\n"
        << "| | |\n|---|---|\n"
-       << "| CPU | " << (si.cpu.brand.empty() ? "unknown" : si.cpu.brand) << " (" << si.cpu.arch
+       << "| CPU | " << md_cell(si.cpu.brand.empty() ? "unknown" : si.cpu.brand) << " (" << si.cpu.arch
        << ", " << si.cpu.logical_cores << " logical cores) |\n"
-       << "| OS | " << si.os.name << " " << si.os.version << " |\n"
-       << "| compiler | " << si.compiler.name << " " << si.compiler.version << " |\n"
+       << "| OS | " << md_cell(si.os.name + " " + si.os.version) << " |\n"
+       << "| compiler | " << md_cell(si.compiler.name + " " + si.compiler.version) << " |\n"
        << "| build | `" << mtl::build_cxx_flags << "`, SIMD " << mtl::simd::backend_name() << " |\n"
        << "| commit | `" << mtl::build_git_commit << "`" << (std::string(mtl::build_git_dirty) == "1" ? " (dirty)" : "")
        << " |\n" << std::setprecision(1)
@@ -272,7 +284,7 @@ bool write_card(const std::string& path, const std::string& label, const std::st
                 failed += !(r.check.ok && r.error.empty());
             }
         std::sort(pct.begin(), pct.end());
-        md << "| " << a << " | " << entries << " | " << std::setprecision(0);
+        md << "| " << md_cell(a) << " | " << entries << " | " << std::setprecision(0);
         if (pct.empty()) md << "n/a | n/a";
         else md << pct[pct.size() / 2] << "% | " << pct.back() << "%";
         md << " | " << failed << " |";
@@ -292,7 +304,7 @@ bool write_card(const std::string& path, const std::string& label, const std::st
         const bool ok = r.check.ok && r.error.empty();
         any_cached |= r.cache_resident;
         any_suspect |= r.suspect_model;
-        md << "| " << r.area << " | " << r.op << " | " << r.dtype << " | " << r.shape << " | "
+        md << "| " << md_cell(r.area) << " | " << md_cell(r.op) << " | " << md_cell(r.dtype) << " | " << md_cell(r.shape) << " | "
            << std::setprecision(3) << r.median_s * 1e3 << " ms | " << std::setprecision(2) << r.gflops
            << " | " << r.gbytes_per_s << " | " << std::setprecision(0);
         if (r.no_roofline()) md << "n/a";
