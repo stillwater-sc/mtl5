@@ -422,12 +422,13 @@ elseif(SESSION STREQUAL latest)
     string(SUBSTRING "${rest}" ${row_len} -1 after)
     string(SUBSTRING "${systems_text}" 0 ${row_at} before)
     # Trailing blanks stay out of the cell arithmetic. (No CR to handle:
-    # file(READ) drops them, and the files are written with LF.)
-    string(REGEX MATCH "[ \t]*$" row_end "${row}")
-    string(LENGTH "${row}" n)
-    string(LENGTH "${row_end}" e)
-    math(EXPR n "${n} - ${e}")
-    string(SUBSTRING "${row}" 0 ${n} row)
+    # file(READ) drops them, and the files are written with LF.) Strip with a
+    # regex that cannot match an empty string: CMake before 4.x fails on one
+    # that does, as "[ \t]*$" did on every row without trailing blanks.
+    string(REGEX REPLACE "[ \t]+$" "" row_trim "${row}")
+    string(LENGTH "${row_trim}" n)
+    string(SUBSTRING "${row}" ${n} -1 row_end)
+    set(row "${row_trim}")
     if(NOT row MATCHES "\\|$")
         fail("the systems.md row for ${MACHINE} does not end in '|': ${row}")
     endif()
