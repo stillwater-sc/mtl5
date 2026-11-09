@@ -1,0 +1,17 @@
+preflight_version=1
+preflight_host=sw-21
+preflight_kernel=Linux 7.0.0-43-generic
+tree_git_commit=e7497e6e4c47
+tree_git_dirty=0
+competing_load=none
+loadavg_1m=0.99
+cpu_online=20
+cpu_affinity=20
+governor=powersave
+turbo=enabled
+power_mode=n/a
+thermal_sensor=coretemp:Package id 0
+thermal_before_c=25.0
+thermal_limit_c=80.0
+thermal_headroom_c=55.0
+preflight_gates=enforced
