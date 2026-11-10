@@ -151,6 +151,17 @@ bool read_baseline(const std::string& path, baseline& out) {
     return out.threads > 0;
 }
 
+/// The detected BLAS vendor's thread count for a call made outside an MTL5
+/// region, as text: "0" without a vendor, else the count, or `unknown` when
+/// the vendor can't say. BLIS reports -1 when its per-loop ways
+/// (BLIS_JC_NT, ...) are set instead of one total; that is not a count, so
+/// the JSON gets null and the sidecar and banner "unknown" (#754).
+std::string blas_vendor_threads_text(const char* unknown) {
+    const int t = mtl::interface::blas_vendor_threads();
+    if (*mtl::interface::blas_vendor() && t < 1) return unknown;
+    return std::to_string(t);
+}
+
 /// Returns false if the file could not be opened or a write failed.
 bool write_json(const std::string& path, const std::string& label, const std::string& machine,
                 bp::size_class cls, const bp::probe_results& pr, const std::vector<bp::record>& rs) {
@@ -165,7 +176,7 @@ bool write_json(const std::string& path, const std::string& label, const std::st
        << "  \"probes\": {\n"
        << "    \"threads\": " << pr.threads << ",\n"
        << "    \"blas_vendor\": \"" << json_escape(mtl::interface::blas_vendor()) << "\",\n"
-       << "    \"blas_vendor_threads\": " << mtl::interface::blas_vendor_threads() << ",\n"
+       << "    \"blas_vendor_threads\": " << blas_vendor_threads_text("null") << ",\n"
        << "    \"fma_peak_f64_gflops\": " << num(pr.fma_peak_f64_gflops) << ",\n"
        << "    \"fma_peak_f32_gflops\": " << num(pr.fma_peak_f32_gflops) << ",\n"
        << "    \"build_fma_peak_f64_gflops\": " << num(pr.build_fma_peak_f64_gflops) << ",\n"
@@ -222,7 +233,7 @@ bool write_sidecar(const std::string& path, const std::string& label, const std:
        << "cmake_build_type=" << mtl::build_cmake_type << "\n"
        << "pool_size=" << pr.threads << "\n"
        << "blas_vendor=" << mtl::interface::blas_vendor() << "\n"
-       << "blas_vendor_threads=" << mtl::interface::blas_vendor_threads() << "\n";
+       << "blas_vendor_threads=" << blas_vendor_threads_text("unknown") << "\n";
     si.flush();
     return static_cast<bool>(si);
 }
@@ -405,7 +416,7 @@ int main(int argc, char** argv) {
               << "  simd=" << mtl::simd::backend_name() << "  threads=" << threads
               << (*mtl::interface::blas_vendor() ? std::string("  ") + mtl::interface::blas_vendor() +
                                                          "_threads=" +
-                                                         std::to_string(mtl::interface::blas_vendor_threads())
+                                                         blas_vendor_threads_text("unknown")
                                                    : std::string())
               << "  commit=" << mtl::build_git_commit << "\n\n";
 
