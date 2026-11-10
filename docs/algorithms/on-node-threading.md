@@ -301,6 +301,40 @@ OpenMP builds of any of them. MTL5 has no switch that sets these for you: each i
 one line of the vendor's own API, and the application is the one that knows
 which configuration it wants.
 
+### Level 1 never calls the vendor
+
+`dot`, `two_norm`, `axpy` and `scale` on dense float/double vectors take MTL5's
+own SIMD loops in a BLAS build too (#754); `interface::blas::` keeps the
+wrappers for a direct call. Level 2 and Level 3 still dispatch.
+
+A Level 1 routine is bandwidth-bound, so a vendor has nothing to win over a
+SIMD loop that reads each operand once. What it can add is the cost of its
+thread team. OpenBLAS splits `ddot` and `daxpy` across its team above a few
+thousand elements, and on a machine whose cores are busy each call waits for
+the team to be scheduled. Per call, OpenBLAS 0.3.32 on the i7-12700K, best of
+5 × 200 calls:
+
+| n | `ddot`, 20 threads, idle | `ddot`, 20 threads, 3 cores busy | `ddot`, 1 thread | `daxpy`, 20 threads, 3 cores busy | `daxpy`, 1 thread |
+|---|---|---|---|---|---|
+| 8,192 | 1.6 µs | 1.1 µs | 1.6 µs | 1.4 µs | 2.1 µs |
+| 16,384 | 1.8 µs | **6,245 µs** | 1.7 µs | **6,025 µs** | 4.6 µs |
+| 1,048,576 | 54 µs | **3,150 µs** | 252 µs | **6,095 µs** | 341 µs |
+
+`dnrm2` and `dscal` showed no such cost. A shared workstation or a CI runner
+always has busy cores, and a Krylov iteration makes several of these calls on
+vectors of exactly that size: with OpenBLAS at its default threads, a
+BiCGSTAB/ILU(0) solve at n = 16,384 took 448 ms against 15 ms without BLAS.
+
+On an idle machine OpenBLAS's team does make a large `ddot` faster, 54 µs
+against 208 µs at n = 10⁶. MTL5's loops thread through MTL5's own pool for
+that: with `MTL5_NUM_THREADS` > 1, `dot` and `two_norm` split above 65,536
+elements and `axpy` and `scale` above the same grain (see the table below).
+
+`mtl5_bench` records the vendor and the thread count it would use outside a
+region, `probes.blas_vendor` and `probes.blas_vendor_threads`, next to MTL5's
+own `probes.threads`. A BLAS-build Level 2 or Level 3 result read without them
+can't be told from a result measured at a different thread count.
+
 ## What is parallelized
 
 | Kernel | Where | Partition | Bit-identical to serial? |

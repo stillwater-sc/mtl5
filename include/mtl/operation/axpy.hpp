@@ -1,8 +1,8 @@
 #pragma once
 // MTL5 -- axpy: y <- alpha*x + y  (BLAS level-1)
 // Native SIMD path for contiguous, same-type real float/double vectors
-// (mtl::simd::axpy, #86); BLAS dispatch when available; generic scalar
-// fallback otherwise.
+// (mtl::simd::axpy, #86), also in a BLAS build (#754: see dot.hpp); generic
+// scalar fallback otherwise.
 #include <cassert>
 #include <cstddef>
 #include <limits>
@@ -15,9 +15,6 @@
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/simd/algorithm.hpp>
-#ifdef MTL5_HAS_BLAS
-#include <mtl/interface/blas.hpp>
-#endif
 
 namespace mtl {
 
@@ -26,7 +23,7 @@ namespace mtl {
 /// Mixed precision: pass an explicit `Accumulator` to form each element's update
 /// in a precision distinct from the operand type; the result is rounded out to
 /// y's element type on store (#261, Part C). The default `Accumulator = void`
-/// keeps today's BLAS / SIMD / generic dispatch byte for byte.
+/// keeps today's SIMD / generic dispatch byte for byte.
 ///
 /// WHY AN AXPY HAS AN ACCUMULATOR AT ALL, when it sums nothing. Each element is
 /// `y(i) + alpha * x(i)` -- a one-term sum of products, seeded with y(i) rather
@@ -42,16 +39,16 @@ namespace mtl {
 ///             is the store.
 ///
 /// THE DEFAULT'S ROUNDING IS DISPATCH-DEPENDENT, and that is the strongest
-/// argument for the policy. `Accumulator = void` may reach any of four paths,
+/// argument for the policy. `Accumulator = void` may reach any of three paths,
 /// which do not agree with each other:
 ///
-///   external BLAS      whatever the vendor's ?axpy does -- unspecified
 ///   simd::axpy body    `fma(alpha, x, y)`, fused, one rounding
 ///   simd::axpy tail    `wrap_add(y, wrap_mul(alpha, x))`, NOT fused, two
 ///   generic loop       `y + alpha*x`, not fused, two
 ///
 /// So a vector shorter than one SIMD lane group is rounded differently from a
-/// long one, and a BLAS build differently again. An explicit `Accumulator` is
+/// long one. (Before #754 a BLAS build reached the vendor's ?axpy, whose
+/// rounding is unspecified, as a fourth path.) An explicit `Accumulator` is
 /// how a caller PINS the rounding across all of them -- `axpy<fma_accumulator<T>>`
 /// is fused on every path, by construction.
 ///
@@ -94,13 +91,7 @@ void axpy(const S& alpha, const VX& x, VY& y) {
                   std::is_same_v<typename VX::value_type, typename VY::value_type>) {
         using T = typename VY::value_type;
         const std::size_t n = y.size();
-#ifdef MTL5_HAS_BLAS
-        if (n <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            interface::blas::axpy(static_cast<int>(n), static_cast<T>(alpha),
-                                  x.data(), 1, y.data(), 1);
-            return;
-        }
-#endif
+        // MTL5's loop, not BLAS ?axpy, even with MTL5_HAS_BLAS (#754): see dot.hpp.
         // Element-wise: chunk the range across the pool (bit-identical, each
         // element in exactly one chunk). Serial by default (MTL5_NUM_THREADS=1).
         const T a = static_cast<T>(alpha);
