@@ -210,6 +210,13 @@ target_link_libraries(bench_pool_latency PRIVATE MTL5::mtl5)
 set_target_properties(bench_pool_latency PROPERTIES FOLDER "Benchmarks")
 add_dependencies(bench_pool_latency mtl5_build_info)
 
+# The interleave width of the generic row kernels (#772): times gemv, trmv and
+# the forward substitution at each width and prints the -D defines for the
+# fastest on this machine.
+add_executable(bench_interleave_rows bench_interleave_rows.cpp)
+target_link_libraries(bench_interleave_rows PRIVATE MTL5::mtl5)
+set_target_properties(bench_interleave_rows PROPERTIES FOLDER "Benchmarks")
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)

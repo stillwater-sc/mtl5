@@ -13,6 +13,7 @@
 #include <mtl/detail/same_object.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/view/transposed_view.hpp>
 // The pool is NOT part of the native-fast-GEMM option. Threading the generic
@@ -34,6 +35,42 @@ namespace mtl {
 namespace detail {
 
 // row_major_contiguous_v: interface/dispatch_traits.hpp.
+
+/// The default-accumulator mat*vec rows [rb, re), W rows per pass over x, one
+/// accumulator each (#749, #772). W independent chains instead of one serial
+/// reduction hide the add latency a single row is bound by. Each row sums the
+/// same terms in ascending c with the same expression as the one-row loop, so
+/// y is bit-identical for every W; W only sets the speed. The rows left over
+/// go to W / 2, and so on down to W = 1, which is the one-row loop.
+///
+/// The accumulators are an array indexed only by the pack K, never by a run-time
+/// index, so the compiler keeps each one in a register.
+template <std::size_t W, typename M, typename VIn, typename VOut>
+void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
+                           std::size_t rb, std::size_t re) {
+    static_assert(W >= 1);
+    assert(A.num_cols() == x.size());
+    assert(A.num_rows() == y.size());
+    assert(re <= static_cast<std::size_t>(A.num_rows()));
+    using Result = typename VOut::value_type;
+    using size_type = typename M::size_type;
+    using y_size = typename VOut::size_type;
+    const size_type ncols = A.num_cols();
+    std::size_t r = rb;
+    [&]<std::size_t... K>(std::index_sequence<K...>) {
+        for (; re - r >= W; r += W) {
+            Result acc[W] = {(static_cast<void>(K), math::zero<Result>())...};
+            for (size_type c = 0; c < ncols; ++c) {
+                const auto& xc = x(c);
+                ((acc[K] = generic_fma<Result>(acc[K], A(static_cast<size_type>(r + K), c), xc)), ...);
+            }
+            ((y(static_cast<y_size>(r + K)) = acc[K]), ...);
+        }
+    }(std::make_index_sequence<W>{});
+    if constexpr (W > 1) {
+        if (r < re) mult_rows_interleaved<W / 2>(A, x, y, r, re);
+    }
+}
 
 /// Generic mat*vec over the OUTPUT ROW RANGE [rb, re): the loop body of
 /// `mult_generic` below, split out so a threaded caller can hand one contiguous
@@ -60,40 +97,11 @@ void mult_generic_rows(const M& A, const VIn& x, VOut& y,
     assert(re <= static_cast<std::size_t>(A.num_rows()));
     using Result = typename VOut::value_type;
     using size_type = typename M::size_type;
-    const size_type ncols = A.num_cols();
     if constexpr (std::is_void_v<Accumulator>) {
-        // Four rows at a time, one accumulator each (#749): four independent
-        // chains instead of one serial reduction, which hides the add latency
-        // a single row is bound by. Each row sums the same terms in ascending
-        // c with the same expression, so y is bit-identical to the one-row
-        // loop that finishes the band.
-        std::size_t r = rb;
-        for (; re - r >= 4; r += 4) {
-            const auto r0 = static_cast<size_type>(r), r1 = static_cast<size_type>(r + 1),
-                       r2 = static_cast<size_type>(r + 2), r3 = static_cast<size_type>(r + 3);
-            auto a0 = math::zero<Result>();
-            auto a1 = math::zero<Result>();
-            auto a2 = math::zero<Result>();
-            auto a3 = math::zero<Result>();
-            for (size_type c = 0; c < ncols; ++c) {
-                a0 = generic_fma<Result>(a0, A(r0, c), x(c));
-                a1 = generic_fma<Result>(a1, A(r1, c), x(c));
-                a2 = generic_fma<Result>(a2, A(r2, c), x(c));
-                a3 = generic_fma<Result>(a3, A(r3, c), x(c));
-            }
-            y(static_cast<typename VOut::size_type>(r)) = a0;
-            y(static_cast<typename VOut::size_type>(r + 1)) = a1;
-            y(static_cast<typename VOut::size_type>(r + 2)) = a2;
-            y(static_cast<typename VOut::size_type>(r + 3)) = a3;
-        }
-        for (; r < re; ++r) {
-            auto acc = math::zero<Result>();
-            for (size_type c = 0; c < ncols; ++c) {
-                acc = generic_fma<Result>(acc, A(static_cast<size_type>(r), c), x(c));
-            }
-            y(static_cast<typename VOut::size_type>(r)) = acc;
-        }
+        mult_rows_interleaved<interface::interleave_rows_v<Result, interface::kernel::gemv>>(
+            A, x, y, rb, re);
     } else {
+        const size_type ncols = A.num_cols();
         using Value = std::common_type_t<typename M::value_type, typename VIn::value_type>;
         using AT = math::accumulator_traits<Accumulator, Value>;
         for (std::size_t r = rb; r < re; ++r) {

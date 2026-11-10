@@ -597,7 +597,9 @@ inline void register_all(registry& r) {
     r.add("blas2", "gemv", "f32", gemv<float>);
     r.add("blas2", "symv", "f64", symv<double>);
     r.add("blas2", "trmv", "f64", trmv<double>);
+    r.add("blas2", "trmv", "f32", trmv<float>);
     r.add("blas2", "trsv", "f64", trsv<double>);
+    r.add("blas2", "trsv", "f32", trsv<float>);
     r.add("blas2", "ger",  "f64", ger<double>);
 
     r.add("blas3", "gemm",  "f64", gemm<double>);

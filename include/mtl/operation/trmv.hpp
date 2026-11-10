@@ -18,12 +18,14 @@
 #include <cstddef>
 #include <limits>
 #include <type_traits>
+#include <utility>
 
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/interface/interleave_rows.hpp>
 #include <vector>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -103,6 +105,66 @@ void trmv_blocked(const M& A, VX& x, bool upper, bool unit_diag) {
 }
 #endif
 
+/// The generic upper trmv on rows [i, n), W rows per block, top-down (#749,
+/// #772). Row r sums its diagonal term, then A(r, j) x(j) for j > r in
+/// ascending j, exactly as the one-row loop does, so x is bit-identical for
+/// every W. A block's rows first add their terms inside the W x W diagonal
+/// block, each in its own order, then the columns j >= i0 + W they share, as
+/// W independent chains. A block reads x before it writes any of its entries,
+/// and the rows below it are not overwritten yet. The rows left over go to
+/// W / 2, down to W = 1, which is the one-row loop.
+template <std::size_t W, typename M, typename VX>
+void trmv_upper_rows(const M& A, VX& x, typename M::size_type i, bool unit_diag) {
+    static_assert(W >= 1);
+    using size_type = typename M::size_type;
+    using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
+    const size_type n = A.num_rows();
+    [&]<std::size_t... K>(std::index_sequence<K...>) {
+        for (; n - i >= W; i += W) {
+            const size_type i0 = i;
+            acc_type acc[W] = {(unit_diag ? x(i0 + K) : A(i0 + K, i0 + K) * x(i0 + K))...};
+            ([&] {
+                for (size_type j = i0 + K + 1; j < i0 + W; ++j) acc[K] += A(i0 + K, j) * x(j);
+            }(), ...);
+            for (size_type j = i0 + W; j < n; ++j) {
+                const auto& xj = x(j);
+                ((acc[K] += A(i0 + K, j) * xj), ...);
+            }
+            ((x(i0 + K) = acc[K]), ...);
+        }
+    }(std::make_index_sequence<W>{});
+    if constexpr (W > 1) {
+        if (i < n) trmv_upper_rows<W / 2>(A, x, i, unit_diag);
+    }
+}
+
+/// The generic lower trmv on rows [0, ii), W rows per block, bottom-up: the
+/// mirror image of trmv_upper_rows. A block's rows first add the columns
+/// j < r0 they share, then each its own terms inside the diagonal block.
+template <std::size_t W, typename M, typename VX>
+void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag) {
+    static_assert(W >= 1);
+    using size_type = typename M::size_type;
+    using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
+    [&]<std::size_t... K>(std::index_sequence<K...>) {
+        for (; ii >= W; ii -= W) {
+            const size_type r0 = ii - W;
+            acc_type acc[W] = {(unit_diag ? x(r0 + K) : A(r0 + K, r0 + K) * x(r0 + K))...};
+            for (size_type j = 0; j < r0; ++j) {
+                const auto& xj = x(j);
+                ((acc[K] += A(r0 + K, j) * xj), ...);
+            }
+            ([&] {
+                for (size_type j = r0; j < r0 + K; ++j) acc[K] += A(r0 + K, j) * x(j);
+            }(), ...);
+            ((x(r0 + K) = acc[K]), ...);
+        }
+    }(std::make_index_sequence<W>{});
+    if constexpr (W > 1) {
+        if (ii > 0) trmv_lower_rows<W / 2>(A, x, ii, unit_diag);
+    }
+}
+
 } // namespace detail
 
 /// Triangular matrix-vector product: x = A*x, A upper/lower triangular.
@@ -181,73 +243,14 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
         }
     }
 #endif
-    // Four rows at a time, one accumulator each (#749). Every row sums the
-    // same terms in the same order as the one-row loop at the bottom, so the
-    // bits are the same; the four chains are independent, which hides the
-    // add latency a single serial reduction is bound by. Each block reads x
-    // before it writes any of its four entries, and the blocks go in the
-    // overwrite-safe order, so every x(j) read still holds its original value.
-    if (upper) {
-        // x_i depends on x_j for j >= i; forward order is safe.
-        size_type i = 0;
-        for (; n - i >= 4; i += 4) {
-            const size_type r1 = i + 1, r2 = i + 2, r3 = i + 3, j0 = i + 4;
-            // Each row's terms inside the 4x4 diagonal block come first.
-            auto a0 = unit_diag ? x(i) : A(i, i) * x(i);
-            a0 += A(i, r1) * x(r1);
-            a0 += A(i, r2) * x(r2);
-            a0 += A(i, r3) * x(r3);
-            auto a1 = unit_diag ? x(r1) : A(r1, r1) * x(r1);
-            a1 += A(r1, r2) * x(r2);
-            a1 += A(r1, r3) * x(r3);
-            auto a2 = unit_diag ? x(r2) : A(r2, r2) * x(r2);
-            a2 += A(r2, r3) * x(r3);
-            auto a3 = unit_diag ? x(r3) : A(r3, r3) * x(r3);
-            for (size_type j = j0; j < n; ++j) {
-                a0 += A(i, j) * x(j);
-                a1 += A(r1, j) * x(j);
-                a2 += A(r2, j) * x(j);
-                a3 += A(r3, j) * x(j);
-            }
-            x(i) = a0; x(r1) = a1; x(r2) = a2; x(r3) = a3;
-        }
-        for (; i < n; ++i) {
-            auto acc = unit_diag ? x(i) : A(i, i) * x(i);
-            for (size_type j = i + 1; j < n; ++j)
-                acc += A(i, j) * x(j);
-            x(i) = acc;
-        }
-    } else {
-        // x_i depends on x_j for j <= i; reverse order is safe.
-        size_type ii = n;
-        for (; ii >= 4; ii -= 4) {
-            const size_type r0 = ii - 4, r1 = ii - 3, r2 = ii - 2, r3 = ii - 1;
-            auto a0 = unit_diag ? x(r0) : A(r0, r0) * x(r0);
-            auto a1 = unit_diag ? x(r1) : A(r1, r1) * x(r1);
-            auto a2 = unit_diag ? x(r2) : A(r2, r2) * x(r2);
-            auto a3 = unit_diag ? x(r3) : A(r3, r3) * x(r3);
-            for (size_type j = 0; j < r0; ++j) {
-                a0 += A(r0, j) * x(j);
-                a1 += A(r1, j) * x(j);
-                a2 += A(r2, j) * x(j);
-                a3 += A(r3, j) * x(j);
-            }
-            // Then each row's terms inside the 4x4 diagonal block, in order.
-            a1 += A(r1, r0) * x(r0);
-            a2 += A(r2, r0) * x(r0);
-            a2 += A(r2, r1) * x(r1);
-            a3 += A(r3, r0) * x(r0);
-            a3 += A(r3, r1) * x(r1);
-            a3 += A(r3, r2) * x(r2);
-            x(r0) = a0; x(r1) = a1; x(r2) = a2; x(r3) = a3;
-        }
-        while (ii-- > 0) {
-            auto acc = unit_diag ? x(ii) : A(ii, ii) * x(ii);
-            for (size_type j = 0; j < ii; ++j)
-                acc += A(ii, j) * x(j);
-            x(ii) = acc;
-        }
-    }
+    // W rows at a time, one accumulator each (#749, #772): see
+    // detail::trmv_upper_rows. The accumulator's type is the one-row loop's.
+    using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
+    constexpr std::size_t W = interface::interleave_rows_v<acc_type, interface::kernel::trmv>;
+    if (upper)
+        detail::trmv_upper_rows<W>(A, x, size_type{0}, unit_diag);
+    else
+        detail::trmv_lower_rows<W>(A, x, n, unit_diag);
 }
 
 } // namespace mtl

@@ -125,10 +125,11 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # (alpha*B(i,c) into the first subtraction, say) where the vector loop has
 # stored it to the row buffer first: an ulp apart, in the same order.
 #
-# op_test_trmv_trsv_interleaved asserts the same for the four-row forms of the
-# generic trmv and forward substitution against their one-row loops (#749): the
-# same terms in the same order, which contraction can fuse in one and not the
-# other.
+# op_test_trmv_trsv_interleaved asserts the same for the W-row forms of the
+# generic trmv, forward substitution and mat*vec against their one-row loops
+# (#749, #772): the same terms in the same order, which contraction can fuse in
+# one and not the other. op_test_interleave_rows_override does the same for
+# the widths the -D overrides set.
 #
 # op_test_gemmt asserts that gemmt's triangle and congruence's result are
 # bit-identical to mult_generic, and that a CRS and a dense A give the same bits
@@ -198,6 +199,7 @@ if(NOT MSVC)
                       op_test_mult_ikj
                       op_test_blas_row_loops
                       op_test_trmv_trsv_interleaved
+                      op_test_interleave_rows_override
                       op_test_gemmt
                       op_test_cholesky_ordering
                       op_test_householder_textbook
