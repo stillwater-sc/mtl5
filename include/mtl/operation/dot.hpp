@@ -1,7 +1,14 @@
 #pragma once
 // MTL5 -- Dot product (inner product) of two vectors
-// Optional BLAS dispatch when MTL5_HAS_BLAS is defined and types qualify
-// (real float/double dense vectors), mirroring two_norm.
+//
+// Level 1 never dispatches to BLAS, even when MTL5_HAS_BLAS is defined (#754).
+// It is bandwidth-bound, so a vendor has nothing to win over MTL5's own SIMD
+// loop, and OpenBLAS threads ?dot and ?axpy above a few thousand elements with
+// a process-wide team: on a machine with busy cores, each call then waits ~3-6
+// ms to wake it -- 1,000x the work at n = 16,384, enough to make a BLAS-build
+// Krylov solve 30x slower. MTL5's loop threads through MTL5's own pool
+// (MTL5_NUM_THREADS) instead. interface::blas:: still has the wrappers for a
+// direct call.
 #include <cassert>
 #include <complex>
 #include <cstddef>
@@ -17,9 +24,6 @@
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/simd/algorithm.hpp>
-#ifdef MTL5_HAS_BLAS
-#include <mtl/interface/blas.hpp>
-#endif
 
 namespace mtl {
 
@@ -82,7 +86,7 @@ concept widening_int_dot =
 /// precision distinct from the element type (e.g. `dot<float>(a, b)` over
 /// bfloat16 vectors accumulates in fp32), and an optional `Result` to round the
 /// sum out to a delivery type (default = the accumulator type). With the default
-/// `Accumulator = void`, behavior is unchanged (BLAS/SIMD fast path or the
+/// `Accumulator = void`, behavior is unchanged (SIMD fast path or the
 /// common-type loop). The mixed path is scalar; a SIMD variant is a follow-up.
 template <typename Accumulator = void, typename Result = Accumulator,
           Vector V1, Vector V2>
@@ -137,17 +141,6 @@ auto dot(const V1& v1, const V2& v2) {
             return AT::template value<Result>(acc);
         }
     } else {
-#ifdef MTL5_HAS_BLAS
-    // BlasDenseVector is real float/double, where conj is the identity, so
-    // BLAS ?dot matches the Hermitian product on these types. Guard the int
-    // length cast: BLAS takes int, so fall back to the loop for huge vectors.
-    if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2>) {
-        if (v1.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            return interface::blas::dot(static_cast<int>(v1.size()),
-                                        v1.data(), 1, v2.data(), 1);
-        }
-    }
-#endif
     // Native SIMD path for contiguous, same-type real float/double vectors
     // (conj is the identity there, so reduce_dot matches the Hermitian product).
     if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2> &&
@@ -230,14 +223,6 @@ auto dot_real(const V1& v1, const V2& v2) {
             return AT::template value<Result>(acc);
         }
     } else {
-#ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseVector<V1> && interface::BlasDenseVector<V2>) {
-        if (v1.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            return interface::blas::dot(static_cast<int>(v1.size()),
-                                        v1.data(), 1, v2.data(), 1);
-        }
-    }
-#endif
     // SimdDenseVector is BlasDenseVector widened to every mtl::simd lane type,
     // so this also picks up the integer lanes (#451 phase 0); on those the sum
     // is exact mod 2^32 rather than order-dependent.

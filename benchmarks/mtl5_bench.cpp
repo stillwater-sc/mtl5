@@ -33,6 +33,7 @@
 
 #include <mtl/build_info.hpp>
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/interface/vendor_threads.hpp>
 #include <mtl/simd/batch.hpp>
 #include <mtl/util/system_info.hpp>
 
@@ -163,6 +164,8 @@ bool write_json(const std::string& path, const std::string& label, const std::st
        << "  \"simd_backend\": \"" << json_escape(mtl::simd::backend_name()) << "\",\n"
        << "  \"probes\": {\n"
        << "    \"threads\": " << pr.threads << ",\n"
+       << "    \"blas_vendor\": \"" << json_escape(mtl::interface::blas_vendor()) << "\",\n"
+       << "    \"blas_vendor_threads\": " << mtl::interface::blas_vendor_threads() << ",\n"
        << "    \"fma_peak_f64_gflops\": " << num(pr.fma_peak_f64_gflops) << ",\n"
        << "    \"fma_peak_f32_gflops\": " << num(pr.fma_peak_f32_gflops) << ",\n"
        << "    \"build_fma_peak_f64_gflops\": " << num(pr.build_fma_peak_f64_gflops) << ",\n"
@@ -217,7 +220,9 @@ bool write_sidecar(const std::string& path, const std::string& label, const std:
        << "git_dirty=" << mtl::build_git_dirty << "\n"
        << "cxx_flags=" << mtl::build_cxx_flags << "\n"
        << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-       << "pool_size=" << pr.threads << "\n";
+       << "pool_size=" << pr.threads << "\n"
+       << "blas_vendor=" << mtl::interface::blas_vendor() << "\n"
+       << "blas_vendor_threads=" << mtl::interface::blas_vendor_threads() << "\n";
     si.flush();
     return static_cast<bool>(si);
 }
@@ -398,6 +403,10 @@ int main(int argc, char** argv) {
     }
     std::cout << "mtl5_bench  label=" << label << "  class=" << bp::to_string(cls)
               << "  simd=" << mtl::simd::backend_name() << "  threads=" << threads
+              << (*mtl::interface::blas_vendor() ? std::string("  ") + mtl::interface::blas_vendor() +
+                                                         "_threads=" +
+                                                         std::to_string(mtl::interface::blas_vendor_threads())
+                                                   : std::string())
               << "  commit=" << mtl::build_git_commit << "\n\n";
 
     std::cout << "probing the machine..." << std::flush;

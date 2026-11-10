@@ -2,12 +2,23 @@
 // These tests verify that the dispatch logic in mult.hpp and norms.hpp produces
 // correct results. When MTL5_HAS_BLAS is defined, the BLAS-accelerated paths are
 // exercised; otherwise the generic C++ fallback paths are tested.
+//
+// Level 1 (dot, two_norm, axpy, scale) never dispatches to BLAS (#754): the
+// last test case pins each to MTL5's own SIMD loop, bit for bit, in every build.
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/norms.hpp>
+#include <mtl/operation/dot.hpp>
+#include <mtl/operation/axpy.hpp>
+#include <mtl/operation/scale.hpp>
+#include <mtl/simd/algorithm.hpp>
+#include <mtl/detail/thread_pool.hpp>
+#include <catch2/catch_template_test_macros.hpp>
+#include <cmath>
+#include <cstddef>
 #include <mtl/math/identity.hpp>
 
 using namespace mtl;
@@ -190,4 +201,50 @@ TEST_CASE("dispatch traits correctly identify BLAS-eligible types", "[interface]
     STATIC_REQUIRE(interface::BlasDenseVector<vec::dense_vector<double>>);
     STATIC_REQUIRE(interface::BlasDenseVector<vec::dense_vector<float>>);
     STATIC_REQUIRE_FALSE(interface::BlasDenseVector<vec::dense_vector<int>>);
+}
+
+// -- Level 1 stays native (#754) ---------------------------------------------
+//
+// OpenBLAS threads ?dot and ?axpy above a few thousand elements with a
+// process-wide team, and on a machine with busy cores each call then waits
+// milliseconds for it. So dot, two_norm, axpy and scale take MTL5's SIMD loops
+// in a BLAS build too. n = 20,000 is above OpenBLAS's threading threshold and
+// below one 65,536-element pool chunk, so the whole vector is one simd:: call
+// at any MTL5_NUM_THREADS, and the comparison is exact.
+
+TEMPLATE_TEST_CASE("Level 1 takes MTL5's SIMD loops, also in a BLAS build", "[interface][blas][754]",
+                   float, double) {
+    using T = TestType;
+    // Not a constant expression: with the scalar SIMD backend, GCC folds a
+    // constant n into simd::'s remainder loops and warns about an iteration it
+    // has just proved cannot run (-Waggressive-loop-optimizations).
+    static volatile std::size_t n_runtime = 20000;
+    const std::size_t n = n_runtime;
+    vec::dense_vector<T> x(n), y(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        x(i) = static_cast<T>(std::sin(0.37 * static_cast<double>(i)) + 1e-3 * static_cast<double>(i % 97));
+        y(i) = static_cast<T>(std::cos(0.11 * static_cast<double>(i)) - 0.5);
+    }
+
+    SECTION("dot") {
+        const T expected = simd::reduce_dot<T>(x.data(), y.data(), n);
+        REQUIRE(dot(x, y) == expected);
+    }
+    SECTION("two_norm") {
+        using std::sqrt;
+        const T expected = sqrt(simd::reduce_sum_squares<T>(x.data(), n));
+        REQUIRE(two_norm(x) == expected);
+    }
+    SECTION("axpy") {
+        vec::dense_vector<T> expected = y;
+        simd::axpy<T>(T(0.731), x.data(), expected.data(), n);
+        axpy(T(0.731), x, y);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(y(i) == expected(i));
+    }
+    SECTION("scale") {
+        vec::dense_vector<T> expected = x;
+        simd::scal<T>(T(1.0009), expected.data(), n);
+        scale(T(1.0009), x);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(x(i) == expected(i));
+    }
 }

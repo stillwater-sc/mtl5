@@ -1,6 +1,15 @@
 #pragma once
 // MTL5 -- Vector/matrix norms: one_norm, two_norm, infinity_norm, frobenius_norm
-// Optional BLAS dispatch when MTL5_HAS_BLAS is defined and types qualify.
+//
+// two_norm on dense float/double takes MTL5's SIMD loop, not BLAS ?nrm2:
+// Level 1 never dispatches to BLAS, even when MTL5_HAS_BLAS is defined (#754).
+// It is bandwidth-bound, so a vendor has nothing to win over MTL5's own SIMD
+// loop, and OpenBLAS threads ?dot and ?axpy above a few thousand elements with
+// a process-wide team: on a machine with busy cores, each call then waits ~3-6
+// ms to wake it -- 1,000x the work at n = 16,384, enough to make a BLAS-build
+// Krylov solve 30x slower. MTL5's loop threads through MTL5's own pool
+// (MTL5_NUM_THREADS) instead. interface::blas:: still has the wrappers for a
+// direct call.
 #include <algorithm>
 #include <cmath>
 #include <cassert>
@@ -18,9 +27,6 @@
 #include <mtl/interface/dispatch_traits.hpp>
 #include <type_traits>
 #include <mtl/simd/algorithm.hpp>
-#ifdef MTL5_HAS_BLAS
-#include <mtl/interface/blas.hpp>
-#endif
 
 namespace mtl {
 
@@ -138,8 +144,8 @@ auto one_norm(const V& v) {
 /// Mixed precision: pass an explicit `Accumulator` to sum the squares in a wider
 /// precision than the element magnitude (e.g. `two_norm<double>(v)` over a
 /// bfloat16/float vector), guarding the long reduction against overflow and
-/// precision loss. Default `Accumulator = void` keeps the BLAS / SIMD / loop
-/// dispatch unchanged.
+/// precision loss. Default `Accumulator = void` keeps the SIMD / loop dispatch
+/// unchanged.
 ///
 /// `Result` is the delivery type, as in `dot` (#379). It defaults to void,
 /// meaning the element magnitude type -- today's behaviour, byte for byte.
@@ -159,7 +165,7 @@ auto two_norm(const V& v) {
     using mag_t = magnitude_t<typename V::value_type>;
     static_assert(!std::is_void_v<Accumulator> || std::is_void_v<Result>,
         "two_norm: Result without an Accumulator would be silently ignored -- the "
-        "default path dispatches to BLAS/SIMD and has no accumulator to round out. "
+        "default path dispatches to SIMD and has no accumulator to round out. "
         "Pass an Accumulator too, e.g. two_norm<double, double>(v) (#379).");
     if constexpr (!std::is_void_v<Accumulator>) {
         using out_t = std::conditional_t<std::is_void_v<Result>, mag_t, Result>;
@@ -189,14 +195,6 @@ auto two_norm(const V& v) {
         using round_t = math::accumulator_round_type_t<Accumulator, out_t>;
         return static_cast<out_t>(sqrt(AT::template value<round_t>(acc)));
     } else {
-#ifdef MTL5_HAS_BLAS
-    // BLAS takes int; fall back to the loop for vectors larger than INT_MAX.
-    if constexpr (interface::BlasDenseVector<V>) {
-        if (v.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            return interface::blas::nrm2(static_cast<int>(v.size()), v.data(), 1);
-        }
-    }
-#endif
     // Native SIMD path for contiguous real float/double (abs is the identity).
     if constexpr (interface::BlasDenseVector<V>) {
         using std::sqrt;
