@@ -85,6 +85,7 @@ These tune or instrument **in-tree** builds (tests, benchmarks). They are
 | `MTL5_WITH_HIGHWAY` | OFF | Use Google Highway for SIMD-accelerated native kernels (found or fetched at a pinned tag); scalar fallback otherwise |
 | `MTL5_NATIVE_ARCH` | OFF | Tune for the host CPU (`-march=native`); lets the SIMD layer pick the widest ISA (non-portable binaries) |
 | `MTL5_NATIVE_FAST_GEMM` | OFF | Route `mtl::mult` through the native blocked GEMM / SIMD GEMV path instead of the generic loop |
+| `MTL5_INTERLEAVE_ROWS` | *(empty)* | Rows the generic `gemv`, `trmv` and forward substitution sum per pass, 1–64, for every type. Empty keeps the per-type default: for float/double, 6 capped at half the target's vector registers (6 on x86-64, AVX-512 and AArch64; 4 on 32-bit x86 and unrecognized targets), and 4 for every other type. Results are bit-identical at any width; `bench_interleave_rows` reports the fastest. Outside the tree, pass `-DMTL5_INTERLEAVE_ROWS=W`, or `_F32` / `_F64` for one type, or specialize `mtl::interface::interleave_rows` (see `include/mtl/interface/interleave_rows.hpp`) |
 | `MTL5_SANITIZE` | *(empty)* | Comma-separated sanitizers for in-tree builds, e.g. `-DMTL5_SANITIZE=address,undefined` (GCC/Clang) |
 
 ```bash

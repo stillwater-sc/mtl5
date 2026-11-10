@@ -1,20 +1,25 @@
 // The generic trmv, the generic forward substitution (lower_trisolve, and
 // trsv with a lower A) and the generic mat*vec (detail::mult_generic_rows,
-// behind mult_generic and mult_generic_par) take four rows at a time, and the
-// result is BIT-IDENTICAL to the one-row loops they replace (#749).
+// behind mult_generic and mult_generic_par) take W rows at a time, and the
+// result is BIT-IDENTICAL to the one-row loops they replace (#749), for every
+// W (#772).
 //
 // The one-row loops are a single serial reduction per row: each add waits on
 // the last, so they ran at one add per FMA latency, 41% of the bandwidth
-// roofline. Four rows give four independent chains. Every row still sums the
-// same terms in the same order with the same expressions, so the bits do not
+// roofline. W rows give W independent chains. Every row still sums the same
+// terms in the same order with the same expressions, so the bits do not
 // change; this test holds them to that, against verbatim copies of the old
-// loops below, for n below, at and past multiples of 4.
+// loops below. The public functions take W from interface::interleave_rows;
+// the detail kernels are also called with every width in `widths`, for n
+// below, at and past W and 2W, so the remainder rows each width hands down to
+// W / 2 are covered too.
 //
 // In a BLAS build, float and double trmv and trsv go to BLAS, so those cases
 // are only checked to be close; long double never reaches BLAS, and
-// lower_trisolve is called directly as well, so every build exercises the new
-// loops bit for bit. With MTL5_NATIVE_FAST_GEMM, trmv and trsv block only above
-// detail::triangular_block rows, and every n here is at or below it.
+// lower_trisolve and the detail kernels are called directly as well, so every
+// build exercises the new loops bit for bit. With MTL5_NATIVE_FAST_GEMM, trmv
+// and trsv block only above detail::triangular_block rows, and every n here is
+// at or below it.
 //
 // Built with -ffp-contract=off (tests/unit/CMakeLists.txt): with contraction
 // on, a compiler may fuse a product into its add in one form and not the other.
@@ -26,8 +31,10 @@
 #include <cstdint>
 #include <limits>
 #include <type_traits>
+#include <utility>
 
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
@@ -38,6 +45,14 @@
 #include <mtl/tag/orientation.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
+// A user's width for one type and one kernel (#772): long double gemv takes 3
+// rows, which also puts the public mat*vec tests below on an odd width with a
+// remainder of 1 or 2. It must precede every use of the trait in this TU.
+template <>
+struct mtl::interface::interleave_rows<long double, mtl::interface::kernel::gemv> {
+    static constexpr std::size_t value = 3;
+};
+
 using namespace mtl;
 
 namespace {
@@ -45,7 +60,13 @@ namespace {
 template <typename T> using rm = mat::dense2D<T, mat::parameters<tag::row_major>>;
 template <typename T> using cm = mat::dense2D<T, mat::parameters<tag::col_major>>;
 
-constexpr std::size_t sizes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 16, 31, 33, 64};
+constexpr std::size_t sizes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17,
+                                 31, 32, 33, 47, 48, 49, 64};
+
+/// The widths the detail kernels are checked at: 1 is the one-row loop, 3 and 5
+/// hand odd remainders down, 6 is the float/double default, 16 the widest the
+/// sweep in benchmarks/bench_interleave_rows tries.
+using widths = std::index_sequence<1, 2, 3, 4, 5, 6, 8, 16>;
 static_assert(64 <= detail::triangular_block, "every n stays on the row loop in a native-fast build");
 
 // -- the pre-#749 generic loops, verbatim ---------------------------------------
@@ -303,4 +324,103 @@ TEST_CASE("generic mat*vec rows keep wrapping integers and mixed types bit for b
         detail::mult_generic(A, x, z);
         require_identical(z, y);
     }
+}
+
+namespace {
+
+/// Every detail kernel at width W against the one-row loops, all sizes.
+template <std::size_t W, typename M>
+void check_width() {
+    using T = typename M::value_type;
+    using V = vec::dense_vector<T>;
+    for (std::size_t n : sizes) {
+        INFO("W = " << W << ", n = " << n);
+        const M A = triangular<M>(n, 11 + n);
+        const V x0 = filled<T>(n, 12 + n);
+        for (bool unit : {false, true}) {
+            INFO((unit ? "unit" : "non-unit"));
+            {   // trmv, upper
+                V x = x0, y = x0;
+                detail::trmv_upper_rows<W>(A, x, typename M::size_type{0}, unit);
+                old_trmv(A, y, true, unit);
+                require_identical(x, y);
+            }
+            {   // trmv, lower
+                V x = x0, y = x0;
+                detail::trmv_lower_rows<W>(A, x, static_cast<typename M::size_type>(n), unit);
+                old_trmv(A, y, false, unit);
+                require_identical(x, y);
+            }
+            {   // forward substitution, out of place and in place
+                V x(n), y(n);
+                detail::lower_trisolve_rows<W>(A, x, x0, unit);
+                old_lower_trisolve(A, y, x0, unit);
+                require_identical(x, y);
+                V u = x0;
+                detail::lower_trisolve_rows<W>(A, u, u, unit);
+                require_identical(u, y);
+            }
+        }
+        {   // mat*vec: the whole range, then a band starting and ending off a block
+            V y(n), z(n);
+            old_mult_generic(A, x0, y);
+            detail::mult_rows_interleaved<W>(A, x0, z, 0, n);
+            require_identical(z, y);
+            if (n >= 3) {
+                V u = y;
+                for (std::size_t i = 1; i + 1 < n; ++i) u(i) = T(0);
+                detail::mult_rows_interleaved<W>(A, x0, u, 1, n - 1);
+                require_identical(u, y);
+            }
+        }
+    }
+}
+
+template <typename M, std::size_t... W>
+void check_widths(std::index_sequence<W...>) {
+    (check_width<W, M>(), ...);
+}
+
+} // namespace
+
+TEMPLATE_TEST_CASE("every interleave width is bit-identical to the one-row loops", "[operation][772]",
+                   rm<float>, rm<double>, rm<long double>, cm<float>, cm<double>, cm<long double>) {
+    check_widths<TestType>(widths{});
+}
+
+TEST_CASE("every interleave width keeps wrapping integers bit for bit", "[operation][772]") {
+    rm<std::int32_t> A(19, 9);
+    vec::dense_vector<std::int32_t> x(9);
+    for (std::size_t i = 0; i < 19; ++i)
+        for (std::size_t j = 0; j < 9; ++j) A(i, j) = static_cast<std::int32_t>(0x7fff0000 - 977 * i * j);
+    for (std::size_t j = 0; j < 9; ++j) x(j) = static_cast<std::int32_t>(65537 * (j + 3));
+    vec::dense_vector<std::int32_t> y(19);
+    old_mult_generic(A, x, y);
+    [&]<std::size_t... W>(std::index_sequence<W...>) {
+        ([&] {
+            INFO("W = " << W);
+            vec::dense_vector<std::int32_t> z(19);
+            detail::mult_rows_interleaved<W>(A, x, z, 0, 19);
+            require_identical(z, y);
+        }(), ...);
+    }(widths{});
+}
+
+TEST_CASE("interleave_rows defaults and overrides", "[operation][772]") {
+    using namespace mtl::interface;
+#if !defined(MTL5_INTERLEAVE_ROWS) && !defined(MTL5_INTERLEAVE_ROWS_F32) && !defined(MTL5_INTERLEAVE_ROWS_F64)
+    // Hardware float types: the measured 6, at most half the registers.
+    constexpr std::size_t cap = vector_registers / 2;
+    STATIC_REQUIRE(interleave_rows_v<double, kernel::gemv> == (6 < cap ? 6 : cap));
+    STATIC_REQUIRE(interleave_rows_v<float, kernel::gemv> == (6 < cap ? 6 : cap));
+    STATIC_REQUIRE(interleave_rows_v<float, kernel::trmv> == interleave_rows_v<float, kernel::lower_trisolve>);
+    STATIC_REQUIRE(interleave_rows_v<const double&, kernel::trmv> == interleave_rows_v<double, kernel::trmv>);
+    // Everything else keeps the pre-#772 width of 4: no extra registers on x87,
+    // and only the user knows a software type's cost.
+    STATIC_REQUIRE(interleave_rows_v<long double, kernel::trmv> == 4);
+    STATIC_REQUIRE(interleave_rows_v<long double, kernel::lower_trisolve> == 4);
+    STATIC_REQUIRE(interleave_rows_v<std::int32_t, kernel::gemv> == 4);
+#endif
+    // The specialization at the top of this file, for one type and one kernel.
+    STATIC_REQUIRE(interleave_rows_v<long double, kernel::gemv> == 3);
 }

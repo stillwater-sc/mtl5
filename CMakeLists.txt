@@ -157,6 +157,19 @@ if(MTL5_NATIVE_FAST_GEMM)
     target_compile_definitions(mtl5 INTERFACE $<BUILD_INTERFACE:MTL5_NATIVE_FAST_GEMM>)
 endif()
 
+# The interleave width of the generic row kernels (#772), for every type and
+# kernel: include/mtl/interface/interleave_rows.hpp. Empty keeps the measured
+# per-type default; benchmarks/bench_interleave_rows reports the fastest width.
+# BUILD_INTERFACE only: a downstream build passes -DMTL5_INTERLEAVE_ROWS itself.
+set(MTL5_INTERLEAVE_ROWS "" CACHE STRING
+    "Rows the generic gemv/trmv/forward substitution interleave (1-64; empty = per-type default)")
+if(NOT MTL5_INTERLEAVE_ROWS STREQUAL "")
+    if(NOT MTL5_INTERLEAVE_ROWS MATCHES "^[1-9][0-9]?$" OR MTL5_INTERLEAVE_ROWS GREATER 64)
+        message(FATAL_ERROR "MTL5_INTERLEAVE_ROWS must be an integer from 1 to 64, got '${MTL5_INTERLEAVE_ROWS}'")
+    endif()
+    target_compile_definitions(mtl5 INTERFACE $<BUILD_INTERFACE:MTL5_INTERLEAVE_ROWS=${MTL5_INTERLEAVE_ROWS}>)
+endif()
+
 # Sanitizers for in-tree builds (tests/benchmarks): pass a comma-separated list,
 # e.g. -DMTL5_SANITIZE=address,undefined. BUILD_INTERFACE only so it never leaks
 # into installed/exported flags. Used to validate the packing + micro-kernel
