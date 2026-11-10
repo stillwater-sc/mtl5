@@ -58,6 +58,17 @@ double median_seconds(Reset&& reset, Run&& run, int reps) {
 
 struct result { std::size_t width; double seconds; };
 
+/// Every kernel's output is summed into this after its timed runs, so the
+/// optimizer cannot treat the timed work as dead.
+volatile double g_sink = 0;
+
+template <typename V>
+void consume(const V& v) {
+    double s = 0;
+    for (std::size_t i = 0; i < v.size(); ++i) s += static_cast<double>(v(i));
+    g_sink = g_sink + s;
+}
+
 template <typename T>
 const char* type_name() { return sizeof(T) == 4 ? "f32" : "f64"; }
 
@@ -65,12 +76,13 @@ template <typename T>
 const char* define_suffix() { return sizeof(T) == 4 ? "F32" : "F64"; }
 
 /// One kernel at every width: prints a row per width, returns the fastest.
-template <typename T, typename Kernel, typename Call, typename Reset>
-std::size_t sweep(const char* kernel, double bytes, Reset&& reset, Call&& call, int reps) {
+template <typename T, typename Kernel, typename Call, typename Reset, typename Out>
+std::size_t sweep(const char* kernel, double bytes, Reset&& reset, Call&& call, const Out& out, int reps) {
     constexpr std::size_t dflt = mtl::interface::interleave_rows_v<T, Kernel>;
     std::vector<result> rs;
     [&]<std::size_t... W>(std::index_sequence<W...>) {
-        (rs.push_back({W, median_seconds(reset, [&] { call(std::integral_constant<std::size_t, W>{}); }, reps)}),
+        ((rs.push_back({W, median_seconds(reset, [&] { call(std::integral_constant<std::size_t, W>{}); }, reps)}),
+          consume(out)),
          ...);
     }(widths{});
     const auto best = std::min_element(rs.begin(), rs.end(),
@@ -99,13 +111,13 @@ void run_type(std::size_t n, int reps) {
 
     const std::size_t g = sweep<T, iface::kernel::gemv>("gemv", full, none, [&](auto w) {
         mtl::detail::mult_rows_interleaved<decltype(w)::value>(A, x0, y, 0, n);
-    }, reps);
+    }, y, reps);
     const std::size_t t = sweep<T, iface::kernel::trmv>("trmv lower", tri, restore, [&](auto w) {
         mtl::detail::trmv_lower_rows<decltype(w)::value>(A, x, n, false);
-    }, reps);
+    }, x, reps);
     const std::size_t s = sweep<T, iface::kernel::lower_trisolve>("lower_trisolve", tri, none, [&](auto w) {
         mtl::detail::lower_trisolve_rows<decltype(w)::value>(A, x, x0, false);
-    }, reps);
+    }, x, reps);
     std::printf("fastest %s: gemv %zu, trmv %zu, lower_trisolve %zu", type_name<T>(), g, t, s);
     if (g == t && t == s) std::printf("  -> -DMTL5_INTERLEAVE_ROWS_%s=%zu", define_suffix<T>(), g);
     std::printf("\n\n");
