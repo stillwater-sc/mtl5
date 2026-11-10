@@ -1,6 +1,7 @@
-// The generic trmv and the generic forward substitution (lower_trisolve, and
-// trsv with a lower A) take four rows at a time, and the result is
-// BIT-IDENTICAL to the one-row loops they replace (#749).
+// The generic trmv, the generic forward substitution (lower_trisolve, and
+// trsv with a lower A) and the generic mat*vec (detail::mult_generic_rows,
+// behind mult_generic and mult_generic_par) take four rows at a time, and the
+// result is BIT-IDENTICAL to the one-row loops they replace (#749).
 //
 // The one-row loops are a single serial reduction per row: each add waits on
 // the last, so they ran at one add per FMA latency, 41% of the bandwidth
@@ -22,12 +23,15 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <type_traits>
 
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
+#include <mtl/operation/mult.hpp>
 #include <mtl/operation/trmv.hpp>
 #include <mtl/operation/trsv.hpp>
 #include <mtl/operation/upper_trisolve.hpp>
@@ -116,6 +120,20 @@ void old_upper_trisolve(const M& U, VX& x, bool unit_diag) {
     }
 }
 
+template <typename M, typename VIn, typename VOut>
+void old_mult_generic(const M& A, const VIn& x, VOut& y) {
+    using Result = typename VOut::value_type;
+    using size_type = typename M::size_type;
+    const size_type ncols = A.num_cols();
+    for (std::size_t r = 0; r < static_cast<std::size_t>(A.num_rows()); ++r) {
+        auto acc = math::zero<Result>();
+        for (size_type c = 0; c < ncols; ++c) {
+            acc = detail::generic_fma<Result>(acc, A(static_cast<size_type>(r), c), x(c));
+        }
+        y(static_cast<typename VOut::size_type>(r)) = acc;
+    }
+}
+
 // -- inputs and comparison --------------------------------------------------------
 
 double val(std::size_t seed, std::size_t i, std::size_t j) {
@@ -147,8 +165,12 @@ vec::dense_vector<T> filled(std::size_t n, std::size_t seed) {
 /// six bytes of padding whose contents are unspecified.
 template <typename T>
 bool identical(T x, T y) {
-    if (std::isnan(x) || std::isnan(y)) return std::isnan(x) && std::isnan(y);
-    return x == y && std::signbit(x) == std::signbit(y);
+    if constexpr (std::is_integral_v<T>) {
+        return x == y;
+    } else {
+        if (std::isnan(x) || std::isnan(y)) return std::isnan(x) && std::isnan(y);
+        return x == y && std::signbit(x) == std::signbit(y);
+    }
 }
 
 template <typename V>
@@ -229,4 +251,56 @@ TEMPLATE_TEST_CASE("generic trsv and lower_trisolve are bit-identical to the one
                 if constexpr (via_blas) require_close(r, q); else require_identical(r, q);
             }
         }
+}
+
+TEMPLATE_TEST_CASE("generic mat*vec rows are bit-identical to the one-row loop", "[operation][749]",
+                   rm<float>, rm<double>, rm<long double>, cm<float>, cm<double>, cm<long double>) {
+    using M = TestType;
+    using T = typename M::value_type;
+    using V = vec::dense_vector<T>;
+    for (std::size_t m : sizes)
+        for (std::size_t n : {std::size_t{0}, std::size_t{1}, std::size_t{5}, std::size_t{37}}) {
+            INFO("m = " << m << ", n = " << n);
+            M A(m, n);
+            for (std::size_t i = 0; i < m; ++i)
+                for (std::size_t j = 0; j < n; ++j) A(i, j) = static_cast<T>(val(5 + m, i, j));
+            const V x = filled<T>(n, 6 + n);
+            V y(m), z(m), w(m);
+            old_mult_generic(A, x, y);
+            detail::mult_generic(A, x, z);
+            require_identical(z, y);
+            detail::mult_generic_par(A, x, w);
+            require_identical(w, y);
+            // A band that starts off a multiple of 4 and ends inside a block.
+            if (m >= 3) {
+                V u = y;
+                for (std::size_t i = 1; i + 1 < m; ++i) u(i) = T(0);
+                detail::mult_generic_rows(A, x, u, 1, m - 1);
+                require_identical(u, y);
+            }
+        }
+}
+
+TEST_CASE("generic mat*vec rows keep wrapping integers and mixed types bit for bit", "[operation][749]") {
+    // int32: generic_fma wraps mod 2^32; the values overflow on purpose.
+    {
+        rm<std::int32_t> A(13, 9);
+        vec::dense_vector<std::int32_t> x(9);
+        for (std::size_t i = 0; i < 13; ++i)
+            for (std::size_t j = 0; j < 9; ++j) A(i, j) = static_cast<std::int32_t>(0x7fff0000 - 977 * i * j);
+        for (std::size_t j = 0; j < 9; ++j) x(j) = static_cast<std::int32_t>(65537 * (j + 3));
+        vec::dense_vector<std::int32_t> y(13), z(13);
+        old_mult_generic(A, x, y);
+        detail::mult_generic(A, x, z);
+        require_identical(z, y);
+    }
+    // double operands into a float y: each term rounds in the result type.
+    {
+        const rm<double> A = triangular<rm<double>>(11, 8);
+        const vec::dense_vector<double> x = filled<double>(11, 9);
+        vec::dense_vector<float> y(11), z(11);
+        old_mult_generic(A, x, y);
+        detail::mult_generic(A, x, z);
+        require_identical(z, y);
+    }
 }
