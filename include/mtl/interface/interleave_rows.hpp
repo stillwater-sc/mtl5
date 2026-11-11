@@ -16,9 +16,9 @@
 //     accumulator, and spilling one costs more than the chain gains.
 //   - In between, the compiler decides. GCC's SLP vectorizer packs the W
 //     accumulators of a row-major A into vector registers, assembled from W
-//     scalar loads a row apart. That costs more than it saves: with it off,
-//     f32 gemv runs about 25% faster at every W >= 4. Which W suffers least
-//     differs between compilers and -march levels.
+//     scalar loads a row apart, which costs more than it saves. For float,
+//     the kernels stop it with detail::keep_scalar (#776); the measurements
+//     below predate that, and with it f32 gemv at W = 6 takes 2.71 ms.
 //
 // So the default for float and double is measured, not derived: 6, capped at
 // half the vector registers the target has. On an i7-12700K (n = 4096, one

@@ -33,6 +33,7 @@
 #include <type_traits>
 #include <utility>
 
+#include <mtl/detail/scalar_chain.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -423,4 +424,21 @@ TEST_CASE("interleave_rows defaults and overrides", "[operation][772]") {
 #endif
     // The specialization at the top of this file, for one type and one kernel.
     STATIC_REQUIRE(interleave_rows_v<long double, kernel::gemv> == 3);
+}
+
+TEST_CASE("keep_scalar applies to row-major float at W >= 4 under GCC only", "[operation][776]") {
+    // Where it applies, the row-major float cases of the width sweep above
+    // check that it leaves the bits alone.
+#if defined(__GNUC__) && !defined(__clang__) && (defined(__x86_64__) || defined(__aarch64__))
+    STATIC_REQUIRE(detail::keep_scalar_v<float, rm<float>, 4>);
+    STATIC_REQUIRE(detail::keep_scalar_v<float, rm<float>, 6>);
+    STATIC_REQUIRE(detail::keep_scalar_v<float, rm<float>, 16>);
+#else
+    STATIC_REQUIRE(!detail::keep_scalar_v<float, rm<float>, 6>);
+#endif
+    STATIC_REQUIRE(!detail::keep_scalar_v<float, rm<float>, 1>);
+    STATIC_REQUIRE(!detail::keep_scalar_v<float, rm<float>, 3>);
+    STATIC_REQUIRE(!detail::keep_scalar_v<float, cm<float>, 6>);
+    STATIC_REQUIRE(!detail::keep_scalar_v<double, rm<double>, 6>);
+    STATIC_REQUIRE(!detail::keep_scalar_v<long double, rm<long double>, 6>);
 }

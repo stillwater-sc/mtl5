@@ -12,6 +12,7 @@
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/detail/same_object.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
+#include <mtl/detail/scalar_chain.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/compressed2D.hpp>
@@ -63,6 +64,7 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
             for (size_type c = 0; c < ncols; ++c) {
                 const auto& xc = x(c);
                 ((acc[K] = generic_fma<Result>(acc[K], A(static_cast<size_type>(r + K), c), xc)), ...);
+                (keep_scalar<keep_scalar_v<Result, M, W>>(acc[K]), ...);   // #776
             }
             ((y(static_cast<y_size>(r + K)) = acc[K]), ...);
         }
