@@ -82,13 +82,16 @@ apply_governor() {   # governor cpus
     done
 }
 
-# "governor performance on policy0 (cpus 0-1, 2112 MHz max); ..." for the record.
+# "performance 1200-2700 MHz on cpus 0-5" for the record: the policies covering
+# the CPUs, grouped by governor and frequency range.
 describe_policies() {   # cpus
-    local p out=""
+    local p
     for p in $(policies_of "$*"); do
-        out="$out${out:+; }$(basename "$p") cpus $(cat "$p/related_cpus" | tr ' ' ',') $(cat "$p/scaling_governor") $(( $(cat "$p/scaling_min_freq") / 1000 ))-$(( $(cat "$p/scaling_max_freq") / 1000 )) MHz"
-    done
-    printf '%s' "$out"
+        printf '%s %s-%s MHz|%s\n' "$(cat "$p/scaling_governor")" \
+            $(( $(cat "$p/scaling_min_freq") / 1000 )) $(( $(cat "$p/scaling_max_freq") / 1000 )) \
+            "$(cat "$p/related_cpus" | tr ' ' ',')"
+    done | awk -F'|' '{ if (!($1 in c)) o[n++] = $1; c[$1] = c[$1] (c[$1] ? "," : "") $2 }
+                      END { for (i = 0; i < n; i++) printf "%s%s on cpus %s", (i ? "; " : ""), o[i], c[o[i]] }'
 }
 
 # Run the platform benchmark: 1 thread and one per listed CPU, pinned.

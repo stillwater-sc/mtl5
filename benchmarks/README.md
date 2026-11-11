@@ -129,6 +129,65 @@ stopping on it.
 CI runs the script end to end at `--class small` on Linux x64, Linux ARM64,
 macOS and Windows.
 
+### Machine profiles: pinned cores and a clock policy (#737)
+
+Run without options, `platform.sh` is correct only on a homogeneous machine
+without SMT. Elsewhere the scheduler is free to put threads on SMT siblings or
+little cores, and the script warns. For a session to publish, use the
+machine's profile:
+
+```bash
+benchmarks/machines/i7-12700k-platform.sh          # 8 P-cores, governor performance
+benchmarks/machines/xeon-e5-2420v2-platform.sh     # 6 cores, SMT siblings excluded
+benchmarks/machines/jetson-orin-platform.sh        # 6 A78AE, nvpmodel + jetson_clocks
+benchmarks/machines/arduino-ventuno-q-platform.sh  # 4 A78C, A55s excluded
+CLASS=large benchmarks/machines/i7-12700k-platform.sh
+```
+
+A profile does four things:
+1. **Identifies the machine.** It refuses to run anywhere else; `FORCE=1`
+   overrides.
+2. **Derives the CPUs from the topology:** one CPU per physical core, of the
+   core class to measure, never a hard-coded list.
+3. **Applies the clock policy.** Every change goes through `sudo -n` and is put
+   back when the profile exits.
+4. **Calls `platform.sh`.** It passes `--cpus` (a run at T threads gets
+   `taskset -c` on the first T CPUs) and `--clock-policy`, and every sidecar
+   records them as `bench_cpus=` and `clock_policy=`. `publish_platform.cmake`
+   puts both on the card page.
+
+`NO_CLOCK_POLICY=1` measures without the policy, for a card published with
+`PRELIMINARY=ON`. `INTERLEAVE=1` also runs `bench_interleave_rows` on the first
+measured CPU, still under the policy, with GCC and with Clang where it's
+installed (#780).
+
+**Root for the clock policy.** A machine whose user lacks passwordless sudo
+needs one rule, installed with `sudo visudo -f /etc/sudoers.d/mtl5-bench`. The
+`reboot` entry is for `remote_session.sh --reboot` below:
+
+```
+<user> ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpufreq/policy[0-9]/scaling_governor, /usr/sbin/reboot
+# a Jetson also needs: , /usr/sbin/nvpmodel, /usr/bin/jetson_clocks
+```
+
+**A new machine** gets a `<machine>-platform.sh` that follows one of these
+four, plus a line in `docs/benchmarks/systems.md` naming its pinning policy.
+
+**From another machine.** `benchmarks/remote_session.sh HOST PROFILE`:
+1. pushes this checkout's commit over ssh to `~/mtl5-campaign` on `HOST`;
+2. runs the profile there, detached, so a dropped connection doesn't end it;
+3. waits for it to finish;
+4. copies the results to `build-platform/remote/<host>/<session>/`.
+
+`--reboot` cold-boots the host first, for the second session. `--interleave`
+and `--class` pass through to the profile.
+
+**Repeatability.** Each machine is measured twice, the second time after a
+cold boot. `benchmarks/compare_sessions.py SESSION1 SESSION2` gives each run's
+median, min and max ratio of session-2 to session-1 time, and lists the entries
+outside ±5% (`--band`). Its last line is the repeatability band for the card
+page's `NOTE=`.
+
 ### Publishing a session
 
 A results directory under `build-platform/` is not kept: it is ignored by git.
