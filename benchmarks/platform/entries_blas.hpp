@@ -41,6 +41,8 @@
 // SuperLU's headers, whose dgemm_/dtrsm_ prototypes conflict with MTL5's own
 // BLAS declarations, and the translation unit does not compile.
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/parameter.hpp>
+#include <mtl/tag/orientation.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/axpy.hpp>
 #include <mtl/operation/dot.hpp>
@@ -229,6 +231,36 @@ problem gemv(size_class c) {
     const std::size_t n = n_mv(c);
     struct S { mat::dense2D<T> A; vec::dense_vector<T> x, y; };
     auto s = std::make_shared<S>(S{mat_of<T>(n, n, 4), vec_of<T>(n, 5), vec::dense_vector<T>(n)});
+    problem p{vshape(n), 2.0 * n * n, (1.0 * n * n + 2.0 * n) * sizeof(T), [] {},
+              [s] { mtl::mult(s->A, s->x, s->y); }, {}};
+    p.check = [s, n] {
+        error_tracker e(tol<T>(n), "componentwise rel err vs |A||x|");
+        for (std::size_t i = 0; i < n; ++i) {
+            long double ref = 0, abs = 0;
+            for (std::size_t j = 0; j < n; ++j) {
+                const long double t = (long double)s->A(i, j) * s->x(j);
+                ref += t; abs += std::fabs(t);
+            }
+            e.add(s->y(i), ref, abs);
+        }
+        return e.result();
+    };
+    return p;
+}
+
+/// gemv on a column-major A, the same values as gemv's. The generic build takes
+/// the column sweep here (#777); a BLAS build calls ?gemv('N').
+template <typename T>
+problem gemv_colmajor(size_class c) {
+    using CM = mat::dense2D<T, mat::parameters<tag::col_major>>;
+    const std::size_t n = n_mv(c);
+    struct S { CM A; vec::dense_vector<T> x, y; };
+    auto s = std::make_shared<S>(S{CM(n, n), vec_of<T>(n, 5), vec::dense_vector<T>(n)});
+    {
+        const auto R = mat_of<T>(n, n, 4);
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j) s->A(i, j) = R(i, j);
+    }
     problem p{vshape(n), 2.0 * n * n, (1.0 * n * n + 2.0 * n) * sizeof(T), [] {},
               [s] { mtl::mult(s->A, s->x, s->y); }, {}};
     p.check = [s, n] {
@@ -595,6 +627,8 @@ inline void register_all(registry& r) {
 
     r.add("blas2", "gemv", "f64", gemv<double>);
     r.add("blas2", "gemv", "f32", gemv<float>);
+    r.add("blas2", "gemv_colmajor", "f64", gemv_colmajor<double>);
+    r.add("blas2", "gemv_colmajor", "f32", gemv_colmajor<float>);
     r.add("blas2", "symv", "f64", symv<double>);
     r.add("blas2", "trmv", "f64", trmv<double>);
     r.add("blas2", "trmv", "f32", trmv<float>);

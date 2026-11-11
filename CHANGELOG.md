@@ -126,6 +126,23 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **The generic `gemv`, `trmv` and forward substitution on a column-major matrix are 3–8× faster, with results unchanged bit for bit** (#777). The row kernels read W rows of each column per step, so on a column-major A each step touched a new cache line, and often a new page, for a handful of elements: f32 `gemv` ran at 9% of the bandwidth roofline.
+  - **The column sweep:** on a contiguous column-major A (`dense2D`) with an arithmetic accumulator (float, double, long double, integers), the kernels keep a strip of row sums in a 16 KB stack buffer, which stays in L1, and walk down each column: `acc[0..S) += A(r0..r0+S-1, c) * x(c)`. The inner loop is lane-wise, so the compiler vectorizes it itself, one row per lane, with no Highway needed. Each row still adds the same terms in ascending column order with the same expression as the one-row loop, which is why the bits don't change.
+  - **The kernels:** `detail::mult_rows_column_sweep`, `detail::trmv_column_sweep` (both triangles; strips top-down for upper and bottom-up for lower, so every x(j) read is still the original) and `detail::lower_trisolve_column_sweep` (each strip adds the solved columns, then solves its diagonal block column by column). `detail/column_sweep.hpp` holds the dispatch predicate and the strip size.
+  - **Speed:** i7-12700K, n = 4096, one core, generic build:
+
+    | column-major | before | after |
+    |---|---|---|
+    | `gemv` f32 (`mtl5_bench`) | 19.1 ms, 9% of roofline | 2.24 ms, 78% |
+    | `gemv` f64 (`mtl5_bench`) | 19.9 ms, 18% | 4.80 ms, 73% |
+    | `trmv` f32 lower / upper | 8.46 / 6.79 ms | 1.68 / 1.57 ms |
+    | `trmv` f64 lower / upper | 12.3 / 8.95 ms | 3.19 / 3.15 ms |
+    | forward substitution f32 / f64 | 7.69 / 9.04 ms | 1.74 / 2.98 ms |
+
+  - **Not row-major:** vertical lanes on a row-major A need a transpose. Prototyped as a packed panel, it ran 1.4–2× slower than the scalar row kernels under GCC and Clang, plain and `-march=native`. Row-major keeps the interleaved rows. Reaching the roofline there needs reassociation, which the native-fast path's SIMD gemv already does.
+  - **Benchmarks:** `mtl5_bench` gains `blas2/gemv_colmajor` in f32 and f64.
+  - **Tests:** `op_test_trmv_trsv_interleaved` checks each sweep at strip sizes 1, 2, 3, 5, 8 and 16 against the verbatim one-row loops: f32, f64 and long double, both triangles, unit and non-unit, in place and out of place, and a band of rows. It also checks wrapping int32, a double A into a float y, and when the sweep applies. The existing column-major cases of the public functions now take the sweep.
+
 - **Under GCC, the generic f32 `gemv`, `trmv` and forward substitution on a row-major matrix are 11–24% faster, with results unchanged bit for bit** (#776). GCC's SLP vectorizer packed the interleaved row accumulators into vector registers, filling each vector from scalar loads a whole row apart, which cost more than the vector add saved.
   - **The fix:** `detail::keep_scalar` in `include/mtl/detail/scalar_chain.hpp`, an empty `asm` that holds each accumulator in a scalar register of its own. It emits no instruction and leaves the value unchanged; GCC just can no longer pack it.
   - **Where it applies:** GCC on x86-64 or AArch64, float, a row-major matrix, and a width of at least 4. Double, column-major (where the rows of a column are contiguous and packing is cheap), Clang and MSVC keep their code as it was, because the barrier didn't help them or made them slower.

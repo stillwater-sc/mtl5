@@ -27,6 +27,7 @@
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/detail/scalar_chain.hpp>
+#include <mtl/detail/column_sweep.hpp>
 #include <vector>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -168,6 +169,61 @@ void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag
     }
 }
 
+/// The generic trmv on a contiguous column-major A, S rows per strip (#777;
+/// see detail/column_sweep.hpp). Each row r starts from its diagonal term and
+/// adds A(r, j) x(j) for the other j of its triangle in ascending j, exactly as
+/// the one-row loop does, so x is bit-identical to it. A strip reads x before
+/// it writes any of its entries, and the strips go in the overwrite-safe order
+/// (top-down for upper, bottom-up for lower), so every x(j) read still holds
+/// its original value.
+template <std::size_t S, typename M, typename VX>
+void trmv_column_sweep(const M& A, VX& x, bool upper, bool unit_diag) {
+    static_assert(S >= 1);
+    using size_type = typename M::size_type;
+    using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
+    const std::size_t n = static_cast<std::size_t>(A.num_rows());
+    const auto* a = A.data();
+    const auto at = [&](std::size_t i, std::size_t j) -> decltype(auto) { return a[j * n + i]; };
+    acc_type acc[S];
+    const auto start = [&](std::size_t r0, std::size_t rr) {
+        for (std::size_t l = 0; l < rr; ++l) {
+            const auto i = static_cast<size_type>(r0 + l);
+            acc[l] = unit_diag ? x(i) : A(i, i) * x(i);
+        }
+    };
+    const auto finish = [&](std::size_t r0, std::size_t rr) {
+        for (std::size_t l = 0; l < rr; ++l) x(static_cast<size_type>(r0 + l)) = acc[l];
+    };
+    if (upper) {
+        // Row i adds j = i+1 .. n-1: column j feeds the strip's rows i < j.
+        for (std::size_t r0 = 0; r0 < n; r0 += S) {
+            const std::size_t rr = std::min(S, n - r0);
+            start(r0, rr);
+            for (std::size_t j = r0 + 1; j < n; ++j) {
+                const auto& xj = x(static_cast<size_type>(j));
+                const std::size_t hi = std::min(j, r0 + rr);
+                const auto* col = &at(0, j);
+                for (std::size_t i = r0; i < hi; ++i) acc[i - r0] += col[i] * xj;
+            }
+            finish(r0, rr);
+        }
+    } else {
+        // Row i adds j = 0 .. i-1: column j feeds the strip's rows i > j.
+        for (std::size_t r1 = n; r1 > 0;) {
+            const std::size_t r0 = r1 > S ? r1 - S : 0, rr = r1 - r0;
+            start(r0, rr);
+            for (std::size_t j = 0; j + 1 < r1; ++j) {
+                const auto& xj = x(static_cast<size_type>(j));
+                const std::size_t lo = std::max(j + 1, r0);
+                const auto* col = &at(0, j);
+                for (std::size_t i = lo; i < r1; ++i) acc[i - r0] += col[i] * xj;
+            }
+            finish(r0, rr);
+            r1 = r0;
+        }
+    }
+}
+
 } // namespace detail
 
 /// Triangular matrix-vector product: x = A*x, A upper/lower triangular.
@@ -246,9 +302,15 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
         }
     }
 #endif
+    // A contiguous column-major A takes the column sweep (#777), anything else
     // W rows at a time, one accumulator each (#749, #772): see
-    // detail::trmv_upper_rows. The accumulator's type is the one-row loop's.
+    // detail::trmv_column_sweep and detail::trmv_upper_rows. Both give the
+    // one-row loop's bits; the accumulator's type is the one-row loop's.
     using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
+    if constexpr (detail::column_sweep_v<acc_type, M>) {
+        detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
+        return;
+    }
     constexpr std::size_t W = interface::interleave_rows_v<acc_type, interface::kernel::trmv>;
     if (upper)
         detail::trmv_upper_rows<W>(A, x, size_type{0}, unit_diag);

@@ -13,6 +13,7 @@
 #include <mtl/detail/same_object.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/detail/scalar_chain.hpp>
+#include <mtl/detail/column_sweep.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/compressed2D.hpp>
@@ -74,6 +75,36 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
     }
 }
 
+/// The default-accumulator mat*vec rows [rb, re) on a contiguous column-major
+/// A, S rows per strip (#777; see detail/column_sweep.hpp). Row r sums
+/// generic_fma<Result>(acc, A(r, c), x(c)) for c ascending from zero, as the
+/// one-row loop does, so y is bit-identical to it.
+template <std::size_t S, typename M, typename VIn, typename VOut>
+void mult_rows_column_sweep(const M& A, const VIn& x, VOut& y,
+                            std::size_t rb, std::size_t re) {
+    static_assert(S >= 1);
+    assert(A.num_cols() == x.size());
+    assert(A.num_rows() == y.size());
+    assert(re <= static_cast<std::size_t>(A.num_rows()));
+    using Result = typename VOut::value_type;
+    using size_type = typename M::size_type;
+    using y_size = typename VOut::size_type;
+    const std::size_t m = static_cast<std::size_t>(A.num_rows());
+    const size_type ncols = A.num_cols();
+    const auto* a = A.data();
+    Result acc[S];
+    for (std::size_t r0 = rb; r0 < re; r0 += S) {
+        const std::size_t rr = std::min(S, re - r0);
+        for (std::size_t l = 0; l < rr; ++l) acc[l] = math::zero<Result>();
+        for (size_type c = 0; c < ncols; ++c) {
+            const auto& xc = x(c);
+            const auto* col = a + static_cast<std::size_t>(c) * m + r0;
+            for (std::size_t l = 0; l < rr; ++l) acc[l] = generic_fma<Result>(acc[l], col[l], xc);
+        }
+        for (std::size_t l = 0; l < rr; ++l) y(static_cast<y_size>(r0 + l)) = acc[l];
+    }
+}
+
 /// Generic mat*vec over the OUTPUT ROW RANGE [rb, re): the loop body of
 /// `mult_generic` below, split out so a threaded caller can hand one contiguous
 /// band of rows to each worker (#446).
@@ -99,7 +130,9 @@ void mult_generic_rows(const M& A, const VIn& x, VOut& y,
     assert(re <= static_cast<std::size_t>(A.num_rows()));
     using Result = typename VOut::value_type;
     using size_type = typename M::size_type;
-    if constexpr (std::is_void_v<Accumulator>) {
+    if constexpr (std::is_void_v<Accumulator> && column_sweep_v<Result, M>) {
+        mult_rows_column_sweep<column_strip_rows<Result>>(A, x, y, rb, re);   // #777
+    } else if constexpr (std::is_void_v<Accumulator>) {
         mult_rows_interleaved<interface::interleave_rows_v<Result, interface::kernel::gemv>>(
             A, x, y, rb, re);
     } else {
