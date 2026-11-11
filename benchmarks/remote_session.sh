@@ -213,11 +213,15 @@ try {
 }
 EOF
     scp -q -o BatchMode=yes "$job" "$HOST:$RDIR/$OUTREL/session.ps1" 2> >(grep -v '^\*\*' >&2) || { log "session did not start (copy)"; unlock; exit 3; }
-    rsh "\$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + (Join-Path \$HOME '$WOUT\\session.ps1'); CurrentDirectory = (Join-Path \$HOME '$RDIR') }; if (\$r.ReturnValue -ne 0) { exit 1 }; exit 0" \
+    rsh "\$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + [char]34 + (Join-Path \$HOME '$WOUT\\session.ps1') + [char]34; CurrentDirectory = (Join-Path \$HOME '$RDIR') }; if (\$r.ReturnValue -ne 0) { exit 1 }; exit 0" \
         || { log "session did not start"; unlock; exit 3; }
     OWN_LOCK=0   # started: the session releases the lock now (an interrupt from here on must not)
-    sleep 10
-    rsh "if (Test-Path $WOUT\\session.log) { exit 0 } else { exit 1 }" || { log "session did not start"; unlock; exit 3; }
+    nap 10
+    # Launched, so the lock stays with the session even if it is slow to start
+    # or ssh blips: unlocking here could let a second session in beside it.
+    # wait_session's --timeout bounds a session that never really started.
+    rsh "if (Test-Path $WOUT\\session.log) { exit 0 } else { exit 1 }" \
+        || log "no session.log yet; waiting for the session anyway (it holds the lock; --timeout bounds the wait)"
     log "session $TAG started ($PROFILE, class $CLASS$([ "$INTERLEAVE" -eq 1 ] && echo ", interleave"))"
     probe() { rsh "if (Test-Path $WOUT\\session.exit) { Get-Content $WOUT\\session.exit }; exit 0" 2>/dev/null | tr -d '\r '; }
     wait_session probe "~/$RDIR/$OUTREL"
@@ -293,8 +297,10 @@ echo \$? > $OUTREL/session.exit.tmp; mv $OUTREL/session.exit.tmp $OUTREL/session
 "${SSH[@]}" "$HOST" "cd $RDIR || exit 1; setsid nohup bash -c $(printf %q "$job") > /dev/null 2>&1 < /dev/null &" \
     || { log "session did not start"; unlock; exit 3; }
 OWN_LOCK=0   # started: the session releases the lock now (an interrupt from here on must not)
-sleep 5
-"${SSH[@]}" "$HOST" "test -f $RDIR/$OUTREL/session.log" || { log "session did not start"; unlock; exit 3; }
+nap 5
+# Launched, so the lock stays with the session (see the Windows path above).
+"${SSH[@]}" "$HOST" "test -f $RDIR/$OUTREL/session.log" \
+    || log "no session.log yet; waiting for the session anyway (it holds the lock; --timeout bounds the wait)"
 log "session $TAG started ($PROFILE, class $CLASS$([ "$INTERLEAVE" -eq 1 ] && echo ", interleave"))"
 probe() { "${SSH[@]}" "$HOST" "cat $RDIR/$OUTREL/session.exit 2>/dev/null; true"; }
 wait_session probe "~/$RDIR/$OUTREL"

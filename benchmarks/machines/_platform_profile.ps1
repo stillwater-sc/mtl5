@@ -107,6 +107,7 @@ function Use-VisualStudio {
 }
 
 $script:PowerRestore = $null
+$script:RestoreFailed = $false
 function Get-ActiveScheme {
     if ((powercfg /getactivescheme) -match '([0-9a-fA-F-]{36})') { return $Matches[1] }
     return $null
@@ -161,7 +162,10 @@ function Exit-ClockPolicy {
     # on the session scheme (or with a stray copy) for whoever uses it next.
     foreach ($step in @(@('/setactive', $script:PowerRestore.orig), @('/delete', $script:PowerRestore.copy))) {
         try { Invoke-Powercfg @step | Out-Null }
-        catch { Write-Host "WARNING: restoring the power scheme: $_ -- fix by hand with powercfg /setactive $($script:PowerRestore.orig)" }
+        catch {
+            Write-Host "WARNING: restoring the power scheme: $_ -- fix by hand with powercfg /setactive $($script:PowerRestore.orig)"
+            $script:RestoreFailed = $true   # the session then fails (Invoke-PlatformProfile)
+        }
     }
     $script:PowerRestore = $null
 }
@@ -255,6 +259,8 @@ function Invoke-PlatformProfile([string]$machine, [string]$cpus, [object[]]$extr
         }
     } finally {
         Exit-ClockPolicy
+        # A machine left on the session scheme is not a clean finish.
+        if ($script:RestoreFailed) { $status = 1 }
     }
     return $status
 }
