@@ -77,7 +77,8 @@ function Get-ActiveScheme {
     return $null
 }
 function Get-BoostMode([string]$scheme) {
-    $q = powercfg /query $scheme SUB_PROCESSOR PERFBOOSTMODE 2>$null
+    # /qh: PERFBOOSTMODE is a hidden setting, which /query leaves out.
+    $q = powercfg /qh $scheme SUB_PROCESSOR PERFBOOSTMODE 2>$null
     $ac = $q | Select-String 'Current AC Power Setting Index: 0x([0-9a-fA-F]+)' | Select-Object -First 1
     if (-not $ac) { return 'unknown' }
     switch ([Convert]::ToInt32($ac.Matches[0].Groups[1].Value, 16)) {
@@ -94,7 +95,9 @@ function Enter-ClockPolicy {
     if ((powercfg /duplicatescheme $orig) -match '([0-9a-fA-F-]{36})') { $copy = $Matches[1] }
     if (-not $copy) { Write-Host "powercfg /duplicatescheme failed (needs an administrator)"; exit 2 }
     $script:PowerRestore = @{ orig = $orig; copy = $copy }
-    powercfg /changename $copy "mtl5 platform benchmark (temporary)" | Out-Null
+    # The name says what it is; preflight.ps1 records it as the governor and
+    # looks for "performance" in it (and reads the name up to the first ")").
+    powercfg /changename $copy "mtl5 performance - temporary copy of $origName" | Out-Null
     foreach ($mode in '/setacvalueindex', '/setdcvalueindex') {
         powercfg $mode $copy SUB_PROCESSOR PROCTHROTTLEMIN 100 | Out-Null
         powercfg $mode $copy SUB_PROCESSOR PROCTHROTTLEMAX 100 | Out-Null

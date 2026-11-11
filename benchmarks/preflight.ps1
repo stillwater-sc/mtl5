@@ -279,7 +279,8 @@ if ($governor -notmatch '[Pp]erformance' -and $governor -ne 'unavailable') {
 
 $turbo = 'unavailable'
 try {
-    $boost = & powercfg /q SCHEME_CURRENT SUB_PROCESSOR PERFBOOSTMODE 2>$null
+    # /qh, not /q: PERFBOOSTMODE is a hidden setting, which /q leaves out.
+    $boost = & powercfg /qh SCHEME_CURRENT SUB_PROCESSOR PERFBOOSTMODE 2>$null
     if ($LASTEXITCODE -eq 0 -and $boost) {
         $ac = ($boost | Select-String -Pattern 'Current AC Power Setting Index:\s*(0x[0-9a-fA-F]+)')
         if ($ac) { $turbo = if ([int]$ac.Matches[0].Groups[1].Value -eq 0) { 'disabled' } else { 'enabled' } }
