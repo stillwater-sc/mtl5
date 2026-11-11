@@ -19,7 +19,7 @@ lo=${pcores%-*}; hi=${pcores#*-}
 CPUS=$(one_cpu_per_core $(seq "$lo" "$hi"))
 [ "$(printf '%s' "$CPUS" | tr ',' '\n' | grep -c .)" -eq 8 ] || { echo "expected 8 P-cores, got '$CPUS'" >&2; exit 2; }
 
-apply_governor performance "$CPUS"
+apply_governor performance "$(seq -s, "$lo" "$hi")"   # SMT siblings too: they share the core clock
 turbo=on
 [ "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null || echo 0)" = 1 ] && turbo=off
 run_platform i7-12700k "$CPUS" "governor performance on the P-cores, turbo $turbo; $(describe_policies "$CPUS")" "$@"
