@@ -92,6 +92,7 @@ set(total_failed 0)
 set(runs "")
 set(governor "")
 set(cpus "")
+set(bench_cpus "")      # the widest run's pin list (#737), when the session was pinned
 set(competing "")
 set(copy_list "${RESULTS}/summary.md")
 
@@ -131,6 +132,8 @@ foreach(json IN LISTS jsons)
     set(sc_commit "")
     set(sc_dirty "")
     set(sc_threads "")
+    set(sc_pin "<not recorded>")      # this run's bench_cpus (#737)
+    set(sc_policy "<not recorded>")   # this run's clock_policy (#737)
     foreach(line IN LISTS lines)
         if(line MATCHES "^git_commit=(.*)$")
             set(sc_commit "${CMAKE_MATCH_1}")
@@ -142,12 +145,37 @@ foreach(json IN LISTS jsons)
             set(governor "${CMAKE_MATCH_1}")
         elseif(line MATCHES "^cpu_affinity=(.*)$" AND cpus STREQUAL "")
             set(cpus "${CMAKE_MATCH_1}")
+        elseif(line MATCHES "^bench_cpus=(.*)$" AND sc_pin STREQUAL "<not recorded>")
+            set(sc_pin "${CMAKE_MATCH_1}")
+        elseif(line MATCHES "^clock_policy=(.*)$" AND sc_policy STREQUAL "<not recorded>")
+            set(sc_policy "${CMAKE_MATCH_1}")
         elseif(line MATCHES "^competing_load=(.*)$" AND competing STREQUAL "")
             set(competing "${CMAKE_MATCH_1}")
         endif()
     endforeach()
     if(sc_commit STREQUAL "")
         fail("${name}.sysinfo has no git_commit -- not an mtl5_bench sidecar")
+    endif()
+    # One session is one pinning policy and one clock policy (#737): a run left
+    # in a reused --out by an earlier, differently pinned session must not lend
+    # this page its provenance.
+    if(sc_pin MATCHES "^(unpinned|<not recorded>)$")
+        set(sc_pin_kind "${sc_pin}")
+    else()
+        set(sc_pin_kind "pinned")
+    endif()
+    if(NOT DEFINED pin_kind)
+        set(pin_kind "${sc_pin_kind}")
+        set(clock_policy "${sc_policy}")
+    elseif(NOT pin_kind STREQUAL sc_pin_kind OR NOT clock_policy STREQUAL sc_policy)
+        fail("${name}: CPUs ${sc_pin}, clock policy '${sc_policy}', but an earlier run is ${pin_kind}, "
+             "'${clock_policy}' -- one session is one pinning and one clock policy")
+    endif()
+    # The widest pin list: the run at the most threads names every CPU.
+    string(LENGTH "${sc_pin}" new_len)
+    string(LENGTH "${bench_cpus}" old_len)
+    if(sc_pin_kind STREQUAL "pinned" AND new_len GREATER old_len)
+        set(bench_cpus "${sc_pin}")
     endif()
     if(commit STREQUAL "")
         set(commit "${sc_commit}")
@@ -314,6 +342,24 @@ else()
     if(governor STREQUAL "")
         set(governor "not recorded")
     endif()
+    # Pinned sessions (#737) name the CPUs and the policy; older ones fall back
+    # to the affinity count and the governor preflight recorded.
+    # Pinned sessions (#737) name the CPUs and the policy. Older sidecars record
+    # neither, which is not the same as "not applied": say so.
+    if(pin_kind STREQUAL "pinned")
+        set(cpus_cell "`${bench_cpus}` (pinned)")
+    elseif(pin_kind STREQUAL "unpinned")
+        set(cpus_cell "${cpus} available, not pinned")
+    else()
+        set(cpus_cell "${cpus} available, pinning not recorded")
+    endif()
+    if(clock_policy STREQUAL "<not recorded>")
+        set(clock_cell "not recorded (governor `${governor}`)")
+    else()
+        set(clock_cell "${clock_policy} (governor `${governor}`)")
+    endif()
+    # Free text in a table cell: a | would open a new column.
+    string(REPLACE "|" "\\|" clock_cell "${clock_cell}")
     set(earlier "")
     foreach(s IN LISTS sessions)
         if(NOT s STREQUAL SESSION)
@@ -351,8 +397,8 @@ else()
         "| class | `${class}` |\n"
         "| runs | ${runs} |\n"
         "| failed checks | ${failed_cell} |\n"
-        "| CPUs available | ${cpus} |\n"
-        "| clock policy | `${governor}` |\n"
+        "| CPUs | ${cpus_cell} |\n"
+        "| clock policy | ${clock_cell} |\n"
         "| raw data | [`${DATA_REL}/`](https://github.com/stillwater-sc/mtl5/tree/main/${DATA_REL}) |\n"
         "| earlier sessions | ${earlier} |\n\n"
         "${body}")

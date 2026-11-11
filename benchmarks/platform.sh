@@ -40,6 +40,21 @@
 #   --machine NAME               machine name for the cards (default: the
 #                                device-tree board model on ARM boards, else
 #                                the CPU brand)
+#   --cpus LIST                  pin the measurements (#737): a run at T threads
+#                                gets CPU affinity to the first T CPUs of LIST
+#                                (taskset -c; Linux only). LIST is comma-separated
+#                                CPU ids or ranges ("0,2,4,6" or "0-3"), one per
+#                                core to measure, in the order threads should take
+#                                them. The builds are not pinned. Each run's
+#                                sidecar records bench_cpus=. Without --cpus the
+#                                runs are unpinned, recorded as
+#                                bench_cpus=unpinned, and a machine with SMT or
+#                                mixed core types gets a warning: its threads may
+#                                land on siblings or little cores.
+#   --clock-policy TEXT          the clock policy the caller applied, recorded
+#                                in every sidecar as clock_policy= (the machine
+#                                profiles in benchmarks/machines/*-platform.sh
+#                                set it)
 #   --no-gate                    record the machine state but never stop on it
 #
 # Exit: 0 if every run passed every check; 1 if a gate, a build or a check
@@ -61,6 +76,8 @@ JOBS=$(( ncpu / 2 > 0 ? ncpu / 2 : 1 ))
 OUT=""
 MACHINE=""
 GATE=1
+CPUS=""
+CLOCK_POLICY=""
 
 need_value() { [ "$2" -ge 2 ] || { echo "platform.sh: $1 requires a value" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
@@ -71,6 +88,8 @@ while [ $# -gt 0 ]; do
         --jobs)     need_value "$1" $#; JOBS=$2; shift 2 ;;
         --out)      need_value "$1" $#; OUT=$2; shift 2 ;;
         --machine)  need_value "$1" $#; MACHINE=$2; shift 2 ;;
+        --cpus)     need_value "$1" $#; CPUS=$2; shift 2 ;;
+        --clock-policy) need_value "$1" $#; CLOCK_POLICY=$2; shift 2 ;;
         --no-gate)  GATE=0; shift ;;
         -h|--help)  sed -n '2,/^set -uo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; /^set -uo/d'; exit 0 ;;
         *) echo "platform.sh: unknown argument '$1'" >&2; exit 2 ;;
@@ -93,6 +112,60 @@ for v in "${VARIANT_LIST[@]}"; do
     case "$v" in native|native-fast|blas) ;; *) echo "platform.sh: unknown variant '$v'" >&2; exit 2 ;; esac
 done
 
+# -- CPU pinning (#737) -----------------------------------------------------------
+# CPU_LIST: the --cpus ids, expanded and in order. pin_prefix T prints the first
+# T of them as a taskset list.
+CPU_LIST=()
+if [ -n "$CPUS" ]; then
+    [ "$(uname -s)" = Linux ] || { echo "platform.sh: --cpus needs Linux (taskset)" >&2; exit 2; }
+    command -v taskset >/dev/null 2>&1 || { echo "platform.sh: --cpus needs taskset (util-linux)" >&2; exit 2; }
+    IFS=',' read -r -a cpu_items <<< "$CPUS"
+    for item in "${cpu_items[@]}"; do
+        case "$item" in
+            *[!0-9-]*|''|-*|*-) echo "platform.sh: bad --cpus item '$item'" >&2; exit 2 ;;
+            *-*) lo=${item%-*}; hi=${item#*-}
+                 [ "$lo" -le "$hi" ] || { echo "platform.sh: bad --cpus range '$item'" >&2; exit 2; }
+                 c=$lo; while [ "$c" -le "$hi" ]; do CPU_LIST+=("$c"); c=$((c + 1)); done ;;
+            *) CPU_LIST+=("$item") ;;
+        esac
+    done
+    dups=$(printf '%s\n' "${CPU_LIST[@]}" | sort -n | uniq -d | tr '\n' ' ')
+    if [ -n "$dups" ]; then
+        # Affinity is a set: "0,0" pins a 2-thread run to one CPU.
+        echo "platform.sh: --cpus repeats CPU(s) $dups" >&2; exit 2
+    fi
+    for c in "${CPU_LIST[@]}"; do
+        if [ -r "/sys/devices/system/cpu/cpu$c/online" ] && [ "$(cat "/sys/devices/system/cpu/cpu$c/online")" != 1 ]; then
+            echo "platform.sh: --cpus names cpu$c, which is offline" >&2; exit 2
+        fi
+        [ -d "/sys/devices/system/cpu/cpu$c" ] || { echo "platform.sh: --cpus names cpu$c, which does not exist" >&2; exit 2; }
+    done
+    if [ "${#CPU_LIST[@]}" -lt "$max_threads" ]; then
+        echo "platform.sh: --cpus lists ${#CPU_LIST[@]} CPUs but --threads asks for $max_threads" >&2; exit 2
+    fi
+fi
+pin_list() {   # T -> the first T CPUs of --cpus, comma-separated
+    local t=$1 out="" i=0
+    while [ "$i" -lt "$t" ]; do out="$out${out:+,}${CPU_LIST[$i]}"; i=$((i + 1)); done
+    printf '%s' "$out"
+}
+# Without --cpus, say when the scheduler is free to pick a sibling or a little core.
+if [ "${#CPU_LIST[@]}" -eq 0 ] && [ "$(uname -s)" = Linux ]; then
+    smt=0; mixed=0
+    for f in /sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list; do
+        [ -r "$f" ] || continue
+        case "$(cat "$f")" in *,*|*-*) smt=1; break ;; esac
+    done
+    nmax=$(cat /sys/devices/system/cpu/cpu[0-9]*/cpufreq/cpuinfo_max_freq 2>/dev/null | sort -u | wc -l)
+    nparts=$(sed -n 's/^CPU part[[:space:]]*:[[:space:]]*//p' /proc/cpuinfo 2>/dev/null | sort -u | wc -l)
+    [ "$nmax" -gt 1 ] || [ "$nparts" -gt 1 ] && mixed=1
+    if [ "$smt" -eq 1 ] || [ "$mixed" -eq 1 ]; then
+        echo "WARNING: unpinned run on a machine with$([ "$smt" -eq 1 ] && echo " SMT")$([ "$smt" -eq 1 ] && [ "$mixed" -eq 1 ] && echo " and")$([ "$mixed" -eq 1 ] && echo " mixed core types"):" >&2
+        echo "         threads may land on SMT siblings or slower cores. Pass --cpus, or use the" >&2
+        echo "         machine's profile in benchmarks/machines/*-platform.sh (#737)." >&2
+    fi
+fi
+
 BUILD_ROOT="$ROOT/build-platform"
 host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)
 [ -n "$OUT" ] || OUT="$BUILD_ROOT/results/${host}-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -109,7 +182,7 @@ if [ -z "$MACHINE" ] && [ "$(uname -m)" != x86_64 ] && command -v lscpu >/dev/nu
     MACHINE=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)
 fi
 
-echo "mtl5 platform benchmark: class=$CLASS variants=$VARIANTS threads=$THREADS jobs=$JOBS"
+echo "mtl5 platform benchmark: class=$CLASS variants=$VARIANTS threads=$THREADS jobs=$JOBS cpus=${CPUS:-unpinned}"
 echo "results: $OUT"
 
 # -- 1. preflight, before the builds ------------------------------------------
@@ -118,7 +191,11 @@ preflight() {   # extra args...
     # make the tree dirty.
     local args=(--threads "$max_threads" --repo "$ROOT")
     [ "$GATE" -eq 1 ] || args+=(--report-only)
-    "$SCRIPT_DIR/preflight.sh" "${args[@]}" "$@"
+    if [ "${#CPU_LIST[@]}" -gt 0 ]; then
+        taskset -c "$(pin_list "${#CPU_LIST[@]}")" "$SCRIPT_DIR/preflight.sh" "${args[@]}" "$@"
+    else
+        "$SCRIPT_DIR/preflight.sh" "${args[@]}" "$@"
+    fi
 }
 if ! preflight > "$OUT/logs/preflight-before-build.txt"; then
     echo "preflight failed -- not measuring. Fix the above, pass --no-gate to record" >&2
@@ -205,8 +282,15 @@ for v in "${BUILT[@]}"; do
         # start one thread per core by default, so a "1-thread" BLAS run would
         # otherwise use all of them (a 1-thread blas3 measured 202% of the
         # 1-thread ceiling before this).
+        # Pinned (#737): this run's threads get the first t CPUs of --cpus.
+        pin=()
+        bench_cpus=unpinned
+        if [ "${#CPU_LIST[@]}" -gt 0 ]; then
+            bench_cpus=$(pin_list "$t")
+            pin=(taskset -c "$bench_cpus")
+        fi
         if MTL5_NUM_THREADS=$t OPENBLAS_NUM_THREADS=$t MKL_NUM_THREADS=$t BLIS_NUM_THREADS=$t \
-           OMP_NUM_THREADS=$t "$exe" "${args[@]}" > "$OUT/logs/$v-t$t.log" 2>&1; then
+           OMP_NUM_THREADS=$t ${pin[@]+"${pin[@]}"} "$exe" "${args[@]}" > "$OUT/logs/$v-t$t.log" 2>&1; then
             echo "   $(tail -1 "$OUT/logs/$v-t$t.log")"
         else
             echo "   FAILED: $(tail -1 "$OUT/logs/$v-t$t.log") (see logs/$v-t$t.log)" >&2
@@ -215,6 +299,8 @@ for v in "${BUILT[@]}"; do
         # Machine state into the sidecar, so it is IN the data (#442).
         if [ -f "$base.json.sysinfo" ]; then
             { cat "$OUT/logs/preflight.txt"
+              echo "bench_cpus=$bench_cpus"
+              echo "clock_policy=${CLOCK_POLICY:-not applied}"
               after=$("$SCRIPT_DIR/preflight.sh" --phase after 2>/dev/null) || after=""
               case "$after" in *thermal_after_c=*) echo "$after" ;; *) echo "thermal_after_c=unavailable" ;; esac
             } >> "$base.json.sysinfo"
@@ -228,7 +314,7 @@ done
 {
     echo "# mtl5_bench platform characterization"
     echo
-    echo "Class \`$CLASS\`, variants ${BUILT[*]}, threads $THREADS, $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+    echo "Class \`$CLASS\`, variants ${BUILT[*]}, threads $THREADS, CPUs ${CPUS:-unpinned}, clock policy ${CLOCK_POLICY:-not applied}, $(date -u +%Y-%m-%dT%H:%M:%SZ)."
     if [ "${#SKIPPED[@]}" -gt 0 ]; then
         echo; echo "Not measured:"; printf -- '- %s\n' ${SKIPPED[@]+"${SKIPPED[@]}"}
     fi
