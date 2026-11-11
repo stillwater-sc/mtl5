@@ -16,10 +16,12 @@ sessions must be the same commit and class; a mismatch is an error, because
 then the ratio measures the change, not the noise.
 
 Prints, per run, the median and the spread of the ratios and the entries
-outside the band, and a one-line band for the card page. --markdown also
-writes that report as a Markdown file. Exit 0 when the comparison ran (noisy
-entries are a finding, not a failure), 1 when the sessions don't match, 2 on
-bad usage.
+outside the band, and a one-line band for the card page. Entries that failed
+their check or have no timing in either session, or exist in only one, are
+listed and not counted. --markdown also writes that report as a Markdown file.
+Exit 0 when the comparison ran (noisy entries are a finding, not a failure);
+1 when the sessions don't match: a run in only one of them, or a commit or
+class that differs or isn't recorded; 2 on bad usage.
 """
 import argparse
 import json
@@ -41,13 +43,19 @@ def sidecar(path):
 
 
 def entries(path):
+    """The run's entries by (area, op, dtype, shape): (median_s or None, ok)."""
     data = json.loads(Path(path).read_text())
     res = {}
     for r in data.get("results", []):
         key = (r.get("area"), r.get("op"), r.get("dtype"), r.get("shape"))
-        if r.get("median_s"):
-            res[key] = r
+        check = r.get("check") or {}
+        ok = bool(check.get("ok")) and not r.get("error")
+        res[key] = (r.get("median_s") or None, ok)
     return data, res
+
+
+def label(key):
+    return "/".join(str(k) for k in key[:3]) + f" {key[3]}"
 
 
 def main():
@@ -63,50 +71,86 @@ def main():
             print(f"compare_sessions: {s} is not a directory", file=sys.stderr)
             return 2
 
-    runs = sorted(p.name for p in s1.glob("*-t*.json") if (s2 / p.name).exists())
+    runs1 = {p.name for p in s1.glob("*-t*.json")}
+    runs2 = {p.name for p in s2.glob("*-t*.json")}
+    only = sorted((runs1 - runs2) | (runs2 - runs1))
+    runs = sorted(runs1 & runs2)
+    if only:
+        # A partial session would give a complete-looking band over fewer runs.
+        for n in only:
+            print(f"compare_sessions: {n} is in only one session "
+                  f"({s1 if n in runs1 else s2})", file=sys.stderr)
+        return 1
     if not runs:
-        print("compare_sessions: the sessions share no <variant>-t<T>.json runs", file=sys.stderr)
+        print("compare_sessions: the sessions have no <variant>-t<T>.json runs", file=sys.stderr)
         return 1
 
     lo, hi = 1 - a.band / 100, 1 + a.band / 100
     lines = [f"# Repeatability: `{s2.name}` against `{s1.name}`", "",
-             f"Ratio of session-2 to session-1 median time per entry; band +-{a.band:g}%.", "",
-             "| run | entries | median ratio | min | max | outside band |",
-             "|---|---|---|---|---|---|"]
-    noisy_all = []
-    all_ratios = []
+             f"Ratio of session-2 to session-1 median time per entry; band +-{a.band:g}%. "
+             "Entries that failed their check, or have no timing, in either session are "
+             "listed separately and not counted.", "",
+             "| run | compared | median ratio | min | max | outside band | not compared |",
+             "|---|---|---|---|---|---|---|"]
+    noisy_all, uncompared, all_ratios = [], [], []
     for name in runs:
         d1, e1 = entries(s1 / name)
         d2, e2 = entries(s2 / name)
         c1, c2 = sidecar(s1 / name), sidecar(s2 / name)
-        if c1.get("git_commit") != c2.get("git_commit") or d1.get("class") != d2.get("class"):
-            print(f"compare_sessions: {name}: commit {c1.get('git_commit')} class {d1.get('class')} "
-                  f"against commit {c2.get('git_commit')} class {d2.get('class')} -- not the same "
-                  "build, so the ratio would measure the change, not the noise", file=sys.stderr)
+        meta = (c1.get("git_commit"), d1.get("class"), c2.get("git_commit"), d2.get("class"))
+        if not all(meta):
+            print(f"compare_sessions: {name}: commit or class not recorded in one of the sessions "
+                  f"({meta}) -- the provenance cannot be matched", file=sys.stderr)
+            return 1
+        if meta[0] != meta[2] or meta[1] != meta[3]:
+            print(f"compare_sessions: {name}: commit {meta[0]} class {meta[1]} against commit "
+                  f"{meta[2]} class {meta[3]} -- not the same build, so the ratio would measure "
+                  "the change, not the noise", file=sys.stderr)
             return 1
         ratios = []
-        for key, r1 in e1.items():
-            r2 = e2.get(key)
-            if r2 is None:
+        n_unc = 0
+        for key in sorted(set(e1) | set(e2), key=str):
+            m1, ok1 = e1.get(key, (None, False))
+            m2, ok2 = e2.get(key, (None, False))
+            why = []
+            if key not in e1 or key not in e2:
+                why.append("missing in session " + ("1" if key not in e1 else "2"))
+            if not (m1 and m2):
+                why.append("no timing")
+            if key in e1 and key in e2 and not (ok1 and ok2):
+                why.append("check failed in session " + ",".join(
+                    str(i) for i, ok in ((1, ok1), (2, ok2)) if not ok))
+            if why:
+                uncompared.append((name, label(key), "; ".join(why)))
+                n_unc += 1
                 continue
-            q = r2["median_s"] / r1["median_s"]
+            q = m2 / m1
             ratios.append(q)
             if not lo <= q <= hi:
-                noisy_all.append((name, "/".join(str(k) for k in key[:3]), key[3], q))
+                noisy_all.append((name, label(key), q))
         all_ratios += ratios
-        out = sum(1 for q in ratios if not lo <= q <= hi)
-        lines.append(f"| `{name[:-5]}` | {len(ratios)} | {statistics.median(ratios):.3f} | "
-                     f"{min(ratios):.3f} | {max(ratios):.3f} | {out} |")
+        if ratios:
+            out = sum(1 for q in ratios if not lo <= q <= hi)
+            lines.append(f"| `{name[:-5]}` | {len(ratios)} | {statistics.median(ratios):.3f} | "
+                         f"{min(ratios):.3f} | {max(ratios):.3f} | {out} | {n_unc} |")
+        else:
+            lines.append(f"| `{name[:-5]}` | 0 | -- | -- | -- | -- | {n_unc} |")
 
     within = sum(1 for q in all_ratios if lo <= q <= hi)
-    band_line = (f"Repeatability: {within} of {len(all_ratios)} entries within +-{a.band:g}% "
-                 f"between sessions `{s1.name}` and `{s2.name}` (median ratio "
-                 f"{statistics.median(all_ratios):.3f}).")
+    median = f"{statistics.median(all_ratios):.3f}" if all_ratios else "--"
+    band_line = (f"Repeatability: {within} of {len(all_ratios)} compared entries within "
+                 f"+-{a.band:g}% between sessions `{s1.name}` and `{s2.name}` (median ratio "
+                 f"{median}); {len(uncompared)} not compared.")
     lines += ["", band_line, ""]
     if noisy_all:
-        lines += ["Entries outside the band (noisy):", "", "| run | entry | shape | ratio |", "|---|---|---|---|"]
-        lines += [f"| `{r[:-5]}` | `{e}` | {sh} | {q:.3f} |" for r, e, sh, q in sorted(noisy_all, key=lambda t: -abs(t[3] - 1))]
-    report = "\n".join(lines) + "\n"
+        lines += ["Entries outside the band (noisy):", "", "| run | entry | ratio |", "|---|---|---|"]
+        lines += [f"| `{r[:-5]}` | `{e}` | {q:.3f} |" for r, e, q in sorted(noisy_all, key=lambda t: -abs(t[2] - 1))]
+        lines.append("")
+    if uncompared:
+        lines += ["Entries not compared:", "", "| run | entry | why |", "|---|---|---|"]
+        lines += [f"| `{r[:-5]}` | `{e}` | {w} |" for r, e, w in uncompared]
+        lines.append("")
+    report = "\n".join(lines)
     print(report)
     if a.markdown:
         Path(a.markdown).write_text(report)

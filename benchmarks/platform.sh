@@ -129,6 +129,11 @@ if [ -n "$CPUS" ]; then
             *) CPU_LIST+=("$item") ;;
         esac
     done
+    dups=$(printf '%s\n' "${CPU_LIST[@]}" | sort -n | uniq -d | tr '\n' ' ')
+    if [ -n "$dups" ]; then
+        # Affinity is a set: "0,0" pins a 2-thread run to one CPU.
+        echo "platform.sh: --cpus repeats CPU(s) $dups" >&2; exit 2
+    fi
     for c in "${CPU_LIST[@]}"; do
         if [ -r "/sys/devices/system/cpu/cpu$c/online" ] && [ "$(cat "/sys/devices/system/cpu/cpu$c/online")" != 1 ]; then
             echo "platform.sh: --cpus names cpu$c, which is offline" >&2; exit 2

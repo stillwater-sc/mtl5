@@ -5,12 +5,14 @@
 #
 # HOST is an ssh destination; PROFILE is a machine profile's file name under
 # benchmarks/machines/ (e.g. xeon-e5-2420v2-platform.sh). In order:
-#   1. Pushes this checkout's HEAD to ~/mtl5-campaign on HOST (created on first
+#   1. Takes the host's lock (~/mtl5-campaign.lock: one session per host),
+#      pushes this checkout's HEAD to ~/mtl5-campaign on HOST (created on first
 #      use; an existing clone elsewhere is never touched) and checks it out
 #      detached, so the session measures exactly this commit. The local tree
 #      must be clean: a session of uncommitted code is not reproducible.
-#   2. --reboot: reboots HOST first (sudo -n reboot), waits for ssh, then lets
-#      it settle (--settle, default 300 s) -- #737's "after a cold boot".
+#   2. --reboot: reboots HOST first (sudo -n reboot), waits until its boot id
+#      has changed, then lets it settle (--settle, default 300 s) -- #737's
+#      "after a cold boot".
 #   3. Runs the profile detached on HOST (setsid nohup), so a dropped ssh
 #      connection does not end the session; polls until it finishes.
 #   4. Copies the results directory back to DEST/<HOST>/<session> (default
@@ -59,33 +61,63 @@ RDIR=mtl5-campaign
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30)
 log() { echo "[$(date -u +%H:%M:%S) $HOST] $*"; }
 
-# -- 1. the commit -------------------------------------------------------------
+# -- 1. the lock and the commit ---------------------------------------------------
+# One session per host at a time: two would share ~/$RDIR, and the second
+# checkout would change the first one's sources under its build. mkdir is the
+# lock (atomic); the detached session removes it when it finishes.
+LOCK=mtl5-campaign.lock
+"${SSH[@]}" "$HOST" "mkdir $LOCK" 2>/dev/null || {
+    if "${SSH[@]}" "$HOST" true 2>/dev/null; then
+        log "another session holds $HOST:~/$LOCK (remove it by hand if that session is gone)"
+    else
+        log "cannot reach $HOST"
+    fi
+    exit 3
+}
+unlock() { "${SSH[@]}" "$HOST" "rmdir $LOCK" 2>/dev/null; }
 "${SSH[@]}" "$HOST" "git init -q $RDIR 2>/dev/null; cd $RDIR && git config receive.denyCurrentBranch ignore" \
-    || { log "cannot reach $HOST"; exit 3; }
-git -C "$ROOT" push -q -f "$HOST:$RDIR" "$SHA:refs/heads/campaign" || { log "push failed"; exit 3; }
+    || { log "cannot set up ~/$RDIR"; unlock; exit 3; }
+git -C "$ROOT" push -q -f "$HOST:$RDIR" "$SHA:refs/heads/campaign" || { log "push failed"; unlock; exit 3; }
 "${SSH[@]}" "$HOST" "cd $RDIR && git checkout -q --detach -f $SHA && git clean -q -fdx -e build-platform && git log --oneline -1" \
-    || { log "checkout failed"; exit 3; }
+    || { log "checkout failed"; unlock; exit 3; }
 log "at $(git -C "$ROOT" log --oneline -1 "$SHA")"
 
+# A reused --tag would leave the old session.exit for the poller to find.
+OUTREL="build-platform/results/campaign-$TAG"
+"${SSH[@]}" "$HOST" "cd $RDIR && mkdir -p build-platform/results && mkdir $OUTREL" 2>/dev/null \
+    || { log "session $TAG already exists on $HOST (~/$RDIR/$OUTREL); pick another --tag"; unlock; exit 2; }
+
 # -- 2. cold boot ----------------------------------------------------------------
+# Reachable again is not rebooted: the boot id has to change.
 if [ "$REBOOT" -eq 1 ]; then
+    boot0=$("${SSH[@]}" "$HOST" cat /proc/sys/kernel/random/boot_id)
     log "rebooting"
     "${SSH[@]}" "$HOST" "sudo -n reboot" > /dev/null 2>&1
     sleep 20
-    for _ in $(seq 1 60); do "${SSH[@]}" "$HOST" true 2>/dev/null && break; sleep 15; done
-    "${SSH[@]}" "$HOST" true 2>/dev/null || { log "did not come back"; exit 3; }
+    boot1=$boot0
+    for _ in $(seq 1 60); do
+        boot1=$("${SSH[@]}" "$HOST" cat /proc/sys/kernel/random/boot_id 2>/dev/null) && [ "$boot1" != "$boot0" ] && break
+        sleep 15
+    done
+    if [ -z "$boot1" ] || [ "$boot1" = "$boot0" ]; then
+        log "did not reboot (boot id unchanged, or the host did not come back)"; unlock; exit 3
+    fi
     log "up after reboot ($("${SSH[@]}" "$HOST" uptime -p)); settling ${SETTLE}s"
     sleep "$SETTLE"
 fi
 
 # -- 3. the session ----------------------------------------------------------------
-OUTREL="build-platform/results/campaign-$TAG"
-q_extra=$(printf ' %q' ${EXTRA[@]+"${EXTRA[@]}"})
-"${SSH[@]}" "$HOST" "cd $RDIR && mkdir -p $OUTREL && setsid nohup env CLASS=$CLASS INTERLEAVE=$INTERLEAVE \
-    PLATFORM_OUT=\$PWD/$OUTREL benchmarks/machines/$PROFILE$q_extra > $OUTREL/session.log 2>&1 < /dev/null; \
-    echo \$? > $OUTREL/session.exit" > /dev/null 2>&1 < /dev/null &
+# The profile, its exit status and the unlock run in ONE detached process, so a
+# dropped ssh connection can't leave the session without its session.exit.
+q_extra=""
+[ "${#EXTRA[@]}" -gt 0 ] && q_extra=$(printf ' %q' "${EXTRA[@]}")
+job="env CLASS=$CLASS INTERLEAVE=$INTERLEAVE PLATFORM_OUT=\"\$HOME/$RDIR/$OUTREL\" \
+benchmarks/machines/$PROFILE$q_extra > $OUTREL/session.log 2>&1 < /dev/null; \
+echo \$? > $OUTREL/session.exit.tmp; mv $OUTREL/session.exit.tmp $OUTREL/session.exit; rmdir \"\$HOME/$LOCK\""
+"${SSH[@]}" "$HOST" "cd $RDIR && setsid nohup bash -c $(printf %q "$job") > /dev/null 2>&1 < /dev/null &" \
+    || { log "session did not start"; unlock; exit 3; }
 sleep 5
-"${SSH[@]}" "$HOST" "test -f $RDIR/$OUTREL/session.log" || { log "session did not start"; exit 3; }
+"${SSH[@]}" "$HOST" "test -f $RDIR/$OUTREL/session.log" || { log "session did not start"; unlock; exit 3; }
 log "session $TAG started ($PROFILE, class $CLASS$([ "$INTERLEAVE" -eq 1 ] && echo ", interleave"))"
 while :; do
     sleep "$POLL"

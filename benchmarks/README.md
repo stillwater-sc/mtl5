@@ -166,7 +166,7 @@ needs one rule, installed with `sudo visudo -f /etc/sudoers.d/mtl5-bench`. The
 `reboot` entry is for `remote_session.sh --reboot` below:
 
 ```
-<user> ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpufreq/policy[0-9]/scaling_governor, /usr/sbin/reboot
+<user> ALL=(root) NOPASSWD: /usr/bin/tee /sys/devices/system/cpu/cpufreq/policy[0-9]/scaling_governor, /usr/bin/tee /sys/devices/system/cpu/cpufreq/policy[0-9][0-9]/scaling_governor, /usr/sbin/reboot
 # a Jetson also needs: , /usr/sbin/nvpmodel, /usr/bin/jetson_clocks
 ```
 
