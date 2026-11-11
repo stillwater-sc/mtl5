@@ -84,9 +84,13 @@ function Use-VisualStudio {
     $req = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
     $path = & $vswhere -latest -products * -requires $req -property installationPath
     $ver  = & $vswhere -latest -products * -requires $req -property installationVersion
-    $year = & $vswhere -latest -products * -requires $req -property catalog_productLineVersion
-    if (-not $path -or -not $ver -or -not $year) { Write-Host "no Visual Studio with the C++ tools"; exit 2 }
-    $env:CMAKE_GENERATOR = "Visual Studio $(([version]$ver).Major) $year"
+    if (-not $path -or -not $ver) { Write-Host "no Visual Studio with the C++ tools"; exit 2 }
+    # CMake's generator names carry the product year, which vswhere doesn't
+    # report reliably (catalog_productLineVersion is "18" for VS 2026).
+    $major = ([version]$ver).Major
+    $year = @{ 15 = 2017; 16 = 2019; 17 = 2022; 18 = 2026 }[$major]
+    if (-not $year) { Write-Host "Visual Studio $ver is not one this profile knows (15-18); add its year"; exit 2 }
+    $env:CMAKE_GENERATOR = "Visual Studio $major $year"
     $env:CMAKE_GENERATOR_INSTANCE = $path
     Write-Host "   compiler: $env:CMAKE_GENERATOR ($ver)"
 }
@@ -161,8 +165,9 @@ function Invoke-Interleave([int]$cpu, [string]$policy, [string]$out) {
         }
         if ($LASTEXITCODE -ne 0) { Write-Host "   build FAILED ($($arm.name))"; $status = 1; continue }
         $exe = Join-Path $dir 'benchmarks\Release\bench_interleave_rows.exe'
-        $compiler = (Select-String -Path (Join-Path $out "interleave-$($arm.name).configure.log") `
-                     -Pattern 'The CXX compiler identification is (.*)' | Select-Object -First 1).Matches.Groups[1].Value
+        $id = Select-String -Path (Join-Path $out "interleave-$($arm.name).configure.log") `
+                  -Pattern 'The CXX compiler identification is (.*)' | Select-Object -First 1
+        $compiler = if ($id) { $id.Matches[0].Groups[1].Value.Trim() } else { "$($arm.name), version not recorded" }
         $self = [System.Diagnostics.Process]::GetCurrentProcess()
         $full = $self.ProcessorAffinity
         for ($i = 1; $i -le $(if ($env:REPS) { [int]$env:REPS } else { 3 }); $i++) {
