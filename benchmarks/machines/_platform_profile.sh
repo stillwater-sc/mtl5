@@ -38,14 +38,21 @@ _run_restore() {
 trap _run_restore EXIT
 on_exit() { _restore+=("$1"); }
 
-need_root() {   # what for
+# Whether the clock policy can be applied: 1 under NO_CLOCK_POLICY, else each
+# command must be runnable through sudo -n. `sudo -n -l CMD` asks for exactly
+# that, so a sudoers rule that permits only these commands (benchmarks/README.md)
+# is enough; `sudo -n true` would demand far more.
+need_root() {   # what-for command...
+    local what=$1 cmd
+    shift
     if [ "${NO_CLOCK_POLICY:-0}" = 1 ]; then return 1; fi
-    if ! sudo -n true 2>/dev/null; then
-        echo "$(basename "$0"): applying the clock policy ($1) needs passwordless sudo." >&2
+    for cmd in "$@"; do
+        sudo -n -l "$cmd" > /dev/null 2>&1 && continue
+        echo "$(basename "$0"): applying the clock policy ($what) needs passwordless sudo for $cmd." >&2
         echo "  Install the sudoers rule in benchmarks/README.md (\"Machine profiles\")," >&2
         echo "  or set NO_CLOCK_POLICY=1 and publish the card as PRELIMINARY." >&2
         exit 2
-    fi
+    done
     return 0
 }
 
@@ -72,7 +79,7 @@ policies_of() {
 apply_governor() {   # governor cpus
     local gov=$1 p old
     shift
-    need_root "cpufreq governor $gov" || return 0
+    need_root "cpufreq governor $gov" "$(command -v tee)" || return 0
     for p in $(policies_of "$*"); do
         old=$(cat "$p/scaling_governor")
         [ "$old" = "$gov" ] && continue

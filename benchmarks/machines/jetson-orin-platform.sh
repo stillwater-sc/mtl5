@@ -20,7 +20,7 @@ CPUS=$(one_cpu_per_core)
 mode_name() { nvpmodel -q 2>/dev/null | sed -n 's/^NV Power Mode:[[:space:]]*//p' | head -1; }
 mode_id()   { nvpmodel -q 2>/dev/null | sed -n '2p' | tr -d '[:space:]'; }
 policy="not applied"
-if need_root "nvpmodel and jetson_clocks"; then
+if need_root "nvpmodel and jetson_clocks" "$(command -v nvpmodel)" "$(command -v jetson_clocks)"; then
     if [ -n "${JETSON_NVPMODEL:-}" ] && [ "$JETSON_NVPMODEL" != "$(mode_id)" ]; then
         old=$(mode_id)
         sudo -n nvpmodel -m "$JETSON_NVPMODEL" > /dev/null
