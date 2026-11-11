@@ -72,6 +72,25 @@ function Use-OpenBlas {
     return $true
 }
 
+# One Visual Studio for every build of the session. With several installed,
+# CMake's default generator choice is not stable: on the Ryzen 9 (VS 2022 and
+# VS 2026) one session's mtl5_bench configured for VS 2022 and its interleave
+# build, minutes later, for VS 2026. The newest instance with the C++ tools is
+# pinned through CMAKE_GENERATOR and CMAKE_GENERATOR_INSTANCE, which CMake reads
+# from the environment.
+function Use-VisualStudio {
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path $vswhere)) { Write-Host "no Visual Studio (vswhere.exe not found)"; exit 2 }
+    $req = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+    $path = & $vswhere -latest -products * -requires $req -property installationPath
+    $ver  = & $vswhere -latest -products * -requires $req -property installationVersion
+    $year = & $vswhere -latest -products * -requires $req -property catalog_productLineVersion
+    if (-not $path -or -not $ver -or -not $year) { Write-Host "no Visual Studio with the C++ tools"; exit 2 }
+    $env:CMAKE_GENERATOR = "Visual Studio $(([version]$ver).Major) $year"
+    $env:CMAKE_GENERATOR_INSTANCE = $path
+    Write-Host "   compiler: $env:CMAKE_GENERATOR ($ver)"
+}
+
 $script:PowerRestore = $null
 function Get-ActiveScheme {
     if ((powercfg /getactivescheme) -match '([0-9a-fA-F-]{36})') { return $Matches[1] }
@@ -119,7 +138,8 @@ function Exit-ClockPolicy {
 function Get-ClangClToolset {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) { return $false }
-    [bool](& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset -property installationPath)
+    # The pinned instance (Use-VisualStudio), not merely the newest one.
+    [bool](& $vswhere -path $env:CMAKE_GENERATOR_INSTANCE -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset -property installationPath)
 }
 
 # The interleave-width sweep (#780) on one CPU, under the policy still applied.
@@ -166,6 +186,7 @@ function Invoke-Interleave([int]$cpu, [string]$policy, [string]$out) {
 function Invoke-PlatformProfile([string]$machine, [string]$cpus, [object[]]$extra) {
     $n = @($cpus -split ',').Count
     $policy = 'not applied (NO_CLOCK_POLICY=1)'
+    Use-VisualStudio
     $null = Use-OpenBlas
     $status = 0
     try {
