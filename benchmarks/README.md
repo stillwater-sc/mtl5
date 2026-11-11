@@ -182,6 +182,50 @@ four, plus a line in `docs/benchmarks/systems.md` naming its pinning policy.
 `--reboot` cold-boots the host first, for the second session. `--interleave`
 and `--class` pass through to the profile.
 
+**Windows machines.** The Ryzen NUCs have PowerShell profiles, driven the same
+way from a Linux machine:
+
+```bash
+benchmarks/remote_session.sh nuc-ryzen-7-8845hs ryzen-7-8845hs-platform.ps1 --interleave
+benchmarks/remote_session.sh nuc-ryzen-9-8945hs ryzen-9-8945hs-platform.ps1 --reboot --interleave
+```
+
+Locally: `powershell -ExecutionPolicy Bypass -File benchmarks\machines\ryzen-7-8845hs-platform.ps1`,
+with `$env:CLASS`, `$env:INTERLEAVE`, `$env:NO_CLOCK_POLICY` and `$env:FORCE` in
+place of the shell variables. `_platform_profile.ps1` holds what they share:
+- **CPUs:** one logical CPU per core (`0,2,…,14`), passed to `platform.ps1
+  -Cpus`. A run at T threads gets the processor affinity of the first T, which
+  the benchmark inherits from the script when it starts.
+- **Clock policy:** a copy of the active power scheme with the processor state at
+  100–100% and the energy-performance preference at 0, active for the session.
+  The previous scheme comes back and the copy is deleted afterwards. Boost is
+  left as the scheme has it and recorded.
+- **BLAS:** the newest official OpenBLAS Windows release unpacked under
+  `~\opt\OpenBLAS-<version>`, found through `CMAKE_PREFIX_PATH`, with its DLL on
+  `PATH` (the `?gemmt` probe and the runs need it). Without one, the `blas`
+  variant is skipped.
+- **Interleave sweep:** MSVC, and clang-cl when Visual Studio has the "C++ Clang
+  tools for Windows" component.
+
+A Windows host needs, once:
+1. **OpenSSH Server,** with this machine's key. For an administrator the key goes
+   in `C:\ProgramData\ssh\administrators_authorized_keys`, readable only by
+   Administrators and SYSTEM; Windows ignores the user's own file for them.
+2. **PowerShell as the ssh shell:** `New-ItemProperty -Path HKLM:\SOFTWARE\OpenSSH
+   -Name DefaultShell -Value C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+   -PropertyType String -Force`. Under the default `cmd.exe`, git over ssh gets
+   the repository path with its quotes and fails.
+3. **Git for Windows, CMake and Visual Studio** with the C++ workload.
+4. **An administrator account,** for the power scheme and the reboot.
+5. **Optionally, a Defender exclusion** for `~\mtl5-campaign`: real-time
+   scanning of the builds and runs is the largest source of timing noise there.
+
+`remote_session.sh` takes a `.ps1` profile as the sign of a Windows host, and
+checks that the host agrees. It starts the session with `Win32_Process.Create`,
+outside the ssh connection's job object, which Windows ends with the
+connection. The reboot is `Restart-Computer`, checked by the boot time, and
+the results come back with `scp`.
+
 **Repeatability.** Each machine is measured twice, the second time after a
 cold boot. `benchmarks/compare_sessions.py SESSION1 SESSION2` gives each run's
 median, min and max ratio of session-2 to session-1 time, and lists the entries
