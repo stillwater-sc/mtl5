@@ -14,6 +14,7 @@
 # recorded. The copy is made active for the session; afterwards the previous
 # scheme is re-activated and the copy deleted. powercfg needs an administrator.
 #
+#   $env:FORCE = '1'             run on a machine the profile doesn't recognize.
 #   $env:NO_CLOCK_POLICY = '1'   measure without applying the policy; the
 #                                sidecars then record clock_policy=not applied,
 #                                and the card has to be published as PRELIMINARY.
@@ -38,7 +39,7 @@ function Assert-Machine([string]$pattern) {
     $name = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
     if ($name -notmatch [regex]::Escape($pattern)) {
         Write-Host "this profile is for a $pattern; this machine reports: $name"
-        exit 2
+        if ($env:FORCE -ne '1') { Write-Host "set `$env:FORCE = '1' if this really is one"; exit 2 }
     }
 }
 
