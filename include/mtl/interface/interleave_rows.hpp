@@ -30,6 +30,10 @@
 // The default is 4 for every other type: long double (x87 has eight stack
 // slots), integers, and software number types, whose cost only the user knows.
 //
+// A contiguous column-major A with an arithmetic accumulator doesn't use W at
+// all: it takes the column sweep (detail/column_sweep.hpp, #777), which reads
+// A down its columns instead of W rows at a time.
+//
 // Another machine may well want another width; that is what the overrides
 // and benchmarks/bench_interleave_rows are for. Every width gives the same
 // bits, so picking one per machine never changes a result.

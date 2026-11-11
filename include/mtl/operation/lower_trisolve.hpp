@@ -10,7 +10,8 @@
 // Default Accumulator = void keeps the generic path byte for byte.
 //
 // The default path takes W rows at a time (detail::lower_trisolve_rows, #749,
-// with W from interface::interleave_rows, #772), bit-identical to the one-row
+// with W from interface::interleave_rows, #772), or on a contiguous
+// column-major L the column sweep (#777), both bit-identical to the one-row
 // loop. upper_trisolve cannot do the same: its row i sums in ascending j, so
 // its FIRST term needs x(i+1), and no two rows' reductions can overlap
 // without reordering them.
@@ -19,6 +20,7 @@
 // overwrite hazard: x(j) for j < i must already be SOLVED (not merely
 // original) before row i can be computed. Unrelated to accumulator choice,
 // unchanged by this patch.
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <type_traits>
@@ -30,6 +32,7 @@
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/detail/scalar_chain.hpp>
+#include <mtl/detail/column_sweep.hpp>
 
 namespace mtl {
 
@@ -75,6 +78,43 @@ void lower_trisolve_rows(const M& L, VecX& x, const VecB& b, bool unit_diag,
     }
 }
 
+/// The default-accumulator forward substitution on a contiguous column-major
+/// L, S rows per strip, top-down (#777; see detail/column_sweep.hpp).
+///
+/// A strip of rows [r0, r1) first adds the columns j < r0, which are already
+/// solved, one column at a time down the strip. Then its diagonal block goes
+/// column by column: row j is solved, and its x(j) is added to the strip's
+/// rows below it. Every row still sums L(i, j) x(j) in ascending j with the
+/// same expressions as the one-row loop, so x is bit-identical to it. The
+/// in-place overload passes x as b: b(j) is read when row j is solved, before
+/// anything writes x(j).
+template <std::size_t S, typename M, typename VecX, typename VecB>
+void lower_trisolve_column_sweep(const M& L, VecX& x, const VecB& b, bool unit_diag) {
+    static_assert(S >= 1);
+    using value_type = typename VecX::value_type;
+    using size_type  = typename M::size_type;
+    const std::size_t n = static_cast<std::size_t>(L.num_rows());
+    const auto* a = L.data();
+    value_type s[S];
+    for (std::size_t r0 = 0; r0 < n; r0 += S) {
+        const std::size_t r1 = std::min(n, r0 + S);
+        for (std::size_t l = 0; l < r1 - r0; ++l) s[l] = math::zero<value_type>();
+        for (std::size_t j = 0; j < r0; ++j) {
+            const auto& xj = x(static_cast<size_type>(j));
+            const auto* col = a + j * n;
+            for (std::size_t i = r0; i < r1; ++i) s[i - r0] += col[i] * xj;
+        }
+        for (std::size_t j = r0; j < r1; ++j) {
+            const auto jj = static_cast<size_type>(j);
+            if (unit_diag) x(jj) = b(jj) - s[j - r0];
+            else           x(jj) = (b(jj) - s[j - r0]) / L(jj, jj);
+            const auto& xj = x(jj);
+            const auto* col = a + j * n;
+            for (std::size_t i = j + 1; i < r1; ++i) s[i - r0] += col[i] * xj;
+        }
+    }
+}
+
 } // namespace detail
 
 /// Solve L*x = b by forward substitution where L is lower triangular.
@@ -104,8 +144,11 @@ void lower_trisolve(const M& L, VecX& x, const VecB& b, bool unit_diag = false) 
         return;
     }
 
-    detail::lower_trisolve_rows<
-        interface::interleave_rows_v<value_type, interface::kernel::lower_trisolve>>(L, x, b, unit_diag);
+    if constexpr (detail::column_sweep_v<value_type, M>)
+        detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, b, unit_diag);   // #777
+    else
+        detail::lower_trisolve_rows<
+            interface::interleave_rows_v<value_type, interface::kernel::lower_trisolve>>(L, x, b, unit_diag);
 }
 
 /// In-place variant: solve L*x = x (b is x on input)
@@ -133,8 +176,11 @@ void lower_trisolve(const M& L, VecX& x, bool unit_diag = false) {
         return;
     }
 
-    detail::lower_trisolve_rows<
-        interface::interleave_rows_v<value_type, interface::kernel::lower_trisolve>>(L, x, x, unit_diag);
+    if constexpr (detail::column_sweep_v<value_type, M>)
+        detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, x, unit_diag);   // #777
+    else
+        detail::lower_trisolve_rows<
+            interface::interleave_rows_v<value_type, interface::kernel::lower_trisolve>>(L, x, x, unit_diag);
 }
 
 } // namespace mtl
