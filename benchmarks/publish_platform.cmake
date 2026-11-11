@@ -92,6 +92,8 @@ set(total_failed 0)
 set(runs "")
 set(governor "")
 set(cpus "")
+set(bench_cpus "")      # the widest run's pin list (#737), when the session was pinned
+set(clock_policy "")    # what the machine profile applied (#737)
 set(competing "")
 set(copy_list "${RESULTS}/summary.md")
 
@@ -142,6 +144,15 @@ foreach(json IN LISTS jsons)
             set(governor "${CMAKE_MATCH_1}")
         elseif(line MATCHES "^cpu_affinity=(.*)$" AND cpus STREQUAL "")
             set(cpus "${CMAKE_MATCH_1}")
+        elseif(line MATCHES "^bench_cpus=(.*)$")
+            # Keep the longest list: the run at the most threads names every CPU.
+            string(LENGTH "${CMAKE_MATCH_1}" new_len)
+            string(LENGTH "${bench_cpus}" old_len)
+            if(new_len GREATER old_len OR bench_cpus STREQUAL "unpinned")
+                set(bench_cpus "${CMAKE_MATCH_1}")
+            endif()
+        elseif(line MATCHES "^clock_policy=(.*)$" AND clock_policy STREQUAL "")
+            set(clock_policy "${CMAKE_MATCH_1}")
         elseif(line MATCHES "^competing_load=(.*)$" AND competing STREQUAL "")
             set(competing "${CMAKE_MATCH_1}")
         endif()
@@ -314,6 +325,18 @@ else()
     if(governor STREQUAL "")
         set(governor "not recorded")
     endif()
+    # Pinned sessions (#737) name the CPUs and the policy; older ones fall back
+    # to the affinity count and the governor preflight recorded.
+    if(NOT bench_cpus STREQUAL "" AND NOT bench_cpus STREQUAL "unpinned")
+        set(cpus_cell "`${bench_cpus}` (pinned)")
+    else()
+        set(cpus_cell "${cpus} available, not pinned")
+    endif()
+    if(NOT clock_policy STREQUAL "" AND NOT clock_policy STREQUAL "not applied")
+        set(clock_cell "${clock_policy} (governor `${governor}`)")
+    else()
+        set(clock_cell "not applied (governor `${governor}`)")
+    endif()
     set(earlier "")
     foreach(s IN LISTS sessions)
         if(NOT s STREQUAL SESSION)
@@ -351,8 +374,8 @@ else()
         "| class | `${class}` |\n"
         "| runs | ${runs} |\n"
         "| failed checks | ${failed_cell} |\n"
-        "| CPUs available | ${cpus} |\n"
-        "| clock policy | `${governor}` |\n"
+        "| CPUs | ${cpus_cell} |\n"
+        "| clock policy | ${clock_cell} |\n"
         "| raw data | [`${DATA_REL}/`](https://github.com/stillwater-sc/mtl5/tree/main/${DATA_REL}) |\n"
         "| earlier sessions | ${earlier} |\n\n"
         "${body}")
