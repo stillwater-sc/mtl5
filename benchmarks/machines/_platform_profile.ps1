@@ -75,24 +75,35 @@ function Use-OpenBlas {
 # One Visual Studio for every build of the session. With several installed,
 # CMake's default generator choice is not stable: on the Ryzen 9 (VS 2022 and
 # VS 2026) one session's mtl5_bench configured for VS 2022 and its interleave
-# build, minutes later, for VS 2026. The newest instance with the C++ tools is
-# pinned through CMAKE_GENERATOR and CMAKE_GENERATOR_INSTANCE, which CMake reads
-# from the environment.
+# build, minutes later, for VS 2026. The newest instance with the C++ tools
+# that THIS CMake has a generator for is pinned through CMAKE_GENERATOR and
+# CMAKE_GENERATOR_INSTANCE, which CMake reads from the environment. (CMake 3.31
+# knows no VS 2026, and given its instance falls back to a default generator
+# that then fails on the mismatched instance.)
 function Use-VisualStudio {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) { Write-Host "no Visual Studio (vswhere.exe not found)"; exit 2 }
-    $req = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
-    $path = & $vswhere -latest -products * -requires $req -property installationPath
-    $ver  = & $vswhere -latest -products * -requires $req -property installationVersion
-    if (-not $path -or -not $ver) { Write-Host "no Visual Studio with the C++ tools"; exit 2 }
+    $known = @(((& cmake -E capabilities) | ConvertFrom-Json).generators | ForEach-Object { $_.name })
     # CMake's generator names carry the product year, which vswhere doesn't
     # report reliably (catalog_productLineVersion is "18" for VS 2026).
-    $major = ([version]$ver).Major
-    $year = @{ 15 = 2017; 16 = 2019; 17 = 2022; 18 = 2026 }[$major]
-    if (-not $year) { Write-Host "Visual Studio $ver is not one this profile knows (15-18); add its year"; exit 2 }
-    $env:CMAKE_GENERATOR = "Visual Studio $major $year"
-    $env:CMAKE_GENERATOR_INSTANCE = $path
-    Write-Host "   compiler: $env:CMAKE_GENERATOR ($ver)"
+    $years = @{ 15 = 2017; 16 = 2019; 17 = 2022; 18 = 2026 }
+    $all = @((& $vswhere -all -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json) |
+             Out-String | ConvertFrom-Json) | Sort-Object { [version]$_.installationVersion } -Descending
+    $skipped = @()
+    foreach ($vs in $all) {
+        $major = ([version]$vs.installationVersion).Major
+        $gen = if ($years.ContainsKey($major)) { "Visual Studio $major $($years[$major])" } else { $null }
+        if ($gen -and $known -contains $gen) {
+            $env:CMAKE_GENERATOR = $gen
+            $env:CMAKE_GENERATOR_INSTANCE = $vs.installationPath
+            $note = if ($skipped.Count) { "; skipped $($skipped -join ', '), which this CMake has no generator for" } else { '' }
+            Write-Host "   compiler: $gen ($($vs.installationVersion))$note"
+            return
+        }
+        $skipped += "$($vs.installationVersion)"
+    }
+    Write-Host "no Visual Studio with the C++ tools that this CMake ($((cmake --version)[0])) can generate for"
+    exit 2
 }
 
 $script:PowerRestore = $null

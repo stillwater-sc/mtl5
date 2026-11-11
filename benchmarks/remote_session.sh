@@ -105,7 +105,13 @@ fi
 # script ends. OWN_LOCK is 1 from taking the lock until the detached session
 # has started, which then owns it.
 OWN_LOCK=0 JOB=""
+# Every long wait is nap, not sleep: bash runs a trap only after the
+# foreground command ends, so a Ctrl-C or kill during "sleep 300" would wait
+# out the 300 s; wait returns on the signal at once.
+NAP=""
+nap() { sleep "$1" & NAP=$!; wait "$NAP"; NAP=""; }
 cleanup() {
+    [ -n "$NAP" ] && kill "$NAP" 2>/dev/null
     [ "$OWN_LOCK" -eq 1 ] && unlock
     [ -n "$JOB" ] && rm -f "$JOB"
     return 0
@@ -121,7 +127,7 @@ wait_session() {   # probe-function where-the-results-are
     local probe=$1 where=$2 deadline last="no check yet" rc
     deadline=$(( $(date +%s) + TIMEOUT ))
     while :; do
-        sleep "$POLL"
+        nap "$POLL"
         if st=$("$probe"); then
             [ -n "$st" ] && return 0
             last="no session.exit yet"
@@ -166,17 +172,17 @@ if [ "$exec_windows" -eq 1 ]; then
         # Its status is not checked: the connection may drop as the host goes
         # down. A restart that didn't happen shows as an unchanged boot time below.
         rsh "Restart-Computer -Force" > /dev/null 2>&1
-        sleep 30
+        nap 30
         boot1=$boot0
         for _ in $(seq 1 60); do
             boot1=$(rsh "$bootq" 2>/dev/null | tr -d '\r') && [ -n "$boot1" ] && [ "$boot1" != "$boot0" ] && break
-            sleep 15
+            nap 15
         done
         if [ -z "$boot1" ] || [ "$boot1" = "$boot0" ]; then
             log "did not reboot (boot time unchanged, or the host did not come back)"; unlock; exit 3
         fi
         log "up after reboot (booted $boot1); settling ${SETTLE}s"
-        sleep "$SETTLE"
+        nap "$SETTLE"
     fi
 
     # Remote commands carry no double quotes: Windows sshd hands them to
@@ -261,17 +267,17 @@ if [ "$REBOOT" -eq 1 ]; then
         || { log "cannot read the boot id; not rebooting"; unlock; exit 3; }
     log "rebooting"
     "${SSH[@]}" "$HOST" "sudo -n reboot" > /dev/null 2>&1
-    sleep 20
+    nap 20
     boot1=$boot0
     for _ in $(seq 1 60); do
         boot1=$("${SSH[@]}" "$HOST" cat /proc/sys/kernel/random/boot_id 2>/dev/null) && [ -n "$boot1" ] && [ "$boot1" != "$boot0" ] && break
-        sleep 15
+        nap 15
     done
     if [ -z "$boot1" ] || [ "$boot1" = "$boot0" ]; then
         log "did not reboot (boot id unchanged, or the host did not come back)"; unlock; exit 3
     fi
     log "up after reboot ($("${SSH[@]}" "$HOST" uptime -p)); settling ${SETTLE}s"
-    sleep "$SETTLE"
+    nap "$SETTLE"
 fi
 
 # -- 3. the session ----------------------------------------------------------------
