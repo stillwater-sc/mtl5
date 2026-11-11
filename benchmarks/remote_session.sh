@@ -40,6 +40,11 @@
 # Exit: the profile's exit status (0 all checks passed), 3 if HOST could not
 # be reached or the session could not be started, 2 on bad usage.
 set -uo pipefail
+# The whole script is one { ... } block, so bash parses all of it before running
+# any: a session runs for hours, and bash otherwise reads a script from the file
+# as it goes, so switching branches or editing this file under a running
+# session made its poller execute the new file from the old offset.
+{
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -247,3 +252,4 @@ rsync -a -e "ssh -o BatchMode=yes" "$HOST:$RDIR/$OUTREL/" "$DEST/$HOST/$TAG/" ||
 log "results in $DEST/$HOST/$TAG"
 tail -3 "$DEST/$HOST/$TAG/session.log" | sed "s/^/[$HOST]   /"
 exit "$st"
+}
