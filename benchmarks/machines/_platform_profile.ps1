@@ -159,6 +159,9 @@ function Invoke-Interleave([int]$cpu, [string]$policy, [string]$out) {
     else { Write-Host "== bench_interleave_rows (clang-cl): skipped, this Visual Studio has no clang-cl (C++ Clang tools for Windows)" }
     foreach ($arm in $arms) {
         $dir = Join-Path $ProfileRoot "build-platform\interleave-$($arm.name)"
+        # Fresh, like platform.ps1's variants: a reused cache keeps its old
+        # generator, and CMake prints the compiler it found only on a first configure.
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
         Write-Host "== bench_interleave_rows ($($arm.name))"
         & cmake -S $ProfileRoot -B $dir @($arm.toolset) -DMTL5_BUILD_BENCHMARKS=ON -DMTL5_BUILD_TESTS=OFF `
             -DMTL5_BUILD_EXAMPLES=OFF *>&1 | Out-File -Encoding ascii (Join-Path $out "interleave-$($arm.name).configure.log")
