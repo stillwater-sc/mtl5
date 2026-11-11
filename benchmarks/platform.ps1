@@ -34,6 +34,18 @@ Results directory; default build-platform\results\<host>-<UTC time>.
 Machine name for the cards; default the CPU brand.
 .PARAMETER NoGate
 Record the machine state but never stop on it.
+.PARAMETER Cpus
+Pin the measurements (#737): a run at T threads gets the processor affinity of
+the first T logical CPUs of this list. Comma-separated ids or ranges ("0,2,4"
+or "0-3"), one per core to measure, in the order threads should take them.
+Every measured child process inherits the affinity from this script, which
+sets it on itself just for the run, so it is in force before the benchmark
+starts its threads. The builds are not pinned. Each run's sidecar records
+bench_cpus=. Without -Cpus the runs are unpinned (bench_cpus=unpinned), and a
+machine with SMT gets a warning: its threads may land on siblings.
+.PARAMETER ClockPolicy
+The clock policy the caller applied, recorded in every sidecar as
+clock_policy= (the machine profiles benchmarks\machines\*-platform.ps1 set it).
 
 .NOTES
 Exit: 0 if every run passed every check; 1 if a gate, a build or a check
@@ -49,7 +61,9 @@ param(
     [int]$Jobs = 0,
     [string]$Out = '',
     [string]$Machine = '',
-    [switch]$NoGate
+    [switch]$NoGate,
+    [string[]]$Cpus = @(),
+    [string]$ClockPolicy = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -77,6 +91,52 @@ foreach ($t in $Threads) {
 $ThreadList = @($ThreadList | Sort-Object -Unique)
 $MaxThreads = ($ThreadList | Measure-Object -Maximum).Maximum
 $VariantList = $Variants
+
+# -- CPU pinning (#737) ---------------------------------------------------------
+# CpuList: the -Cpus ids, expanded and in order. Pin-Mask T is the affinity mask
+# of the first T of them, Pin-List T the same as a comma list for the sidecar.
+$CpuList = @()
+foreach ($item in (Split-List $Cpus)) {
+    if ($item -match '^(\d+)-(\d+)$') {
+        $lo = [int]$Matches[1]; $hi = [int]$Matches[2]
+        if ($lo -gt $hi) { Write-Host "platform.ps1: bad -Cpus range '$item'"; exit 2 }
+        $CpuList += $lo..$hi
+    } elseif ($item -match '^\d+$') {
+        $CpuList += [int]$item
+    } else { Write-Host "platform.ps1: bad -Cpus item '$item'"; exit 2 }
+}
+if ($CpuList.Count -gt 0) {
+    $dups = @($CpuList | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+    # Affinity is a set: "0,0" pins a 2-thread run to one CPU.
+    if ($dups.Count -gt 0) { Write-Host "platform.ps1: -Cpus repeats CPU(s) $($dups -join ',')"; exit 2 }
+    foreach ($c in $CpuList) {
+        # ProcessorAffinity is one 64-bit mask: processor group 0 only.
+        if ($c -ge $ncpu -or $c -ge 64) { Write-Host "platform.ps1: -Cpus names CPU $c; this machine has CPUs 0-$($ncpu - 1)"; exit 2 }
+    }
+    if ($CpuList.Count -lt $MaxThreads) {
+        Write-Host "platform.ps1: -Cpus lists $($CpuList.Count) CPUs but -Threads asks for $MaxThreads"; exit 2
+    }
+} else {
+    $cpu0 = Get-CimInstance Win32_Processor | Select-Object -First 1
+    if ($cpu0 -and $cpu0.NumberOfLogicalProcessors -gt $cpu0.NumberOfCores) {
+        Write-Host "WARNING: unpinned run on a machine with SMT: threads may land on SMT siblings."
+        Write-Host "         Pass -Cpus, or use the machine's profile benchmarks\machines\*-platform.ps1 (#737)."
+    }
+}
+function Pin-List([int]$t) { ($CpuList | Select-Object -First $t) -join ',' }
+function Pin-Mask([int]$t) {
+    [int64]$m = 0
+    foreach ($c in ($CpuList | Select-Object -First $t)) { $m = $m -bor ([int64]1 -shl $c) }
+    return $m
+}
+$Self = [System.Diagnostics.Process]::GetCurrentProcess()
+$FullAffinity = $Self.ProcessorAffinity
+# Run a script block with this process's affinity set to mask (children inherit
+# it at creation), then put the full set back.
+function With-Affinity([int64]$mask, [scriptblock]$body) {
+    if ($mask -ne 0) { $Self.ProcessorAffinity = [IntPtr]$mask }
+    try { & $body } finally { if ($mask -ne 0) { $Self.ProcessorAffinity = $FullAffinity } }
+}
 foreach ($v in $VariantList) {
     if ($v -notin @('native', 'native-fast', 'blas')) { Write-Host "platform.ps1: unknown variant '$v'"; exit 2 }
 }
@@ -89,7 +149,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Out 'logs') | Out-Null
 $Out = (Resolve-Path $Out).Path
 $Logs = Join-Path $Out 'logs'
 
-Write-Host "mtl5 platform benchmark: class=$Class variants=$($Variants -join ',') threads=$($Threads -join ',') jobs=$Jobs"
+$CpusText = if ($CpuList.Count -gt 0) { $CpuList -join ',' } else { 'unpinned' }
+$PolicyText = if ($ClockPolicy) { $ClockPolicy } else { 'not applied' }
+Write-Host "mtl5 platform benchmark: class=$Class variants=$($Variants -join ',') threads=$($Threads -join ',') jobs=$Jobs cpus=$CpusText"
 Write-Host "results: $Out"
 
 # Run a native tool with stdout+stderr to files, returning the exit code.
@@ -124,7 +186,7 @@ $PreflightScript = Join-Path $PSScriptRoot 'preflight.ps1'
 function Invoke-Preflight {
     param([string]$Phase = 'before')
     if ($Phase -eq 'after') { return (& $PreflightScript -Phase after) }
-    $kv = & $PreflightScript -Threads $MaxThreads -Repo $RepoRoot -ReportOnly:$NoGate
+    $kv = With-Affinity (Pin-Mask $CpuList.Count) { & $PreflightScript -Threads $MaxThreads -Repo $RepoRoot -ReportOnly:$NoGate }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "preflight failed -- not measuring. Fix the above, pass -NoGate to record"
         Write-Host "without gating, or set `$env:ALLOW_DIRTY = '1' to accept a dirty tree (it is recorded)."
@@ -188,7 +250,11 @@ foreach ($v in $Built) {
         if ($Machine) { $runArgs += @('--machine', $Machine) }
         # Thread scaling against THIS invocation's 1-thread run of the variant.
         if ($t -ne 1 -and $t1Json) { $runArgs += @('--baseline', $t1Json) }
-        $rc = Invoke-Native $exe $runArgs (Join-Path $Logs "$v-t$t")
+        # Pinned (#737): this run's threads get the first t CPUs of -Cpus.
+        $benchCpus = if ($CpuList.Count -gt 0) { Pin-List $t } else { 'unpinned' }
+        $rc = With-Affinity (Pin-Mask $(if ($CpuList.Count -gt 0) { $t } else { 0 })) {
+            Invoke-Native $exe $runArgs (Join-Path $Logs "$v-t$t")
+        }
         $last = Get-Content (Join-Path $Logs "$v-t$t.out.log") -Tail 1
         if ($rc -eq 0) { Write-Host "   $last" }
         else { Write-Host "   FAILED (exit $rc): $last (see logs\$v-t$t.*.log)"; $Failed = 1 }
@@ -196,7 +262,8 @@ foreach ($v in $Built) {
             # Machine state into the sidecar, so it is IN the data (#442).
             $after = Invoke-Preflight -Phase after
             if (-not ($after -match 'thermal_after_c=')) { $after = 'thermal_after_c=unavailable' }
-            Add-Content -Encoding ascii -Path "$base.json.sysinfo" -Value ($PreflightKv + $after)
+            Add-Content -Encoding ascii -Path "$base.json.sysinfo" -Value ($PreflightKv + $after +
+                @("bench_cpus=$benchCpus", "clock_policy=$PolicyText"))
             $Runs += $base
             if ($t -eq 1 -and (Test-Path "$base.json")) { $t1Json = "$base.json" }
         }
@@ -205,7 +272,7 @@ foreach ($v in $Built) {
 
 # --- summary --------------------------------------------------------------------
 $summary = @('# mtl5_bench platform characterization', '',
-             "Class ``$Class``, variants $($Built -join ' '), threads $($Threads -join ','), $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')).")
+             "Class ``$Class``, variants $($Built -join ' '), threads $($Threads -join ','), CPUs $CpusText, clock policy $PolicyText, $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')).")
 if ($Skipped.Count -gt 0) { $summary += @('', 'Not measured:') + ($Skipped | ForEach-Object { "- $_" }) }
 $summary += ''
 foreach ($r in $Runs) { if (Test-Path "$r.md") { $summary += Get-Content "$r.md" } }
