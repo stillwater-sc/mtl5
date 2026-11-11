@@ -219,6 +219,16 @@ A Windows host needs, once:
 4. **An administrator account,** for the power scheme and the reboot.
 5. **Optionally, a Defender exclusion** for `~\mtl5-campaign`: real-time
    scanning of the builds and runs is the largest source of timing noise there.
+6. **No scan after each Defender signature update.** Defender updates its
+   signatures every few hours and scans after each one; on the Ryzen 9 such a
+   scan overlapped two runs and made the memory-bound entries 10-30% slower.
+   The policy "Turn on scan after security intelligence update" (Computer
+   Configuration > Administrative Templates > Windows Components > Microsoft
+   Defender Antivirus > Scan) set to *Disabled* stops it; real-time protection
+   and the scheduled scans stay on. Whatever Windows still runs is recorded:
+   each session writes `background_activity.txt`, and every sidecar gets
+   `background_activity=` (`none`, or the Defender and Windows Update events
+   in the session's window).
 
 `remote_session.sh` takes a `.ps1` profile as the sign of a Windows host, and
 checks that the host agrees. It starts the session with `Win32_Process.Create`,
