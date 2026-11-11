@@ -87,8 +87,13 @@ function Use-VisualStudio {
     # CMake's generator names carry the product year, which vswhere doesn't
     # report reliably (catalog_productLineVersion is "18" for VS 2026).
     $years = @{ 15 = 2017; 16 = 2019; 17 = 2022; 18 = 2026 }
-    $all = @((& $vswhere -all -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json) |
-             Out-String | ConvertFrom-Json) | Sort-Object { [version]$_.installationVersion } -Descending
+    # Complete instances only (no -all): an install or update in progress is
+    # registered but unusable -- the Ryzen 9's VS 2026 mid-update was
+    # isComplete=0, and CMake refused it. ForEach-Object unrolls the array,
+    # which Windows PowerShell's ConvertFrom-Json emits as ONE object.
+    $all = @((& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json) |
+             Out-String | ConvertFrom-Json | ForEach-Object { $_ }) |
+           Sort-Object { [version]$_.installationVersion } -Descending
     $skipped = @()
     foreach ($vs in $all) {
         $major = ([version]$vs.installationVersion).Major
