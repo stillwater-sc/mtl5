@@ -26,9 +26,11 @@ if need_root "nvpmodel and jetson_clocks" "$(command -v nvpmodel)" "$(command -v
         sudo -n nvpmodel -m "$JETSON_NVPMODEL" > /dev/null
         on_exit "sudo -n nvpmodel -m $old > /dev/null"
     fi
-    store=$(mktemp)
+    # --store refuses to overwrite a file, so it gets a fresh name in a new dir.
+    storedir=$(mktemp -d)
+    store="$storedir/l4t_dfs.conf"
     sudo -n jetson_clocks --store "$store" > /dev/null
-    on_exit "sudo -n jetson_clocks --restore $store > /dev/null; rm -f $store"
+    on_exit "sudo -n jetson_clocks --restore $store > /dev/null"
     sudo -n jetson_clocks > /dev/null
     policy="nvpmodel $(mode_name) (mode $(mode_id)), jetson_clocks; $(describe_policies "$CPUS")"
 fi
