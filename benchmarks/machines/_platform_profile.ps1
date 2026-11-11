@@ -142,8 +142,11 @@ function Exit-ClockPolicy {
 function Get-ClangClToolset {
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path $vswhere)) { return $false }
-    # The pinned instance (Use-VisualStudio), not merely the newest one.
-    [bool](& $vswhere -path $env:CMAKE_GENERATOR_INSTANCE -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset -property installationPath)
+    # The pinned instance (Use-VisualStudio), and the compiler itself: the
+    # component can be registered without its tools (the Ryzen 9 during a
+    # Visual Studio update), and MSBuild then fails with MSB8020.
+    if (-not (& $vswhere -path $env:CMAKE_GENERATOR_INSTANCE -products * -requires Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset -property installationPath)) { return $false }
+    Test-Path (Join-Path $env:CMAKE_GENERATOR_INSTANCE 'VC\Tools\Llvm\x64\bin\clang-cl.exe')
 }
 
 # The interleave-width sweep (#780) on one CPU, under the policy still applied.
@@ -153,7 +156,7 @@ function Invoke-Interleave([int]$cpu, [string]$policy, [string]$out) {
     $commit = (git -C $ProfileRoot rev-parse HEAD)
     $arms = @(@{ name = 'msvc'; toolset = @() })
     if (Get-ClangClToolset) { $arms += @{ name = 'clang-cl'; toolset = @('-T', 'ClangCL') } }
-    else { Write-Host "== bench_interleave_rows (clang-cl): skipped, Visual Studio has no C++ Clang tools" }
+    else { Write-Host "== bench_interleave_rows (clang-cl): skipped, this Visual Studio has no clang-cl (C++ Clang tools for Windows)" }
     foreach ($arm in $arms) {
         $dir = Join-Path $ProfileRoot "build-platform\interleave-$($arm.name)"
         Write-Host "== bench_interleave_rows ($($arm.name))"
