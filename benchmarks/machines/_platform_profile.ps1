@@ -110,6 +110,13 @@ function Get-BoostMode([string]$scheme) {
         5 { 'aggressive at guaranteed' } 6 { 'efficient aggressive at guaranteed' } default { "mode $_" }
     }
 }
+# powercfg, failing loudly: a native command's nonzero exit is not a PowerShell
+# error, so an unchecked write that failed would still be reported as applied.
+function Invoke-Powercfg {
+    $out = & powercfg @args 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "powercfg $($args -join ' ') failed (exit $LASTEXITCODE): $out" }
+    $out
+}
 # Apply the session scheme and return the policy text for the sidecars.
 function Enter-ClockPolicy {
     $orig = Get-ActiveScheme
@@ -121,21 +128,30 @@ function Enter-ClockPolicy {
     $script:PowerRestore = @{ orig = $orig; copy = $copy }
     # The name says what it is; preflight.ps1 records it as the governor and
     # looks for "performance" in it (and reads the name up to the first ")").
-    powercfg /changename $copy "mtl5 performance - temporary copy of $origName" | Out-Null
-    foreach ($mode in '/setacvalueindex', '/setdcvalueindex') {
-        powercfg $mode $copy SUB_PROCESSOR PROCTHROTTLEMIN 100 | Out-Null
-        powercfg $mode $copy SUB_PROCESSOR PROCTHROTTLEMAX 100 | Out-Null
-        powercfg $mode $copy SUB_PROCESSOR PERFEPP 0 | Out-Null
+    try {
+        Invoke-Powercfg /changename $copy "mtl5 performance - temporary copy of $origName" | Out-Null
+        foreach ($mode in '/setacvalueindex', '/setdcvalueindex') {
+            Invoke-Powercfg $mode $copy SUB_PROCESSOR PROCTHROTTLEMIN 100 | Out-Null
+            Invoke-Powercfg $mode $copy SUB_PROCESSOR PROCTHROTTLEMAX 100 | Out-Null
+            Invoke-Powercfg $mode $copy SUB_PROCESSOR PERFEPP 0 | Out-Null
+        }
+        Invoke-Powercfg /setactive $copy | Out-Null
+    } catch {
+        Write-Host "clock policy not applied: $_"
+        Exit-ClockPolicy; exit 2
     }
-    powercfg /setactive $copy | Out-Null
     if ((Get-ActiveScheme) -ne $copy) { Exit-ClockPolicy; Write-Host "could not activate the session power scheme"; exit 2 }
     $ac = if ((Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)) { 'battery present' } else { 'AC' }
     return "power scheme copy of $origName with processor state 100-100% and EPP 0, boost $(Get-BoostMode $copy); $ac"
 }
 function Exit-ClockPolicy {
     if (-not $script:PowerRestore) { return }
-    powercfg /setactive $script:PowerRestore.orig | Out-Null
-    powercfg /delete $script:PowerRestore.copy | Out-Null
+    # Both steps are attempted; a failure is reported, since it leaves the machine
+    # on the session scheme (or with a stray copy) for whoever uses it next.
+    foreach ($step in @(@('/setactive', $script:PowerRestore.orig), @('/delete', $script:PowerRestore.copy))) {
+        try { Invoke-Powercfg @step | Out-Null }
+        catch { Write-Host "WARNING: restoring the power scheme: $_ -- fix by hand with powercfg /setactive $($script:PowerRestore.orig)" }
+    }
     $script:PowerRestore = $null
 }
 
@@ -206,13 +222,25 @@ function Invoke-PlatformProfile([string]$machine, [string]$cpus, [object[]]$extr
         $class = if ($env:CLASS) { $env:CLASS } else { 'medium' }
         $pargs = @{ Class = $class; Cpus = $cpus; Threads = "1,$n"; Machine = $machine; ClockPolicy = $policy
                     Variants = 'native,native-fast,blas' }
-        if ($env:PLATFORM_OUT) { $pargs.Out = $env:PLATFORM_OUT }
+        # The results directory is always named here, so the gate's outcome can be
+        # read from it below; the default is platform.ps1's own.
+        $out = if ($env:PLATFORM_OUT) { $env:PLATFORM_OUT } else {
+            Join-Path $ProfileRoot "build-platform\results\$($env:COMPUTERNAME)-$((Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'"))" }
+        $pargs.Out = $out
         # Out-Host: only the exit status may reach this function's output.
         & (Join-Path $ProfileRoot 'benchmarks\platform.ps1') @pargs @extra | Out-Host
         $status = $LASTEXITCODE
         if ($env:INTERLEAVE -eq '1') {
-            $out = if ($env:PLATFORM_OUT) { $env:PLATFORM_OUT } else { Join-Path $ProfileRoot 'build-platform\results\interleave' }
-            if ((Invoke-Interleave ([int]($cpus -split ',')[0]) $policy $out) -ne 0) { $status = 1 }
+            # Only on a machine the session accepted: platform.ps1 writes
+            # logs\preflight.txt once both preflight gates have passed (or -NoGate
+            # made them report-only). A gate failure, or no variant built, leaves
+            # none, and the sweep would measure a machine the session rejected.
+            if (Test-Path (Join-Path $out 'logs\preflight.txt')) {
+                if ((Invoke-Interleave -cpu ([int]($cpus -split ',')[0]) -policy $policy -out $out) -ne 0) { $status = 1 }
+            } else {
+                Write-Host "== bench_interleave_rows: skipped, the session did not pass preflight"
+                $status = 1
+            }
         }
     } finally {
         Exit-ClockPolicy

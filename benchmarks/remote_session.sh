@@ -36,9 +36,16 @@
 #   --class C       CLASS for the profile (default medium)
 #   --dest DIR      local destination root (default build-platform/remote)
 #   --poll SEC      seconds between completion checks (default 60)
+#   --timeout SEC   give up waiting for the session after SEC (default 43200,
+#                   12 h; a large session on the Xeon takes about 3 h)
 #
 # Exit: the profile's exit status (0 all checks passed), 3 if HOST could not
-# be reached or the session could not be started, 2 on bad usage.
+# be reached or the session could not be started, 4 if the session did not
+# finish within --timeout (its results stay on HOST), 2 on bad usage.
+#
+# Until the detached session has started, this script owns HOST's lock and
+# releases it however it ends (an error, Ctrl-C, a kill); from then on the
+# session releases it.
 set -uo pipefail
 # The whole script is one { ... } block, so bash parses all of it before running
 # any: a session runs for hours, and bash otherwise reads a script from the file
@@ -53,7 +60,7 @@ usage() { sed -n '2,/^set -uo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; /^se
 HOST=$1 PROFILE=$2
 shift 2
 TAG=$(date -u +%Y%m%dT%H%M%SZ) REBOOT=0 SETTLE=300 INTERLEAVE=0 CLASS=medium
-DEST="$ROOT/build-platform/remote" POLL=60 EXTRA=()
+DEST="$ROOT/build-platform/remote" POLL=60 TIMEOUT=43200 EXTRA=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --tag) TAG=$2; shift 2 ;;
@@ -63,6 +70,7 @@ while [ $# -gt 0 ]; do
         --class) CLASS=$2; shift 2 ;;
         --dest) DEST=$2; shift 2 ;;
         --poll) POLL=$2; shift 2 ;;
+        --timeout) TIMEOUT=$2; shift 2 ;;
         --) shift; EXTRA=("$@"); break ;;
         *) echo "remote_session.sh: unknown argument '$1'" >&2; usage ;;
     esac
@@ -93,6 +101,40 @@ elif [ "$WIN" -eq 0 ] && [ "$os" = Windows_NT ]; then
 fi
 [ "$WIN" -eq 1 ] && exec_windows=1 || exec_windows=0
 
+# The remote lock and the local temporary file are cleaned up however this
+# script ends. OWN_LOCK is 1 from taking the lock until the detached session
+# has started, which then owns it.
+OWN_LOCK=0 JOB=""
+cleanup() {
+    [ "$OWN_LOCK" -eq 1 ] && unlock
+    [ -n "$JOB" ] && rm -f "$JOB"
+    return 0
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+# Wait for the session's exit status, at most --timeout. The probe (a function)
+# prints the status, or nothing while there is none; a failing probe means ssh
+# failed.
+wait_session() {   # probe-function where-the-results-are
+    local probe=$1 where=$2 deadline last="no check yet" rc
+    deadline=$(( $(date +%s) + TIMEOUT ))
+    while :; do
+        sleep "$POLL"
+        if st=$("$probe"); then
+            [ -n "$st" ] && return 0
+            last="no session.exit yet"
+        else
+            rc=$?; last="ssh failed (exit $rc)"
+        fi
+        if [ "$(date +%s)" -ge "$deadline" ]; then
+            log "no session.exit after ${TIMEOUT}s (last check: $last); results left on $HOST ($where)"
+            exit 4
+        fi
+    done
+}
+
 # == Windows hosts ==================================================================
 # The same four steps as below, as PowerShell. Every remote command ends in an
 # explicit exit status: powershell -c reports only whether the last command
@@ -102,6 +144,7 @@ if [ "$exec_windows" -eq 1 ]; then
     rsh "try { New-Item -ItemType Directory -ErrorAction Stop \$HOME\\$LOCK | Out-Null; exit 0 } catch { exit 1 }" || {
         log "another session holds $HOST:~/$LOCK (remove it by hand if that session is gone)"; exit 3; }
     unlock() { rsh "Remove-Item -Force -ErrorAction SilentlyContinue \$HOME\\$LOCK" > /dev/null; }
+    OWN_LOCK=1
     rsh "if (-not (Test-Path $RDIR\\.git)) { git init -q $RDIR }; git -C $RDIR config receive.denyCurrentBranch ignore; exit \$LASTEXITCODE" \
         || { log "cannot set up ~/$RDIR"; unlock; exit 3; }
     git -C "$ROOT" push -q -f "$HOST:$RDIR" "$SHA:refs/heads/campaign" 2> >(grep -v '^\*\*' >&2) || { log "push failed"; unlock; exit 3; }
@@ -116,8 +159,12 @@ if [ "$exec_windows" -eq 1 ]; then
 
     if [ "$REBOOT" -eq 1 ]; then
         bootq="(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')"
-        boot0=$(rsh "$bootq" | tr -d '\r')
+        # A missing first reading would make any later one look like a new boot.
+        boot0=$(rsh "$bootq" | tr -d '\r') && [ -n "$boot0" ] \
+            || { log "cannot read the boot time; not rebooting"; unlock; exit 3; }
         log "rebooting"
+        # Its status is not checked: the connection may drop as the host goes
+        # down. A restart that didn't happen shows as an unchanged boot time below.
         rsh "Restart-Computer -Force" > /dev/null 2>&1
         sleep 30
         boot1=$boot0
@@ -143,7 +190,7 @@ if [ "$exec_windows" -eq 1 ]; then
     ps_extra=""
     for a in "${EXTRA[@]+"${EXTRA[@]}"}"; do ps_extra="$ps_extra $(pq "$a")"; done
     job=$(mktemp)
-    trap 'rm -f "$job"' EXIT
+    JOB=$job
     cat > "$job" <<EOF
 \$ErrorActionPreference = 'Continue'
 \$out = Join-Path \$HOME '$WOUT'
@@ -162,13 +209,12 @@ EOF
     scp -q -o BatchMode=yes "$job" "$HOST:$RDIR/$OUTREL/session.ps1" 2> >(grep -v '^\*\*' >&2) || { log "session did not start (copy)"; unlock; exit 3; }
     rsh "\$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ' + (Join-Path \$HOME '$WOUT\\session.ps1'); CurrentDirectory = (Join-Path \$HOME '$RDIR') }; if (\$r.ReturnValue -ne 0) { exit 1 }; exit 0" \
         || { log "session did not start"; unlock; exit 3; }
+    OWN_LOCK=0   # started: the session releases the lock now (an interrupt from here on must not)
     sleep 10
     rsh "if (Test-Path $WOUT\\session.log) { exit 0 } else { exit 1 }" || { log "session did not start"; unlock; exit 3; }
     log "session $TAG started ($PROFILE, class $CLASS$([ "$INTERLEAVE" -eq 1 ] && echo ", interleave"))"
-    while :; do
-        sleep "$POLL"
-        st=$(rsh "Get-Content -ErrorAction SilentlyContinue $WOUT\\session.exit" 2>/dev/null | tr -d '\r ') && [ -n "$st" ] && break
-    done
+    probe() { rsh "if (Test-Path $WOUT\\session.exit) { Get-Content $WOUT\\session.exit }; exit 0" 2>/dev/null | tr -d '\r '; }
+    wait_session probe "~/$RDIR/$OUTREL"
     log "session finished, exit $st"
 
     mkdir -p "$DEST/$HOST"
@@ -194,6 +240,7 @@ LOCK=mtl5-campaign.lock
     exit 3
 }
 unlock() { "${SSH[@]}" "$HOST" "rmdir $LOCK" 2>/dev/null; }
+OWN_LOCK=1
 "${SSH[@]}" "$HOST" "git init -q $RDIR 2>/dev/null; cd $RDIR && git config receive.denyCurrentBranch ignore" \
     || { log "cannot set up ~/$RDIR"; unlock; exit 3; }
 git -C "$ROOT" push -q -f "$HOST:$RDIR" "$SHA:refs/heads/campaign" || { log "push failed"; unlock; exit 3; }
@@ -209,13 +256,15 @@ OUTREL="build-platform/results/campaign-$TAG"
 # -- 2. cold boot ----------------------------------------------------------------
 # Reachable again is not rebooted: the boot id has to change.
 if [ "$REBOOT" -eq 1 ]; then
-    boot0=$("${SSH[@]}" "$HOST" cat /proc/sys/kernel/random/boot_id)
+    # A missing first reading would make any later one look like a new boot.
+    boot0=$("${SSH[@]}" "$HOST" cat /proc/sys/kernel/random/boot_id) && [ -n "$boot0" ] \
+        || { log "cannot read the boot id; not rebooting"; unlock; exit 3; }
     log "rebooting"
     "${SSH[@]}" "$HOST" "sudo -n reboot" > /dev/null 2>&1
     sleep 20
     boot1=$boot0
     for _ in $(seq 1 60); do
-        boot1=$("${SSH[@]}" "$HOST" cat /proc/sys/kernel/random/boot_id 2>/dev/null) && [ "$boot1" != "$boot0" ] && break
+        boot1=$("${SSH[@]}" "$HOST" cat /proc/sys/kernel/random/boot_id 2>/dev/null) && [ -n "$boot1" ] && [ "$boot1" != "$boot0" ] && break
         sleep 15
     done
     if [ -z "$boot1" ] || [ "$boot1" = "$boot0" ]; then
@@ -237,13 +286,12 @@ echo \$? > $OUTREL/session.exit.tmp; mv $OUTREL/session.exit.tmp $OUTREL/session
 # output open, so ssh would wait for the session; "cd X; cmd &" doesn't.
 "${SSH[@]}" "$HOST" "cd $RDIR || exit 1; setsid nohup bash -c $(printf %q "$job") > /dev/null 2>&1 < /dev/null &" \
     || { log "session did not start"; unlock; exit 3; }
+OWN_LOCK=0   # started: the session releases the lock now (an interrupt from here on must not)
 sleep 5
 "${SSH[@]}" "$HOST" "test -f $RDIR/$OUTREL/session.log" || { log "session did not start"; unlock; exit 3; }
 log "session $TAG started ($PROFILE, class $CLASS$([ "$INTERLEAVE" -eq 1 ] && echo ", interleave"))"
-while :; do
-    sleep "$POLL"
-    st=$("${SSH[@]}" "$HOST" "cat $RDIR/$OUTREL/session.exit 2>/dev/null") && [ -n "$st" ] && break
-done
+probe() { "${SSH[@]}" "$HOST" "cat $RDIR/$OUTREL/session.exit 2>/dev/null; true"; }
+wait_session probe "~/$RDIR/$OUTREL"
 log "session finished, exit $st"
 
 # -- 4. fetch -------------------------------------------------------------------------
