@@ -114,7 +114,9 @@ q_extra=""
 job="env CLASS=$CLASS INTERLEAVE=$INTERLEAVE PLATFORM_OUT=\"\$HOME/$RDIR/$OUTREL\" \
 benchmarks/machines/$PROFILE$q_extra > $OUTREL/session.log 2>&1 < /dev/null; \
 echo \$? > $OUTREL/session.exit.tmp; mv $OUTREL/session.exit.tmp $OUTREL/session.exit; rmdir \"\$HOME/$LOCK\""
-"${SSH[@]}" "$HOST" "cd $RDIR && setsid nohup bash -c $(printf %q "$job") > /dev/null 2>&1 < /dev/null &" \
+# "cd X && cmd &" would background the whole list, whose subshell keeps ssh's
+# output open, so ssh would wait for the session; "cd X; cmd &" doesn't.
+"${SSH[@]}" "$HOST" "cd $RDIR || exit 1; setsid nohup bash -c $(printf %q "$job") > /dev/null 2>&1 < /dev/null &" \
     || { log "session did not start"; unlock; exit 3; }
 sleep 5
 "${SSH[@]}" "$HOST" "test -f $RDIR/$OUTREL/session.log" || { log "session did not start"; unlock; exit 3; }
