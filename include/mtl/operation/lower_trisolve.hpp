@@ -29,6 +29,7 @@
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/interface/interleave_rows.hpp>
+#include <mtl/detail/scalar_chain.hpp>
 
 namespace mtl {
 
@@ -59,6 +60,7 @@ void lower_trisolve_rows(const M& L, VecX& x, const VecB& b, bool unit_diag,
             for (size_type j = 0; j < i0; ++j) {
                 const auto& xj = x(j);
                 ((s[K] += L(i0 + K, j) * xj), ...);
+                (keep_scalar<keep_scalar_v<value_type, M, W>>(s[K]), ...);   // #776
             }
             ([&] {
                 constexpr size_type k = K;

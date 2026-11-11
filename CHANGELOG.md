@@ -126,6 +126,23 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **Under GCC, the generic f32 `gemv`, `trmv` and forward substitution on a row-major matrix are 11–24% faster, with results unchanged bit for bit** (#776). GCC's SLP vectorizer packed the interleaved row accumulators into vector registers, filling each vector from scalar loads a whole row apart, which cost more than the vector add saved.
+  - **The fix:** `detail::keep_scalar` in `include/mtl/detail/scalar_chain.hpp`, an empty `asm` that holds each accumulator in a scalar register of its own. It emits no instruction and leaves the value unchanged; GCC just can no longer pack it.
+  - **Where it applies:** GCC on x86-64 or AArch64, float, a row-major matrix, and a width of at least 4. Double, column-major (where the rows of a column are contiguous and packing is cheap), Clang and MSVC keep their code as it was, because the barrier didn't help them or made them slower.
+  - **Speed:** i7-12700K, n = 4096, one core, `bench_interleave_rows`, at the default width of 6:
+
+    | f32, row-major | before | after |
+    |---|---|---|
+    | `gemv`, GCC `-O3` | 3.05 ms | 2.71 ms |
+    | `trmv`, GCC `-O3` | 1.71 ms | 1.45 ms |
+    | forward substitution, GCC `-O3` | 1.65 ms | 1.42 ms |
+    | `gemv`, GCC `-march=native` | 3.79 ms | 2.88 ms |
+    | `trmv`, GCC `-march=native` | 1.76 ms | 1.51 ms |
+    | forward substitution, GCC `-march=native` | 1.73 ms | 1.47 ms |
+
+    f64 and column-major times are unchanged. f32 `gemv` at width 6 now matches the build with the vectorizer switched off (2.72 ms).
+  - **Tests:** the row-major float cases of `op_test_trmv_trsv_interleaved` take the new path in a GCC build and are still checked bit for bit. A new case pins down exactly where the barrier applies.
+
 - **The interleave width of the generic `gemv`, `trmv` and forward substitution is a trait, and float/double default to 6 rows instead of 4** (#772). Every width gives the same bits, so the width is a pure speed knob; results are unchanged.
   - **The trait:** `interface::interleave_rows<T, Kernel>` in `include/mtl/interface/interleave_rows.hpp`, with `Kernel` one of `interface::kernel::gemv`, `trmv` and `lower_trisolve`. The three kernels (`detail::mult_rows_interleaved`, `detail::trmv_upper_rows` / `trmv_lower_rows`, `detail::lower_trisolve_rows`) are written once for any width W, and the rows left over go to W/2, down to the one-row loop.
   - **Defaults:** 6 for float and double, capped at half the target's vector registers; 4, as before, for long double, integers and software number types.
