@@ -29,6 +29,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **i7-12700K:** `benchmarks/data/i7-12700k/mtl5_bench/20261109T025123Z/`, built at `e7497e6e4c47`. Its threaded runs used 20 threads, E-cores included, though the Systems table lists 8 P-cores for this machine.
   - **Xeon E5-2420 v2:** `benchmarks/data/xeon-e5-2420v2/mtl5_bench/20261109T035023Z/`, built at `73d11400a0e3`.
   - Each card page (`docs/benchmarks/<machine>-mtl5-bench.md`) now links its raw data, and each machine's Systems-table row links its card.
+- **Each per-machine analysis has a roofline plot of its platform session** (#799). `benchmarks/plot_roofline.py <session dir> --out <image>` places every entry at its arithmetic intensity and measured GFLOP/s, against each run's own bandwidth slope and f64 and f32 FMA ceilings, with the points coloured by area.
+  - **The grid:** one row per thread count (1 thread, then all threads) and one column per build, all on the same axes. The generic `native` build is the baseline a straightforward implementation gives, `native-fast` the best MTL5 does, and the `blas` build, with OpenBLAS and its LAPACK behind the dense kernels, the target. `--variants` picks the columns, and a variant the session didn't run is left out and named in the title (the Ventuno Q has no OpenBLAS).
+  - **What it leaves out:** integer entries, because the model has no integer ceiling, and the 28 entries that record no flops or bytes (Krylov solvers, preconditioners, orderings, sparse eigensolvers). That leaves 74 of the 111 entries in each panel.
+  - **What the plots show:**
+    - The memory-bound entries sit on the slope in every column.
+    - Level 3 is where the builds separate. On one core, GEMM goes from 17% of peak to 90% to 92% on the i7-12700K, and from 33% to 60% to 94% on the Jetson Orin.
+    - The factorizations and eigensolvers rise only in the OpenBLAS column, where LAPACK takes them.
+    - The elementwise transcendentals sit far under the slope, because the model counts one flop per element.
+  - **Pages:** the Jetson Orin, Ventuno Q, i7-12700K and Ryzen 9 8945HS analyses, under a new Roofline section, with the command under Reproducing.
 
 ### Fixed
 

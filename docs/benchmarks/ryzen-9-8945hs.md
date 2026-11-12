@@ -109,6 +109,61 @@ The median %roof of each area. Areas without a roofline are left out.
 - **`blas3` in native-fast (14%) is barely above the generic build (12%).** The
   SSE2 GEMM kernel gains little over MSVC's code for the portable loops.
 
+### Roofline
+
+![Roofline plots of the generic, native-fast and OpenBLAS builds, at 1 and 8 threads](../img/benchmarks/amd-ryzen-9-8945hs/roofline-platform.svg)
+
+Each panel places one build's entries at their arithmetic intensity (flops per
+byte moved) and their measured GFLOP/s. The rows are 1 thread and all 8
+threads. The columns are the generic `native` build, the baseline a
+straightforward implementation gives; `native-fast`, the best MTL5 does; and
+the `blas` build, where OpenBLAS and its LAPACK take the dense kernels: what
+tuned libraries reach, and so MTL5's target. The lines are each run's own
+roofs: the measured bandwidth up to the ridge, then the FMA peak, solid for
+f64 and dashed for f32. An entry at 100% of its roof sits on the line. Integer
+entries are left out, because the model has no integer ceiling, and so are the
+28 entries that record no flops or bytes (Krylov solvers, preconditioners,
+orderings and sparse eigensolvers). That leaves 74 of the 111 entries in each
+panel.
+
+Across the columns:
+
+- **Level 3 separates OpenBLAS from both MTL5 builds.** GEMM is at 17%, 20%
+  and 93% of the FMA peak on one core, and at 19%, 19% and 78% on eight.
+  native-fast gains almost nothing over the generic build here, because both
+  are SSE2 (see the headline).
+- **The factorizations and eigensolvers rise only in the OpenBLAS column**,
+  where LAPACK takes them. The `factor` median is 3% in both MTL5 builds and
+  13% with OpenBLAS, and the `eigen` median is 3–4% against 17%.
+- **native-fast leads on the memory-bound kernels on one core.** `blas1` is at
+  a median 103% of its roof, against 20% for the generic build and 18% for
+  OpenBLAS. On eight threads all three are at 81–110%.
+- **The elementwise kernels and the sparse direct solvers don't move between
+  columns**, because no build replaces them.
+
+Within the native-fast column:
+
+- **The memory-bound points line up along the slope**: `blas1` at a median
+  103% of its roof on one core and 110% on eight.
+- **A few memory-bound points sit slightly above the slope.** The slope is the
+  best of three bandwidth probes (triad, read and update), not a hard limit,
+  and a kernel with a lighter read/write mix can beat it. `scale` reaches 128%
+  on one core. `spmv` at 241% on eight is flagged as a suspect model (hollow).
+- **No compute-bound point reaches half the ceiling.** The ceiling is the
+  hardware's FMA peak, while the build is SSE2 (see the headline). GEMM sits
+  at 20% of it on one core and 17–19% on eight. An `/arch` build would show
+  how much of that gap is the instruction set.
+- **Points far under the slope at an intensity near 0.06 are the elementwise
+  transcendentals** (`sin`, `erf`, `log`, `exp`, `sqrt`). The model counts one
+  flop per element, but each costs tens of instructions, so they are compute-
+  bound in fact and sit 10–20× under the slope on one core.
+- **The compute-bound points other than level 3 sit far under the ceiling**:
+  at most a third of it, and the sparse direct solvers under 4%. These are the
+  factorizations at 512×512, the dense eigensolvers at 256×256 and the sparse
+  direct solvers. Their flop counts are nominal, and most of their time goes
+  to panels, pivoting, iteration and indirect access, not to FMAs at full
+  width.
+
 ### GEMM at 512³
 
 `blas3/gemm`, GFLOP/s and % of the measured FMA peak (about 63 GFLOP/s per
@@ -379,7 +434,13 @@ The platform benchmark's sessions are run with
 `benchmarks/machines/ryzen-9-8945hs-platform.ps1` and published with
 `benchmarks/publish_platform.cmake`. Their repeatability comes from
 `benchmarks/compare_sessions.py` on the two session directories under
-`benchmarks/data/ryzen-9-8945hs/mtl5_bench/`.
+`benchmarks/data/ryzen-9-8945hs/mtl5_bench/`. The roofline is drawn from the second
+session:
+
+```bash
+benchmarks/plot_roofline.py benchmarks/data/ryzen-9-8945hs/mtl5_bench/20261112T032806Z \
+    --out docs/img/benchmarks/amd-ryzen-9-8945hs/roofline-platform.svg
+```
 
 Builds and sweeps use the Windows PowerShell harnesses (the MSVC equivalents of
 the bash scripts), which pin with processor-affinity bitmasks:
