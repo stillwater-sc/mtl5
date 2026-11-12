@@ -292,7 +292,10 @@ Then it does three things:
 2. **Writes the machine's card page,** `docs/benchmarks/cards/<machine>.md`.
    - The page opens with a provenance table: session, commit, class, runs, failed
      checks, CPUs, clock policy, a link to the raw data, and the earlier sessions.
-   - The session's cards follow.
+   - "Across the runs" compares the session's runs side by side: each area's
+     median %roof, and each entry's median time with the fastest run in bold.
+   - The session's cards follow, one section per run. Each run's full entry
+     table is folded into a `<details>` block.
    - The page always shows the **latest** published session. Publishing an older
      one archives its data and leaves the page alone.
    - The page is generated, so don't edit it by hand. Publish a new session

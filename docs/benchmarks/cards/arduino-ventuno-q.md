@@ -22,6 +22,149 @@ Repeatability: 413 of 444 entries within +-5% of the previous session, measured 
 | raw data | [`benchmarks/data/arduino-ventuno-q/mtl5_bench/20261111T191603Z/`](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/arduino-ventuno-q/mtl5_bench/20261111T191603Z) |
 | earlier sessions | `20261111T185721Z` |
 
+## Across the runs
+
+Each column is one run of this session: the build variant and its thread count (1T is one thread). The runs follow below, each with its full entry table.
+
+### Median %roof by area
+
+| area | native 1T | native 4T | native-fast 1T | native-fast 4T |
+|---|---:|---:|---:|---:|
+| blas1 | 83% | 90% | 94% | 90% |
+| blas2 | 55% | 52% | 55% | 57% |
+| blas3 | 30% | 9% | 45% | 18% |
+| factor | 12% | 2% | 12% | 2% |
+| eigen | 15% | 4% | 15% | 4% |
+| elementwise | 5% | 5% | 5% | 5% |
+| sparse | 30% | 54% | 29% | 55% |
+| direct | 1% | 0% | 1% | 0% |
+| ordering | n/a | n/a | n/a | n/a |
+| krylov | n/a | n/a | n/a | n/a |
+| pc | n/a | n/a | n/a | n/a |
+| smoother | 47% | 51% | 47% | 52% |
+| mg | 36% | 33% | 37% | 33% |
+| sparse_eig | n/a | n/a | n/a | n/a |
+| mixed | 33% | 30% | 38% | 35% |
+| integer | n/a | n/a | n/a | n/a |
+
+### Every entry: median time
+
+The median time of each of the 111 entries in each run. The fastest run of each entry is in bold; -- is an entry the run did not measure.
+
+| area | op | type | shape | native 1T | native 4T | native-fast 1T | native-fast 4T |
+|---|---|---|---|---:|---:|---:|---:|
+| blas1 | dot | f64 | n=8388608 | **5.648 ms** | 5.958 ms | 5.701 ms | 6.001 ms |
+| blas1 | dot | f32 | n=8388608 | 4.517 ms | 3.072 ms | **2.878 ms** | 3.137 ms |
+| blas1 | axpy | f64 | n=8388608 | 7.810 ms | 8.226 ms | **7.801 ms** | 8.208 ms |
+| blas1 | axpy | f32 | n=8388608 | 3.952 ms | 4.217 ms | **3.941 ms** | 4.249 ms |
+| blas1 | scale | f64 | n=8388608 | 5.350 ms | 5.022 ms | 5.332 ms | **4.971 ms** |
+| blas1 | two_norm | f64 | n=8388608 | 3.237 ms | **2.859 ms** | 3.161 ms | 2.872 ms |
+| blas1 | one_norm | f64 | n=8388608 | 8.187 ms | 7.692 ms | 8.590 ms | **7.510 ms** |
+| blas1 | infinity_norm | f64 | n=8388608 | 17.287 ms | **15.459 ms** | 17.349 ms | 15.554 ms |
+| blas1 | sum | f64 | n=8388608 | 8.362 ms | 7.897 ms | 8.755 ms | **7.808 ms** |
+| blas1 | dot_k3 | f64 | n=8388608 | 196.176 ms | **178.871 ms** | 198.557 ms | 179.772 ms |
+| blas2 | gemv | f64 | n=4096 | 9.257 ms | 7.760 ms | 8.251 ms | **6.591 ms** |
+| blas2 | gemv | f32 | n=4096 | 6.915 ms | 3.957 ms | 4.052 ms | **2.997 ms** |
+| blas2 | gemv_colmajor | f64 | n=4096 | 9.817 ms | **8.003 ms** | 49.182 ms | 22.955 ms |
+| blas2 | gemv_colmajor | f32 | n=4096 | **4.329 ms** | 5.188 ms | 25.699 ms | 12.495 ms |
+| blas2 | symv | f64 | n=4096 | 16.936 ms | 15.842 ms | 16.930 ms | **15.586 ms** |
+| blas2 | trmv | f64 | n=4096 | 4.955 ms | 5.749 ms | 4.952 ms | **4.778 ms** |
+| blas2 | trmv | f32 | n=4096 | 6.805 ms | 6.104 ms | 2.592 ms | **2.543 ms** |
+| blas2 | trsv | f64 | n=4096 | 4.954 ms | 5.354 ms | 4.788 ms | **4.783 ms** |
+| blas2 | trsv | f32 | n=4096 | 20.718 ms | 19.346 ms | 2.593 ms | **2.412 ms** |
+| blas2 | ger | f64 | n=4096 | 15.256 ms | 14.897 ms | 15.218 ms | **14.838 ms** |
+| blas3 | gemm | f64 | 512x512x512 | 53.873 ms | 27.034 ms | 28.189 ms | **7.818 ms** |
+| blas3 | gemm | f32 | 512x512x512 | 25.232 ms | 12.044 ms | 13.842 ms | **4.213 ms** |
+| blas3 | gemmt | f64 | 512x512x512 | 41.049 ms | 35.650 ms | 17.957 ms | **10.402 ms** |
+| blas3 | symm | f64 | 512x512x512 | 52.486 ms | 54.711 ms | 29.177 ms | **8.675 ms** |
+| blas3 | syrk | f64 | 512x512x512 | 43.366 ms | **35.106 ms** | 41.220 ms | 36.562 ms |
+| blas3 | syr2k | f64 | 512x512x512 | 79.913 ms | 78.992 ms | 79.548 ms | **77.579 ms** |
+| blas3 | trmm | f64 | 512x512x512 | 25.870 ms | 22.576 ms | 17.649 ms | **10.954 ms** |
+| blas3 | trsm | f64 | 512x512x512 | 26.327 ms | 22.810 ms | 18.067 ms | **11.394 ms** |
+| blas3 | trsm | f32 | 512x512x512 | 12.115 ms | 10.830 ms | 8.526 ms | **6.689 ms** |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 32.062 ms | **28.360 ms** | 31.380 ms | 29.173 ms |
+| factor | lu | f64 | 512x512 | 26.158 ms | 109.537 ms | **24.602 ms** | 109.071 ms |
+| factor | lu | f32 | 512x512 | **13.186 ms** | 91.533 ms | 13.196 ms | 93.127 ms |
+| factor | cholesky | f64 | 512x512 | 22.459 ms | **19.947 ms** | 22.260 ms | 20.069 ms |
+| factor | cholesky | f32 | 512x512 | 19.631 ms | 17.565 ms | 19.666 ms | **17.536 ms** |
+| factor | ldlt | f64 | 512x512 | 21.788 ms | **19.210 ms** | 22.616 ms | 20.330 ms |
+| factor | ldlt_bk | f64 | 512x512 | 69.248 ms | 61.333 ms | 67.975 ms | **60.247 ms** |
+| factor | qr | f64 | 512x512 | 249.655 ms | 213.764 ms | 249.647 ms | **198.816 ms** |
+| factor | lq | f64 | 512x512 | 60.831 ms | 138.218 ms | **60.589 ms** | 126.414 ms |
+| factor | hessenberg | f64 | 512x512 | **347.591 ms** | 447.266 ms | 347.760 ms | 440.059 ms |
+| factor | householder | f64 | 512x512 | 1.545 ms | **0.936 ms** | 1.553 ms | 1.033 ms |
+| factor | inv | f64 | 512x512 | 145.030 ms | 220.125 ms | **143.459 ms** | 224.090 ms |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 21.397 ms | 109.426 ms | **20.862 ms** | 108.003 ms |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 39.945 ms | 35.739 ms | 39.882 ms | **35.471 ms** |
+| eigen | eigen_symmetric | f64 | 256x256 | 97.285 ms | 86.841 ms | 96.701 ms | **86.506 ms** |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 592.811 ms | 525.379 ms | 604.340 ms | **525.246 ms** |
+| eigen | eigenvalue | f64 | 256x256 | 67.319 ms | 60.025 ms | 67.220 ms | **59.907 ms** |
+| eigen | schur | f64 | 256x256 | 151.903 ms | 134.076 ms | 149.906 ms | **133.826 ms** |
+| eigen | svd | f64 | 256x256 | 231.130 ms | **205.438 ms** | 230.064 ms | 205.719 ms |
+| eigen | expm | f64 | 256x256 | 67.411 ms | 42.850 ms | 48.004 ms | **31.967 ms** |
+| eigen | sylvester | f64 | 256x256 | 379.393 ms | 320.048 ms | 355.257 ms | **312.866 ms** |
+| elementwise | exp | f64 | n=8388608 | 89.134 ms | **81.364 ms** | 89.862 ms | 81.760 ms |
+| elementwise | log | f64 | n=8388608 | 110.964 ms | **100.498 ms** | 110.900 ms | 100.712 ms |
+| elementwise | sin | f64 | n=8388608 | 149.831 ms | **135.677 ms** | 149.958 ms | 135.791 ms |
+| elementwise | sqrt | f64 | n=8388608 | 71.381 ms | **65.958 ms** | 71.961 ms | 67.033 ms |
+| elementwise | erf | f64 | n=8388608 | 117.077 ms | **107.588 ms** | 117.191 ms | 107.826 ms |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 1.669 ms | 1.555 ms | 1.620 ms | **1.265 ms** |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 2.179 ms | 1.990 ms | 2.156 ms | **1.987 ms** |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 12.007 ms | 6.449 ms | 12.029 ms | **6.438 ms** |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 13.369 ms | **11.795 ms** | 13.383 ms | 11.814 ms |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 8.765 ms | 9.907 ms | **8.460 ms** | 9.438 ms |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 181.876 ms | **163.561 ms** | 181.889 ms | 164.695 ms |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 58.962 ms | **53.182 ms** | 61.650 ms | 55.546 ms |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 26.333 ms | **24.388 ms** | 26.561 ms | 24.573 ms |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 103.207 ms | **91.661 ms** | 103.552 ms | 92.323 ms |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 139.816 ms | **125.560 ms** | 141.067 ms | 126.886 ms |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | 43.235 ms | 39.527 ms | 43.271 ms | **39.188 ms** |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | 207.110 ms | **181.881 ms** | 203.997 ms | 185.829 ms |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | 8.643 ms | 8.049 ms | 8.748 ms | **7.659 ms** |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | 13.782 ms | 13.033 ms | 14.105 ms | **12.239 ms** |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | 0.705 ms | **0.630 ms** | 0.712 ms | 0.636 ms |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 42.875 ms | **38.715 ms** | 44.046 ms | 39.374 ms |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 70.463 ms | **64.123 ms** | 70.892 ms | 64.234 ms |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 103.856 ms | 97.680 ms | 104.593 ms | **97.497 ms** |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 53.914 ms | **48.571 ms** | 53.819 ms | 48.728 ms |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 29.059 ms | 26.093 ms | 28.929 ms | **26.066 ms** |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 34.443 ms | **31.451 ms** | 34.449 ms | 31.456 ms |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 33.705 ms | **30.546 ms** | 33.866 ms | 30.710 ms |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 63.674 ms | 56.815 ms | 63.542 ms | **56.007 ms** |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 63.987 ms | **56.981 ms** | 63.128 ms | 57.268 ms |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 34.765 ms | **31.116 ms** | 34.728 ms | 31.429 ms |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 36.992 ms | **33.528 ms** | 37.230 ms | 33.708 ms |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 35.997 ms | **32.188 ms** | 35.682 ms | 32.446 ms |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 39.313 ms | 36.045 ms | 39.597 ms | **35.720 ms** |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 47.442 ms | **42.209 ms** | 47.039 ms | 42.625 ms |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | 0.112 ms | **0.099 ms** | 0.114 ms | 0.102 ms |
+| pc | ilu_0 | f64 | 128^2 grid | 5.231 ms | **4.374 ms** | 4.882 ms | 4.437 ms |
+| pc | ilut | f64 | 128^2 grid | 30.495 ms | **27.633 ms** | 31.046 ms | 27.683 ms |
+| pc | ic_0 | f64 | 128^2 grid | 3.058 ms | 2.797 ms | 3.058 ms | **2.782 ms** |
+| pc | ildl | f64 | 128^2 grid | 2.952 ms | **2.675 ms** | 2.905 ms | 2.695 ms |
+| pc | ssor | f64 | 128^2 grid | 0.063 ms | **0.062 ms** | 0.064 ms | 0.063 ms |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 1.731 ms | **1.552 ms** | 1.722 ms | 1.571 ms |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 2.109 ms | **1.977 ms** | 2.102 ms | 2.017 ms |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 2.496 ms | 2.288 ms | 2.489 ms | **2.278 ms** |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 5.035 ms | 4.472 ms | 2.941 ms | **2.662 ms** |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 32.432 ms | 35.349 ms | **32.006 ms** | 35.794 ms |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 231.698 ms | **209.007 ms** | 232.202 ms | 210.080 ms |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 270.586 ms | **243.701 ms** | 270.564 ms | 244.974 ms |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 164.754 ms | **133.262 ms** | 149.555 ms | 149.863 ms |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 13.426 ms | 11.968 ms | 13.228 ms | **11.893 ms** |
+| mixed | dot | f32>f64 | n=8388608 | 8.135 ms | 7.221 ms | 4.079 ms | **3.680 ms** |
+| mixed | gemm | f32>f64 | 512x512x512 | 48.743 ms | 13.140 ms | 41.762 ms | **11.197 ms** |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 2.942 ms | 2.657 ms | 2.652 ms | **2.357 ms** |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 2.846 ms | 2.811 ms | 2.825 ms | **2.784 ms** |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 1.399 ms | 1.373 ms | 1.388 ms | **1.361 ms** |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 3.654 ms | 3.269 ms | 2.320 ms | **2.111 ms** |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.150 ms | **1.036 ms** | 4.255 ms | 3.810 ms |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 26.726 ms | 12.256 ms | 17.316 ms | **5.067 ms** |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 26.354 ms | 7.445 ms | 16.639 ms | **4.867 ms** |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 20.313 ms | 5.901 ms | 16.573 ms | **4.289 ms** |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 20.297 ms | **5.889 ms** | 23.623 ms | 6.509 ms |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 38.404 ms | **10.483 ms** | 50.869 ms | 13.316 ms |
+
 Not measured:
 - blas: no BLAS/LAPACK found
 
@@ -58,6 +201,9 @@ Not measured:
 | sparse_eig | 4 | n/a | n/a | 0 |
 | mixed | 3 | 33% | 34% | 0 |
 | integer | 9 | n/a | n/a | 0 |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -173,6 +319,8 @@ Not measured:
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 20.297 ms | 13.23 | 0.08 | n/a | ok |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 38.404 ms | 6.99 | 0.04 | n/a | ok |
 
+</details>
+
 ## arduino-ventuno-q -- native, 4 threads, class medium
 
 | | |
@@ -206,6 +354,9 @@ Not measured:
 | sparse_eig | 4 | n/a | n/a | 0 | 28% |
 | mixed | 3 | 30% | 37% | 0 | 28% |
 | integer | 9 | n/a | n/a | 0 | 55% |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
 |---|---|---|---|---:|---:|---:|---:|---|---:|
@@ -321,6 +472,8 @@ Not measured:
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 5.889 ms | 45.58 | 0.27 | n/a | ok | 3.4x (86%) |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 10.483 ms | 25.61 | 0.15 | n/a | ok | 3.7x (92%) |
 
+</details>
+
 ## arduino-ventuno-q -- native-fast, 1 thread, class medium
 
 | | |
@@ -354,6 +507,9 @@ Not measured:
 | sparse_eig | 4 | n/a | n/a | 0 |
 | mixed | 3 | 38% | 66% | 0 |
 | integer | 9 | n/a | n/a | 0 |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -469,6 +625,8 @@ Not measured:
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 23.623 ms | 11.36 | 0.07 | n/a | ok |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 50.869 ms | 5.28 | 0.03 | n/a | ok |
 
+</details>
+
 ## arduino-ventuno-q -- native-fast, 4 threads, class medium
 
 | | |
@@ -502,6 +660,9 @@ Not measured:
 | sparse_eig | 4 | n/a | n/a | 0 | 28% |
 | mixed | 3 | 35% | 74% | 0 | 28% |
 | integer | 9 | n/a | n/a | 0 | 85% |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
 |---|---|---|---|---:|---:|---:|---:|---|---:|
@@ -616,4 +777,6 @@ Not measured:
 | integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 4.289 ms | 62.59 | 0.37 | n/a | ok | 3.9x (97%) |
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 6.509 ms | 41.24 | 0.24 | n/a | ok | 3.6x (91%) |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 13.316 ms | 20.16 | 0.12 | n/a | ok | 3.8x (96%) |
+
+</details>
 

@@ -22,6 +22,149 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | raw data | [`benchmarks/data/ryzen-7-8845hs/mtl5_bench/20261112T035709Z/`](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/ryzen-7-8845hs/mtl5_bench/20261112T035709Z) |
 | earlier sessions | `20261112T033940Z` |
 
+## Across the runs
+
+Each column is one run of this session: the build variant and its thread count (1T is one thread). The runs follow below, each with its full entry table.
+
+### Median %roof by area
+
+| area | native 1T | native 8T | native-fast 1T | native-fast 8T | blas 1T | blas 8T |
+|---|---:|---:|---:|---:|---:|---:|
+| blas1 | 25% | 97% | 107% | 111% | 25% | 93% |
+| blas2 | 52% | 68% | 69% | 57% | 77% | 101% |
+| blas3 | 14% | 2% | 17% | 4% | 68% | 40% |
+| factor | 3% | 1% | 3% | 1% | 13% | 2% |
+| eigen | 4% | 0% | 4% | 0% | 17% | 2% |
+| elementwise | 8% | 8% | 8% | 8% | 7% | 7% |
+| sparse | 25% | 40% | 27% | 40% | 21% | 34% |
+| direct | 0% | 0% | 0% | 0% | 0% | 0% |
+| ordering | n/a | n/a | n/a | n/a | n/a | n/a |
+| krylov | n/a | n/a | n/a | n/a | n/a | n/a |
+| pc | n/a | n/a | n/a | n/a | n/a | n/a |
+| smoother | 35% | 37% | 32% | 37% | 35% | 37% |
+| mg | 34% | 35% | 34% | 35% | 34% | 35% |
+| sparse_eig | n/a | n/a | n/a | n/a | n/a | n/a |
+| mixed | 14% | 13% | 69% | 70% | 11% | 11% |
+| integer | n/a | n/a | n/a | n/a | n/a | n/a |
+
+### Every entry: median time
+
+The median time of each of the 111 entries in each run. The fastest run of each entry is in bold; -- is an entry the run did not measure.
+
+| area | op | type | shape | native 1T | native 8T | native-fast 1T | native-fast 8T | blas 1T | blas 8T |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|
+| blas1 | dot | f64 | n=8388608 | 9.796 ms | 2.290 ms | 2.382 ms | **2.266 ms** | 11.491 ms | 2.309 ms |
+| blas1 | dot | f32 | n=8388608 | 9.748 ms | 1.347 ms | 1.182 ms | **0.991 ms** | 10.308 ms | 1.359 ms |
+| blas1 | axpy | f64 | n=8388608 | 11.898 ms | 3.499 ms | **3.439 ms** | 3.548 ms | 11.930 ms | 3.519 ms |
+| blas1 | axpy | f32 | n=8388608 | 11.855 ms | 1.852 ms | **1.646 ms** | 1.678 ms | 10.299 ms | 1.776 ms |
+| blas1 | scale | f64 | n=8388608 | 2.292 ms | 2.114 ms | **1.903 ms** | 2.134 ms | 2.287 ms | 2.084 ms |
+| blas1 | two_norm | f64 | n=8388608 | 9.326 ms | 1.298 ms | 1.165 ms | **1.046 ms** | 11.013 ms | 1.518 ms |
+| blas1 | one_norm | f64 | n=8388608 | 5.063 ms | **5.062 ms** | 5.065 ms | 5.292 ms | 5.064 ms | 5.069 ms |
+| blas1 | infinity_norm | f64 | n=8388608 | 5.074 ms | **5.072 ms** | 5.113 ms | 5.098 ms | **5.072 ms** | 5.100 ms |
+| blas1 | sum | f64 | n=8388608 | 5.064 ms | **5.061 ms** | 5.075 ms | 5.143 ms | 5.062 ms | 5.079 ms |
+| blas1 | dot_k3 | f64 | n=8388608 | 87.618 ms | 87.663 ms | 91.203 ms | 97.716 ms | **84.572 ms** | 86.046 ms |
+| blas2 | gemv | f64 | n=4096 | 3.184 ms | 2.367 ms | 3.346 ms | **2.347 ms** | 3.219 ms | 2.550 ms |
+| blas2 | gemv | f32 | n=4096 | 2.445 ms | 1.138 ms | 1.706 ms | **1.095 ms** | 1.567 ms | 1.156 ms |
+| blas2 | gemv_colmajor | f64 | n=4096 | 6.646 ms | **2.312 ms** | 21.609 ms | 9.513 ms | 3.374 ms | 2.695 ms |
+| blas2 | gemv_colmajor | f32 | n=4096 | 2.256 ms | **1.157 ms** | 7.868 ms | 4.853 ms | 1.502 ms | 1.251 ms |
+| blas2 | symv | f64 | n=4096 | 8.555 ms | 8.694 ms | 8.705 ms | 9.195 ms | 1.826 ms | **1.215 ms** |
+| blas2 | trmv | f64 | n=4096 | 1.855 ms | 1.885 ms | 1.824 ms | 2.167 ms | 1.626 ms | **1.218 ms** |
+| blas2 | trmv | f32 | n=4096 | 1.543 ms | 1.561 ms | 0.944 ms | 1.121 ms | 0.847 ms | **0.530 ms** |
+| blas2 | trsv | f64 | n=4096 | 1.772 ms | 1.857 ms | 1.845 ms | 2.149 ms | 1.614 ms | **1.589 ms** |
+| blas2 | trsv | f32 | n=4096 | 1.573 ms | 1.594 ms | **0.901 ms** | 1.101 ms | 0.908 ms | 0.946 ms |
+| blas2 | ger | f64 | n=4096 | 13.543 ms | **13.492 ms** | 13.538 ms | 17.212 ms | 13.588 ms | 13.670 ms |
+| blas3 | gemm | f64 | 512x512x512 | 16.376 ms | 2.468 ms | 10.978 ms | 3.236 ms | 3.629 ms | **0.605 ms** |
+| blas3 | gemm | f32 | 512x512x512 | 8.239 ms | 1.179 ms | 5.565 ms | 1.822 ms | 1.913 ms | **0.340 ms** |
+| blas3 | gemmt | f64 | 512x512x512 | 11.224 ms | 11.311 ms | 7.415 ms | 5.034 ms | 2.726 ms | **1.356 ms** |
+| blas3 | symm | f64 | 512x512x512 | 17.706 ms | 17.614 ms | 11.973 ms | 3.734 ms | 3.806 ms | **0.607 ms** |
+| blas3 | syrk | f64 | 512x512x512 | 13.574 ms | 13.666 ms | 13.566 ms | 14.165 ms | 3.039 ms | **1.720 ms** |
+| blas3 | syr2k | f64 | 512x512x512 | 23.489 ms | 23.728 ms | 23.003 ms | 24.116 ms | 4.897 ms | **2.387 ms** |
+| blas3 | trmm | f64 | 512x512x512 | 25.087 ms | 25.188 ms | 9.725 ms | 5.917 ms | 1.888 ms | **0.398 ms** |
+| blas3 | trsm | f64 | 512x512x512 | 26.572 ms | 26.898 ms | 9.845 ms | 6.195 ms | 2.842 ms | **0.557 ms** |
+| blas3 | trsm | f32 | 512x512x512 | 25.995 ms | 26.112 ms | 6.574 ms | 4.605 ms | 1.346 ms | **0.266 ms** |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | **9.015 ms** | 9.303 ms | 9.083 ms | 9.264 ms | 9.306 ms | 9.245 ms |
+| factor | lu | f64 | 512x512 | 32.730 ms | 23.656 ms | 32.813 ms | 23.200 ms | **4.986 ms** | 9.104 ms |
+| factor | lu | f32 | 512x512 | 30.913 ms | 22.075 ms | 31.412 ms | 22.390 ms | **2.443 ms** | 4.345 ms |
+| factor | cholesky | f64 | 512x512 | 11.394 ms | 11.374 ms | 11.382 ms | 11.397 ms | **4.350 ms** | 5.960 ms |
+| factor | cholesky | f32 | 512x512 | 10.910 ms | 10.898 ms | 10.904 ms | 10.906 ms | **1.676 ms** | 2.308 ms |
+| factor | ldlt | f64 | 512x512 | 11.450 ms | 11.445 ms | **11.433 ms** | 11.437 ms | 11.785 ms | 11.867 ms |
+| factor | ldlt_bk | f64 | 512x512 | 166.463 ms | 165.070 ms | 166.832 ms | 165.245 ms | **164.303 ms** | 167.173 ms |
+| factor | qr | f64 | 512x512 | 645.572 ms | 397.421 ms | 645.997 ms | 395.043 ms | **10.166 ms** | 11.893 ms |
+| factor | lq | f64 | 512x512 | 64.390 ms | 44.839 ms | 68.522 ms | **44.608 ms** | 64.507 ms | 45.484 ms |
+| factor | hessenberg | f64 | 512x512 | 740.793 ms | 470.812 ms | 752.540 ms | **470.760 ms** | 745.299 ms | 477.079 ms |
+| factor | householder | f64 | 512x512 | 3.918 ms | **1.002 ms** | 4.000 ms | 1.021 ms | 3.878 ms | 1.004 ms |
+| factor | inv | f64 | 512x512 | 88.836 ms | 79.564 ms | 93.824 ms | 79.181 ms | **60.512 ms** | 65.954 ms |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 33.800 ms | 24.624 ms | 34.158 ms | 25.187 ms | **5.538 ms** | 7.245 ms |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 38.616 ms | 39.148 ms | 37.521 ms | 33.577 ms | **1.678 ms** | 3.588 ms |
+| eigen | eigen_symmetric | f64 | 256x256 | 126.776 ms | 128.315 ms | 127.218 ms | **123.975 ms** | 129.208 ms | 133.014 ms |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 520.252 ms | 512.298 ms | 512.542 ms | **496.530 ms** | 499.815 ms | 519.779 ms |
+| eigen | eigenvalue | f64 | 256x256 | 57.420 ms | 60.275 ms | 54.014 ms | 60.808 ms | **16.673 ms** | 21.078 ms |
+| eigen | schur | f64 | 256x256 | 110.628 ms | 113.515 ms | 109.018 ms | 112.942 ms | **21.833 ms** | 26.127 ms |
+| eigen | svd | f64 | 256x256 | 117.948 ms | 119.042 ms | 118.388 ms | 118.691 ms | **8.649 ms** | 12.133 ms |
+| eigen | expm | f64 | 256x256 | 30.289 ms | 19.867 ms | 26.294 ms | 19.380 ms | **15.903 ms** | 18.256 ms |
+| eigen | sylvester | f64 | 256x256 | 261.271 ms | 259.695 ms | 259.941 ms | 259.498 ms | **72.035 ms** | 80.883 ms |
+| elementwise | exp | f64 | n=8388608 | 27.455 ms | 32.543 ms | **27.353 ms** | 27.896 ms | 27.847 ms | 28.560 ms |
+| elementwise | log | f64 | n=8388608 | **41.556 ms** | 42.263 ms | 42.478 ms | 42.556 ms | 43.053 ms | 43.937 ms |
+| elementwise | sin | f64 | n=8388608 | **38.614 ms** | 38.782 ms | 39.362 ms | 39.823 ms | 38.927 ms | 39.470 ms |
+| elementwise | sqrt | f64 | n=8388608 | 21.302 ms | 21.317 ms | **21.114 ms** | 21.289 ms | 21.365 ms | 21.387 ms |
+| elementwise | erf | f64 | n=8388608 | 32.112 ms | 31.949 ms | **31.732 ms** | 31.967 ms | 36.179 ms | 34.953 ms |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 0.832 ms | 0.202 ms | 0.851 ms | 0.205 ms | 2.424 ms | **0.198 ms** |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 1.381 ms | **1.269 ms** | 1.324 ms | 1.289 ms | 1.370 ms | 1.516 ms |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 6.517 ms | **2.260 ms** | 6.177 ms | 2.288 ms | 6.594 ms | 2.320 ms |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 18.294 ms | 18.221 ms | 18.036 ms | 18.861 ms | **17.840 ms** | 18.291 ms |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 1.786 ms | **1.689 ms** | 1.815 ms | 1.753 ms | 1.752 ms | 1.705 ms |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 104.848 ms | 110.628 ms | 99.470 ms | **98.618 ms** | 103.386 ms | 101.545 ms |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 31.221 ms | 31.983 ms | 29.388 ms | **29.054 ms** | 30.551 ms | 31.941 ms |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 18.305 ms | 17.916 ms | 16.270 ms | **15.885 ms** | 17.140 ms | 18.977 ms |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | **54.321 ms** | 54.741 ms | 54.953 ms | 55.213 ms | 54.899 ms | 54.848 ms |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 73.608 ms | 73.319 ms | 74.370 ms | **72.275 ms** | 73.333 ms | 74.254 ms |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | **25.380 ms** | 26.601 ms | 26.666 ms | 25.865 ms | 25.679 ms | 26.133 ms |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | **75.715 ms** | 76.275 ms | 84.782 ms | 83.988 ms | 79.417 ms | 80.579 ms |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | **3.599 ms** | 3.699 ms | 3.675 ms | 3.703 ms | 3.651 ms | 3.723 ms |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | **5.528 ms** | 5.590 ms | 5.691 ms | 5.668 ms | 5.609 ms | 5.692 ms |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | **0.419 ms** | 0.433 ms | 0.445 ms | 0.444 ms | 0.427 ms | 0.422 ms |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 14.074 ms | **14.011 ms** | 15.474 ms | 14.117 ms | 14.147 ms | 14.111 ms |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 39.256 ms | 39.203 ms | 33.757 ms | **32.635 ms** | 40.253 ms | 40.303 ms |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 43.754 ms | 43.675 ms | **31.894 ms** | 32.034 ms | 46.171 ms | 46.739 ms |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 30.510 ms | 30.456 ms | 28.291 ms | **27.434 ms** | 31.072 ms | 31.310 ms |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 16.668 ms | 16.644 ms | 13.784 ms | **13.466 ms** | 17.261 ms | 17.299 ms |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 21.684 ms | 21.608 ms | 18.055 ms | **17.877 ms** | 22.413 ms | 22.467 ms |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 17.593 ms | 17.556 ms | 15.877 ms | **15.724 ms** | 17.946 ms | 17.965 ms |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 50.784 ms | 50.802 ms | 32.118 ms | **31.046 ms** | 54.792 ms | 54.976 ms |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 33.841 ms | 33.736 ms | 29.495 ms | **28.980 ms** | 34.736 ms | 34.869 ms |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 19.777 ms | 19.742 ms | 17.583 ms | **17.304 ms** | 20.221 ms | 20.462 ms |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 23.595 ms | 23.531 ms | 19.592 ms | **19.322 ms** | 24.339 ms | 24.452 ms |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 22.770 ms | 22.697 ms | 19.357 ms | **18.431 ms** | 23.512 ms | 23.691 ms |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 25.309 ms | 25.289 ms | 19.720 ms | **19.587 ms** | 26.343 ms | 26.532 ms |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 30.987 ms | 31.172 ms | **22.163 ms** | 22.431 ms | 32.786 ms | 33.729 ms |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | **0.036 ms** | **0.036 ms** | **0.036 ms** | **0.036 ms** | **0.036 ms** | **0.036 ms** |
+| pc | ilu_0 | f64 | 128^2 grid | **2.383 ms** | 2.437 ms | 2.403 ms | 2.433 ms | 2.401 ms | 2.535 ms |
+| pc | ilut | f64 | 128^2 grid | 23.169 ms | 23.199 ms | 23.132 ms | 23.180 ms | **22.279 ms** | 22.782 ms |
+| pc | ic_0 | f64 | 128^2 grid | **1.814 ms** | 1.827 ms | 1.833 ms | 1.828 ms | 1.839 ms | 1.870 ms |
+| pc | ildl | f64 | 128^2 grid | **1.734 ms** | 1.752 ms | 1.761 ms | 1.758 ms | 1.764 ms | 1.773 ms |
+| pc | ssor | f64 | 128^2 grid | **0.021 ms** | **0.021 ms** | **0.021 ms** | 0.022 ms | **0.021 ms** | 0.022 ms |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 0.663 ms | **0.661 ms** | 0.665 ms | 0.664 ms | 1.321 ms | 1.329 ms |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 1.585 ms | **1.456 ms** | 1.736 ms | 1.467 ms | 1.588 ms | 1.461 ms |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | **1.493 ms** | 1.494 ms | 1.501 ms | 1.495 ms | 1.540 ms | 1.499 ms |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 1.780 ms | 1.768 ms | 1.818 ms | 1.783 ms | 1.791 ms | **1.764 ms** |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 15.830 ms | 15.505 ms | 16.074 ms | 15.564 ms | 15.984 ms | **15.486 ms** |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 32.230 ms | 32.329 ms | 32.399 ms | 32.454 ms | **32.228 ms** | 32.459 ms |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 46.726 ms | 46.791 ms | 47.014 ms | 46.887 ms | **32.894 ms** | 33.106 ms |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 56.665 ms | **53.987 ms** | 55.463 ms | 54.576 ms | 57.155 ms | 58.023 ms |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 7.733 ms | 7.712 ms | **6.453 ms** | 6.519 ms | 7.998 ms | 8.046 ms |
+| mixed | dot | f32>f64 | n=8388608 | 9.321 ms | 9.354 ms | 1.840 ms | **1.786 ms** | 11.424 ms | 11.440 ms |
+| mixed | gemm | f32>f64 | 512x512x512 | 29.049 ms | 4.032 ms | 15.320 ms | **2.635 ms** | 29.514 ms | 5.023 ms |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 1.377 ms | 1.403 ms | 0.476 ms | **0.475 ms** | 1.478 ms | 1.506 ms |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 3.123 ms | 3.123 ms | **1.202 ms** | 1.229 ms | 3.132 ms | 3.136 ms |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 2.879 ms | 2.877 ms | **0.463 ms** | 0.473 ms | 2.878 ms | 2.893 ms |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 1.382 ms | 1.399 ms | 0.347 ms | **0.346 ms** | 1.394 ms | 1.408 ms |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.381 ms | 1.399 ms | **0.318 ms** | **0.318 ms** | 1.394 ms | 1.409 ms |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 8.087 ms | **1.181 ms** | 14.928 ms | 2.438 ms | 8.394 ms | 1.281 ms |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 30.291 ms | 4.176 ms | 17.341 ms | **2.544 ms** | 30.301 ms | 4.212 ms |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 30.562 ms | 4.187 ms | 17.723 ms | **2.569 ms** | 30.554 ms | 4.241 ms |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 30.551 ms | 4.193 ms | 3.711 ms | **0.674 ms** | 30.558 ms | 4.240 ms |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 27.274 ms | 3.800 ms | 3.688 ms | **0.672 ms** | 27.237 ms | 3.859 ms |
+
 ## ryzen-7-8845hs -- native, 1 thread, class medium
 
 | | |
@@ -55,6 +198,9 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | sparse_eig | 4 | n/a | n/a | 0 |
 | mixed | 3 | 14% | 24% | 0 |
 | integer | 9 | n/a | n/a | 0 |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -170,6 +316,8 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 30.551 ms | 8.79 | 0.05 | n/a | ok |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 27.274 ms | 9.84 | 0.06 | n/a | ok |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ## ryzen-7-8845hs -- native, 8 threads, class medium
@@ -205,6 +353,9 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | sparse_eig | 4 | n/a | n/a | 0 | 13% |
 | mixed | 3 | 13% | 24% | 0 | 12% |
 | integer | 9 | n/a | n/a | 0 | 86% |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
 |---|---|---|---|---:|---:|---:|---:|---|---:|
@@ -320,6 +471,8 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 4.193 ms | 64.02 | 0.38 | n/a | ok | 7.3x (91%) |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 3.800 ms | 70.63 | 0.41 | n/a | ok | 7.2x (90%) |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ! more than 150% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong.
@@ -357,6 +510,9 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | sparse_eig | 4 | n/a | n/a | 0 |
 | mixed | 3 | 69% | 71% | 0 |
 | integer | 9 | n/a | n/a | 0 |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -472,6 +628,8 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 3.711 ms | 72.34 | 0.42 | n/a | ok |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 3.688 ms | 72.78 | 0.43 | n/a | ok |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ## ryzen-7-8845hs -- native-fast, 8 threads, class medium
@@ -507,6 +665,9 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | sparse_eig | 4 | n/a | n/a | 0 | 13% |
 | mixed | 3 | 70% | 70% | 0 | 13% |
 | integer | 9 | n/a | n/a | 0 | 69% |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
 |---|---|---|---|---:|---:|---:|---:|---|---:|
@@ -622,6 +783,8 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 0.674 ms | 398.45 | 2.33 | n/a | ok | 5.5x (69%) |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 0.672 ms | 399.16 | 2.34 | n/a | ok | 5.5x (69%) |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ! more than 150% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong.
@@ -659,6 +822,9 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | sparse_eig | 4 | n/a | n/a | 0 |
 | mixed | 3 | 11% | 23% | 0 |
 | integer | 9 | n/a | n/a | 0 |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -774,6 +940,8 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 30.558 ms | 8.78 | 0.05 | n/a | ok |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 27.237 ms | 9.86 | 0.06 | n/a | ok |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ## ryzen-7-8845hs -- blas, 8 threads, class medium
@@ -809,6 +977,9 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | sparse_eig | 4 | n/a | n/a | 0 | 12% |
 | mixed | 3 | 11% | 22% | 0 | 12% |
 | integer | 9 | n/a | n/a | 0 | 82% |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
 |---|---|---|---|---:|---:|---:|---:|---|---:|
@@ -923,6 +1094,8 @@ Repeatability: 590 of 666 entries within +-5% of the previous session, measured 
 | integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 4.241 ms | 63.29 | 0.37 | n/a | ok | 7.2x (90%) |
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 4.240 ms | 63.32 | 0.37 | n/a | ok | 7.2x (90%) |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 3.859 ms | 69.55 | 0.41 | n/a | ok | 7.1x (88%) |
+
+</details>
 
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 

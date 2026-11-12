@@ -20,7 +20,10 @@
 #      published stays, which is what stillwater-sc/mtl5-python#121 ingests.
 #   3. Writes docs/benchmarks/cards/<MACHINE>.md, the machine's card page:
 #      a provenance table (session, commit, class, runs, CPUs, clock policy,
-#      the raw data, earlier sessions) and the session's cards. The page shows
+#      the raw data, earlier sessions); "Across the runs", each area's median
+#      %roof and each entry's median time per run, the fastest in bold (#799);
+#      then the session's cards, each run's entry table folded into a
+#      <details> block. The page shows
 #      the LATEST published session; publishing an older one leaves it alone.
 #      Table cells are repaired if the cards came from an mtl5_bench that did
 #      not escape `|` (before #758).
@@ -284,6 +287,18 @@ else()
     set(rest "${summary}")
     set(header_cells -1)
     set(repaired 0)
+    # Collected on the way for the cross-run tables at the top (#799): each
+    # run's median %roof per area, and each entry's median time per run. A row
+    # is split into cells with its escaped pipes and any ';' set aside as
+    # @P@ / @S@, so the cells can live in a CMake list; the tables put them
+    # back. An entry's key is area | op | type | shape, as an MD5 so it can
+    # name a variable.
+    set(run_labels "")        # "native 1T", ... in the session's order
+    set(run_idx -1)
+    set(table_kind "")        # areas, entries, or "" outside those tables
+    set(area_order "")
+    set(entry_order "")
+    set(in_details OFF)
     while(NOT rest STREQUAL "")
         string(FIND "${rest}" "\n" nl)
         if(nl EQUAL -1)
@@ -320,8 +335,127 @@ else()
         else()
             set(header_cells -1)
         endif()
+
+        # -- for the cross-run tables, and the per-run entry table folded away
+        if(line MATCHES "^## .* -- ([^,]+), ([0-9]+) threads?, class ")
+            list(APPEND run_labels "${CMAKE_MATCH_1} ${CMAKE_MATCH_2}T")
+            math(EXPR run_idx "${run_idx} + 1")
+        endif()
+        if(line MATCHES "^\\|")
+            if(line MATCHES "^\\| area \\| entries \\|")
+                set(table_kind areas)
+            elseif(line MATCHES "^\\| area \\| op \\|")
+                set(table_kind entries)
+                string(APPEND body "<details>\n<summary>Every entry of this run</summary>\n\n")
+                set(in_details ON)
+            elseif(NOT line MATCHES "^\\|[-:|]+\\|$" AND NOT table_kind STREQUAL "" AND run_idx GREATER -1)
+                string(REPLACE "\\|" "@P@" r "${line}")
+                string(REPLACE ";" "@S@" r "${r}")
+                string(REGEX REPLACE "^\\| *" "" r "${r}")
+                string(REGEX REPLACE " *\\|$" "" r "${r}")
+                string(REGEX REPLACE " *\\| *" ";" cells "${r}")
+                list(GET cells 0 c_area)
+                if(table_kind STREQUAL "areas")
+                    list(GET cells 2 c_med)
+                    if(NOT DEFINED "AREA_SEEN_${c_area}")
+                        set("AREA_SEEN_${c_area}" ON)
+                        list(APPEND area_order "${c_area}")
+                    endif()
+                    set("AREA_${c_area}_${run_idx}" "${c_med}")
+                else()
+                    list(GET cells 1 c_op)
+                    list(GET cells 2 c_type)
+                    list(GET cells 3 c_shape)
+                    list(GET cells 4 c_time)
+                    string(MD5 id "${c_area}|${c_op}|${c_type}|${c_shape}")
+                    if(NOT DEFINED "ENTRY_${id}")
+                        set("ENTRY_${id}" "| ${c_area} | ${c_op} | ${c_type} | ${c_shape} |")
+                        list(APPEND entry_order "${id}")
+                    endif()
+                    if(DEFINED "ENTRY_${id}_${run_idx}")
+                        fail("summary.md lists the entry ${c_area} ${c_op} ${c_type} ${c_shape} twice in one run")
+                    endif()
+                    set("ENTRY_${id}_${run_idx}" "${c_time}")
+                endif()
+            endif()
+        else()
+            set(table_kind "")
+            if(in_details)
+                string(APPEND body "\n</details>\n")
+                set(in_details OFF)
+            endif()
+        endif()
         string(APPEND body "${line}\n")
     endwhile()
+    if(in_details)
+        string(APPEND body "\n</details>\n")
+    endif()
+
+    # -- the cross-run tables -----------------------------------------------------
+    set(across "")
+    list(LENGTH run_labels n_runs)
+    if(n_runs GREATER 1)
+        set(run_head "|")
+        set(rule "|")
+        foreach(lbl IN LISTS run_labels)
+            string(APPEND run_head " ${lbl} |")
+            string(APPEND rule "---:|")
+        endforeach()
+        math(EXPR last_run "${n_runs} - 1")
+        string(APPEND across
+            "## Across the runs\n\n"
+            "Each column is one run of this session: the build variant and its thread count "
+            "(1T is one thread). The runs follow below, each with its full entry table.\n\n"
+            "### Median %roof by area\n\n"
+            "| area ${run_head}\n|---${rule}\n")
+        foreach(a IN LISTS area_order)
+            set(row "| ${a} |")
+            foreach(i RANGE ${last_run})
+                if(DEFINED "AREA_${a}_${i}")
+                    string(APPEND row " ${AREA_${a}_${i}} |")
+                else()
+                    string(APPEND row " -- |")
+                endif()
+            endforeach()
+            string(APPEND across "${row}\n")
+        endforeach()
+        list(LENGTH entry_order n_entries)
+        string(APPEND across
+            "\n### Every entry: median time\n\n"
+            "The median time of each of the ${n_entries} entries in each run. The fastest run "
+            "of each entry is in bold; -- is an entry the run did not measure.\n\n"
+            "| area | op | type | shape ${run_head}\n|---|---|---|---${rule}\n")
+        foreach(id IN LISTS entry_order)
+            # The fastest: times are fixed-point "<n>.<3 digits> ms", so without
+            # the point they compare as integers (microseconds).
+            set(best "")
+            foreach(i RANGE ${last_run})
+                if(DEFINED "ENTRY_${id}_${i}" AND "${ENTRY_${id}_${i}}" MATCHES "^([0-9]+)[.]([0-9][0-9][0-9]) ms$")
+                    math(EXPR us "${CMAKE_MATCH_1} * 1000 + 1${CMAKE_MATCH_2} - 1000")
+                    set("US_${i}" ${us})
+                    if(best STREQUAL "" OR us LESS best)
+                        set(best ${us})
+                    endif()
+                else()
+                    unset("US_${i}")
+                endif()
+            endforeach()
+            set(row "${ENTRY_${id}}")
+            foreach(i RANGE ${last_run})
+                if(NOT DEFINED "ENTRY_${id}_${i}")
+                    string(APPEND row " -- |")
+                elseif(DEFINED "US_${i}" AND "${US_${i}}" EQUAL "${best}")
+                    string(APPEND row " **${ENTRY_${id}_${i}}** |")
+                else()
+                    string(APPEND row " ${ENTRY_${id}_${i}} |")
+                endif()
+            endforeach()
+            string(APPEND across "${row}\n")
+        endforeach()
+        string(APPEND across "\n")
+        string(REPLACE "@P@" "\\|" across "${across}")
+        string(REPLACE "@S@" ";" across "${across}")
+    endif()
     string(REGEX REPLACE "^\n+" "" body "${body}")
     if(repaired GREATER 0)
         note("repaired ${repaired} table rows with unescaped '|' (cards from an mtl5_bench before #758)")
@@ -401,6 +535,7 @@ else()
         "| clock policy | ${clock_cell} |\n"
         "| raw data | [`${DATA_REL}/`](https://github.com/stillwater-sc/mtl5/tree/main/${DATA_REL}) |\n"
         "| earlier sessions | ${earlier} |\n\n"
+        "${across}"
         "${body}")
 
     if(DRY_RUN)

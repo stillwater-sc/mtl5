@@ -864,6 +864,11 @@ jobs:
           done
           grep -q '^# mtl5_bench capability card -- i7-12700k' docs/benchmarks/cards/i7-12700k.md
           grep -q "^| session | \`$session\` (UTC) |" docs/benchmarks/cards/i7-12700k.md
+          # The cross-run tables (#799), and one folded entry table per run.
+          grep -q '^## Across the runs$' docs/benchmarks/cards/i7-12700k.md
+          grep -q '^| area | op | type | shape | native 1T | native 2T | native-fast 1T | native-fast 2T |$' docs/benchmarks/cards/i7-12700k.md
+          test "$(grep -c '^<details>$' docs/benchmarks/cards/i7-12700k.md)" = 4
+          test "$(grep -c '^</details>$' docs/benchmarks/cards/i7-12700k.md)" = 4
           grep -q "'benchmarks/cards/i7-12700k.md'" docs-site/sync-content.mjs
           grep -q '^| `i7-12700K` |.*| \[Card\](cards/i7-12700k.md) (preliminary) |$' docs/benchmarks/systems.md
           if [ "$RUNNER_OS" != macOS ]; then benchmarks/check_sidecars.sh; fi
