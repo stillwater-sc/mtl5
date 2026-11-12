@@ -31,7 +31,6 @@ import glob
 import math
 import os
 import re
-import shutil
 import statistics
 import sys
 
@@ -176,10 +175,10 @@ def cmd_table(page):
     for (machine, comp), e in found.items():
         widths = sorted({w for (_, _, w) in e["rows"]})
         out += [f"### {machine} -- {comp}", "",
-                f"{e['cpu']}; {e['version']}; vector registers {e['vregs']}; built default W = "
-                f"{e['default'].get('f64')} (f64), {e['default'].get('f32')} (f32); median of {e['runs']} runs "
-                f"({len(e['sessions'])} sessions), each the median of 21. Data: "
-                f"`benchmarks/data/{machine}/interleave_rows/`.", "",
+                (f"{e['cpu']}; {e['version']}; vector registers {e['vregs']}; built default W = "
+                 f"{e['default'].get('f64')} (f64), {e['default'].get('f32')} (f32); median of {e['runs']} runs "
+                 f"({len(e['sessions'])} sessions), each the median of 21. Data: "
+                 f"`benchmarks/data/{machine}/interleave_rows/`."), "",
                 "| kernel | " + " | ".join(f"W={w}" for w in widths) +
                 " | fastest | W=6 / fastest | W=6 / W=4 | per-run fastest |",
                 "|---|" + "---|" * (len(widths) + 4)]
@@ -194,8 +193,8 @@ def cmd_table(page):
                 summary.append((machine, comp, e["isa"], t, best, med))
         out.append("")
     head = ["### Summary", "",
-            "Per machine and compiler: the fastest width of each kernel, and the worst cost of a fixed "
-            "width against the fastest (time at that width / time at the fastest; 1.000 is no loss).", "",
+            ("Per machine and compiler: the fastest width of each kernel, and the worst cost of a fixed "
+             "width against the fastest (time at that width / time at the fastest; 1.000 is no loss)."), "",
             "| machine | ISA | compiler | fastest (f64 gemv, trmv, trisolve / f32 ...) | W=4 | W=6 | W=8 | W=6 / W=4 |",
             "|---|---|---|---|---|---|---|---|"]
     groups = collections.OrderedDict()
@@ -207,8 +206,8 @@ def cmd_table(page):
         head.append(f"| {machine} | {isa} | {comp} | {fast} | " + " | ".join(f"{x:.3f}" for x in worst) +
                     f" | {max(r[5][6] / r[5][4] for r in rs):.3f} |")
     head += ["", "### A fixed default per ISA class", "",
-             "Time at a fixed width / time at the fastest width, over every machine, compiler, kernel and "
-             "type of the class: geometric mean / worst case.", "",
+             ("Time at a fixed width / time at the fastest width, over every machine, compiler, kernel and "
+              "type of the class: geometric mean / worst case."), "",
              "| ISA | W=2 | W=4 | W=6 | W=8 | W=12 |", "|---|---|---|---|---|---|"]
     for isa in sorted({s[2] for s in summary}, key=lambda i: (i != "x86-64", i)):
         cells = []
