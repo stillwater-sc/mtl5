@@ -18,11 +18,14 @@ with the system description here.
 | `ryzen-7-8845hs` | AMD Ryzen 7 8845HS (Zen 4) | 8 cores (SMT siblings excluded) | — | [Card](cards/ryzen-7-8845hs.md) |
 | `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) | [Card](cards/ryzen-9-8945hs.md) |
 | `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | — | [Card](cards/xeon-e5-2420v2.md) |
-| `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | pending — #430 | [Card](cards/jetson-orin.md) |
-| `arduino-ventuno-q` | Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55 | 4 A78C cores (A55 excluded) | null run (no cache sizes exposed); see its section | [Card](cards/arduino-ventuno-q.md) |
+| `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | [Results](jetson-orin.md) | [Card](cards/jetson-orin.md) |
+| `arduino-ventuno-q` | Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55 | 4 A78C cores (A55 excluded) | [Results](arduino-ventuno-q.md) | [Card](cards/arduino-ventuno-q.md) |
 
-**Results** pages are written analyses of the suites in `benchmarks/README.md`
-(GEMM against the vendors, factorizations, threading, sparse direct).
+**Results** pages are written analyses of one machine. The i7-12700K and
+Ryzen 9 8945HS pages cover the suites in `benchmarks/README.md` (GEMM against
+the vendors, factorizations, threading, sparse direct) and the platform
+benchmark's #737 sessions. The Jetson Orin and Ventuno Q pages read the
+platform benchmark and the interleave sweeps.
 **mtl5_bench cards** are the platform benchmark's generated capability cards
 (#721): every operation family against this machine's measured FMA peak and
 bandwidth. A card page is written by `benchmarks/publish_platform.cmake` from a
@@ -35,10 +38,10 @@ The sessions' `bench_interleave_rows` sweeps are compared across the machines
 on [Interleave width across the benchmark machines](interleave-width.md) (#780).
 
 A machine is registered here as soon as it is part of an experiment, which can
-precede its first result page: the bottom two rows exist because #430 needs the
-cache hierarchies and pinning policies of all four machines settled *before* it
-starts measuring. A row without a results link means the hardware is
-characterized and the suites have not been run on it yet.
+precede its first result page: the Jetson and Ventuno rows first existed
+because #430 needed the cache hierarchies and pinning policies of all four
+machines settled *before* it started measuring. A row without a results link
+has a card but no written analysis yet.
 
 ## `i7-12700K` — desktop hybrid (Alder Lake)
 
@@ -326,6 +329,10 @@ equivalents where a vendor is linked).
 > **15 W-mode, unpinned** numbers and should not be compared against a `MAXN`
 > or `jetson_clocks` run. Single-thread GEMM measured 6.7 GFLOP/s, roughly 56% of
 > the ~12 GFLOP/s fp64 NEON peak this core reaches at the 15 W cap.
+>
+> The #737 platform sessions use a different policy: 25 W (mode 1) and
+> `jetson_clocks`, with all six cores at 1344 MHz. See the
+> [Jetson Orin analysis](jetson-orin.md).
 
 The 6-core figure matters beyond bookkeeping: the thread pool clamps
 `MTL5_NUM_THREADS` to `hardware_concurrency`, so a run asking for 8 threads here

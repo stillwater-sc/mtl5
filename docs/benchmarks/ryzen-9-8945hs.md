@@ -1,9 +1,16 @@
 # Benchmark Results — AMD Ryzen 9 8945HS
 
 Full benchmark results for the `ryzen-9-8945hs` system described on the
-[benchmark systems](systems.md) page. Measured 2026-08-02 in a single session:
-every figure below comes from the same set of builds, on the same machine,
-under the pinning policy documented there.
+[benchmark systems](systems.md) page, under the pinning policy documented
+there.
+
+**Provenance.** Two measurement dates, and which one applies depends on the
+section:
+
+| Section | Measured | Why |
+|---|---|---|
+| [Platform benchmark (#737)](#platform-benchmark-737) | **2026-11-12** | The capability card's two sessions (#721, #737); a different benchmark from every section below it |
+| Every other section | 2026-08-02 | One session: every figure comes from the same set of builds |
 
 This is the first **Windows / MSVC** results page, and the first on **AMD Zen 4**.
 Read it together with the system description — and note that its backend set
@@ -13,6 +20,13 @@ MKL comes from the `mkl-devel` wheel). These are not portable performance claims
 
 ## Headline findings
 
+- **The native-fast kernels are SSE2 under MSVC, the likely explanation of
+  most of the gate failure below (#737).** The platform benchmark's sidecars record
+  Highway's target for native-fast as `SSE2`. MTL5 compiles Highway for its
+  static target only, without run-time dispatch, and MSVC without `/arch`
+  targets SSE2: 128-bit vectors, no FMA. On one core, native-fast GEMM at 512³
+  reaches 21–33% of OpenBLAS in the two sessions. See
+  [Platform benchmark (#737)](#platform-benchmark-737).
 - **The #82 GEMM acceptance gate FAILS on this machine — native-fast is at
   ~32% of OpenBLAS** (median 32.0% for N ≥ 256), far below the epic's 80% target.
   On the i7 the same gate passes at 82%. The gap is entirely in the native-fast
@@ -35,6 +49,109 @@ MKL comes from the `mkl-devel` wheel). These are not portable performance claims
   wins nothing here (it beat SuiteSparse on `rajat14` under GCC), and native LU
   trails SuperLU by 2.5–23.8×. The fill ratios match the i7 exactly, so the extra
   gap is again the slower MSVC native kernel, not ordering quality.
+
+## Platform benchmark (#737)
+
+Measured on 2026-11-12. This section reads the machine's
+[capability card](cards/ryzen-9-8945hs.md): `mtl5_bench`, the platform
+benchmark of #721, which runs every operation family at fixed sizes and
+reports each against the machine's measured FMA peak and bandwidth. It is a
+different benchmark from the sweeps in the sections below. Their sizes and
+protocols differ, so compare the two only through ratios taken within one
+benchmark.
+
+| | |
+|---|---|
+| Sessions | `20261112T030915Z` and `20261112T032806Z` (the card shows the second), a cold boot between them |
+| Commit | `cd6762a6e989` |
+| Compiler | MSVC 19.52.37029, `/O2 /Ob2 /DNDEBUG`, no `/arch`. Highway's target is `SSE2` |
+| Cores | the 8 physical cores, SMT siblings idle: CPUs 0, 2, 4, …, 14 |
+| Clock policy | a copy of the Balanced power scheme with processor state 100–100%, EPP 0 and aggressive boost, on AC |
+| Runs | `native`, `native-fast` and `blas` (OpenBLAS), each at 1 and 8 threads, class `medium`. 0 failed checks |
+| Repeatability | 580 of 666 entries (87.1%) within ±5% between the two sessions |
+
+**Repeatability.** This is the least repeatable machine of the campaign. The
+median ratio between the sessions is 0.997–0.999 in every run, but two runs
+carry most of the outliers:
+
+- **`native-t8`, 26 entries outside ±5%.** The sessions record their
+  background activity (#787). At 03:22Z, inside the second session's window
+  (03:17:13Z to 03:28:06Z; a session's ID is the time its runs ended), Windows
+  Update installed an update and Defender's security intelligence was
+  updated. The logs don't time the individual runs, so the update can't be
+  tied to `native-t8` for certain. No Defender scan ran in either session.
+- **`native-fast-t1`, 24 entries.** A block of dense kernels is 1.4–1.6×
+  slower in the second session: `gemm` f64 and f32, `lu` f64 and f32, `symm`,
+  `gemmt`, `trmm`. They move together, and nothing in the background record
+  coincides with them. It is unexplained.
+
+### The card by area
+
+The median %roof of each area. Areas without a roofline are left out.
+
+| area | native 1T | native 8T | native-fast 1T | native-fast 8T | blas 1T | blas 8T |
+|---|---:|---:|---:|---:|---:|---:|
+| blas1 | 20% | 84% | 103% | 110% | 18% | 81% |
+| blas2 | 44% | 61% | 54% | 62% | 76% | 100% |
+| blas3 | 12% | 2% | 14% | 5% | 71% | 44% |
+| factor | 3% | 1% | 3% | 1% | 13% | 2% |
+| eigen | 3% | 0% | 4% | 0% | 17% | 2% |
+| elementwise | 7% | 5% | 7% | 6% | 6% | 6% |
+| sparse | 22% | 32% | 21% | 36% | 22% | 21% |
+| direct | 0% | 0% | 0% | 0% | 0% | 0% |
+| smoother | 31% | 28% | 30% | 29% | 31% | 30% |
+| mg | 29% | 29% | 29% | 29% | 29% | 29% |
+| mixed | 11% | 11% | 59% | 58% | 11% | 11% |
+
+- **`blas1` on one core is at 103% in native-fast and 18–20% in the other two
+  builds.** Under MSVC the generic vector loops don't come close to the memory
+  roof on one core, and the explicit SSE2 kernels do.
+- **`blas3` in native-fast (14%) is barely above the generic build (12%).** The
+  SSE2 GEMM kernel gains little over MSVC's code for the portable loops.
+
+### GEMM at 512³
+
+`blas3/gemm`, GFLOP/s and % of the measured FMA peak (about 63 GFLOP/s per
+core in f64, 506 on eight). native-fast is shown for both sessions, because
+they differ by 1.56×.
+
+| | native | native-fast | OpenBLAS | native-fast / OpenBLAS |
+|---|---:|---:|---:|---:|
+| f64, 1 thread, session 1 | | 19.34 (31%) | 58.65 (90%) | 33% |
+| f64, 1 thread, session 2 (card) | 13.41 (17%) | 12.42 (20%) | 58.82 (93%) | 21% |
+| f64, 8 threads (card) | 105.99 (19%) | 98.27 (19%) | 393.83 (78%) | 25% |
+| f32, 1 thread, session 1 | | 38.58 (30%) | 112.93 (90%) | 34% |
+| f32, 1 thread, session 2 (card) | 26.96 (21%) | 24.80 (20%) | 113.07 (89%) | 22% |
+| f32, 8 threads (card) | 212.00 (21%) | 172.86 (17%) | 709.02 (70%) | 24% |
+
+- **Session 1 agrees with the sweep below**, which found native-fast at 32.0%
+  of OpenBLAS for N ≥ 256. Session 2 is the slow mode described under
+  Repeatability.
+- **At eight threads, native-fast is no faster than the generic build.** Both
+  scale about 7.9× in f64, and both end at about a quarter of OpenBLAS.
+- **The likely fix is a build flag, not a kernel, but it is unmeasured.** An
+  `/arch:AVX2` (or `AVX512`) build of native-fast would give Highway an AVX2
+  or AVX-512 target. On the i7-12700K under GCC, with `AVX2`, the same GEMM
+  reaches 98% of OpenBLAS. There is no MSVC measurement with `/arch` yet, so
+  whether it closes the gap here is a hypothesis until one is taken.
+- **Mixed precision is native-fast's.** `mixed/gemm` reaches 13.9 GFLOP/s on one
+  core against 7.2–7.3 in the other two builds, and `block_scaled_dot` 29.1
+  against 9.1–9.7.
+
+### Interleave width
+
+From [Interleave width across the benchmark machines](interleave-width.md),
+taken in the same sessions on CPU 0. Under MSVC and clang-cl, W = 8 is the
+fastest width of every generic row kernel, or within 0.2% of it. The x86-64
+default of #798 is 8, so it costs nothing here. The previous default, 6, cost
+up to 31% under clang-cl (f64 `trmv`).
+
+### Open observation
+
+Column-major `gemv` in native-fast takes 22.3 ms on one core against 7.8 ms in
+the generic build and 3.6 ms in OpenBLAS: 2.9× slower than the generic build.
+The same gap appears on every machine of the campaign, so it belongs to the
+native-fast path. #804 tracks it.
 
 ## Dense BLAS (single-threaded)
 
@@ -237,10 +354,17 @@ on this page.
   vendor libraries (OpenBLAS, MKL) are the like-for-like comparison, and they
   land within a few percent of the i7's absolute GFLOP/s.
 - **native-fast is not built with an explicit wide-ISA flag.** MSVC ignores
-  `-march=native` (`MTL5_NATIVE_ARCH`), so the native path's own (non-Highway)
-  code is compiled for the MSVC baseline, and only Highway's dispatched kernels
-  target AVX2/AVX-512. This is the leading suspect for the #82 gate failure.
-- **Clocks are not pinned.** Windows runs its balanced power plan; the 8945HS is
+  `-march=native` (`MTL5_NATIVE_ARCH`), so the whole native-fast build is
+  compiled for the MSVC baseline, SSE2.
+
+  > **Corrected (2026-11, #737).** This caveat used to say that "only Highway's
+  > dispatched kernels target AVX2/AVX-512". MTL5 doesn't use Highway's run-time
+  > dispatch, so the Highway kernels are SSE2 too: the platform benchmark's
+  > sidecars record `simd_backend=SSE2` for native-fast. That makes the missing
+  > `/arch` flag the leading explanation of the #82 gate failure. An MSVC
+  > build with `/arch` would confirm it.
+- **Clocks are not pinned in the sweeps.** Windows ran its balanced power plan
+  (the #737 sessions use a copy of it pinned to 100% processor state); the 8945HS is
   a 35–54 W mobile part that boosts to ~5.2 GHz but sustains lower under load.
   Treat differences under ~5 points between two sizes or two runs as noise.
 - **Absolute GFLOP/s depend on the measurement protocol.** Every table here comes
@@ -250,6 +374,12 @@ on this page.
   library and version the i7 page used; only the packaging differs.
 
 ## Reproducing
+
+The platform benchmark's sessions are run with
+`benchmarks/machines/ryzen-9-8945hs-platform.ps1` and published with
+`benchmarks/publish_platform.cmake`. Their repeatability comes from
+`benchmarks/compare_sessions.py` on the two session directories under
+`benchmarks/data/ryzen-9-8945hs/mtl5_bench/`.
 
 Builds and sweeps use the Windows PowerShell harnesses (the MSVC equivalents of
 the bash scripts), which pin with processor-affinity bitmasks:
