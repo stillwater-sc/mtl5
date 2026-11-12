@@ -120,16 +120,16 @@ fastest width.
 
 ## Open observations
 
-These are measured but not explained, and no issue tracks them yet.
+These are measured but not explained yet. Each has a tracking issue.
 
-- **The threaded LU.** `factor/lu` f64 512×512 is 4.4× slower on four threads
+- **The threaded LU (#805).** `factor/lu` f64 512×512 is 4.4× slower on four threads
   than on one (native-fast 24.6 → 109.1 ms; the generic build 26.2 →
   109.5 ms). The first session agrees (24.7 → 112.4 ms). Cholesky and QR, on
   the same cores, gain 1.1× and 1.3×.
-- **Column-major `gemv` in native-fast** takes 49.2 ms on one core against
+- **Column-major `gemv` in native-fast (#804)** takes 49.2 ms on one core against
   9.8 ms in the generic build: 5.0× slower. The same gap appears on every
   machine of the campaign (2.2× on the i7-12700K, 3.2× on the Jetson).
-- **The quad integer gemm is slower than the plain one.** This build has the
+- **The quad integer gemm is slower than the plain one (#806).** This build has the
   dot-product extension, so `gemm_quad` i8>i32 should use `SDOT`. It reaches
   11.4 GFLOP/s on one core and 41.2 on four, against 16.2 and 62.6 for the
   plain i8 gemm. On the Jetson, whose build has no `DOTPROD`, the quad form is

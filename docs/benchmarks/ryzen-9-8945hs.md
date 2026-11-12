@@ -151,7 +151,7 @@ up to 31% under clang-cl (f64 `trmv`).
 Column-major `gemv` in native-fast takes 22.3 ms on one core against 7.8 ms in
 the generic build and 3.6 ms in OpenBLAS: 2.9× slower than the generic build.
 The same gap appears on every machine of the campaign, so it belongs to the
-native-fast path. No issue tracks it yet.
+native-fast path. #804 tracks it.
 
 ## Dense BLAS (single-threaded)
 
