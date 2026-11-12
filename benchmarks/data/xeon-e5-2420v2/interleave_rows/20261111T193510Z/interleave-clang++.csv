@@ -1,0 +1,127 @@
+session,run,compiler,compiler_version,cpu,vector_registers,n,reps,kernel,type,width,is_default,ms,gbps
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,1,0,21.111,6.36
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,2,0,13.813,9.72
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,4,0,13.334,10.07
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,6,1,13.698,9.80
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,8,0,13.923,9.64
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,12,0,15.744,8.53
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,16,0,18.256,7.36
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,1,0,10.650,6.31
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,2,0,7.602,8.84
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,4,0,7.373,9.11
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,6,1,7.370,9.11
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,8,0,7.464,9.00
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,12,0,8.398,8.00
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,16,0,15.948,4.21
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,1,0,10.090,6.66
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,2,0,7.306,9.19
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,4,0,7.181,9.35
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,6,1,7.385,9.10
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,8,0,7.444,9.02
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,12,0,10.781,6.23
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,16,0,15.917,4.22
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,1,0,19.187,3.50
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,2,0,10.728,6.26
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,4,0,9.061,7.41
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,6,1,8.483,7.91
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,8,0,8.860,7.58
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,12,0,10.197,6.58
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,16,0,12.033,5.58
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,1,0,10.221,3.29
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,2,0,5.601,6.00
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,4,0,4.751,7.07
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,6,1,4.460,7.53
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,8,0,4.754,7.07
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,12,0,5.525,6.08
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,16,0,11.651,2.88
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,1,0,9.989,3.36
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,2,0,5.448,6.17
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,4,0,4.639,7.24
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,6,1,4.245,7.91
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,8,0,4.699,7.15
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,12,0,8.702,3.86
+20261111T193510Z,1,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,16,0,11.955,2.81
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,1,0,19.629,6.84
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,2,0,14.382,9.34
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,4,0,13.138,10.22
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,6,1,13.513,9.94
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,8,0,13.690,9.81
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,12,0,15.142,8.87
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,16,0,17.592,7.63
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,1,0,10.490,6.40
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,2,0,7.550,8.90
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,4,0,7.156,9.39
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,6,1,7.305,9.20
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,8,0,7.373,9.11
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,12,0,8.653,7.76
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,16,0,15.583,4.31
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,1,0,10.972,6.12
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,2,0,7.247,9.27
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,4,0,6.993,9.61
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,6,1,7.213,9.31
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,8,0,7.286,9.22
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,12,0,10.182,6.60
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,16,0,15.218,4.41
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,1,0,19.457,3.45
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,2,0,10.694,6.28
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,4,0,8.998,7.46
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,6,1,8.317,8.07
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,8,0,8.684,7.73
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,12,0,9.962,6.74
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,16,0,11.072,6.06
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,1,0,10.082,3.33
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,2,0,5.583,6.02
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,4,0,4.794,7.01
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,6,1,4.471,7.51
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,8,0,4.653,7.22
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,12,0,5.283,6.36
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,16,0,10.765,3.12
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,1,0,9.836,3.41
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,2,0,5.429,6.19
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,4,0,4.663,7.20
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,6,1,4.199,8.00
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,8,0,4.503,7.46
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,12,0,8.511,3.95
+20261111T193510Z,2,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,16,0,10.988,3.06
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,1,0,19.641,6.84
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,2,0,13.748,9.77
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,4,0,13.241,10.14
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,6,1,13.976,9.61
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,8,0,13.712,9.79
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,12,0,15.011,8.95
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f64,16,0,17.440,7.70
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,1,0,10.455,6.43
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,2,0,7.410,9.06
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,4,0,7.157,9.39
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,6,1,7.271,9.24
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,8,0,7.330,9.16
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,12,0,8.003,8.39
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f64,16,0,14.667,4.58
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,1,0,10.226,6.57
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,2,0,7.234,9.29
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,4,0,6.974,9.63
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,6,1,7.258,9.25
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,8,0,7.253,9.26
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,12,0,10.250,6.55
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f64,16,0,14.918,4.50
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,1,0,20.370,3.30
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,2,0,10.719,6.26
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,4,0,9.294,7.22
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,6,1,8.564,7.84
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,8,0,8.626,7.78
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,12,0,9.865,6.81
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,gemv,f32,16,0,11.528,5.82
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,1,0,10.218,3.29
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,2,0,5.648,5.95
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,4,0,4.752,7.07
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,6,1,4.426,7.59
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,8,0,4.666,7.20
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,12,0,5.331,6.30
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,trmv lower,f32,16,0,10.886,3.09
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,1,0,9.894,3.39
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,2,0,5.416,6.20
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,4,0,4.594,7.31
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,6,1,4.478,7.50
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,8,0,4.528,7.42
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,12,0,8.601,3.90
+20261111T193510Z,3,clang++,Ubuntu clang version 21.1.8 (6ubuntu1),0,16,4096,21,lower_trisolve,f32,16,0,11.090,3.03

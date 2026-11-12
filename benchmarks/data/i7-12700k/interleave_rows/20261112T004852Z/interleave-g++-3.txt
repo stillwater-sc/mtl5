@@ -1,0 +1,51 @@
+# bench_interleave_rows, g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0, cpu 0, clock policy: governor performance on the P-cores, turbo on; performance 800-4900 MHz on cpus 0,2,8,10,12,14; performance 800-5000 MHz on cpus 4,6
+# commit bfa1c2822688880d398b926678a3d053ebf8e6d4, 2026-11-12T00:48:58Z
+interleave width sweep, n = 4096, median of 21; vector registers = 16; * = this build's default
+
+gemv            f64  W=1        8.273 ms    16.23 GB/s
+gemv            f64  W=2        5.122 ms    26.22 GB/s
+gemv            f64  W=4        3.806 ms    35.28 GB/s
+gemv            f64  W=6  *     3.694 ms    36.35 GB/s
+gemv            f64  W=8        3.620 ms    37.09 GB/s
+gemv            f64  W=12       3.566 ms    37.66 GB/s  <- fastest
+gemv            f64  W=16       3.626 ms    37.03 GB/s
+trmv lower      f64  W=1        4.309 ms    15.59 GB/s
+trmv lower      f64  W=2        2.659 ms    25.27 GB/s
+trmv lower      f64  W=4        2.106 ms    31.89 GB/s
+trmv lower      f64  W=6  *     2.014 ms    33.35 GB/s
+trmv lower      f64  W=8        2.009 ms    33.44 GB/s
+trmv lower      f64  W=12       1.961 ms    34.25 GB/s  <- fastest
+trmv lower      f64  W=16       2.099 ms    32.01 GB/s
+lower_trisolve  f64  W=1        4.274 ms    15.72 GB/s
+lower_trisolve  f64  W=2        2.629 ms    25.55 GB/s
+lower_trisolve  f64  W=4        2.085 ms    32.23 GB/s
+lower_trisolve  f64  W=6  *     1.978 ms    33.97 GB/s
+lower_trisolve  f64  W=8        1.936 ms    34.70 GB/s
+lower_trisolve  f64  W=12       1.910 ms    35.18 GB/s  <- fastest
+lower_trisolve  f64  W=16       2.044 ms    32.86 GB/s
+fastest f64: gemv 12, trmv 12, lower_trisolve 12  -> -DMTL5_INTERLEAVE_ROWS_F64=12
+
+gemv            f32  W=1        6.962 ms     9.64 GB/s
+gemv            f32  W=2        7.318 ms     9.17 GB/s
+gemv            f32  W=4        2.779 ms    24.16 GB/s
+gemv            f32  W=6  *     2.748 ms    24.44 GB/s  <- fastest
+gemv            f32  W=8        2.750 ms    24.42 GB/s
+gemv            f32  W=12       2.808 ms    23.91 GB/s
+gemv            f32  W=16       3.528 ms    19.03 GB/s
+trmv lower      f32  W=1        3.735 ms     8.99 GB/s
+trmv lower      f32  W=2        2.053 ms    16.36 GB/s
+trmv lower      f32  W=4        1.531 ms    21.93 GB/s
+trmv lower      f32  W=6  *     1.472 ms    22.81 GB/s
+trmv lower      f32  W=8        1.443 ms    23.27 GB/s  <- fastest
+trmv lower      f32  W=12       1.466 ms    22.92 GB/s
+trmv lower      f32  W=16       1.845 ms    18.20 GB/s
+lower_trisolve  f32  W=1        3.695 ms     9.09 GB/s
+lower_trisolve  f32  W=2        2.019 ms    16.64 GB/s
+lower_trisolve  f32  W=4        1.476 ms    22.75 GB/s
+lower_trisolve  f32  W=6  *     1.430 ms    23.49 GB/s
+lower_trisolve  f32  W=8        1.411 ms    23.81 GB/s  <- fastest
+lower_trisolve  f32  W=12       1.440 ms    23.32 GB/s
+lower_trisolve  f32  W=16       1.768 ms    18.99 GB/s
+fastest f32: gemv 6, trmv 8, lower_trisolve 8
+
+A width differing per kernel is set by specializing mtl::interface::interleave_rows<T, Kernel>.
