@@ -52,7 +52,7 @@ bool gemv_matches(std::size_t m, std::size_t n, bool rowmajor) {
     return true;
 }
 
-// Sizes straddling the SIMD width, the MR=4 row block, and the UB*W y-strip;
+// Sizes straddling the SIMD width and the MR=4 row block;
 // 0 exercises the empty-shape / zero-iteration paths (incl. m==n==0).
 const std::size_t kDims[] = {0, 1, 2, 3, 4, 5, 7, 8, 9, 13, 16, 17, 31, 33, 64, 100};
 
@@ -68,6 +68,20 @@ TEMPLATE_TEST_CASE("gemv: row-major and col-major vs naive, all sizes", "[operat
             INFO("m=" << m << " n=" << n);
             CHECK(gemv_matches<TestType>(m, n, true));   // row-major (dot-of-rows)
             CHECK(gemv_matches<TestType>(m, n, false));  // col-major (axpy-of-columns)
+        }
+}
+
+// The col-major kernel sweeps 16 KB strips of y, four columns per pass (#804).
+// kDims stays far below one strip, so take m across the strip boundaries and n
+// across the four-column groups: one row short of a strip, exactly one, one
+// past, and two strips plus a part batch, which leaves rows for the scalar tail.
+TEMPLATE_TEST_CASE("gemv: col-major across strip boundaries", "[operation][gemv]",
+                   float, double, std::int32_t, std::uint32_t) {
+    constexpr std::size_t S = 16384 / sizeof(TestType);
+    for (std::size_t m : {S - 1, S, S + 1, 2 * S + 5})
+        for (std::size_t n : {1, 3, 4, 5, 9}) {
+            INFO("m=" << m << " n=" << n);
+            CHECK(gemv_matches<TestType>(m, n, false));
         }
 }
 
