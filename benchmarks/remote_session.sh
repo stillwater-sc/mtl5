@@ -93,6 +93,12 @@ fi
 if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]; then
     echo "remote_session.sh: the local tree has uncommitted changes; commit them first" >&2; exit 2
 fi
+# Results are kept per machine, not per host, so two hosts with the same
+# profile share $DEST/$MACHINE: refuse a tag that already has results there
+# before running anything (the fetch checks again).
+if [ -e "$DEST/$MACHINE/$TAG" ]; then
+    echo "remote_session.sh: $DEST/$MACHINE/$TAG already exists; pick another --tag" >&2; exit 2
+fi
 SHA=$(git -C "$ROOT" rev-parse HEAD)
 RDIR=mtl5-campaign
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30)
@@ -113,7 +119,7 @@ fi
 # The remote lock and the local temporary file are cleaned up however this
 # script ends. OWN_LOCK is 1 from taking the lock until the detached session
 # has started, which then owns it.
-OWN_LOCK=0 JOB=""
+OWN_LOCK=0 JOB="" STAGE=""
 # Every long wait is nap, not sleep: bash runs a trap only after the
 # foreground command ends, so a Ctrl-C or kill during "sleep 300" would wait
 # out the 300 s; wait returns on the signal at once.
@@ -123,6 +129,7 @@ cleanup() {
     [ -n "$NAP" ] && kill "$NAP" 2>/dev/null
     [ "$OWN_LOCK" -eq 1 ] && unlock
     [ -n "$JOB" ] && rm -f "$JOB"
+    [ -n "$STAGE" ] && rm -rf "$STAGE"
     return 0
 }
 trap cleanup EXIT
@@ -237,9 +244,13 @@ EOF
     log "session finished, exit $st"
 
     mkdir -p "$DEST/$MACHINE"
-    [ -e "$DEST/$MACHINE/$TAG" ] && { log "$DEST/$MACHINE/$TAG exists; results left on $HOST (~/$OUTREL)"; exit 3; }
-    scp -q -r -o BatchMode=yes "$HOST:$RDIR/$OUTREL" "$DEST/$MACHINE/" 2> >(grep -v '^\*\*' >&2) \
-        && mv "$DEST/$MACHINE/campaign-$TAG" "$DEST/$MACHINE/$TAG" || { log "fetch failed"; exit 3; }
+    [ -e "$DEST/$MACHINE/$TAG" ] && { log "$DEST/$MACHINE/$TAG exists; results left on $HOST (~/$RDIR/$OUTREL)"; exit 3; }
+    # scp -r copies campaign-$TAG into a fresh staging directory, never into
+    # $DEST/$MACHINE itself, where it could merge into a saved session of that
+    # name; the trap removes the staging directory on every exit.
+    STAGE=$(mktemp -d "$DEST/$MACHINE/.fetch-XXXXXX") || { log "fetch failed"; exit 3; }
+    scp -q -r -o BatchMode=yes "$HOST:$RDIR/$OUTREL" "$STAGE/" 2> >(grep -v '^\*\*' >&2) \
+        && mv "$STAGE/campaign-$TAG" "$DEST/$MACHINE/$TAG" || { log "fetch failed; results left on $HOST (~/$RDIR/$OUTREL)"; exit 3; }
     log "results in $DEST/$MACHINE/$TAG"
     tail -3 "$DEST/$MACHINE/$TAG/session.log" | tr -d '\r' | sed "s/^/[$HOST]   /"
     exit "$st"
@@ -317,6 +328,7 @@ log "session finished, exit $st"
 
 # -- 4. fetch -------------------------------------------------------------------------
 mkdir -p "$DEST/$MACHINE"
+[ -e "$DEST/$MACHINE/$TAG" ] && { log "$DEST/$MACHINE/$TAG exists; results left on $HOST (~/$RDIR/$OUTREL)"; exit 3; }
 rsync -a -e "ssh -o BatchMode=yes" "$HOST:$RDIR/$OUTREL/" "$DEST/$MACHINE/$TAG/" || { log "fetch failed"; exit 3; }
 log "results in $DEST/$MACHINE/$TAG"
 tail -3 "$DEST/$MACHINE/$TAG/session.log" | sed "s/^/[$HOST]   /"
