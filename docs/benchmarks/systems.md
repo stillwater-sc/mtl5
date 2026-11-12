@@ -15,7 +15,7 @@ with the system description here.
 |--------|-----|-----------|---------|-----------------|
 | `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) | [Card](i7-12700k-mtl5-bench.md) (preliminary) |
 | `ryzen-7-2700x` | AMD Ryzen 7 2700X (Zen+) | 8 cores (SMT) | — | [Card](ryzen-7-2700x-mtl5-bench.md) (preliminary) |
-| `ryzen-7-8845hs` | AMD Ryzen 7 8845HS (Zen 4) | 8 cores (SMT siblings excluded) | — | pending — #737 |
+| `ryzen-7-8845hs` | AMD Ryzen 7 8845HS (Zen 4) | 8 cores (SMT siblings excluded) | — | [Card](ryzen-7-8845hs-mtl5-bench.md) |
 | `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) | [Card](ryzen-9-8945hs-mtl5-bench.md) |
 | `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | — | [Card](xeon-e5-2420v2-mtl5-bench.md) (preliminary) |
 | `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | pending — #430 | pending — #737 |
