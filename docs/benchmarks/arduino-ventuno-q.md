@@ -73,36 +73,50 @@ Areas without a roofline are left out.
 
 ## Roofline
 
-![Roofline of the Ventuno Q native-fast runs](../img/benchmarks/arduino-ventuno-q/roofline-platform.svg)
+![Roofline plots of the generic and native-fast builds, at 1 and 4 threads](../img/benchmarks/arduino-ventuno-q/roofline-platform.svg)
 
-Each point is one entry of the native-fast run, placed at its arithmetic
-intensity (flops per byte moved) and its measured GFLOP/s. The lines are the
-run's own roofs: the measured bandwidth up to the ridge, then the FMA peak,
-solid for f64 and dashed for f32. An entry at 100% of its roof sits on the
-line. Integer entries are left out, because the model has no integer ceiling,
-and so are the 28 entries that record no flops or bytes (Krylov solvers,
-preconditioners, orderings and sparse eigensolvers). That leaves 74 of the 111
-entries.
+Each panel places one build's entries at their arithmetic intensity (flops per
+byte moved) and their measured GFLOP/s. The rows are 1 thread and all 4
+threads. The columns are the generic `native` build, the baseline a
+straightforward implementation gives, and `native-fast`, the best MTL5 does.
+There is no OpenBLAS column, because CMake found no BLAS/LAPACK on the board.
+The lines are each run's own roofs: the measured bandwidth up to the ridge,
+then the FMA peak, solid for f64 and dashed for f32. An entry at 100% of its
+roof sits on the line. Integer entries are left out, because the model has no
+integer ceiling, and so are the 28 entries that record no flops or bytes
+(Krylov solvers, preconditioners, orderings and sparse eigensolvers). That
+leaves 74 of the 111 entries in each panel.
 
-- **The memory-bound points line up along the slope, and the slope is the
-  same in both panels**: one core already draws the 24.9 GB/s. `blas1` is at
-  a median 94% of its roof on one core and 90% on four, the smoothers at
-  47–52%.
+Across the columns:
+
+- **Level 3 is where the builds separate.** GEMM is at 30% and 57% of the FMA
+  peak on one core, and at 15% and 51% on four.
+- **The factorizations and eigensolvers don't move**: the `factor` median is
+  12% in both builds on one core.
+- **The memory-bound entries sit on the slope in both columns.** `blas1` is at
+  a median 83% in the generic build and 94% in native-fast.
+
+Within the native-fast column:
+
+- **The memory-bound points line up along the slope, and the slope is the same
+  in both panels**: one core already draws the 24.9 GB/s. `blas1` is at a
+  median 94% of its roof on one core and 90% on four, the smoothers at 47–52%.
 - **Level 3 is the only area near the ceiling.** GEMM is at 57% of the FMA
   peak on one core and 47–51% on four.
-- **A few memory-bound points sit slightly above the slope.** The slope is
-  the best of three bandwidth probes (triad, read and update), not a hard
-  limit, and a kernel with a lighter read/write mix can beat it. `axpy` and `scale` reach 101–109%.
-- **Points far under the slope at an intensity near 0.06 are the
-  elementwise transcendentals** (`sin`, `erf`, `log`, `exp`, `sqrt`). The model
-  counts one flop per element, but each costs tens of instructions, so they
-  are compute-bound in fact and sit 13–28× under the slope on one core.
-- **The compute-bound points other than level 3 sit far under the
-  ceiling**: at most a third of it, and the sparse direct solvers under 4%.
-  These are the factorizations at 512×512, the dense eigensolvers at 256×256
-  and the sparse direct solvers. Their flop counts
-  are nominal, and most of their time goes to panels, pivoting, iteration
-  and indirect access, not to FMAs at full width.
+- **A few memory-bound points sit slightly above the slope.** The slope is the
+  best of three bandwidth probes (triad, read and update), not a hard limit,
+  and a kernel with a lighter read/write mix can beat it. `axpy` and `scale`
+  reach 101–109%.
+- **Points far under the slope at an intensity near 0.06 are the elementwise
+  transcendentals** (`sin`, `erf`, `log`, `exp`, `sqrt`). The model counts one
+  flop per element, but each costs tens of instructions, so they are compute-
+  bound in fact and sit 13–28× under the slope on one core.
+- **The compute-bound points other than level 3 sit far under the ceiling**:
+  at most a third of it, and the sparse direct solvers under 4%. These are the
+  factorizations at 512×512, the dense eigensolvers at 256×256 and the sparse
+  direct solvers. Their flop counts are nominal, and most of their time goes
+  to panels, pivoting, iteration and indirect access, not to FMAs at full
+  width.
 
 ## GEMM
 
