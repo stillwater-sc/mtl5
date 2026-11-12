@@ -1,0 +1,17 @@
+preflight_version=1
+preflight_host=SW-NUC-AMD-A8-1
+preflight_kernel=Microsoft_Windows_NT_10.0.26300.0
+tree_git_commit=cd6762a6e989
+tree_git_dirty=0
+idle_build_processes=none
+competing_load=none
+cpu_online=16
+cpu_affinity=16
+governor=mtl5_performance_-_temporary_copy_of_Balanced
+turbo=enabled
+power_mode=n/a
+thermal_sensor=acpi:ACPI\ThermalZone\TZ01_0
+thermal_before_c=20.1
+thermal_limit_c=110.1
+thermal_headroom_c=90.0
+preflight_gates=enforced
