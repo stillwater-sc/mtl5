@@ -177,7 +177,10 @@ four, plus a line in `docs/benchmarks/systems.md` naming its pinning policy.
 1. pushes this checkout's commit over ssh to `~/mtl5-campaign` on `HOST`;
 2. runs the profile there, detached, so a dropped connection doesn't end it;
 3. waits for it to finish;
-4. copies the results to `build-platform/remote/<host>/<session>/`.
+4. copies the results to `build-platform/remote/<machine>/<session>/`, where
+   `<machine>` is the profile's machine name (`xeon-e5-2420v2` for
+   `xeon-e5-2420v2-platform.sh`), not the ssh host, so the local directories
+   match `benchmarks/data/<machine>/` whatever the host is called.
 
 `--reboot` cold-boots the host first, for the second session. `--interleave`
 and `--class` pass through to the profile.

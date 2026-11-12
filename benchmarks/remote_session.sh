@@ -16,8 +16,12 @@
 #      "after a cold boot".
 #   3. Runs the profile detached on HOST (setsid nohup), so a dropped ssh
 #      connection does not end the session; polls until it finishes.
-#   4. Copies the results directory back to DEST/<HOST>/<session> (default
+#   4. Copies the results directory back to DEST/<machine>/<session> (default
 #      DEST build-platform/remote) and prints the profile's exit status.
+#      <machine> is the profile's name without -platform.sh / -platform.ps1:
+#      the machine's name in docs/benchmarks/systems.md and under
+#      benchmarks/data/, whatever HOST is called on the network (sw-13 runs
+#      xeon-e5-2420v2-platform.sh, so its sessions land in xeon-e5-2420v2/).
 #
 # A .ps1 PROFILE means a Windows HOST, which needs OpenSSH Server with
 # PowerShell as its default shell (HKLM:\SOFTWARE\OpenSSH DefaultShell: under
@@ -76,6 +80,11 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$PROFILE" in *.ps1) WIN=1 ;; *) WIN=0 ;; esac
+# The local results directory is named after the machine, not the ssh host.
+MACHINE=${PROFILE%-platform.*}
+if [ "$MACHINE" = "$PROFILE" ] || ! [[ "$MACHINE" =~ ^[a-z0-9][a-z0-9.-]*$ ]]; then
+    echo "remote_session.sh: '$PROFILE' is not a <machine>-platform.sh / .ps1 profile" >&2; exit 2
+fi
 if [ "$WIN" -eq 1 ]; then
     [ -f "$ROOT/benchmarks/machines/$PROFILE" ] || { echo "remote_session.sh: no profile benchmarks/machines/$PROFILE" >&2; exit 2; }
 else
@@ -227,12 +236,12 @@ EOF
     wait_session probe "~/$RDIR/$OUTREL"
     log "session finished, exit $st"
 
-    mkdir -p "$DEST/$HOST"
-    [ -e "$DEST/$HOST/$TAG" ] && { log "$DEST/$HOST/$TAG exists; results left on $HOST (~/$OUTREL)"; exit 3; }
-    scp -q -r -o BatchMode=yes "$HOST:$RDIR/$OUTREL" "$DEST/$HOST/" 2> >(grep -v '^\*\*' >&2) \
-        && mv "$DEST/$HOST/campaign-$TAG" "$DEST/$HOST/$TAG" || { log "fetch failed"; exit 3; }
-    log "results in $DEST/$HOST/$TAG"
-    tail -3 "$DEST/$HOST/$TAG/session.log" | tr -d '\r' | sed "s/^/[$HOST]   /"
+    mkdir -p "$DEST/$MACHINE"
+    [ -e "$DEST/$MACHINE/$TAG" ] && { log "$DEST/$MACHINE/$TAG exists; results left on $HOST (~/$OUTREL)"; exit 3; }
+    scp -q -r -o BatchMode=yes "$HOST:$RDIR/$OUTREL" "$DEST/$MACHINE/" 2> >(grep -v '^\*\*' >&2) \
+        && mv "$DEST/$MACHINE/campaign-$TAG" "$DEST/$MACHINE/$TAG" || { log "fetch failed"; exit 3; }
+    log "results in $DEST/$MACHINE/$TAG"
+    tail -3 "$DEST/$MACHINE/$TAG/session.log" | tr -d '\r' | sed "s/^/[$HOST]   /"
     exit "$st"
 fi
 
@@ -307,9 +316,9 @@ wait_session probe "~/$RDIR/$OUTREL"
 log "session finished, exit $st"
 
 # -- 4. fetch -------------------------------------------------------------------------
-mkdir -p "$DEST/$HOST"
-rsync -a -e "ssh -o BatchMode=yes" "$HOST:$RDIR/$OUTREL/" "$DEST/$HOST/$TAG/" || { log "fetch failed"; exit 3; }
-log "results in $DEST/$HOST/$TAG"
-tail -3 "$DEST/$HOST/$TAG/session.log" | sed "s/^/[$HOST]   /"
+mkdir -p "$DEST/$MACHINE"
+rsync -a -e "ssh -o BatchMode=yes" "$HOST:$RDIR/$OUTREL/" "$DEST/$MACHINE/$TAG/" || { log "fetch failed"; exit 3; }
+log "results in $DEST/$MACHINE/$TAG"
+tail -3 "$DEST/$MACHINE/$TAG/session.log" | sed "s/^/[$HOST]   /"
 exit "$st"
 }
