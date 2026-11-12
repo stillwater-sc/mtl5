@@ -137,6 +137,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - the i7-12700K analysis, `docs/benchmarks/i7-12700k.md`: the #640 vendor-BLAS-in-a-region test and the #636 pool latency. Both were measured only on the i7.
 
   The text moved unchanged, apart from new section titles and three cross-references that pointed "above". The links into the moved sections, and the "run contract in systems.md" pointers in `run_sweeps.sh`, `run_scaling.sh` and the README, follow them. "Adding a system" now describes publishing a card and adding an analysis page to the sidebar.
+- **The per-machine analyses cover the #737 platform sessions, and the Jetson Orin and Ventuno Q have one** (#799, step 4). Each figure comes from the machine's two published sessions, and each repeatability figure from `benchmarks/compare_sessions.py` on that pair.
+  - **New `docs/benchmarks/jetson-orin.md`:**
+    - 25 W with `jetson_clocks`; 96.5% of entries within ±5% between the sessions;
+    - native-fast GEMM at 60% of peak and 64% of OpenBLAS on one core; one core reaches 16 of the module's 35 GB/s;
+    - the interleave widths, #795 under GCC 11, and the bimodal 6-thread integer gemm (#785).
+  - **New `docs/benchmarks/arduino-ventuno-q.md`:**
+    - the four A78C cores; 93.0% repeatability; one core saturates memory;
+    - native-fast GEMM at 57% of peak, scaling 3.6× on four cores;
+    - GCC against Clang: Clang's W = 4 is fastest in every kernel, and GCC's f32 `trmv` and forward substitution stay 1.45–1.48× behind it even at #798's W = 2.
+  - **`i7-12700k.md` and `ryzen-9-8945hs.md`:** a dated "Platform benchmark (#737)" section each, with the provenance table extended to it and to the threading measurements. On the i7 (91.3% repeatability), native-fast GEMM at 512³ is at 98% of OpenBLAS on one core, which reproduces the #82 parity in a second benchmark.
+  - **Correction on the Ryzen 9 8945HS (87.1%):** the page said that under MSVC "only Highway's dispatched kernels target AVX2/AVX-512". MTL5 doesn't use Highway's run-time dispatch, and the sidecars record native-fast's target as `SSE2`, so the missing `/arch` flag is the cause of the #82 gate failure. The caveat is corrected in place.
+  - **Open observations, recorded on the pages and not yet filed as issues:**
+    - Column-major `gemv` in native-fast is 2.2–5.0× slower than the generic build on all four machines.
+    - The Ventuno's threaded LU is 4.4× slower on four cores than on one.
+    - The Ventuno's `SDOT` quad integer gemm is slower than its plain i8 gemm.
+  - **`systems.md`:** the Results column links the two new pages, and the Jetson section notes that the #737 sessions use 25 W rather than the 15 W of the #430 run. The Xeon E5-2420 v2, Ryzen 7 8845HS and Ryzen 7 2700X stay card-only for now.
 - **Behaviour change for BLAS builds: Level 1 no longer calls the vendor** (#754). With `MTL5_HAS_BLAS`, `dot`, `two_norm`, `axpy` and `scale` on dense float/double vectors called `?dot`, `?nrm2`, `?axpy` and `?scal` at any length. They now take MTL5's own SIMD loops, as a build without BLAS does. Level 2 and Level 3 still dispatch, and `interface::blas::` keeps the Level 1 wrappers for a direct call.
   - **Why:** OpenBLAS splits `ddot` and `daxpy` across its process-wide thread team above a few thousand elements. On a machine with busy cores, each call then waits 3–6 ms for the team, about 1,000× the work at n = 16,384 (OpenBLAS 0.3.32, i7-12700K, 3 cores busy). On an idle machine the team costs nothing, so the slowdown appeared only on shared workstations and CI runners. A Krylov iteration makes several such calls, and `mtl5_bench --class medium --filter krylov` in a BLAS build ran 17–123× slower than without BLAS under that load. For example, `bicgstab+ilu0` took 378 ms and `gmres30+ilu0` 3,672 ms. With this change the BLAS build matches the native one within 0.3% on all 13 entries: 12.8 ms and 29.8 ms.
   - **What changes:** in a BLAS build, results of `dot` and `two_norm` can differ in the last bits, since they now use MTL5's summation order instead of the vendor's. `axpy` now rounds as a build without BLAS does. A large `ddot` on an idle machine loses OpenBLAS's threading: 208 µs single-threaded against 54 µs on 20 threads at n = 10⁶. With `MTL5_NUM_THREADS` > 1, MTL5's loops split across its own pool above 65,536 elements.

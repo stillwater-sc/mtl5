@@ -95,6 +95,8 @@ const FILE_MAP = {
   'benchmarks/systems.md':                      'benchmarks/systems.md',
   'benchmarks/i7-12700k.md':                    'benchmarks/i7-12700k.md',
   'benchmarks/ryzen-9-8945hs.md':               'benchmarks/ryzen-9-8945hs.md',
+  'benchmarks/jetson-orin.md':                  'benchmarks/jetson-orin.md',
+  'benchmarks/arduino-ventuno-q.md':            'benchmarks/arduino-ventuno-q.md',
   // mtl5_bench capability cards, one page per machine, written by
   // benchmarks/publish_platform.cmake (which also adds the entry here).
   'benchmarks/cards/arduino-ventuno-q.md':      'benchmarks/cards/arduino-ventuno-q.md',

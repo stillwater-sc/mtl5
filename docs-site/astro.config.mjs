@@ -104,6 +104,8 @@ export default defineConfig({
               items: [
                 { slug: 'benchmarks/i7-12700k' },
                 { slug: 'benchmarks/ryzen-9-8945hs' },
+                { slug: 'benchmarks/jetson-orin' },
+                { slug: 'benchmarks/arduino-ventuno-q' },
               ],
             },
             {
