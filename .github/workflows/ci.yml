@@ -862,10 +862,10 @@ jobs:
           for f in native-t1 native-t2 native-fast-t1 native-fast-t2; do
             test -f "$data/$session/$f.json" && test -f "$data/$session/$f.json.sysinfo" && test -f "$data/$session/$f.md"
           done
-          grep -q '^# mtl5_bench capability card -- i7-12700k' docs/benchmarks/i7-12700k-mtl5-bench.md
-          grep -q "^| session | \`$session\` (UTC) |" docs/benchmarks/i7-12700k-mtl5-bench.md
-          grep -q "'benchmarks/i7-12700k-mtl5-bench.md'" docs-site/sync-content.mjs
-          grep -q '^| `i7-12700K` |.*| \[Card\](i7-12700k-mtl5-bench.md) (preliminary) |$' docs/benchmarks/systems.md
+          grep -q '^# mtl5_bench capability card -- i7-12700k' docs/benchmarks/cards/i7-12700k.md
+          grep -q "^| session | \`$session\` (UTC) |" docs/benchmarks/cards/i7-12700k.md
+          grep -q "'benchmarks/cards/i7-12700k.md'" docs-site/sync-content.mjs
+          grep -q '^| `i7-12700K` |.*| \[Card\](cards/i7-12700k.md) (preliminary) |$' docs/benchmarks/systems.md
           if [ "$RUNNER_OS" != macOS ]; then benchmarks/check_sidecars.sh; fi
           # Publishing the same session again is a no-op.
           cmake "-DRESULTS=$results" -DMACHINE=i7-12700k -DPRELIMINARY=ON -DALLOW_DIRTY=ON \

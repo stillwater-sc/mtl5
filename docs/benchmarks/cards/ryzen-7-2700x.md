@@ -4,7 +4,7 @@
      Do not edit by hand: publish a new session instead (benchmarks/README.md). -->
 
 The platform benchmark's capability cards for the `ryzen-7-2700x` machine described on the
-[benchmark systems](systems.md) page: every operation family, measured against this
+[benchmark systems](../systems.md) page: every operation family, measured against this
 machine's FMA peak and memory bandwidth (#721). This page shows the latest published
 session; every session's raw results stay in the data directory.
 
