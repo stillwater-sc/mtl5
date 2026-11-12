@@ -41,6 +41,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **The harness README has its sparse direct-solver section again.** #468 deleted "Sparse direct-solver scoreboards" (how to run `bench_klu`, `bench_superlu` and `bench_sparse`) but kept the link to it in the Layout section, so the link led nowhere. The section is restored as it was, with one correction: `bench_sparse` takes one matrix per `--file`, so the example now reads `--file A.mtx --file B.mtx`.
 - **The benchmark preflight no longer fails on idle build processes, and it detects a running `mtl5_bench`** (#756). `preflight.ps1` matched build tools by name only, so an idle reusable MSBuild worker node failed the gate. Command-line builds leave those nodes for about 15 minutes, and Visual Studio leaves them while it is open. An open Visual Studio failed it too. On Windows, that blocked `platform.ps1` with no build running.
   - **The fix:** a matched build process counts as competing load only if it uses more than 50 ms of CPU in a one-second sample, 5% of one core. An idle one is recorded in the new sidecar key `idle_build_processes` and passes. A build that is really running still fails, since its compiler or linker is busy even while the driver waits. The sample costs a second, and only when a build process exists.
   - **`preflight.sh`** applies the same test on Linux, from `/proc/<pid>/stat`. On macOS every match still counts, and `idle_build_processes` is `unavailable`.
