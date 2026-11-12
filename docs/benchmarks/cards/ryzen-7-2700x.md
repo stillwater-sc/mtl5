@@ -23,6 +23,145 @@ session; every session's raw results stay in the data directory.
 | raw data | [`benchmarks/data/ryzen-7-2700x/mtl5_bench/20261108T223729Z/`](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/ryzen-7-2700x/mtl5_bench/20261108T223729Z) |
 | earlier sessions | none |
 
+## Across the runs
+
+Each column is one run of this session: the build variant and its thread count (1T is one thread). The runs follow below, each with its full entry table.
+
+### Median %roof by area
+
+| area | native 1T | native 16T | native-fast 1T | native-fast 16T |
+|---|---:|---:|---:|---:|
+| blas1 | 40% | 91% | 85% | 112% |
+| blas2 | 40% | 41% | 89% | 81% |
+| blas3 | 26% | 4% | 27% | 5% |
+| factor | 4% | 1% | 3% | 1% |
+| eigen | 7% | 1% | 6% | 1% |
+| elementwise | 10% | 8% | 9% | 9% |
+| sparse | 37% | 32% | 34% | 33% |
+| direct | 1% | 0% | 1% | 0% |
+| ordering | n/a | n/a | n/a | n/a |
+| krylov | n/a | n/a | n/a | n/a |
+| pc | n/a | n/a | n/a | n/a |
+| smoother | 53% | 47% | 52% | 49% |
+| mg | 51% | 41% | 47% | 46% |
+| sparse_eig | n/a | n/a | n/a | n/a |
+| mixed | 20% | 16% | 79% | 76% |
+| integer | n/a | n/a | n/a | n/a |
+
+### Every entry: median time
+
+The median time of each of the 107 entries in each run. The fastest run of each entry is in bold; -- is an entry the run did not measure.
+
+| area | op | type | shape | native 1T | native 16T | native-fast 1T | native-fast 16T |
+|---|---|---|---|---:|---:|---:|---:|
+| blas1 | dot | f64 | n=8388608 | 14.194 ms | 4.706 ms | 5.268 ms | **4.357 ms** |
+| blas1 | dot | f32 | n=8388608 | 14.387 ms | 2.809 ms | 2.517 ms | **2.250 ms** |
+| blas1 | axpy | f64 | n=8388608 | 16.203 ms | 7.158 ms | 8.908 ms | **6.836 ms** |
+| blas1 | axpy | f32 | n=8388608 | 14.882 ms | 3.499 ms | 4.689 ms | **3.264 ms** |
+| blas1 | scale | f64 | n=8388608 | 7.206 ms | **4.374 ms** | 6.799 ms | 4.458 ms |
+| blas1 | two_norm | f64 | n=8388608 | 14.603 ms | 2.687 ms | 2.823 ms | **2.295 ms** |
+| blas1 | one_norm | f64 | n=8388608 | **6.570 ms** | 6.604 ms | 6.628 ms | 6.608 ms |
+| blas1 | infinity_norm | f64 | n=8388608 | 8.846 ms | **8.787 ms** | 22.107 ms | 14.559 ms |
+| blas1 | sum | f64 | n=8388608 | 6.636 ms | **6.611 ms** | 6.638 ms | 6.648 ms |
+| blas1 | dot_k3 | f64 | n=8388608 | 116.474 ms | **115.573 ms** | 119.442 ms | 117.447 ms |
+| blas2 | gemv | f64 | n=4096 | 14.252 ms | 4.541 ms | 5.478 ms | **4.405 ms** |
+| blas2 | gemv | f32 | n=4096 | 13.097 ms | 2.621 ms | 2.811 ms | **2.266 ms** |
+| blas2 | symv | f64 | n=4096 | **9.995 ms** | 10.069 ms | 10.340 ms | 10.024 ms |
+| blas2 | trmv | f64 | n=4096 | 7.160 ms | 7.113 ms | **2.997 ms** | 3.159 ms |
+| blas2 | trsv | f64 | n=4096 | 6.939 ms | 7.081 ms | **3.172 ms** | 3.365 ms |
+| blas2 | ger | f64 | n=4096 | 24.014 ms | **23.955 ms** | 24.293 ms | 24.890 ms |
+| blas3 | gemm | f64 | 512x512x512 | 28.436 ms | **3.622 ms** | 21.348 ms | 4.760 ms |
+| blas3 | gemm | f32 | 512x512x512 | 13.307 ms | **2.715 ms** | 9.929 ms | 3.837 ms |
+| blas3 | gemmt | f64 | 512x512x512 | 15.912 ms | 15.902 ms | **13.463 ms** | 14.098 ms |
+| blas3 | symm | f64 | 512x512x512 | 28.809 ms | 28.242 ms | 22.346 ms | **5.832 ms** |
+| blas3 | syrk | f64 | 512x512x512 | **18.498 ms** | 18.815 ms | 19.065 ms | 18.837 ms |
+| blas3 | syr2k | f64 | 512x512x512 | 29.410 ms | 28.495 ms | 30.963 ms | **28.438 ms** |
+| blas3 | trmm | f64 | 512x512x512 | 45.065 ms | 44.256 ms | 17.742 ms | **11.427 ms** |
+| blas3 | trsm | f64 | 512x512x512 | 45.826 ms | 46.392 ms | 21.624 ms | **11.385 ms** |
+| blas3 | trsm | f32 | 512x512x512 | 50.882 ms | 44.436 ms | 11.764 ms | **8.993 ms** |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 19.056 ms | 17.021 ms | **16.838 ms** | 16.964 ms |
+| factor | lu | f64 | 512x512 | 148.661 ms | 50.534 ms | 149.146 ms | **49.409 ms** |
+| factor | lu | f32 | 512x512 | 150.947 ms | 58.603 ms | **51.625 ms** | 82.944 ms |
+| factor | cholesky | f64 | 512x512 | **16.425 ms** | 16.523 ms | 16.437 ms | 16.451 ms |
+| factor | cholesky | f32 | 512x512 | 16.857 ms | **16.316 ms** | 16.436 ms | 16.409 ms |
+| factor | ldlt | f64 | 512x512 | 16.489 ms | 15.902 ms | 16.202 ms | **15.829 ms** |
+| factor | ldlt_bk | f64 | 512x512 | **159.439 ms** | 159.553 ms | 159.488 ms | 160.108 ms |
+| factor | qr | f64 | 512x512 | 512.832 ms | **310.657 ms** | 511.967 ms | 312.080 ms |
+| factor | lq | f64 | 512x512 | 154.419 ms | **72.861 ms** | 172.004 ms | 109.561 ms |
+| factor | hessenberg | f64 | 512x512 | 685.062 ms | **418.485 ms** | 678.472 ms | 434.708 ms |
+| factor | householder | f64 | 512x512 | 3.286 ms | 0.778 ms | 3.289 ms | **0.673 ms** |
+| factor | inv | f64 | 512x512 | 171.541 ms | **159.077 ms** | 206.977 ms | 159.895 ms |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 64.490 ms | 63.831 ms | 153.007 ms | **53.593 ms** |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 33.554 ms | **33.550 ms** | 39.822 ms | 43.571 ms |
+| eigen | eigen_symmetric | f64 | 256x256 | 111.391 ms | **104.711 ms** | 113.651 ms | 119.587 ms |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 586.004 ms | **583.927 ms** | 610.571 ms | 584.781 ms |
+| eigen | eigenvalue | f64 | 256x256 | 75.484 ms | 68.055 ms | 68.393 ms | **68.048 ms** |
+| eigen | schur | f64 | 256x256 | **173.144 ms** | 233.611 ms | 220.307 ms | 185.943 ms |
+| eigen | svd | f64 | 256x256 | 179.009 ms | **173.886 ms** | 183.620 ms | 174.965 ms |
+| eigen | expm | f64 | 256x256 | 61.162 ms | **36.989 ms** | 50.017 ms | 37.893 ms |
+| eigen | sylvester | f64 | 256x256 | 434.842 ms | 445.949 ms | 393.788 ms | **390.383 ms** |
+| elementwise | exp | f64 | n=8388608 | 57.329 ms | **54.608 ms** | 61.654 ms | 58.003 ms |
+| elementwise | log | f64 | n=8388608 | 75.034 ms | **68.645 ms** | 70.100 ms | 74.233 ms |
+| elementwise | sin | f64 | n=8388608 | **56.559 ms** | 58.953 ms | 59.464 ms | 58.646 ms |
+| elementwise | sqrt | f64 | n=8388608 | **27.251 ms** | 28.626 ms | 28.556 ms | 27.444 ms |
+| elementwise | erf | f64 | n=8388608 | **60.953 ms** | 64.030 ms | 61.858 ms | 62.164 ms |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 1.359 ms | 0.969 ms | 1.270 ms | **0.967 ms** |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 3.144 ms | 3.153 ms | 3.167 ms | **3.138 ms** |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 7.615 ms | 4.561 ms | 7.504 ms | **4.519 ms** |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 21.180 ms | 20.681 ms | 21.023 ms | **19.535 ms** |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | **2.961 ms** | 3.881 ms | 2.982 ms | 3.252 ms |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 185.719 ms | 174.271 ms | 172.342 ms | **166.490 ms** |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 53.487 ms | 53.205 ms | 52.812 ms | **49.649 ms** |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 34.282 ms | 33.784 ms | 32.804 ms | **28.916 ms** |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 112.160 ms | 109.599 ms | **100.850 ms** | 107.379 ms |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | **121.169 ms** | 134.579 ms | 127.068 ms | 131.631 ms |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | **46.807 ms** | 50.168 ms | 53.139 ms | 51.293 ms |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | **353.341 ms** | 420.798 ms | 402.178 ms | 388.801 ms |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | **5.922 ms** | 6.478 ms | 6.007 ms | 6.058 ms |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | **9.345 ms** | 10.788 ms | 9.421 ms | 9.506 ms |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | **0.779 ms** | 0.866 ms | 0.877 ms | 0.856 ms |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 27.218 ms | 32.297 ms | **26.042 ms** | 26.683 ms |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 53.128 ms | 56.006 ms | 43.186 ms | **43.101 ms** |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 67.238 ms | 70.935 ms | 51.599 ms | **51.286 ms** |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 44.273 ms | 46.187 ms | 38.306 ms | **36.871 ms** |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 22.740 ms | 25.129 ms | 18.357 ms | **17.931 ms** |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 33.048 ms | 32.520 ms | **25.135 ms** | 25.154 ms |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 23.994 ms | 25.480 ms | **21.382 ms** | 21.456 ms |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 78.125 ms | 87.694 ms | 53.390 ms | **47.519 ms** |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 48.771 ms | 49.748 ms | **38.915 ms** | 43.657 ms |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 27.843 ms | 31.736 ms | **24.594 ms** | 26.641 ms |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 44.966 ms | 48.518 ms | 34.267 ms | **34.188 ms** |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 55.468 ms | 53.815 ms | **36.995 ms** | 37.655 ms |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 84.429 ms | 93.213 ms | 54.484 ms | **53.020 ms** |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 72.799 ms | 79.002 ms | **45.719 ms** | 47.587 ms |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | **0.061 ms** | 0.076 ms | 0.074 ms | **0.061 ms** |
+| pc | ilu_0 | f64 | 128^2 grid | **4.382 ms** | 4.579 ms | 4.586 ms | 4.770 ms |
+| pc | ilut | f64 | 128^2 grid | 46.639 ms | 49.207 ms | 43.890 ms | **43.149 ms** |
+| pc | ic_0 | f64 | 128^2 grid | **3.400 ms** | 3.460 ms | 4.183 ms | 3.839 ms |
+| pc | ildl | f64 | 128^2 grid | 3.559 ms | 3.748 ms | **3.554 ms** | 3.596 ms |
+| pc | ssor | f64 | 128^2 grid | 0.049 ms | **0.029 ms** | 0.039 ms | **0.029 ms** |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 1.133 ms | 1.145 ms | 1.180 ms | **1.118 ms** |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 2.358 ms | 2.272 ms | **2.253 ms** | 2.286 ms |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 2.032 ms | **2.002 ms** | 2.010 ms | 2.034 ms |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | **2.376 ms** | 2.406 ms | 2.393 ms | 2.442 ms |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | **24.197 ms** | 25.987 ms | 24.617 ms | 24.290 ms |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 63.165 ms | 55.326 ms | 51.213 ms | **48.740 ms** |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | **69.704 ms** | 101.304 ms | 70.644 ms | 74.842 ms |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 126.893 ms | 152.520 ms | **119.792 ms** | 127.283 ms |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 11.852 ms | 14.543 ms | 10.019 ms | **9.789 ms** |
+| mixed | dot | f32>f64 | n=8388608 | 14.221 ms | 15.628 ms | **3.196 ms** | 3.302 ms |
+| mixed | gemm | f32>f64 | 512x512x512 | 53.319 ms | 7.016 ms | 25.600 ms | **4.258 ms** |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 2.300 ms | 3.078 ms | 0.898 ms | **0.893 ms** |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 4.358 ms | 4.302 ms | **2.816 ms** | 3.023 ms |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 3.988 ms | 3.894 ms | **1.203 ms** | 1.229 ms |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 2.635 ms | 2.174 ms | **0.857 ms** | 0.885 ms |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 2.236 ms | 2.165 ms | **0.677 ms** | 0.757 ms |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 18.349 ms | **2.704 ms** | 27.443 ms | 4.165 ms |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 47.401 ms | 8.559 ms | 27.521 ms | **6.555 ms** |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 38.913 ms | 8.393 ms | 29.075 ms | **4.432 ms** |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 39.613 ms | 7.651 ms | 7.638 ms | **2.109 ms** |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 38.405 ms | 7.734 ms | 6.695 ms | **2.294 ms** |
+
 ## AMD Ryzen 7 2700X Eight-Core Processor -- native, 1 thread, class medium
 
 | | |
@@ -56,6 +195,9 @@ session; every session's raw results stay in the data directory.
 | sparse_eig | 4 | n/a | n/a | 0 |
 | mixed | 3 | 20% | 33% | 0 |
 | integer | 9 | n/a | n/a | 0 |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -167,6 +309,8 @@ session; every session's raw results stay in the data directory.
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 39.613 ms | 6.78 | 0.04 | n/a | ok |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 38.405 ms | 6.99 | 0.04 | n/a | ok |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ## AMD Ryzen 7 2700X Eight-Core Processor -- native, 16 threads, class medium
@@ -202,6 +346,9 @@ session; every session's raw results stay in the data directory.
 | sparse_eig | 4 | n/a | n/a | 0 | 5% |
 | mixed | 3 | 16% | 21% | 0 | 6% |
 | integer | 9 | n/a | n/a | 0 | 29% |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
 |---|---|---|---|---:|---:|---:|---:|---|---:|
@@ -313,6 +460,8 @@ session; every session's raw results stay in the data directory.
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 7.651 ms | 35.08 | 0.21 | n/a | ok | 5.2x (32%) |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 7.734 ms | 34.71 | 0.20 | n/a | ok | 5.0x (31%) |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ## AMD Ryzen 7 2700X Eight-Core Processor -- native-fast, 1 thread, class medium
@@ -348,6 +497,9 @@ session; every session's raw results stay in the data directory.
 | sparse_eig | 4 | n/a | n/a | 0 |
 | mixed | 3 | 79% | 84% | 0 |
 | integer | 9 | n/a | n/a | 0 |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
 |---|---|---|---|---:|---:|---:|---:|---|
@@ -459,6 +611,8 @@ session; every session's raw results stay in the data directory.
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 7.638 ms | 35.14 | 0.21 | n/a | ok |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 6.695 ms | 40.09 | 0.23 | n/a | ok |
 
+</details>
+
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 
 ## AMD Ryzen 7 2700X Eight-Core Processor -- native-fast, 16 threads, class medium
@@ -494,6 +648,9 @@ session; every session's raw results stay in the data directory.
 | sparse_eig | 4 | n/a | n/a | 0 | 6% |
 | mixed | 3 | 76% | 77% | 0 | 6% |
 | integer | 9 | n/a | n/a | 0 | 18% |
+
+<details>
+<summary>Every entry of this run</summary>
 
 | area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
 |---|---|---|---|---:|---:|---:|---:|---|---:|
@@ -604,6 +761,8 @@ session; every session's raw results stay in the data directory.
 | integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 4.432 ms | 60.56 | 0.35 | n/a | ok | 6.6x (41%) |
 | integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 2.109 ms | 127.31 | 0.75 | n/a | ok | 3.6x (23%) |
 | integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 2.294 ms | 117.03 | 0.69 | n/a | ok | 2.9x (18%) |
+
+</details>
 
 \* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
 

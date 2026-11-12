@@ -236,7 +236,11 @@ function addFrontmatter(content, srcRelative, editPath) {
   body = rewriteImagePaths(body);
   body = rewriteLinks(body, srcRelative);
   const safeTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `---\ntitle: "${safeTitle}"\neditUrl: "${EDIT}/${editPath}"\n---\n\n${body}`;
+  // A capability card sits in the sidebar's "Capability cards" group, where
+  // its machine name is label enough (#799).
+  const card = srcRelative.match(/^benchmarks\/cards\/([a-z0-9.-]+)\.md$/);
+  const sidebar = card ? `sidebar:\n  label: "${card[1]}"\n` : '';
+  return `---\ntitle: "${safeTitle}"\n${sidebar}editUrl: "${EDIT}/${editPath}"\n---\n\n${body}`;
 }
 
 // A site page keeps its own frontmatter; add the editUrl unless it sets one.
