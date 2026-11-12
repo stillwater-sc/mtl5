@@ -217,7 +217,7 @@ Measured region latency, back to back and in a 1 kHz loop:
 
 Ranges are over T = 2, 4 and 8 on an i7-12700K's P-cores. The method, maxima
 and caveats are in
-[the systems page](../benchmarks/systems.md#pool-dispatch-and-join-latency-636).
+[the i7-12700K results](../benchmarks/i7-12700k.md#pool-dispatch-and-join-latency-636).
 
 ## Vendor libraries inside a region
 
@@ -275,7 +275,7 @@ control. `mtl::interface::blas_vendor()` and `blas_capped_in_region()` report th
 result to code.
 
 Measured on the i7-12700K: 64 dgemms in one 8-tid region, each vendor set to 8
-threads ([Benchmark systems](../benchmarks/systems.md#a-vendor-blas-inside-an-mtl5-region-640)).
+threads ([i7-12700K results](../benchmarks/i7-12700k.md#a-vendor-blas-inside-an-mtl5-region-640)).
 Uncapped, BLIS ran at 0.1–3 GFLOP/s; capped it ran at 405–507. MKL went from
 328–381 GFLOP/s to 468–513. OpenBLAS cannot be capped per thread: uncapped it
 varied between rounds from 102 to 407 GFLOP/s, and set to one thread for the

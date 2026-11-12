@@ -116,7 +116,7 @@ referenced and the binary carries **no link dependency** on a BLAS library. In a
 build **with** BLAS, the branch compiles and the eligible types route to it. There
 is no runtime flag to flip and no in-process policy switch: **the build selects the
 backend, once, for the whole program.** This is the exact model the
-[benchmark methodology](../benchmarks/systems.md) rests on — one binary per
+[benchmark methodology](../benchmarks/run-contract.md#methodology) rests on — one binary per
 backend, the build *is* the backend — and the operation layer is where that
 compile-time choice becomes a kernel call.
 

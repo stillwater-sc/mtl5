@@ -90,9 +90,12 @@ export default defineConfig({
           items: [
             { slug: 'benchmarks' },
             { slug: 'benchmarks/systems' },
+            { slug: 'benchmarks/run-contract' },
             {
               label: 'Across the machines',
               items: [
+                { slug: 'benchmarks/cache-blocking-ab' },
+                { slug: 'benchmarks/register-tile-sweep' },
                 { slug: 'benchmarks/interleave-width' },
               ],
             },

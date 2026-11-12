@@ -107,6 +107,10 @@ const FILE_MAP = {
   // The interleave width across the machines (#780), its tables written by
   // benchmarks/interleave_table.py.
   'benchmarks/interleave-width.md':             'benchmarks/interleave-width.md',
+  // Analyses moved out of systems.md (#799).
+  'benchmarks/cache-blocking-ab.md':            'benchmarks/cache-blocking-ab.md',
+  'benchmarks/register-tile-sweep.md':          'benchmarks/register-tile-sweep.md',
+  'benchmarks/run-contract.md':                 'benchmarks/run-contract.md',
 
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',

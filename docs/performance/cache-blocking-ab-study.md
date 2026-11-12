@@ -33,7 +33,7 @@ Four arms, one source, differing only in which detected level feeds the model:
 | `kconly` | L1 | detected | model L2, but *given* the detected kc |
 | `mconly` | L2 | model | detected |
 
-Protocol (the [run contract](../benchmarks/systems.md)): pinned to one logical id
+Protocol (the [run contract](../benchmarks/run-contract.md)): pinned to one logical id
 per physical core, all arms **interleaved within one session** with the order
 rotated per round, min-of-N per point, per-machine output directory, and machine
 state captured in every sidecar. Shapes are derived once from the first arm and

@@ -423,4 +423,4 @@ Stated up front, so it can be checked later:
 
 - [Assessment: blocking, scheduling, and what transfers](blocking-and-scheduling-assessment.md)
 - [Cache blocking A/B study](cache-blocking-ab-study.md)
-- [Benchmark systems and the run contract](../benchmarks/systems.md)
+- [Benchmark systems](../benchmarks/systems.md) and the [run contract](../benchmarks/run-contract.md)

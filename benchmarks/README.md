@@ -455,7 +455,7 @@ OUTDIR=benchmarks/data/i7-12700k BENCH_CPU=4 BENCH_SUITES=blas benchmarks/run_sw
 
 `run_sweeps.sh` runs `benchmarks/preflight.sh` first and refuses to measure on a
 dirty tree, against a competing build, or on a machine without thermal headroom
-(see the run contract in `docs/benchmarks/systems.md`); the machine state it
+(see the run contract in `docs/benchmarks/run-contract.md`); the machine state it
 captures is appended to every `.sysinfo` sidecar. It then configures each variant
 in its own (clean) build dir and builds `bench_all` for **all** variants before
 measuring any of them, so no backend is timed while the machine is still hot from
