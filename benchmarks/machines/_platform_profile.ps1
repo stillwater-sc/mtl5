@@ -228,6 +228,55 @@ function Invoke-Interleave([int]$cpu, [string]$policy, [string]$out) {
     return $status
 }
 
+# Background work Windows started while the session measured (#737): Defender
+# scans and security-intelligence updates, and Windows Update installations.
+# A Defender scan after a signature update overlapped exactly the two slow runs
+# of the Ryzen 9's first second session (read bandwidth 45.8 -> 41.6 GB/s,
+# memory-bound entries 10-30% slower). Returns one line per event, oldest first,
+# then an "unavailable:" line for each log that could not be read, so a log
+# that failed to answer is never reported as a session without activity.
+function Get-BackgroundActivity([datetime]$since) {
+    $filters = @(
+        @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1000, 1001, 2000; StartTime = $since },
+        @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WindowsUpdateClient'; Id = 19, 43; StartTime = $since })
+    $names = @{ 1000 = 'Defender scan started'; 1001 = 'Defender scan finished'
+                2000 = 'Defender security intelligence updated'; 19 = 'Windows Update installed an update'
+                43 = 'Windows Update started installing an update' }
+    $found = @(); $failed = @()
+    foreach ($f in $filters) {
+        try { $found += @(Get-WinEvent -FilterHashtable $f -ErrorAction Stop) }
+        catch {
+            # Get-WinEvent reports an empty result as an error; only other errors are failures.
+            if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') {
+                $failed += "unavailable: $($f.LogName) log could not be read ($($_.Exception.Message))"
+            }
+        }
+    }
+    @($found | Sort-Object TimeCreated |
+        ForEach-Object { "{0:yyyy-MM-ddTHH:mm:ssZ} {1}" -f $_.TimeCreated.ToUniversalTime(), $names[$_.Id] }) + $failed
+}
+
+# Record that activity in the results: background_activity.txt, and a
+# background_activity= line in every sidecar this session wrote ("none", or the
+# events and any unreadable logs), so a contaminated session shows in its own
+# data instead of in a repeatability band that fails without a cause. Sidecars
+# older than the session, left in a reused output directory by a variant that
+# did not run this time, are not touched.
+function Write-BackgroundActivity([datetime]$since, [string]$out) {
+    $events = @(Get-BackgroundActivity $since)
+    $text = if ($events.Count) { $events -join '; ' } else { 'none' }
+    Set-Content -Encoding ascii (Join-Path $out 'background_activity.txt') `
+        (@("# Defender and Windows Update activity since $($since.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))") +
+         $(if ($events.Count) { $events } else { @('none') }))
+    Get-ChildItem $out -Filter '*.json.sysinfo' -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $since } |
+        ForEach-Object { Add-Content -Encoding ascii -Path $_.FullName -Value "background_activity=$text" }
+    if ($events.Count) {
+        Write-Host "WARNING: Windows ran background work during the session, or a log could not be read; compare its timing with the runs:"
+        $events | ForEach-Object { Write-Host "  $_" }
+    }
+}
+
 # Run the platform benchmark: 1 thread and one per listed CPU, pinned, under the
 # clock policy; the policy is restored however this ends. Returns the exit code.
 function Invoke-PlatformProfile([string]$machine, [string]$cpus, [object[]]$extra) {
@@ -236,6 +285,7 @@ function Invoke-PlatformProfile([string]$machine, [string]$cpus, [object[]]$extr
     Use-VisualStudio
     $null = Use-OpenBlas
     $status = 0
+    $started = Get-Date
     try {
         if ($env:NO_CLOCK_POLICY -ne '1') { $policy = Enter-ClockPolicy }
         Write-Host "== ${machine}: CPUs $cpus ($n), clock policy: $policy"
@@ -262,6 +312,7 @@ function Invoke-PlatformProfile([string]$machine, [string]$cpus, [object[]]$extr
                 $status = 1
             }
         }
+        if (Test-Path $out) { Write-BackgroundActivity -since $started -out $out }
     } finally {
         Exit-ClockPolicy
         # A machine left on the session scheme is not a clean finish.
