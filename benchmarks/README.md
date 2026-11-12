@@ -159,7 +159,10 @@ A profile does four things:
 `NO_CLOCK_POLICY=1` measures without the policy, for a card published with
 `PRELIMINARY=ON`. `INTERLEAVE=1` also runs `bench_interleave_rows` on the first
 measured CPU, still under the policy, with GCC and with Clang where it's
-installed (#780).
+installed (#780). After publishing the session, `interleave_table.py import`
+copies its sweeps to `benchmarks/data/<machine>/interleave_rows/<session>/`, and
+`interleave_table.py table` regenerates the cross-machine tables on
+`docs/benchmarks/interleave-width.md`.
 
 **Root for the clock policy.** A machine whose user lacks passwordless sudo
 needs one rule, installed with `sudo visudo -f /etc/sudoers.d/mtl5-bench`. The

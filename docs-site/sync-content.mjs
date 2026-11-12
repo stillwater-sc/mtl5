@@ -104,6 +104,9 @@ const FILE_MAP = {
   'benchmarks/ryzen-7-2700x-mtl5-bench.md':     'benchmarks/ryzen-7-2700x-mtl5-bench.md',
   'benchmarks/ryzen-9-8945hs-mtl5-bench.md':    'benchmarks/ryzen-9-8945hs-mtl5-bench.md',
   'benchmarks/xeon-e5-2420v2-mtl5-bench.md':    'benchmarks/xeon-e5-2420v2-mtl5-bench.md',
+  // The interleave width across the machines (#780), its tables written by
+  // benchmarks/interleave_table.py.
+  'benchmarks/interleave-width.md':             'benchmarks/interleave-width.md',
 
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',

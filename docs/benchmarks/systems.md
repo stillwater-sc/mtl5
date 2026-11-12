@@ -31,6 +31,9 @@ latest published session; earlier sessions stay in the data directory. A card
 marked *preliminary* was not measured under #737's methodology (pinned cores,
 the machine's clock policy, two sessions).
 
+The sessions' `bench_interleave_rows` sweeps are compared across the machines
+on [Interleave width across the benchmark machines](interleave-width.md) (#780).
+
 A machine is registered here as soon as it is part of an experiment, which can
 precede its first result page: the bottom two rows exist because #430 needs the
 cache hierarchies and pinning policies of all four machines settled *before* it
