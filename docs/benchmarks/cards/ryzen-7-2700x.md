@@ -4,7 +4,7 @@
      Do not edit by hand: publish a new session instead (benchmarks/README.md). -->
 
 The platform benchmark's capability cards for the `ryzen-7-2700x` machine described on the
-[benchmark systems](systems.md) page: every operation family, measured against this
+[benchmark systems](../systems.md) page: every operation family, measured against this
 machine's FMA peak and memory bandwidth (#721). This page shows the latest published
 session; every session's raw results stay in the data directory.
 
@@ -18,8 +18,8 @@ session; every session's raw results stay in the data directory.
 | class | `medium` |
 | runs | native-fast at 1 thread, native-fast at 16 threads, native at 1 thread, native at 16 threads |
 | failed checks | 0 |
-| CPUs available | 16 |
-| clock policy | `Sonos` |
+| CPUs | 16 available, pinning not recorded |
+| clock policy | not recorded (governor `Sonos`) |
 | raw data | [`benchmarks/data/ryzen-7-2700x/mtl5_bench/20261108T223729Z/`](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/ryzen-7-2700x/mtl5_bench/20261108T223729Z) |
 | earlier sessions | none |
 

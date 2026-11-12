@@ -289,7 +289,7 @@ Then it does three things:
    - `check_sidecars.sh` enforces the sidecars in CI.
    - These files are what stillwater-sc/mtl5-python#121 ingests for graphs and
      trends.
-2. **Writes the machine's card page,** `docs/benchmarks/<machine>-mtl5-bench.md`.
+2. **Writes the machine's card page,** `docs/benchmarks/cards/<machine>.md`.
    - The page opens with a provenance table: session, commit, class, runs, failed
      checks, CPUs, clock policy, a link to the raw data, and the earlier sessions.
    - The session's cards follow.
@@ -301,7 +301,7 @@ Then it does three things:
    isn't there yet.
 4. **Links the page from `systems.md`.** It sets the last cell of the machine's
    Systems-table row, the "mtl5_bench card" column, to
-   `[Card](<machine>-mtl5-bench.md)`, followed by `(preliminary)` when the page
+   `[Card](cards/<machine>.md)`, followed by `(preliminary)` when the page
    is. That cell belongs to the script: it follows the page, so a later final
    session drops the mark. Publishing an older session leaves the cell alone,
    like the page. If the row or the column isn't there, it warns instead.
@@ -310,7 +310,7 @@ Then review and commit what the script lists:
 
 ```bash
 git add benchmarks/data/<machine>/mtl5_bench/<session> \
-        docs/benchmarks/<machine>-mtl5-bench.md docs-site/sync-content.mjs \
+        docs/benchmarks/cards/<machine>.md docs-site/sync-content.mjs \
         docs/benchmarks/systems.md
 ```
 

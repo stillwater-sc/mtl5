@@ -113,6 +113,18 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- **The docs site's Benchmarking section keeps the capability cards apart from the analyses** (#799, step 1). The generated cards and the written analyses were listed together in alphabetical order, so the i7-12700K analysis sat next to its card with nothing to tell them apart.
+  - **Where the cards are:** they moved from `docs/benchmarks/<machine>-mtl5-bench.md` to `docs/benchmarks/cards/<machine>.md`.
+    - The site serves them at `/benchmarks/cards/<machine>/`.
+    - The old `/benchmarks/<machine>-mtl5-bench/` URLs redirect there.
+    - `publish_platform.cmake`, the CI publish test and `systems.md`'s card links follow the new path.
+  - **The sidebar order:**
+    1. the harness overview and the systems page;
+    2. the cross-machine analyses;
+    3. the per-machine analyses;
+    4. the cards, in a collapsed group.
+
+    A new page in `docs/benchmarks/` needs a sidebar entry in `docs-site/astro.config.mjs`. A newly published card doesn't: it appears in its group automatically.
 - **Behaviour change for BLAS builds: Level 1 no longer calls the vendor** (#754). With `MTL5_HAS_BLAS`, `dot`, `two_norm`, `axpy` and `scale` on dense float/double vectors called `?dot`, `?nrm2`, `?axpy` and `?scal` at any length. They now take MTL5's own SIMD loops, as a build without BLAS does. Level 2 and Level 3 still dispatch, and `interface::blas::` keeps the Level 1 wrappers for a direct call.
   - **Why:** OpenBLAS splits `ddot` and `daxpy` across its process-wide thread team above a few thousand elements. On a machine with busy cores, each call then waits 3–6 ms for the team, about 1,000× the work at n = 16,384 (OpenBLAS 0.3.32, i7-12700K, 3 cores busy). On an idle machine the team costs nothing, so the slowdown appeared only on shared workstations and CI runners. A Krylov iteration makes several such calls, and `mtl5_bench --class medium --filter krylov` in a BLAS build ran 17–123× slower than without BLAS under that load. For example, `bicgstab+ilu0` took 378 ms and `gmres30+ilu0` 3,672 ms. With this change the BLAS build matches the native one within 0.3% on all 13 entries: 12.8 ms and 29.8 ms.
   - **What changes:** in a BLAS build, results of `dot` and `two_norm` can differ in the last bits, since they now use MTL5's summation order instead of the vendor's. `axpy` now rounds as a build without BLAS does. A large `ddot` on an idle machine loses OpenBLAS's threading: 208 µs single-threaded against 54 µs on 20 threads at n = 10⁶. With `MTL5_NUM_THREADS` > 1, MTL5's loops split across its own pool above 65,536 elements.

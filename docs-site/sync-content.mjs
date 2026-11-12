@@ -97,13 +97,13 @@ const FILE_MAP = {
   'benchmarks/ryzen-9-8945hs.md':               'benchmarks/ryzen-9-8945hs.md',
   // mtl5_bench capability cards, one page per machine, written by
   // benchmarks/publish_platform.cmake (which also adds the entry here).
-  'benchmarks/arduino-ventuno-q-mtl5-bench.md': 'benchmarks/arduino-ventuno-q-mtl5-bench.md',
-  'benchmarks/jetson-orin-mtl5-bench.md':       'benchmarks/jetson-orin-mtl5-bench.md',
-  'benchmarks/ryzen-7-8845hs-mtl5-bench.md':    'benchmarks/ryzen-7-8845hs-mtl5-bench.md',
-  'benchmarks/i7-12700k-mtl5-bench.md':         'benchmarks/i7-12700k-mtl5-bench.md',
-  'benchmarks/ryzen-7-2700x-mtl5-bench.md':     'benchmarks/ryzen-7-2700x-mtl5-bench.md',
-  'benchmarks/ryzen-9-8945hs-mtl5-bench.md':    'benchmarks/ryzen-9-8945hs-mtl5-bench.md',
-  'benchmarks/xeon-e5-2420v2-mtl5-bench.md':    'benchmarks/xeon-e5-2420v2-mtl5-bench.md',
+  'benchmarks/cards/arduino-ventuno-q.md':      'benchmarks/cards/arduino-ventuno-q.md',
+  'benchmarks/cards/jetson-orin.md':            'benchmarks/cards/jetson-orin.md',
+  'benchmarks/cards/ryzen-7-8845hs.md':         'benchmarks/cards/ryzen-7-8845hs.md',
+  'benchmarks/cards/i7-12700k.md':              'benchmarks/cards/i7-12700k.md',
+  'benchmarks/cards/ryzen-7-2700x.md':          'benchmarks/cards/ryzen-7-2700x.md',
+  'benchmarks/cards/ryzen-9-8945hs.md':         'benchmarks/cards/ryzen-9-8945hs.md',
+  'benchmarks/cards/xeon-e5-2420v2.md':         'benchmarks/cards/xeon-e5-2420v2.md',
   // The interleave width across the machines (#780), its tables written by
   // benchmarks/interleave_table.py.
   'benchmarks/interleave-width.md':             'benchmarks/interleave-width.md',

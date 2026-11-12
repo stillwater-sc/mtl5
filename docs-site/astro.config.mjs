@@ -3,9 +3,19 @@ import starlight from '@astrojs/starlight';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
+// The capability cards moved from benchmarks/<machine>-mtl5-bench/ to
+// benchmarks/cards/<machine>/ (#799); the old URLs keep working.
+const CARD_MACHINES = [
+  'arduino-ventuno-q', 'i7-12700k', 'jetson-orin', 'ryzen-7-2700x',
+  'ryzen-7-8845hs', 'ryzen-9-8945hs', 'xeon-e5-2420v2',
+];
+
 export default defineConfig({
   site: 'https://stillwater-sc.github.io',
   base: '/mtl5',
+  redirects: Object.fromEntries(CARD_MACHINES.map((m) => [
+    `/benchmarks/${m}-mtl5-bench`, `/mtl5/benchmarks/cards/${m}/`,
+  ])),
   markdown: {
     remarkPlugins: [remarkMath],
     rehypePlugins: [rehypeKatex],
@@ -73,8 +83,32 @@ export default defineConfig({
           ],
         },
         {
+          // Analyses first, the generated capability cards last (#799). A new
+          // page in docs/benchmarks/ needs an entry here; a new card does not:
+          // publish_platform.cmake writes it to benchmarks/cards/.
           label: 'Benchmarking',
-          autogenerate: { directory: 'benchmarks' },
+          items: [
+            { slug: 'benchmarks' },
+            { slug: 'benchmarks/systems' },
+            {
+              label: 'Across the machines',
+              items: [
+                { slug: 'benchmarks/interleave-width' },
+              ],
+            },
+            {
+              label: 'Per-machine analyses',
+              items: [
+                { slug: 'benchmarks/i7-12700k' },
+                { slug: 'benchmarks/ryzen-9-8945hs' },
+              ],
+            },
+            {
+              label: 'Capability cards',
+              collapsed: true,
+              autogenerate: { directory: 'benchmarks/cards' },
+            },
+          ],
         },
         {
           label: 'Design',

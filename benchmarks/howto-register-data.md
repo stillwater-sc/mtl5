@@ -56,7 +56,7 @@ PowerShell, if it's the Windows box:
 
 ### What it does:
 - Copies the session into benchmarks/data/ryzen-9-8945hs/mtl5_bench/<session>/.
-- Rewrites the card page docs/benchmarks/ryzen-9-8945hs-mtl5-bench.md. Its header will then point at the committed data instead of saying "raw data not yet committed".
+- Rewrites the card page docs/benchmarks/cards/ryzen-9-8945hs.md. Its header will then point at the committed data instead of saying "raw data not yet committed".
 
 Then commit those files (git status shows them), push the branch, and open a PR.
 
