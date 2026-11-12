@@ -521,6 +521,55 @@ authoritative list is always `bench_all --help`.
 would change every machine's committed CSV and break comparison with the
 existing baselines. Ask for it by name.
 
+## Sparse direct-solver scoreboards
+
+Three binaries measure the sparse side. Each runs a built-in synthetic suite
+with no arguments, so they are useful immediately after a plain build:
+
+```bash
+./build-release/benchmarks/bench_klu          # 2D Poisson, 32^2 .. 256^2
+./build-release/benchmarks/bench_superlu      # 2D convection-diffusion (unsymmetric)
+./build-release/benchmarks/bench_sparse       # synthetic sparse triangular solves
+```
+
+**`bench_klu`** (#138) — native KLU vs SuiteSparse KLU: factor + solve time,
+fill, block structure, residual.
+
+```bash
+./bench_klu A.mtx B.mtx        # those matrices instead of the built-in suite
+./bench_klu ext:Big.mtx        # external-only row: skip the native run (too slow)
+./bench_klu --csv out.csv      # also write a CSV scoreboard
+```
+
+**`bench_superlu`** (#186) — the same shape for native LU vs SuperLU. SuperLU is
+supernodal (BLAS-3) while native LU is scalar non-supernodal, so the ratio is
+expected to grow with dense fill — quantifying that gap is the point.
+
+The vendor columns require the corresponding build flag; without it each binary
+says so in its header and reports native-only:
+
+```bash
+cmake -B build-klu -DMTL5_BUILD_BENCHMARKS=ON -DCMAKE_BUILD_TYPE=Release \
+      -DMTL5_WITH_SUITESPARSE_KLU=ON          # or -DMTL5_WITH_SUPERLU=ON
+```
+
+Real matrices come from `fetch_klu_matrices.sh` / `fetch_superlu_matrices.sh`,
+which download the SuiteSparse sets these scoreboards are tuned around.
+
+**`bench_sparse`** (#297) — the level-scheduled solve phase of the native sparse
+Cholesky / LDLT / LU and supernodal solvers. Native-only, no external library.
+The solves are bit-identical across thread counts by construction (proven in
+CI); this measures how much of that level structure becomes wall-clock speedup.
+
+```bash
+MTL5_NUM_THREADS=8 ./bench_sparse --csv t8.csv --label native-t8
+./bench_sparse --file A.mtx --file B.mtx   # add SPD/general matrices from disk, one per --file
+./bench_sparse --sizes 100,150        # 2-D grid side lengths (default 100,160)
+```
+
+`run_scaling_297.sh` drives it as its `sparse` family — one process per thread
+count, pinned to physical cores, into `benchmarks/data/scaling_sparse.csv`.
+
 ## The nc-model sweep (#479)
 
 **What it is for.** #429 wants to balance the jc partition (`balanced_nc`), and
