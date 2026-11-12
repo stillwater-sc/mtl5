@@ -2,9 +2,10 @@
 
 The generic row kernels (`gemv`, `trmv` and the forward substitution on a
 row-major matrix) sum W rows per pass, one accumulator per row (#749, #772).
-The built default is W = 6 for float and double, measured only on an
-i7-12700K (#775). This page measures W on every machine of the #737 platform
-campaign (#780), as the table #778's run-time selection will use.
+These sweeps were built with the earlier default, W = 6 for float and double,
+measured only on an i7-12700K (#775). This page measures W on every machine of
+the #737 platform campaign (#780). The per-ISA defaults below come from it, and
+it is the table #778's run-time selection will use.
 
 ## How it was measured
 
@@ -42,18 +43,22 @@ campaign (#780), as the table #778's run-time selection will use.
   fastest at 4 on both AArch64 machines. On the Jetson, GCC's f64 `trmv` and
   forward substitution are fastest at 2, and lose 12% at 4.
 - **GCC on AArch64 has a separate problem (#795).** Row-major f32 `trmv` and
-  the forward substitution take 4-7x longer at W >= 4 than at W = 2, on both
-  machines (GCC 11 and 13). Clang on the same machine does not. No width
-  fixes it, so these two rows are left out of the AArch64 proposal. The
+  the forward substitution take 5.6-7.2x longer at W = 4 than at W = 2, and
+  1.4-4.5x longer at W = 6 to 12, on both machines (GCC 11 and 13). Clang on
+  the same machine does not. Only W = 2 avoids it, so GCC's float `trmv` and
+  forward substitution default to 2 on AArch64. The
   likely cause is the `keep_scalar` barrier from #776, which is on for GCC on
   AArch64 although it was measured only on x86-64.
 
-## Proposed defaults (#778)
+## Defaults per ISA class
+
+These are the built defaults (`include/mtl/interface/interleave_rows.hpp`).
+Other targets keep 6. Every target caps the width at half its vector registers.
 
 | ISA class | float | double | worst loss against the fastest width |
 |---|---|---|---|
 | x86-64 (SSE2, generic build) | 8 | 8 | 10% (i7-12700K, Clang, f32 gemv); 6% on the Xeon |
-| AArch64 (NEON, generic build) | 4 | 4 | 0% under Clang; 12% under GCC (Jetson, f64 `trmv` and forward substitution); GCC's f32 `trmv` and forward substitution wait on #795 |
+| AArch64 (NEON, generic build) | 4 (GCC: 2 for `trmv` and the forward substitution) | 4 | 0% under Clang; 12% under GCC (Jetson, f64 `trmv` and forward substitution) |
 
 - **x86-64 with AVX-512:** none of these machines has it. The Zen 4 machines
   support AVX-512, but the generic build doesn't use it, so that class is

@@ -415,11 +415,28 @@ TEST_CASE("every interleave width keeps wrapping integers bit for bit", "[operat
 TEST_CASE("interleave_rows defaults and overrides", "[operation][772]") {
     using namespace mtl::interface;
 #if !defined(MTL5_INTERLEAVE_ROWS) && !defined(MTL5_INTERLEAVE_ROWS_F32) && !defined(MTL5_INTERLEAVE_ROWS_F64)
-    // Hardware float types: the measured 6, at most half the registers.
+    // Hardware float types: measured per ISA class (#780), at most half the
+    // registers.
     constexpr std::size_t cap = vector_registers / 2;
-    STATIC_REQUIRE(interleave_rows_v<double, kernel::gemv> == (6 < cap ? 6 : cap));
-    STATIC_REQUIRE(interleave_rows_v<float, kernel::gemv> == (6 < cap ? 6 : cap));
-    STATIC_REQUIRE(interleave_rows_v<float, kernel::trmv> == interleave_rows_v<float, kernel::lower_trisolve>);
+    constexpr auto capped = [](std::size_t w) { return w < cap ? w : cap; };
+#if defined(__x86_64__) || defined(_M_X64)
+    constexpr std::size_t f64 = 8, f32_gemv = 8, f32_tri = 8;
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    constexpr std::size_t f64 = 4, f32_gemv = 4;
+#  if defined(__GNUC__) && !defined(__clang__)
+    constexpr std::size_t f32_tri = 2;   // #795
+#  else
+    constexpr std::size_t f32_tri = 4;
+#  endif
+#else
+    constexpr std::size_t f64 = 6, f32_gemv = 6, f32_tri = 6;
+#endif
+    STATIC_REQUIRE(interleave_rows_v<double, kernel::gemv> == capped(f64));
+    STATIC_REQUIRE(interleave_rows_v<double, kernel::trmv> == capped(f64));
+    STATIC_REQUIRE(interleave_rows_v<double, kernel::lower_trisolve> == capped(f64));
+    STATIC_REQUIRE(interleave_rows_v<float, kernel::gemv> == capped(f32_gemv));
+    STATIC_REQUIRE(interleave_rows_v<float, kernel::trmv> == capped(f32_tri));
+    STATIC_REQUIRE(interleave_rows_v<float, kernel::lower_trisolve> == capped(f32_tri));
     STATIC_REQUIRE(interleave_rows_v<const double&, kernel::trmv> == interleave_rows_v<double, kernel::trmv>);
     // Everything else keeps the pre-#772 width of 4: no extra registers on x87,
     // and only the user knows a software type's cost.

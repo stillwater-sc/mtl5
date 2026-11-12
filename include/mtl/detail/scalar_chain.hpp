@@ -29,7 +29,10 @@
 //     few rows a wider block leaves over. At W = 4 it is not a clean win
 //     either: under -march=native f32 gemv got 9% faster but trmv and the
 //     forward substitution 8% slower, while a plain build gained 12-24% in
-//     all three. No float default is 4 where the barrier applies.
+//     all three. That was x86-64. On AArch64 (#780), GCC's float gemv is
+//     fastest at 4 with the barrier, but its trmv and forward substitution
+//     run 5.6-7.2x slower at 4 than at 2 and 1.4-4.5x slower at 6 to 12
+//     (#795), so their AArch64 default is 2 (interface/interleave_rows.hpp).
 //
 // The bits are checked by op_test_trmv_trsv_interleaved, whose row-major
 // float cases at W >= 4 take this path in a GCC build.
