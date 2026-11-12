@@ -83,6 +83,43 @@ How to read it:
   59% in native. The row-major `gemv` is at 76% (f64) and 86% (f32). `trmv` and
   `trsv` don't gain from threads in either build.
 
+## Roofline
+
+![Roofline of the Jetson Orin native-fast runs](../img/benchmarks/jetson-orin/roofline-platform.svg)
+
+Each point is one entry of the native-fast run, placed at its arithmetic
+intensity (flops per byte moved) and its measured GFLOP/s. The lines are the
+run's own roofs: the measured bandwidth up to the ridge, then the FMA peak,
+solid for f64 and dashed for f32. An entry at 100% of its roof sits on the
+line. Integer entries are left out, because the model has no integer ceiling,
+and so are the 28 entries that record no flops or bytes (Krylov solvers,
+preconditioners, orderings and sparse eigensolvers). That leaves 74 of the 111
+entries.
+
+- **The memory-bound points line up along the slope.** On one core the
+  `blas1` entries are at a median 74% of their roof, `blas2`, the smoothers
+  and the V-cycle at 40–50%. At six threads the slope rises to the module's
+  35 GB/s; `blas1` follows it (93%), and the kernels that don't thread fall
+  away from it.
+- **Level 3 is the only area near the ceiling.** GEMM is at 60% of the FMA
+  peak on one core and 50% on six, and the other level-3 kernels at 512³
+  between 25% and 59% on one core.
+- **A few memory-bound points sit slightly above the slope.** The slope is
+  the best of three bandwidth probes (triad, read and update), not a hard
+  limit, and a kernel with a lighter read/write mix can beat it. On one core `scale` is at 131% and `ger` at 124%.
+- **`mixed/block_scaled_dot` (i8 and f32) is above its ceiling** at 118% on
+  one core. Its roof is the f64 FMA peak, which an i8 kernel isn't bound by.
+- **Points far under the slope at an intensity near 0.06 are the
+  elementwise transcendentals** (`sin`, `erf`, `log`, `exp`, `sqrt`). The model
+  counts one flop per element, but each costs tens of instructions, so they
+  are compute-bound in fact and sit 7–21× under the slope on one core.
+- **The compute-bound points other than level 3 sit far under the
+  ceiling**: at most a third of it, and the sparse direct solvers under 4%.
+  These are the factorizations at 512×512, the dense eigensolvers at 256×256
+  and the sparse direct solvers. Their flop counts
+  are nominal, and most of their time goes to panels, pivoting, iteration
+  and indirect access, not to FMAs at full width.
+
 ## GEMM
 
 `blas3/gemm`, 512×512×512, GFLOP/s and % of the measured FMA peak. The peak is
@@ -192,6 +229,8 @@ These are measured but not explained yet. Each has a tracking issue.
 benchmarks/remote_session.sh <ssh-host> jetson-orin-platform.sh --reboot --interleave
 cmake -DRESULTS=build-platform/remote/jetson-orin/<session> -DMACHINE=jetson-orin \
       -P benchmarks/publish_platform.cmake
+benchmarks/plot_roofline.py benchmarks/data/jetson-orin/mtl5_bench/20261111T193624Z \
+    --out docs/img/benchmarks/jetson-orin/roofline-platform.svg
 benchmarks/compare_sessions.py benchmarks/data/jetson-orin/mtl5_bench/20261111T190610Z \
                                benchmarks/data/jetson-orin/mtl5_bench/20261111T193624Z
 ```

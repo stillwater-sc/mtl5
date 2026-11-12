@@ -29,6 +29,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **i7-12700K:** `benchmarks/data/i7-12700k/mtl5_bench/20261109T025123Z/`, built at `e7497e6e4c47`. Its threaded runs used 20 threads, E-cores included, though the Systems table lists 8 P-cores for this machine.
   - **Xeon E5-2420 v2:** `benchmarks/data/xeon-e5-2420v2/mtl5_bench/20261109T035023Z/`, built at `73d11400a0e3`.
   - Each card page (`docs/benchmarks/<machine>-mtl5-bench.md`) now links its raw data, and each machine's Systems-table row links its card.
+- **Each per-machine analysis has a roofline plot of its platform session** (#799). `benchmarks/plot_roofline.py <session dir> --out <image>` places every entry of a variant (native-fast by default) at its arithmetic intensity and measured GFLOP/s, against that run's own bandwidth slope and f64 and f32 FMA ceilings, with one panel per thread count and the points coloured by area.
+  - **What it leaves out:** integer entries, because the model has no integer ceiling, and the 28 entries that record no flops or bytes (Krylov solvers, preconditioners, orderings, sparse eigensolvers). That leaves 74 of the 111 entries.
+  - **What the plots show:** on all four machines the memory-bound entries line up along the slope. Of the compute-bound entries, only level 3 comes near the ceiling. The elementwise transcendentals sit far under the slope because the model counts one flop per element. The factorizations, dense eigensolvers and sparse direct solvers reach at most a third of the ceiling.
+  - **Pages:** the Jetson Orin, Ventuno Q, i7-12700K and Ryzen 9 8945HS analyses, under a new Roofline section, with the command under Reproducing.
 
 ### Fixed
 

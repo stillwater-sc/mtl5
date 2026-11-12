@@ -109,6 +109,40 @@ The median %roof of each area. Areas without a roofline are left out.
 - **`blas3` in native-fast (14%) is barely above the generic build (12%).** The
   SSE2 GEMM kernel gains little over MSVC's code for the portable loops.
 
+### Roofline
+
+![Roofline of the Ryzen 9 8945HS native-fast runs](../img/benchmarks/amd-ryzen-9-8945hs/roofline-platform.svg)
+
+Each point is one entry of the native-fast run, placed at its arithmetic
+intensity (flops per byte moved) and its measured GFLOP/s. The lines are the
+run's own roofs: the measured bandwidth up to the ridge, then the FMA peak,
+solid for f64 and dashed for f32. An entry at 100% of its roof sits on the
+line. Integer entries are left out, because the model has no integer ceiling,
+and so are the 28 entries that record no flops or bytes (Krylov solvers,
+preconditioners, orderings and sparse eigensolvers). That leaves 74 of the 111
+entries.
+
+- **The memory-bound points line up along the slope**: `blas1` at a median
+  103% of its roof on one core and 110% on eight.
+- **A few memory-bound points sit slightly above the slope.** The slope is
+  the best of three bandwidth probes (triad, read and update), not a hard
+  limit, and a kernel with a lighter read/write mix can beat it. `scale` reaches 128% on one core. `spmv` at 241% on
+  eight is flagged as a suspect model (hollow).
+- **No compute-bound point reaches half the ceiling.** The ceiling is the
+  hardware's FMA peak, while the build is SSE2 (see the headline). GEMM sits
+  at 20% of it on one core and 17–19% on eight. An `/arch` build would show
+  how much of that gap is the instruction set.
+- **Points far under the slope at an intensity near 0.06 are the
+  elementwise transcendentals** (`sin`, `erf`, `log`, `exp`, `sqrt`). The model
+  counts one flop per element, but each costs tens of instructions, so they
+  are compute-bound in fact and sit 10–20× under the slope on one core.
+- **The compute-bound points other than level 3 sit far under the
+  ceiling**: at most a third of it, and the sparse direct solvers under 4%.
+  These are the factorizations at 512×512, the dense eigensolvers at 256×256
+  and the sparse direct solvers. Their flop counts
+  are nominal, and most of their time goes to panels, pivoting, iteration
+  and indirect access, not to FMAs at full width.
+
 ### GEMM at 512³
 
 `blas3/gemm`, GFLOP/s and % of the measured FMA peak (about 63 GFLOP/s per
@@ -379,7 +413,13 @@ The platform benchmark's sessions are run with
 `benchmarks/machines/ryzen-9-8945hs-platform.ps1` and published with
 `benchmarks/publish_platform.cmake`. Their repeatability comes from
 `benchmarks/compare_sessions.py` on the two session directories under
-`benchmarks/data/ryzen-9-8945hs/mtl5_bench/`.
+`benchmarks/data/ryzen-9-8945hs/mtl5_bench/`. The roofline is drawn from the second
+session:
+
+```bash
+benchmarks/plot_roofline.py benchmarks/data/ryzen-9-8945hs/mtl5_bench/20261112T032806Z \
+    --out docs/img/benchmarks/amd-ryzen-9-8945hs/roofline-platform.svg
+```
 
 Builds and sweeps use the Windows PowerShell harnesses (the MSVC equivalents of
 the bash scripts), which pin with processor-affinity bitmasks:
