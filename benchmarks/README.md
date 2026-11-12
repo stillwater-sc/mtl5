@@ -226,9 +226,10 @@ A Windows host needs, once:
    Configuration > Administrative Templates > Windows Components > Microsoft
    Defender Antivirus > Scan) set to *Disabled* stops it; real-time protection
    and the scheduled scans stay on. Whatever Windows still runs is recorded:
-   each session writes `background_activity.txt`, and every sidecar gets
-   `background_activity=` (`none`, or the Defender and Windows Update events
-   in the session's window).
+   each session writes `background_activity.txt`, and every sidecar it wrote
+   gets `background_activity=` (`none`, or the Defender and Windows Update
+   events in the session's window, plus an `unavailable:` entry for a log that
+   could not be read).
 
 `remote_session.sh` takes a `.ps1` profile as the sign of a Windows host, and
 checks that the host agrees. It starts the session with `Win32_Process.Create`,
