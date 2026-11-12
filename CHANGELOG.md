@@ -147,7 +147,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - native-fast GEMM at 57% of peak, scaling 3.6× on four cores;
     - GCC against Clang: Clang's W = 4 is fastest in every kernel, and GCC's f32 `trmv` and forward substitution stay 1.45–1.48× behind it even at #798's W = 2.
   - **`i7-12700k.md` and `ryzen-9-8945hs.md`:** a dated "Platform benchmark (#737)" section each, with the provenance table extended to it and to the threading measurements. On the i7 (91.3% repeatability), native-fast GEMM at 512³ is at 98% of OpenBLAS on one core, which reproduces the #82 parity in a second benchmark.
-  - **Correction on the Ryzen 9 8945HS (87.1%):** the page said that under MSVC "only Highway's dispatched kernels target AVX2/AVX-512". MTL5 doesn't use Highway's run-time dispatch, and the sidecars record native-fast's target as `SSE2`, so the missing `/arch` flag is the cause of the #82 gate failure. The caveat is corrected in place.
+  - **Correction on the Ryzen 9 8945HS (87.1%):** the page said that under MSVC "only Highway's dispatched kernels target AVX2/AVX-512". MTL5 doesn't use Highway's run-time dispatch, and the sidecars record native-fast's target as `SSE2`, so the missing `/arch` flag is the leading explanation of the #82 gate failure, pending an MSVC measurement with `/arch`. The caveat is corrected in place.
   - **Open observations, recorded on the pages and not yet filed as issues:**
     - Column-major `gemv` in native-fast is 2.2–5.0× slower than the generic build on all four machines.
     - The Ventuno's threaded LU is 4.4× slower on four cores than on one.

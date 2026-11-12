@@ -70,8 +70,10 @@ eigensolvers, integer) are left out. Their times are in the card.
 
 How to read it:
 
-- **The 6-thread roof is six times the 1-thread one**, so an area that doesn't
-  thread drops by up to 6× in this table without getting any slower. That is
+- **The 6-thread compute roof is six times the 1-thread one**, so a
+  compute-bound area that doesn't thread drops by up to 6× in this table
+  without getting any slower. The memory roof grows only 2.2× (16.1 to
+  35.0 GB/s). That is
   most of the drop in `factor`, `eigen` and `direct`: at 512×512 the native
   factorizations gain 1.4× from six threads, OpenBLAS's LU 2.4×.
 - **blas1 is near the bandwidth roof in every build.** The vector kernels

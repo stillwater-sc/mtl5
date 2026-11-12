@@ -20,8 +20,8 @@ MKL comes from the `mkl-devel` wheel). These are not portable performance claims
 
 ## Headline findings
 
-- **The native-fast kernels are SSE2 under MSVC, and that explains most of the
-  gate failure below (#737).** The platform benchmark's sidecars record
+- **The native-fast kernels are SSE2 under MSVC, the likely explanation of
+  most of the gate failure below (#737).** The platform benchmark's sidecars record
   Highway's target for native-fast as `SSE2`. MTL5 compiles Highway for its
   static target only, without run-time dispatch, and MSVC without `/arch`
   targets SSE2: 128-bit vectors, no FMA. On one core, native-fast GEMM at 512³
@@ -75,9 +75,11 @@ median ratio between the sessions is 0.997–0.999 in every run, but two runs
 carry most of the outliers:
 
 - **`native-t8`, 26 entries outside ±5%.** The sessions record their
-  background activity (#787): at 03:22Z, during the second session's
-  `native-t8` run, Windows Update installed an update and Defender's security
-  intelligence was updated. No Defender scan ran in either session.
+  background activity (#787). At 03:22Z, inside the second session's window
+  (03:17:13Z to 03:28:06Z; a session's ID is the time its runs ended), Windows
+  Update installed an update and Defender's security intelligence was
+  updated. The logs don't time the individual runs, so the update can't be
+  tied to `native-t8` for certain. No Defender scan ran in either session.
 - **`native-fast-t1`, 24 entries.** A block of dense kernels is 1.4–1.6×
   slower in the second session: `gemm` f64 and f32, `lu` f64 and f32, `symm`,
   `gemmt`, `trmm`. They move together, and nothing in the background record
@@ -127,10 +129,11 @@ they differ by 1.56×.
   Repeatability.
 - **At eight threads, native-fast is no faster than the generic build.** Both
   scale about 7.9× in f64, and both end at about a quarter of OpenBLAS.
-- **The fix is a build flag, not a kernel.** An `/arch:AVX2` (or `AVX512`)
-  build of native-fast would give Highway an AVX2 or AVX-512 target. On the
-  i7-12700K under GCC, with `AVX2`, the same GEMM reaches 98% of OpenBLAS. This
-  page has no MSVC measurement with `/arch` yet.
+- **The likely fix is a build flag, not a kernel, but it is unmeasured.** An
+  `/arch:AVX2` (or `AVX512`) build of native-fast would give Highway an AVX2
+  or AVX-512 target. On the i7-12700K under GCC, with `AVX2`, the same GEMM
+  reaches 98% of OpenBLAS. There is no MSVC measurement with `/arch` yet, so
+  whether it closes the gap here is a hypothesis until one is taken.
 - **Mixed precision is native-fast's.** `mixed/gemm` reaches 13.9 GFLOP/s on one
   core against 7.2–7.3 in the other two builds, and `block_scaled_dot` 29.1
   against 9.1–9.7.
@@ -358,8 +361,8 @@ on this page.
   > dispatched kernels target AVX2/AVX-512". MTL5 doesn't use Highway's run-time
   > dispatch, so the Highway kernels are SSE2 too: the platform benchmark's
   > sidecars record `simd_backend=SSE2` for native-fast. That makes the missing
-  > `/arch` flag the cause of the #82 gate failure, not only the leading
-  > suspect.
+  > `/arch` flag the leading explanation of the #82 gate failure. An MSVC
+  > build with `/arch` would confirm it.
 - **Clocks are not pinned in the sweeps.** Windows ran its balanced power plan
   (the #737 sessions use a copy of it pinned to 100% processor state); the 8945HS is
   a 35–54 W mobile part that boosts to ~5.2 GHz but sustains lower under load.
