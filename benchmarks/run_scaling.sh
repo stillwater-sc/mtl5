@@ -13,7 +13,7 @@
 # Writes one CSV per backend (gemm_scaling_<backend>.csv) whose `backend` column
 # is labelled "<backend>-t<T>", so analyze_scaling.py can recover (backend, T).
 #
-# This harness follows the run contract in docs/benchmarks/systems.md: preflight
+# This harness follows the run contract in docs/benchmarks/run-contract.md: preflight
 # gates, pinning, a per-machine OUTDIR, and machine state in every sidecar. It
 # does NOT interleave -- see the note above the measurement phase for why that
 # needs bench_all to grow append support first.

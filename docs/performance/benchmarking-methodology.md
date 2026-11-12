@@ -111,7 +111,8 @@ A `--target` build silently leaves the previous commit's stamp in place.
 **Known gap:** on WSL the governor reads as `unavailable`, so a pinned-governor
 run there records its *effect* (a lower noise floor) but not the change itself.
 
-See [systems.md](../benchmarks/systems.md) for per-machine topology and pinning
+The full contract, with every sidecar field and gate, is the
+[run contract](../benchmarks/run-contract.md). See [systems.md](../benchmarks/systems.md) for per-machine topology and pinning
 policy, and `benchmarks/README.md` for the commands.
 
 ---

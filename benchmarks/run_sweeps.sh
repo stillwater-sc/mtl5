@@ -5,7 +5,7 @@
 # would set for the whole program, and the public mtl:: API dispatches
 # accordingly. Native is a generic-only build (no BLAS/LAPACK).
 #
-# This harness follows the run contract in docs/benchmarks/systems.md: preflight
+# This harness follows the run contract in docs/benchmarks/run-contract.md: preflight
 # gates, pinning, a per-machine OUTDIR, and machine state in every sidecar. It
 # does NOT interleave -- see the note above the measurement phase.
 #
