@@ -138,6 +138,10 @@ TEST_CASE("Sparse operands of Matrix * Matrix", "[mat][operators][sparse][824]")
     require_equal(S * Bd, naive(Ad, Bd));            // CRS kernel (#550)
     const auto Sb = to_crs(counting(3, 2));
     require_equal(Bd * Sb, naive(Bd, counting(3, 2)));   // dense * CRS
+    // trans(CRS) * dense: the transposed sparse mult is for vectors only.
+    const auto St = trans(S);   // 4x3
+    const auto Bt = counting(3, 2);
+    require_equal(St * Bt, naive(St, Bt));
 }
 
 // -- Matrix * Vector --------------------------------------------------------

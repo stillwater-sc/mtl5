@@ -3,6 +3,7 @@
 #include <mtl/concepts/collection.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/mat/block_diagonal2D.hpp>
 #include <mtl/mat/operators.hpp>
 #include <mtl/operation/trans.hpp>
 #include <algorithm>
@@ -417,6 +418,12 @@ TEST_CASE("Aliased assignment through a view or a lazy product", "[mat][expr][al
         dense2D<double> alias(3, 3, A.data());   // external pointer, A's storage
         A = A + trans(alias);
         require_equal(A, {{2, 6, 10}, {6, 10, 14}, {10, 14, 18}});
+    }
+    SECTION("a block matrix that holds the target as a block") {
+        mat::block_diagonal2D<double> bd{dense2D<double>{{1, 2}, {3, 4}}};
+        auto& A = bd.block(0);
+        A = 1.0 * trans(bd);   // bd(r, c) is A(r, c): trans(bd) reads A elsewhere
+        require_equal(A, {{1, 3}, {2, 4}});
     }
     SECTION("an external-pointer target keeps writing its buffer") {
         double buf[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};

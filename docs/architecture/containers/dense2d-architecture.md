@@ -313,7 +313,7 @@ The walk over the expression tree is conservative:
 | the target itself, as a leaf | yes: read at `(r, c)` only, so `A = A + B` and `A = 2*A - A` stay in place |
 | another contiguous matrix | yes, unless its storage overlaps the target's |
 | a view (`trans`, `hermitian`, `upper`, ...) or a lazy product | no, if it reaches the target's storage at all |
-| any other matrix (sparse, block, generated) | yes: it can't hold the target's storage |
+| any other matrix (sparse, block, generated) | no: a `block_diagonal2D` can hold the target as one of its blocks |
 
 ---
 

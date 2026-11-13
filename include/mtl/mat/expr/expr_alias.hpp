@@ -19,8 +19,10 @@
 //   - A view (it has base(): trans, hermitian, upper, banded, ...) or a lazy
 //     product reads elements other than (r, c), so it is unsafe as soon as it
 //     reaches the target's storage at all.
-//   - Any other leaf (sparse, block and generated matrices) keeps its own
-//     storage and cannot reach the target's: safe.
+//   - Any other matrix is assumed to reach the target: a block_diagonal2D can
+//     hold the target as one of its blocks (block(k) is a dense2D&), and its
+//     elements are not at the target's (r, c). Sparse, block and generated
+//     operands therefore take the temporary.
 // The answer is conservative: a strict-lower view of the target, say, reads
 // only (r, c) and would have been safe, but takes the temporary.
 
@@ -89,7 +91,9 @@ bool alias_reaches_target(const E& e, const alias_target& t) {
     } else if constexpr (alias_contiguous_leaf<E>) {
         return static_cast<const void*>(&e) == t.self || alias_overlaps(e, t);
     } else {
-        return false;
+        static_cast<void>(e);
+        static_cast<void>(t);
+        return true;   // may hold the target (see the top of this file)
     }
 }
 
@@ -106,7 +110,9 @@ bool alias_reads_target_elsewhere(const E& e, const alias_target& t) {
     } else if constexpr (alias_contiguous_leaf<E>) {
         return static_cast<const void*>(&e) != t.self && alias_overlaps(e, t);
     } else {
-        return false;
+        static_cast<void>(e);
+        static_cast<void>(t);
+        return true;   // may hold the target (see the top of this file)
     }
 }
 
