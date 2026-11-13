@@ -176,6 +176,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **The native-fast `gemv` on a column-major matrix is 2.5–6× faster and no longer slower than the generic build** (#804). Its kernel kept 16 rows of y in registers and swept all n columns for them, so every load came from another column and, at n = 4096, another page. It ran 2.2–5× slower than the generic build's column sweep (#777).
+  - **The kernel** (`detail::gemv_colmajor`) now sweeps 64 KB strips of y down the columns, 4 columns per pass where the target has a fused multiply-add and 2 where it has not. Each y[i] gets the same chain of operations as before, so results are bit-identical to the old kernel.
+  - **Why 64 KB, not the 16 KB that keeps y in L1:** each strip restarts every column's contiguous run, and the Jetson's Cortex-A78 pays for each restart (f64, n = 4096: 26 ms with 16 KB strips, 17.8 ms with 64 KB).
+  - **Why 2 columns without FMA:** on the Xeon E5-2420 v2 (AVX, no FMA), 4 columns ran 9–10% behind the generic build at n = 16384; 2 matched it.
+  - **Speed:** `mtl5_bench`, `blas2/gemv_colmajor`, n = 4096, one core, median of three:
+
+    | machine | dtype | generic | native-fast before | native-fast after |
+    |---|---|---:|---:|---:|
+    | i7-12700K | f64 / f32 | 4.76 / 2.29 ms | 9.66 / 4.27 ms | 3.45 / 1.69 ms |
+    | Xeon E5-2420 v2 | f64 / f32 | 13.56 / 6.60 ms | 38.17 / 17.19 ms | 12.98 / 6.46 ms |
+    | Jetson Orin Nano | f64 / f32 | 21.47 / 8.27 ms | 63.92 / 31.40 ms | 17.78 / 7.93 ms |
+    | Arduino Ventuno Q | f64 / f32 | 10.06 / 4.74 ms | 47.52 / 22.77 ms | 7.74 / 4.10 ms |
+
+    All threads, the fix is at or ahead of the generic build except the Ventuno's f64 cell (8 threads: 34.8 ms against 26.5 generic and 28.3 before). On that machine every gemv is slower on 8 threads than on one, the row-major one included, so that cell belongs to #805.
+  - **Tests:** `test_gemv` gains sizes across the strip boundaries; the old sizes stopped at 100 rows.
+
 - **The generic `gemv`, `trmv` and forward substitution on a column-major matrix are 3–8× faster, with results unchanged bit for bit** (#777). The row kernels read W rows of each column per step, so on a column-major A each step touched a new cache line, and often a new page, for a handful of elements: f32 `gemv` ran at 9% of the bandwidth roofline.
   - **The column sweep:** on a contiguous column-major A (`dense2D`) with an arithmetic accumulator (float, double, long double, integers), the kernels keep a strip of row sums in a 16 KB stack buffer, which stays in L1, and walk down each column: `acc[0..S) += A(r0..r0+S-1, c) * x(c)`. The inner loop is lane-wise, so the compiler vectorizes it itself, one row per lane, with no Highway needed. Each row still adds the same terms in ascending column order with the same expression as the one-row loop, which is why the bits don't change.
   - **The kernels:** `detail::mult_rows_column_sweep`, `detail::trmv_column_sweep` (both triangles; strips top-down for upper and bottom-up for lower, so every x(j) read is still the original) and `detail::lower_trisolve_column_sweep` (each strip adds the solved columns, then solves its diagonal block column by column). `detail/column_sweep.hpp` holds the dispatch predicate and the strip size.

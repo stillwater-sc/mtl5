@@ -8,9 +8,9 @@
 //
 //   row-major A  -> dot-of-rows: block MR rows so each loaded x batch is reused
 //                   MR times (x traffic / MR); one horizontal reduce per row.
-//   col-major A  -> axpy-of-columns: hold a strip of y in registers across all
-//                   columns and accumulate (broadcast x[j]) * A[:,j]; y is then
-//                   written exactly once.
+//   col-major A  -> axpy-of-columns over a 64 KB strip of y: walk down each
+//                   column contiguously, accumulating (broadcast x[j]) *
+//                   A[strip, j] into the strip, a few columns per pass (#804).
 //
 // A(i,j) is read from its orientation's contiguous layout:
 //   row-major  A(i,j) = A[i*lda + j]   (lda = n, rows contiguous)
@@ -66,39 +66,76 @@ void gemv_rowmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
         y[i] = simd::reduce_dot<T>(A + i * lda, x, n);
 }
 
+/// Columns the col-major gemv takes per pass over a strip of y (#804): four
+/// where the target has a fused multiply-add, two where `fma` is a separate
+/// multiply and add. A tuning choice only -- either grouping gives each y[i]
+/// the same chain of operations, so the result does not depend on it. Read from
+/// the compiler's macros, not Highway's HWY_NATIVE_FMA (see scalar_fma in
+/// simd/batch.hpp for why that one is not trusted). MSVC defines no __FMA__;
+/// its /arch:AVX2 enables FMA3, so __AVX2__ stands in for it there.
+#if defined(__FMA__) || defined(__ARM_FEATURE_FMA) || defined(__aarch64__) || \
+    defined(_M_ARM64) || (defined(_MSC_VER) && defined(__AVX2__))
+inline constexpr std::size_t gemv_colmajor_columns = 4;
+#else
+inline constexpr std::size_t gemv_colmajor_columns = 2;
+#endif
+
 /// y[m] := A[m x n] * x[n], A col-major (columns contiguous, lda = m).
+///
+/// The rows are swept in STRIPS of S rows (64 KB of y), and each strip walks
+/// down the columns, reading S contiguous elements of each, a few columns per
+/// pass (#804). The kernel before it held only 4 batches of y in registers (16
+/// rows of f64 under AVX2) and swept all n columns for them, so every load came
+/// from a different column: at n = 4096 each strip touched 4096 cache lines on
+/// 4096 pages, and native-fast ran 2.2-5x slower than the generic build's
+/// column sweep (#777).
+///
+/// The strip is 64 KB, not the 16 KB that keeps it in L1, because the length of
+/// each contiguous run down a column matters more than where y lives: on a
+/// Cortex-A78 (Jetson Orin) f64 at n = 4096 took 23.5 ms with 16 KB strips and
+/// 17.2 ms with 64 KB ones, and no machine measured got slower. Columns per pass:
+/// gemv_colmajor_columns.
+///
+/// Each y[i] still sees the same FMA chain, in ascending column order from zero,
+/// as the register-strip kernel gave it, so the result is bit-identical to that
+/// kernel and independent of how the caller partitions the rows across threads.
 template <typename T>
     requires mtl::Scalar<T>
 void gemv_colmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
                    const T* x, T* y) {
     using B = simd::batch<T>;
     constexpr std::size_t W = B::size;
-    constexpr std::size_t UB = 4;                 // y batches resident per strip
-    constexpr std::size_t SB = UB * W;            // rows per strip
+    constexpr std::size_t CP = gemv_colmajor_columns;
+    // Rows per strip: 64 KB of y, a whole number of batches.
+    constexpr std::size_t S = (65536 / sizeof(T)) / W * W > 0 ? (65536 / sizeof(T)) / W * W : W;
 
-    std::size_t i = 0;
-    for (; i + SB <= m; i += SB) {                // wide resident y-strip
-        B acc0, acc1, acc2, acc3;                 // y-strip in registers, zeroed
-        for (std::size_t j = 0; j < n; ++j) {
-            const B xj(x[j]);
-            const T* col = A + j * lda + i;
-            acc0 = fma(xj, B::load_unaligned(col + 0 * W), acc0);
-            acc1 = fma(xj, B::load_unaligned(col + 1 * W), acc1);
-            acc2 = fma(xj, B::load_unaligned(col + 2 * W), acc2);
-            acc3 = fma(xj, B::load_unaligned(col + 3 * W), acc3);
+    const std::size_t mv = m / W * W;             // rows the SIMD strips cover
+    for (std::size_t i0 = 0; i0 < mv; i0 += S) {
+        const std::size_t i1 = i0 + S < mv ? i0 + S : mv;
+        for (std::size_t i = i0; i < i1; i += W) B().store_unaligned(y + i);
+        std::size_t j = 0;
+        for (; j + CP <= n; j += CP) {            // CP columns per pass
+            B xs[CP];
+            const T* c[CP];
+            for (std::size_t q = 0; q < CP; ++q) {
+                xs[q] = B(x[j + q]);
+                c[q] = A + (j + q) * lda;
+            }
+            for (std::size_t i = i0; i < i1; i += W) {
+                B acc = B::load_unaligned(y + i);
+                for (std::size_t q = 0; q < CP; ++q)
+                    acc = fma(xs[q], B::load_unaligned(c[q] + i), acc);
+                acc.store_unaligned(y + i);
+            }
         }
-        acc0.store_unaligned(y + i + 0 * W);
-        acc1.store_unaligned(y + i + 1 * W);
-        acc2.store_unaligned(y + i + 2 * W);
-        acc3.store_unaligned(y + i + 3 * W);
+        for (; j < n; ++j) {                      // remaining columns (< CP)
+            const B xj(x[j]);
+            const T* c = A + j * lda;
+            for (std::size_t i = i0; i < i1; i += W)
+                fma(xj, B::load_unaligned(c + i), B::load_unaligned(y + i)).store_unaligned(y + i);
+        }
     }
-    for (; i + W <= m; i += W) {                  // single-batch strips
-        B acc;
-        for (std::size_t j = 0; j < n; ++j)
-            acc = fma(B(x[j]), B::load_unaligned(A + j * lda + i), acc);
-        acc.store_unaligned(y + i);
-    }
-    for (; i < m; ++i) {                          // remaining rows (< W), scalar
+    for (std::size_t i = mv; i < m; ++i) {        // remaining rows (< W), scalar
         T s = T(0);
         for (std::size_t j = 0; j < n; ++j)
             s = mtl::detail::wrap_add(s, mtl::detail::wrap_mul(A[j * lda + i], x[j]));
