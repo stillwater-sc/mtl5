@@ -82,6 +82,13 @@
 
 #include <mtl/detail/exceptions.hpp>
 
+/// thread_pool::spin_us, in microseconds (#805; default 1000); 0 sleeps at
+/// once, as the pool did before. A compile-time setting: define it alike in
+/// every translation unit, as MTL5_POOL_SPIN.
+#ifndef MTL5_THREAD_POOL_SPIN_US
+#define MTL5_THREAD_POOL_SPIN_US 1000
+#endif
+
 #if defined(MTL5_SHARED_POOL)
 #  if defined(_WIN32) || defined(__CYGWIN__)
 #    if defined(MTL5_SHARED_POOL_BUILD)
@@ -362,12 +369,15 @@ public:
 
     /// How long a waiting thread spins before it sleeps on the condition
     /// variable, in microseconds (#805): a worker waiting for the next region,
-    /// and the caller waiting for the region's last tid. Long enough to cover
-    /// the serial work a kernel does between back-to-back regions (LU's pivot
-    /// search and row swap), short enough that an idle pool stops spinning
-    /// almost at once. A region that starts or finishes later costs no more
-    /// than it did before the spin: one condition-variable wake.
-    static constexpr unsigned spin_us = 50;
+    /// and the caller waiting for the region's last tid. It has to cover the
+    /// serial work a kernel does between regions: on the Ventuno Q at 4
+    /// threads, 50 us left LU at 76 ms (22 ms on one thread), 200 us fixed LU,
+    /// and QR, LQ and Hessenberg needed 1000 us, which made them 1.5-1.6x
+    /// faster than one thread where they had been 1.5-2.2x slower. 3000 us
+    /// gained nothing more. The cost is up to spin_us of a core per worker
+    /// after a burst of regions ends. A region that starts or finishes after
+    /// the spin costs what it did before: one condition-variable wake.
+    static constexpr unsigned spin_us = MTL5_THREAD_POOL_SPIN_US;
 
     /// Run task(tid) for tid in [0, count); see the contract at the top of this
     /// header. Does not allocate.

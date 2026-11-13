@@ -126,11 +126,15 @@ Rules:
 
 `thread_pool` hands each region to its workers under a mutex and wakes them
 through a condition variable. A waiting worker, and the caller in its join,
-first spin for up to `thread_pool::spin_us` (50 µs) before they sleep (#805).
-Without that spin, regions that follow each other closely put the cores to sleep
-between them. On the Arduino Ventuno Q, whose A78C idle states take 1.45–1.76 ms
-to leave, that made every handoff cost about a millisecond, and a 512×512 LU,
-which opens one region per column, ran 7× slower on four threads than on one.
+first spin for up to `thread_pool::spin_us` (1000 µs by default; set it with
+`MTL5_THREAD_POOL_SPIN_US`, the same in every translation unit) before they
+sleep (#805). Without that spin, regions that follow each other closely put the
+cores to sleep between them. On the Arduino Ventuno Q, whose A78C idle states
+take 1.45–1.76 ms to leave, every handoff then cost about a millisecond: a
+512×512 LU, which opens one region per column, ran 7× slower on four threads
+than on one, and QR, LQ and Hessenberg 1.5–2.2× slower. With the spin, LU on
+four threads matches one thread and the other three run 1.5–1.6× faster. The
+cost is up to `spin_us` of a core per worker after the last region of a burst.
 
 That is cheap for throughput work, but a caller in a hard real-time loop gets
 three problems from it:
