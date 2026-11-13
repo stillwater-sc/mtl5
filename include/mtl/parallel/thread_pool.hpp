@@ -486,6 +486,7 @@ private:
     /// The clock is read only every 64th iteration, the one that yields.
     template <typename Pred>
     static bool spin_until(Pred done) {
+        if constexpr (spin_us == 0) return done();  // 0: sleep at once, no spin
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(spin_us);
         for (unsigned i = 0;; ++i) {
             if (done()) return true;
