@@ -116,7 +116,7 @@ Rules:
   translation units of one binary that disagree about it violate the
   one-definition rule.
 - **Every module must be built against the same MTL5 pool header.** The exported
-  functions carry a layout version (`shared_pool_v1`). It changes when the
+  functions carry a layout version (`shared_pool_v2` since #805). It changes when the
   pool's layout does, so a module built against an incompatible header fails to
   link rather than misbehaving at run time.
 - The default, header-only build is unchanged. A module that does not link
@@ -125,11 +125,22 @@ Rules:
 ## A real-time pool: `spin_pool`
 
 `thread_pool` hands each region to its workers under a mutex and wakes them
-through a condition variable. That is cheap for throughput work, but a caller in
-a hard real-time loop gets three problems from it:
+through a condition variable. A waiting worker, and the caller in its join,
+first spin for up to `thread_pool::spin_us` (1000 µs by default; set it with
+`MTL5_THREAD_POOL_SPIN_US`, the same in every translation unit) before they
+sleep (#805). Without that spin, regions that follow each other closely put the
+cores to sleep between them. On the Arduino Ventuno Q, whose A78C idle states
+take 1.45–1.76 ms to leave, every handoff then cost about a millisecond: a
+512×512 LU, which opens one region per column, ran 7× slower on four threads
+than on one, and QR, LQ and Hessenberg 1.5–2.2× slower. With the spin, LU on
+four threads matches one thread and the other three run 1.5–1.6× faster. The
+cost is up to `spin_us` of a core per worker after the last region of a burst.
+
+That is cheap for throughput work, but a caller in a hard real-time loop gets
+three problems from it:
 - a worker preempted while it holds the mutex blocks the caller (priority
   inversion);
-- every wake-up goes through the scheduler;
+- a wake-up after the spin goes through the scheduler;
 - nothing states what one `run()` costs at worst.
 
 `mtl::parallel::spin_pool`, in `<mtl/parallel/spin_pool.hpp>` (#636), has the

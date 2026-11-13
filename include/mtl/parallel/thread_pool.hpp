@@ -7,7 +7,11 @@
 // concurrency; default 1 = serial, no workers, zero overhead). Replaces the
 // per-call std::thread spawn/join that the blocked GEMM used, so a kernel that
 // runs many small parallel regions (e.g. the GEMM (jc,pc) loops) pays a cheap
-// condition-variable handoff instead of thread creation each time. MTL5's own
+// condition-variable handoff instead of thread creation each time. A waiting
+// worker, and the caller in its join, first spin for up to spin_us (#805):
+// regions that follow each other closely then never put a core to sleep, which
+// on a board whose idle states take over a millisecond to leave (the Ventuno
+// Q's A78C) made every handoff cost that millisecond. MTL5's own
 // kernels run on pool(), so code that runs its parallel work there too shares
 // one set of workers with them instead of oversubscribing the cores.
 //
@@ -45,8 +49,9 @@
 // the single translation unit that includes
 // <mtl/parallel/shared_pool_definition.hpp>. Each module looks the pool up
 // once; run() stays inline. Every module must see the same thread_pool
-// layout: a change to the class's data members must bump the _v1 suffix of
-// the pool's two exported functions below, so a stale module fails to link.
+// layout: a change to the class's data members must bump the version suffix
+// of shared_pool_vN() below (v2 since #805 made two members atomic), so a
+// stale module fails to link.
 // The third, shared_region_thread_v1(), is the per-thread region state (#640),
 // exported so that it too is one per thread for the whole process.
 //
@@ -58,6 +63,7 @@
 // parallel_reduce, parallel_accumulate) are the detail:: templates below,
 // shared by both pools, so a kernel's partition is the same on either.
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -70,7 +76,18 @@
 #include <utility>
 #include <vector>
 
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86) || defined(_M_ARM64))
+#  include <intrin.h>
+#endif
+
 #include <mtl/detail/exceptions.hpp>
+
+/// thread_pool::spin_us, in microseconds (#805; default 1000); 0 sleeps at
+/// once, as the pool did before. A compile-time setting: define it alike in
+/// every translation unit, as MTL5_POOL_SPIN.
+#ifndef MTL5_THREAD_POOL_SPIN_US
+#define MTL5_THREAD_POOL_SPIN_US 1000
+#endif
 
 #if defined(MTL5_SHARED_POOL)
 #  if defined(_WIN32) || defined(__CYGWIN__)
@@ -149,7 +166,7 @@ struct pool_config {
 /// mtl5_pool library or <mtl/parallel/shared_pool_definition.hpp>) and
 /// exported, so every module that defines MTL5_SHARED_POOL binds to them.
 MTL5_SHARED_POOL_API pool_config& shared_pool_config_v1();
-MTL5_SHARED_POOL_API thread_pool& shared_pool_v1();
+MTL5_SHARED_POOL_API thread_pool& shared_pool_v2();
 struct region_thread;
 MTL5_SHARED_POOL_API region_thread& shared_region_thread_v1() noexcept;
 #endif
@@ -304,6 +321,27 @@ Acc chunked_accumulate(Pool& pool, std::size_t n, std::size_t grain, unsigned ma
     return std::move(partials[0]);
 }
 
+/// One spin-wait iteration: a pause hint to the core, nothing else.
+inline void cpu_relax() noexcept {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    _mm_pause();
+#elif defined(_MSC_VER) && defined(_M_ARM64)
+    __yield();
+#elif defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ __volatile__("yield" ::: "memory");
+#endif
+}
+
+/// One iteration of a spin wait: a pause, and every 64th iteration a yield,
+/// so a thread the scheduler has queued on this core behind the spinner runs
+/// within a few microseconds instead of after the whole spin.
+inline void spin_step(unsigned i) noexcept {
+    if ((i & 63u) == 63u) std::this_thread::yield();
+    else cpu_relax();
+}
+
 } // namespace detail
 
 class thread_pool {
@@ -319,7 +357,7 @@ public:
     /// Process-wide pool, sized on first use (see configure()).
     static thread_pool& instance() {
 #if defined(MTL5_SHARED_POOL)
-        static thread_pool& pool = detail::shared_pool_v1();
+        static thread_pool& pool = detail::shared_pool_v2();
 #else
         static thread_pool pool(detail::claim_pool_size());
 #endif
@@ -328,6 +366,18 @@ public:
 
     /// Total logical workers, including the calling thread (>= 1).
     unsigned size() const noexcept { return n_; }
+
+    /// How long a waiting thread spins before it sleeps on the condition
+    /// variable, in microseconds (#805): a worker waiting for the next region,
+    /// and the caller waiting for the region's last tid. It has to cover the
+    /// serial work a kernel does between regions: on the Ventuno Q at 4
+    /// threads, 50 us left LU at 76 ms (22 ms on one thread), 200 us fixed LU,
+    /// and QR, LQ and Hessenberg needed 1000 us, which made them 1.5-1.6x
+    /// faster than one thread where they had been 1.5-2.2x slower. 3000 us
+    /// gained nothing more. The cost is up to spin_us of a core per worker
+    /// after a burst of regions ends. A region that starts or finishes after
+    /// the spin costs what it did before: one condition-variable wake.
+    static constexpr unsigned spin_us = MTL5_THREAD_POOL_SPIN_US;
 
     /// Run task(tid) for tid in [0, count); see the contract at the top of this
     /// header. Does not allocate.
@@ -432,6 +482,19 @@ public:
     }
 
 private:
+    /// Spin until done() or spin_us have passed; true if done() became true.
+    /// The clock is read only every 64th iteration, the one that yields.
+    template <typename Pred>
+    static bool spin_until(Pred done) {
+        if constexpr (spin_us == 0) return done();  // 0: sleep at once, no spin
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(spin_us);
+        for (unsigned i = 0;; ++i) {
+            if (done()) return true;
+            if ((i & 63u) == 63u && std::chrono::steady_clock::now() >= deadline) return false;
+            detail::spin_step(i);
+        }
+    }
+
     /// run()'s body, for a task that is an object (a lambda, a functor or a
     /// function pointer).
     template <typename F>
@@ -476,6 +539,7 @@ private:
         }
 #endif
 
+        spin_until([&] { return remaining_.load(std::memory_order_acquire) == 0; });
         lk.lock();
         done_.wait(lk, [&] { return remaining_ == 0; });
         ctx_ = nullptr;
@@ -501,6 +565,12 @@ private:
         // wait (a startup race) is still observed as generation_ != seen.
         std::uint64_t seen = 0;
         for (;;) {
+            // Spin for the next region before sleeping (#805). The stop path
+            // bumps generation_ too, so this sees it. Everything the region
+            // needs is still read under the lock below.
+            lk.unlock();
+            spin_until([&] { return generation_.load(std::memory_order_acquire) != seen; });
+            lk.lock();
             wake_.wait(lk, [&] { return generation_ != seen || stop_; });
             if (stop_) return;
             seen = generation_;
@@ -534,8 +604,10 @@ private:
     void* ctx_ = nullptr;            // the region's callable, by address
     void (*call_)(void*, unsigned) = nullptr;  // invokes *ctx_ for one tid
     unsigned active_ = 0;            // tids [0, active_) participate this region
-    unsigned remaining_ = 0;        // worker tids still running this region
-    std::uint64_t generation_ = 0;  // bumped to start a region (or to stop)
+    // Written only under mtx_, so the condition variables' predicates see them
+    // as before; atomic so the spins can read them without the lock.
+    std::atomic<unsigned> remaining_{0};        // worker tids still running this region
+    std::atomic<std::uint64_t> generation_{0};  // bumped to start a region (or to stop)
     bool busy_ = false;             // a region is in progress
     bool stop_ = false;
     std::exception_ptr worker_exc_;

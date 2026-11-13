@@ -25,7 +25,7 @@ MTL5_SHARED_POOL_API detail::pool_config& detail::shared_pool_config_v1() {
     return c;
 }
 
-MTL5_SHARED_POOL_API thread_pool& detail::shared_pool_v1() {
+MTL5_SHARED_POOL_API thread_pool& detail::shared_pool_v2() {
     static thread_pool pool(claim_pool_size());
     return pool;
 }

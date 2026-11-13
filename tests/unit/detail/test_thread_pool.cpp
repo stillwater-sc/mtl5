@@ -78,10 +78,14 @@ TEST_CASE("thread_pool: parallel_for covers [0,n) exactly once", "[detail][threa
         for (std::size_t n : {std::size_t{0}, std::size_t{1}, std::size_t{7},
                               std::size_t{1000}, std::size_t{100000}}) {
             std::vector<int> hits(n, 0);
+            // Catch2's assertions are not thread-safe, so the workers record a
+            // bad chunk and the caller asserts on it (ThreadSanitizer, #805).
+            std::atomic<bool> inverted{false};
             pool.parallel_for(n, /*grain=*/8, [&](std::size_t b, std::size_t e) {
-                REQUIRE(b <= e);
+                if (b > e) inverted = true;
                 for (std::size_t i = b; i < e; ++i) hits[i] += 1;
             });
+            REQUIRE_FALSE(inverted.load());
             for (std::size_t i = 0; i < n; ++i) REQUIRE(hits[i] == 1);  // once, no gaps/overlap
         }
     }
