@@ -112,22 +112,33 @@ echo "  thermal now: $(cat /sys/devices/virtual/thermal/thermal_zone*/temp 2>/de
                        awk '{printf "%.1fC ", $1/1000}')"
 echo
 
-# -march=native, as on the other hosts: without it Highway compiles for the
-# baseline and the blocking under test is for the wrong vector length. Both core
-# classes report the same ISA flags, so the binary is the same whichever cluster
-# the compiler runs on.
+# The host's ISA, as on the other hosts: without it Highway compiles for the
+# baseline and the blocking under test is for the wrong vector length. Not
+# -march=native, though: GCC 13 resolves it to baseline Armv8.0-a on this board
+# (#806), passing no -march or -mcpu on to cc1. These flags spell out what
+# /proc/cpuinfo lists on every core of both clusters, and tune for the A78C, so
+# the binary is the same whichever cluster the compiler runs on.
 # Every requested arm, not just `default`: the runner refuses an arm whose binary
 # is missing rather than building it. -B keeps an overridden BUILD_DIR the tree
 # that is both configured and built (the preset alone names build-release).
 # FORCE_BUILD=1 rebuilds even when every binary exists, so an experiment whose
 # arms differ from `default` by one macro never compares a stale `default`.
+# A tree configured with other arch flags (a build from before #806, on
+# -march=native) is rebuilt too: its binaries exist, but for the wrong ISA.
+ARCH_FLAGS="-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c"
 need_build=${FORCE_BUILD:-0}
 for a in $ARMS; do
     [ -x "$BUILD_DIR/benchmarks/bench_blocking_ab_$a" ] || need_build=1
 done
+if [ "$need_build" = 0 ] &&
+   ! grep -qxF "MTL5_NATIVE_ARCH_FLAGS:STRING=$ARCH_FLAGS" "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
+    echo "== $BUILD_DIR was configured with other arch flags; rebuilding"
+    need_build=1
+fi
 if [ "$need_build" = 1 ]; then
     echo "== configuring and building $BUILD_DIR"
-    cmake --preset release -B "$BUILD_DIR" -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON >/dev/null
+    cmake --preset release -B "$BUILD_DIR" -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON \
+        "-DMTL5_NATIVE_ARCH_FLAGS=$ARCH_FLAGS" >/dev/null
     targets=""
     for a in $ARMS; do targets="$targets bench_blocking_ab_$a"; done
     # shellcheck disable=SC2086

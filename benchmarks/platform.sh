@@ -56,6 +56,13 @@
 #                                in every sidecar as clock_policy= (the machine
 #                                profiles in benchmarks/machines/*-platform.sh
 #                                set it)
+#   --arch FLAGS                 the native-fast build's arch flags in place of
+#                                -march=native (MTL5_NATIVE_ARCH_FLAGS), for a
+#                                compiler that under-detects the host: GCC 13
+#                                resolves -march=native to baseline Armv8.0-a on
+#                                the Ventuno Q (#806). Also applies where
+#                                -march=native is otherwise skipped (SVE, macOS):
+#                                an explicit flag is the operator's decision.
 #   --no-gate                    record the machine state but never stop on it
 #
 # Exit: 0 if every run passed every check; 1 if a gate, a build or a check
@@ -79,6 +86,7 @@ MACHINE=""
 GATE=1
 CPUS=""
 CLOCK_POLICY=""
+ARCH=""
 
 need_value() { [ "$2" -ge 2 ] || { echo "platform.sh: $1 requires a value" >&2; exit 2; }; }
 while [ $# -gt 0 ]; do
@@ -91,6 +99,7 @@ while [ $# -gt 0 ]; do
         --machine)  need_value "$1" $#; MACHINE=$2; shift 2 ;;
         --cpus)     need_value "$1" $#; CPUS=$2; shift 2 ;;
         --clock-policy) need_value "$1" $#; CLOCK_POLICY=$2; shift 2 ;;
+        --arch)     need_value "$1" $#; ARCH=$2; shift 2 ;;
         --no-gate)  GATE=0; shift ;;
         -h|--help)  sed -n '2,/^set -uo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; /^set -uo/d'; exit 0 ;;
         *) echo "platform.sh: unknown argument '$1'" >&2; exit 2 ;;
@@ -213,7 +222,10 @@ variant_flags() {   # variant -> cmake args on stdout, one per line
         native) ;;
         native-fast)
             printf '%s\n' -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_FAST_GEMM=ON
-            if [ "$has_sve" -eq 1 ]; then
+            if [ -n "$ARCH" ]; then
+                echo "  native-fast: arch flags '$ARCH' (--arch), not -march=native." >&2
+                printf '%s\n' -DMTL5_NATIVE_ARCH=ON "-DMTL5_NATIVE_ARCH_FLAGS=$ARCH"
+            elif [ "$has_sve" -eq 1 ]; then
                 echo "  native-fast: SVE hardware -- not using -march=native, which demotes" >&2
                 echo "  the SIMD batch to one lane with GCC (#720); baseline NEON instead." >&2
             elif [ "$(uname -s)" = Darwin ]; then
@@ -246,6 +258,12 @@ for v in "${VARIANT_LIST[@]}"; do
         fi
         echo "   configure FAILED (see $OUT/logs/$v.configure.log)" >&2
         SKIPPED+=("$v: configure failed"); failed=1; continue
+    fi
+    # CMake's MTL5_NATIVE_ARCH guard (#806): the arch flags miss a feature this
+    # CPU has. Repeated here because nobody reads a configure log that succeeded.
+    if grep -q "MTL5_NATIVE_ARCH: this CPU has" "$OUT/logs/$v.configure.log"; then
+        echo "   WARNING: the arch flags do not enable every feature this CPU has; the" >&2
+        echo "   build gets the baseline ISA. Pass --arch (see logs/$v.configure.log)." >&2
     fi
     if ! cmake --build "$dir" --target mtl5_bench --parallel "$JOBS" > "$OUT/logs/$v.build.log" 2>&1; then
         echo "   build FAILED (see $OUT/logs/$v.build.log)" >&2
