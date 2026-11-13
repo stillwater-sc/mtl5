@@ -446,6 +446,8 @@ entry is measured the same way.
 
 ### Direct-solver references
 
+The results, on the i7-12700K: [Sparse direct solvers against CHOLMOD and PARDISO](../docs/benchmarks/direct-solver-references.md).
+
 The `direct` entries ran at 0.02–1.7% of the roofline, and nothing measured on the same problem said how much of that was MTL5 (#810). In a build configured with `-DMTL5_BENCH_REFERENCES=ON`, `platform.sh`'s `blas` variant, `mtl5_bench` adds tuned libraries beside MTL5's solvers, on the same matrices and with the same backward-error check:
 
 | entries | library | settings | counterpart |

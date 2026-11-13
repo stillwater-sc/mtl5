@@ -7,6 +7,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **The sparse direct solvers against CHOLMOD and PARDISO: an i7-12700K session pair and an analysis page** (#810). `docs/benchmarks/direct-solver-references.md` reads the direct-solver entries of two pinned sessions, `benchmarks/data/i7-12700k/mtl5_bench/20261113T055208Z` and `20261113T060838Z` (at `8867b44`, every check passed, 1-thread direct entries within ±2% of each other but two).
+  - **The 2D grid caps everyone:** even PARDISO reaches only 7.5–8.8% of peak in the factorization, so the old 0.02–1.7% was partly the problem.
+  - **The 3D grid (20³) does not:** CHOLMOD and PARDISO reach 35–41% of peak. MTL5's supernodal LDLᵀ takes 7.2× PARDISO's time, its supernodal LU 35× (slower than its plain LU), and the up-looking `sparse_cholesky` 768×.
+  - **Analysis is close:** MTL5's COLAMD-based LU analysis is about 2× faster than PARDISO's. In 3D, the solves are 2.8× (Cholesky) and 7.1× (LU) behind.
+  - **Threads:** PARDISO's 3D factorization is 4.1× faster on 8 cores; none of MTL5's direct solvers gains.
+  - A direct-only roofline (`roofline-direct.svg`), the card now on the new pair, and the i7 page's #804 note updated: in these sessions native-fast column-major `gemv` takes 3.45 ms, against 4.70 ms generic and 3.61 ms OpenBLAS.
+
 - **`mtl5_bench`: the direct solvers one phase at a time, on a 3D grid too, with CHOLMOD and MKL PARDISO beside them** (#810). The `direct` entries ran at 0.02–1.7% of the roofline, and nothing measured on the same problem said how much of that was MTL5.
   - **Phase entries** (`benchmarks/platform/entries_direct.hpp`): `sparse_cholesky`, `supernodal_ldlt`, `sparse_lu` and `supernodal_lu` each get `.analyze` (ordering and symbolic), `.factor` and `.solve`. The earlier phases run untimed, and every check is the backward error of a full solve.
   - **A 3D grid,** area `direct3d`: the 7-point Laplacian and convection-diffusion at 10³, 20³ and 24³ for the three classes. A 2D grid leaves only small supernodes; this one doesn't. The one-shot entries are unchanged, so earlier cards stay comparable.
