@@ -574,6 +574,8 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Documentation
 
+- **Session log for 2026-11-12 – 2026-11-13**: `docs/sessions/2026-11-13-it-was-never-measured-there.md`. Covers #811 to #821 and the six issues they closed (#795, #799, #804, #805, #806, #810): the direct solvers against CHOLMOD and PARDISO, the Ventuno's threaded LU, its baseline-Armv8 build, and the `keep_scalar` barrier on AArch64. Its through-line is that four of the problems were settings measured on one machine and applied to another nobody had measured: the barrier (x86-64 to AArch64), `-march=native` (which GCC 13 resolves to nothing on the Ventuno), the thread pool's sleep (cheap to wake on x86, 1.5–1.8 ms on the A78C), and CHOLMOD 5's `nthreads_max` on the Jetson's CHOLMOD 3. It also records that the 2026-11-11 sidecars had the two ARM boards' build ISAs right while the issue and the pages had them swapped.
+
 - **[ARM64 SIMD: NEON, fixed-length SVE2 and scalable SVE2](docs/performance/arm64-simd-neon-sve.md)** (#717). It covers which Highway target each set of compiler flags selects, with GCC and with Clang, and the requirements #716 and #717 found:
   - sizeless SVE types can't be stored in `batch`;
   - `SVE2_128` needs I8MM and BF16 in the flags;
