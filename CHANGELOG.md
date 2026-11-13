@@ -7,6 +7,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Platform sessions on the Jetson Orin and the Ventuno Q after #811, with CHOLMOD on ARM** (#805, #810). Two cold-boot sessions per board at `967d20a`, every check passed: `benchmarks/data/jetson-orin/mtl5_bench/20261113T131507Z` and `20261113T140622Z`, `benchmarks/data/arduino-ventuno-q/mtl5_bench/20261113T131507Z` and `20261113T135246Z`. Both cards move to the new pairs; the analysis pages keep their 2026-11-11 figures and add a section for these sessions.
+  - **The Ventuno's threaded LU (#805):** `factor/lu` f64 512×512 in native-fast takes 24.7 ms on one thread and 17.2 ms on four, 1.4× faster; on 2026-11-11 four threads took 109 ms. LQ, Hessenberg, the inverse and the mixed-precision refinement, all slower on four threads then, are now 1.16–1.75× faster; QR's gain grows from 1.26× to 1.70×.
+  - **The Ventuno's first OpenBLAS column:** `gemm` at 89% of the FMA peak on one core, native-fast at 64% of it.
+  - **CHOLMOD on ARM (#810):** on the 3D grid MTL5's supernodal LDLᵀ takes 3.6× CHOLMOD's time on the Jetson and 4.8× on the Ventuno (6.1× on the i7), and on the 2D grid it matches CHOLMOD. `docs/benchmarks/direct-solver-references.md` has an AArch64 section.
+  - **The Jetson's CHOLMOD is 3.7–5.7× slower on six threads than on one.** A diagnostic run traces it to OpenBLAS 0.3.20's threading on that board; MTL5's thread pool and #811's spin make no difference.
+  - Both boards confirm #804's fix in a session: native-fast column-major `gemv` takes 12.9 ms (Jetson) and 7.73 ms (Ventuno) on one core, against 50.1 and 49.2 ms on 2026-11-11.
+
 - **The sparse direct solvers against CHOLMOD and PARDISO: an i7-12700K session pair and an analysis page** (#810). `docs/benchmarks/direct-solver-references.md` reads the direct-solver entries of two pinned sessions, `benchmarks/data/i7-12700k/mtl5_bench/20261113T055208Z` and `20261113T060838Z` (at `8867b44`, every check passed, 1-thread direct entries within ±2% of each other but two).
   - **The 2D grid caps everyone:** even PARDISO reaches only 7.5–8.8% of peak in the factorization, so the old 0.02–1.7% was partly the problem.
   - **The 3D grid (20³) does not:** CHOLMOD and PARDISO reach 35–41% of peak. MTL5's supernodal LDLᵀ takes 7.2× PARDISO's time, its supernodal LU 35× (slower than its plain LU), and the up-looking `sparse_cholesky` 768×.
