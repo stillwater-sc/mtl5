@@ -37,6 +37,10 @@ public:
         return SF<typename raw_e1::value_type, typename raw_e2::value_type>::apply(e1_(r, c), e2_(r, c));
     }
 
+    /// The operands, for the aliasing check of an assignment (expr_alias.hpp).
+    const raw_e1& first()  const { return e1_; }
+    const raw_e2& second() const { return e2_; }
+
 private:
     E1 e1_;
     E2 e2_;

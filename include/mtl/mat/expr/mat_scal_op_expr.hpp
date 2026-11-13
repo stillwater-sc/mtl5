@@ -30,6 +30,9 @@ public:
         return SF<S, typename raw_m::value_type>::apply(s_, m_(r, c));
     }
 
+    /// The matrix operand, for the aliasing check of an assignment (expr_alias.hpp).
+    const raw_m& operand() const { return m_; }
+
 private:
     S s_;          // scalar by value
     M m_;          // matrix: const ref or value depending on lvalue/rvalue
@@ -55,6 +58,9 @@ public:
     value_type operator()(size_type r, size_type c) const {
         return SF<typename raw_m::value_type, S>::apply(m_(r, c), s_);
     }
+
+    /// The matrix operand, for the aliasing check of an assignment (expr_alias.hpp).
+    const raw_m& operand() const { return m_; }
 
 private:
     M m_;

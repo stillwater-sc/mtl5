@@ -27,6 +27,7 @@
 #include <mtl/mat/expr/mat_negate_expr.hpp>
 #include <mtl/mat/expr/mat_mat_times_expr.hpp>
 #include <mtl/operation/spgemm.hpp>
+#include <mtl/operation/mult.hpp>
 
 namespace mtl::mat {
 
@@ -115,21 +116,20 @@ auto operator*(const M& A, const V& x) {
 // Stays eager to avoid aliasing issues (e.g., auto C = A*B; then modify A)
 // and O(n^3)-per-element lazy recomputation. For lazy matmul, use
 // mat_mat_times_expr directly.
+//
+// It is mtl::mult into a fresh C (#824): BLAS or the native-fast GEMM for
+// dense float and double, the CRS kernel for compressed2D * row-major dense
+// (#550), and mult's generic kernel for everything else. It used to be its
+// own unblocked triple loop, reading B down its columns through operator()
+// and a compressed2D operand by binary search per element. C is a new matrix,
+// so it never aliases A or B.
 
 template <Matrix M1, Matrix M2>
 auto operator*(const M1& A, const M2& B) {
     assert(A.num_cols() == B.num_rows());
     using result_t = std::common_type_t<typename M1::value_type, typename M2::value_type>;
     dense2D<result_t> C(A.num_rows(), B.num_cols());
-    for (typename M1::size_type r = 0; r < A.num_rows(); ++r) {
-        for (typename M2::size_type c = 0; c < B.num_cols(); ++c) {
-            auto acc = math::zero<result_t>();
-            for (typename M1::size_type k = 0; k < A.num_cols(); ++k) {
-                acc = detail::generic_fma<result_t>(acc, A(r, k), B(k, c));
-            }
-            C(r, c) = acc;
-        }
-    }
+    ::mtl::mult(A, B, C);
     return C;
 }
 
