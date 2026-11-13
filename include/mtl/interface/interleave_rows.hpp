@@ -45,8 +45,11 @@
 // double (x87 has eight stack slots), integers, and software number types,
 // whose cost only the user knows.
 //
-// Run-time selection (#778) would recover the rest: the Xeon's 4 and GCC's
-// 12 on the i7, which a portable x86-64 binary can't know at compile time.
+// Run-time selection (#778, interleave_runtime.hpp) recovers the rest: the
+// Xeon's 4 and GCC's 12 on the i7, which a portable x86-64 binary can't know
+// at compile time. It is off unless MTL5_INTERLEAVE_RUNTIME is defined (the
+// CMake option of that name passes it), because it compiles each kernel at
+// five widths. Any override below turns it off for the types it covers.
 //
 // A contiguous column-major A with an arithmetic accumulator doesn't use W at
 // all: it takes the column sweep (detail/column_sweep.hpp, #777), which reads
@@ -68,6 +71,10 @@
 
 #include <cstddef>
 #include <type_traits>
+
+#if defined(MTL5_INTERLEAVE_RUNTIME)
+#  include <mtl/interface/interleave_runtime.hpp>
+#endif
 
 namespace mtl::interface {
 
@@ -139,6 +146,9 @@ consteval std::size_t configured_interleave_rows() {
 template <typename T, typename Kernel>
 struct interleave_rows {
     static constexpr std::size_t value = configured_interleave_rows<T, Kernel>();
+    /// Marks the primary template: a specialization lacks it, and so turns
+    /// run-time selection off for its type and kernel (#778).
+    static constexpr bool is_measured_default = true;
 };
 
 template <typename T, typename Kernel>
@@ -147,5 +157,84 @@ inline constexpr std::size_t interleave_rows_v = [] {
     static_assert(w >= 1 && w <= 64, "interleave_rows must be between 1 and 64");
     return w;
 }();
+
+/// Whether Kernel picks its width for T at run time (#778): only with
+/// MTL5_INTERLEAVE_RUNTIME, on x86-64 or AArch64, for float and double, and
+/// only where neither a -D override nor a specialization fixed the width.
+template <typename T, typename Kernel>
+consteval bool interleave_rows_at_runtime() {
+#if defined(MTL5_INTERLEAVE_RUNTIME) && \
+    (defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64))
+    using U = std::remove_cvref_t<T>;
+    if constexpr (!requires { interleave_rows<U, Kernel>::is_measured_default; }) {
+        return false;
+    } else if constexpr (std::is_same_v<U, float>) {
+#  if defined(MTL5_INTERLEAVE_ROWS) || defined(MTL5_INTERLEAVE_ROWS_F32)
+        return false;
+#  else
+        return true;
+#  endif
+    } else if constexpr (std::is_same_v<U, double>) {
+#  if defined(MTL5_INTERLEAVE_ROWS) || defined(MTL5_INTERLEAVE_ROWS_F64)
+        return false;
+#  else
+        return true;
+#  endif
+    } else {
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+
+template <typename T, typename Kernel>
+inline constexpr bool interleave_rows_at_runtime_v = interleave_rows_at_runtime<T, Kernel>();
+
+namespace detail {
+
+template <typename Kernel>
+consteval int interleave_kernel_index() {
+    if constexpr (std::is_same_v<Kernel, kernel::gemv>) return 0;
+    else if constexpr (std::is_same_v<Kernel, kernel::trmv>) return 1;
+    else return 2;
+}
+
+} // namespace detail
+
+/// The width Kernel uses for T in this process: the run-time choice where
+/// there is one, else interleave_rows_v.
+template <typename T, typename Kernel>
+std::size_t selected_interleave_rows() noexcept {
+#if defined(MTL5_INTERLEAVE_RUNTIME)
+    if constexpr (interleave_rows_at_runtime_v<T, Kernel>) {
+        constexpr int type = std::is_same_v<std::remove_cvref_t<T>, float> ? 1 : 0;
+        if (const std::size_t w = runtime_interleave_width(type, detail::interleave_kernel_index<Kernel>()))
+            return w;
+    }
+#endif
+    return interleave_rows_v<T, Kernel>;
+}
+
+/// Call f(std::integral_constant<std::size_t, W>{}) with the width Kernel uses
+/// for T: interleave_rows_v, or with run-time selection, the width chosen for
+/// this CPU, dispatched over runtime_interleave_widths.
+template <typename T, typename Kernel, typename F>
+decltype(auto) with_interleave_rows(F&& f) {
+    constexpr std::size_t W = interleave_rows_v<T, Kernel>;
+#if defined(MTL5_INTERLEAVE_RUNTIME)
+    if constexpr (interleave_rows_at_runtime_v<T, Kernel>) {
+        switch (selected_interleave_rows<T, Kernel>()) {
+        case 2:  return f(std::integral_constant<std::size_t, 2>{});
+        case 4:  return f(std::integral_constant<std::size_t, 4>{});
+        case 6:  return f(std::integral_constant<std::size_t, 6>{});
+        case 8:  return f(std::integral_constant<std::size_t, 8>{});
+        case 12: return f(std::integral_constant<std::size_t, 12>{});
+        default: break;
+        }
+    }
+#endif
+    return f(std::integral_constant<std::size_t, W>{});
+}
 
 } // namespace mtl::interface

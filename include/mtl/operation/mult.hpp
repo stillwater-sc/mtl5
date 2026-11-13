@@ -133,8 +133,9 @@ void mult_generic_rows(const M& A, const VIn& x, VOut& y,
     if constexpr (std::is_void_v<Accumulator> && column_sweep_v<Result, M>) {
         mult_rows_column_sweep<column_strip_rows<Result>>(A, x, y, rb, re);   // #777
     } else if constexpr (std::is_void_v<Accumulator>) {
-        mult_rows_interleaved<interface::interleave_rows_v<Result, interface::kernel::gemv>>(
-            A, x, y, rb, re);
+        interface::with_interleave_rows<Result, interface::kernel::gemv>([&](auto w) {
+            mult_rows_interleaved<decltype(w)::value>(A, x, y, rb, re);
+        });
     } else {
         const size_type ncols = A.num_cols();
         using Value = std::common_type_t<typename M::value_type, typename VIn::value_type>;

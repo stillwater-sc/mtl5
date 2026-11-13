@@ -252,6 +252,8 @@ add_dependencies(bench_pool_latency mtl5_build_info)
 # fastest on this machine.
 add_executable(bench_interleave_rows bench_interleave_rows.cpp)
 target_link_libraries(bench_interleave_rows PRIVATE MTL5::mtl5)
+# Reports the run-time choice (#778); the sweeps call each width directly.
+target_compile_definitions(bench_interleave_rows PRIVATE MTL5_INTERLEAVE_RUNTIME)
 set_target_properties(bench_interleave_rows PROPERTIES FOLDER "Benchmarks")
 
 # Future: individual focused benchmarks can be added here

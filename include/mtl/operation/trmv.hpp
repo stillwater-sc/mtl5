@@ -311,11 +311,13 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
         detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
         return;
     }
-    constexpr std::size_t W = interface::interleave_rows_v<acc_type, interface::kernel::trmv>;
-    if (upper)
-        detail::trmv_upper_rows<W>(A, x, size_type{0}, unit_diag);
-    else
-        detail::trmv_lower_rows<W>(A, x, n, unit_diag);
+    interface::with_interleave_rows<acc_type, interface::kernel::trmv>([&](auto w) {
+        constexpr std::size_t W = decltype(w)::value;
+        if (upper)
+            detail::trmv_upper_rows<W>(A, x, size_type{0}, unit_diag);
+        else
+            detail::trmv_lower_rows<W>(A, x, n, unit_diag);
+    });
 }
 
 } // namespace mtl

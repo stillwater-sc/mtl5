@@ -225,6 +225,15 @@ if(NOT MTL5_INTERLEAVE_ROWS STREQUAL "")
     target_compile_definitions(mtl5 INTERFACE $<BUILD_INTERFACE:MTL5_INTERLEAVE_ROWS=${MTL5_INTERLEAVE_ROWS}>)
 endif()
 
+# Choose that width at run time instead, from the CPU (#778):
+# include/mtl/interface/interleave_runtime.hpp. Compiles each of those kernels
+# at five widths for float and double, so it is off by default. BUILD_INTERFACE
+# only: a downstream build defines MTL5_INTERLEAVE_RUNTIME itself.
+option(MTL5_INTERLEAVE_RUNTIME "Choose the generic row kernels' interleave width at run time (#778)" OFF)
+if(MTL5_INTERLEAVE_RUNTIME)
+    target_compile_definitions(mtl5 INTERFACE $<BUILD_INTERFACE:MTL5_INTERLEAVE_RUNTIME>)
+endif()
+
 # Sanitizers for in-tree builds (tests/benchmarks): pass a comma-separated list,
 # e.g. -DMTL5_SANITIZE=address,undefined. BUILD_INTERFACE only so it never leaks
 # into installed/exported flags. Used to validate the packing + micro-kernel
