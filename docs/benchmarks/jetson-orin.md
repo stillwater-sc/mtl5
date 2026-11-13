@@ -46,7 +46,9 @@ Don't compare figures between the two.
   f32 `trmv` and `trsv` take 26.5 and 26.9 ms against 12.0 ms for f64. Halving
   the data should make f32 faster, not 2.2× slower. The per-ISA defaults of
   #798 set these kernels to W = 2 under GCC on AArch64, which the interleave
-  sweep measures at 6.8–6.9 ms. They postdate these sessions.
+  sweep measures at 6.8–6.9 ms. They postdate these sessions. The cause was the
+  `keep_scalar` barrier; without it on AArch64, W = 4 takes 6.31 and 5.58 ms
+  and is now the default (#795).
 - **native-fast column-major `gemv` was 3.2× slower than the generic build**:
   50.1 ms against 15.6 ms, on every machine of the campaign. #809 fixed it
   (#804); see [Fixed since these sessions](#fixed-since-these-sessions).
@@ -199,12 +201,16 @@ GCC, one pinned core, n = 4096, median of 6 runs over both sessions, in ms.
 | trisolve f32 | **6.80** | 39.43 | 27.04 | 2 |
 
 - **W = 6 was 1.5–1.6× slower than the fastest width in every f64 kernel.**
-- **The defaults of #798 give** W = 4 for f64 and f32 `gemv` and for f64 `trmv`
+- **The defaults of #798 gave** W = 4 for f64 and f32 `gemv` and for f64 `trmv`
   and forward substitution, and W = 2 for f32 `trmv` and forward substitution
   under GCC. That leaves f64 `trmv` and forward substitution 12% from their
   fastest width (W = 2). Run-time selection (#778) would recover it.
-- **f32 at W = 4 is 7.2× slower than at W = 2.** That is #795, still open. Its
-  likely cause is the `keep_scalar` barrier, which is on for GCC on AArch64.
+- **f32 at W = 4 is 7.2× slower than at W = 2 here (#795).** The cause was the
+  `keep_scalar` barrier, which was on for GCC on AArch64. Without it, in an A/B
+  after these sessions (median of 3 runs), f32 `trmv` takes 6.31 ms at W = 4
+  against 50.04 with it, and the forward substitution 5.58 against 39.45. W = 4
+  is now their fastest width and the default; `gemv` keeps the barrier, which
+  is neutral here (8.23 against 8.34 ms).
 
 ## Integer gemm: two modes at six threads (#785)
 

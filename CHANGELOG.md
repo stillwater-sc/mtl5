@@ -226,6 +226,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **GCC's float `trmv` and forward substitution on AArch64: no `keep_scalar` barrier, and W = 4** (#795). The barrier of #776 was on for GCC on AArch64 without a measurement there, and it made these two kernels 5.6–7.2× slower at W = 4 than at W = 2; #798 had held them at 2. An A/B on both ARM boards (`bench_interleave_rows`, n = 4096, one core, median of 3):
+  - **Jetson Orin, GCC 11:** f32 `trmv` at W = 4 takes 6.31 ms without the barrier against 50.04 ms with it; the forward substitution 5.58 against 39.45.
+  - **Ventuno Q, GCC 13:** 3.12 against 31.66 ms and 2.99 against 26.22 ms, now a little faster than Clang's 3.29 and 3.18.
+  - W = 4 is now their fastest width and the AArch64 default for every compiler, 13–36% faster than the 2 they were held at.
+  - **`gemv` keeps the barrier:** neutral on the Jetson, 1.66× faster with it on the Ventuno (5.51 against 9.14 ms). `detail::keep_scalar_triangular_v` is the triangular kernels' predicate; x86-64 is unchanged.
+
 - **`thread_pool` spins for up to 1 ms before it sleeps, so threaded factorizations no longer slow down on boards with deep idle states** (#805). The default pool woke its workers through a condition variable only, so every gap between parallel regions let their cores go idle. The Arduino Ventuno Q's A78C idle states take 1.45–1.76 ms to leave, and after a gap of 5 µs or more a handoff cost about 1 ms instead of 14–22 µs. The non-LAPACK `lu_factor` opens one region per column, so a 512×512 LU ran 7× slower on four threads than on one.
   - **The change:** a waiting worker, and the caller in its join, spin for up to `thread_pool::spin_us` before blocking. `generation_` and `remaining_` became atomics so the spins can read them without the lock; they are still written only under the mutex, and the condition-variable predicates are unchanged.
   - **Setting:** `MTL5_THREAD_POOL_SPIN_US`, default 1000; 0 restores the old behavior. Define it the same in every translation unit. A worker can burn up to that much of a core after the last region of a burst. On the Ventuno at 4 threads, 50 µs left LU at 76 ms, 200 µs fixed LU, QR, LQ and Hessenberg needed 1000 µs, and 3000 µs gained nothing more.

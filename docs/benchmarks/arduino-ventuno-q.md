@@ -49,8 +49,11 @@ quoted outside those sections.
 - **GCC's f32 triangular kernels show #795.** In the generic `native` build,
   the f32 `trsv` takes 20.7 ms against 4.95 ms for f64. Clang on the same board
   doesn't show it. The defaults of #798 set W = 2 for these kernels under GCC
-  on AArch64. That brings them to 4.7–4.8 ms, but it leaves them 1.45–1.48× slower
-  than Clang's W = 4.
+  on AArch64, which brought them to 4.7–4.8 ms, 1.45–1.48× slower than
+  Clang's W = 4. The `keep_scalar` barrier was the cause; without it on
+  AArch64, GCC's W = 4 takes 3.12 ms (`trmv`) and 2.99 ms (forward
+  substitution), now the default
+  ([interleave width](interleave-width.md#findings)).
 
 ## The 2026-11-11 card by area
 
@@ -167,10 +170,11 @@ fastest width.
 - **Under Clang, W = 4 is the fastest width of every kernel**, and W = 6 is
   18–24% slower. That is the clean AArch64 result behind #798's W = 4 default.
 - **Under GCC, f32 `trmv` and forward substitution at W = 4 take 31.7 and
-  26.2 ms**: 6.7× and 5.6× slower than at W = 2 (#795). Only W = 2 avoids it,
-  so even with #798's GCC exception these two kernels stay 1.45–1.48× behind
-  Clang. #795 tracks the likely cause, the `keep_scalar` barrier, which is on
-  for GCC on AArch64.
+  26.2 ms**: 6.7× and 5.6× slower than at W = 2 (#795). In these sessions only
+  W = 2 avoided it, and even with #798's GCC exception these two kernels
+  stayed 1.45–1.48× behind Clang. The cause was the `keep_scalar` barrier.
+  Without it on AArch64, GCC takes 3.12 and 2.99 ms at W = 4, within 6% of
+  Clang's 3.29 and 3.18 (an A/B after these sessions).
 - **The two compilers are within 2% on f64**, and GCC is 15% faster on f32
   `gemv`.
 
