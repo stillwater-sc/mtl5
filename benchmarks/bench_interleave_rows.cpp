@@ -17,8 +17,8 @@
 //
 // It is built with MTL5_INTERLEAVE_RUNTIME (#778), which changes none of the
 // timings above: after each type it prints the width run-time selection
-// picks on this CPU and how far that is from the fastest, and at the end it
-// times what the dispatch costs, on a gemv small enough for it to show.
+// picks on this CPU and how far that is from the fastest.
+// bench_interleave_dispatch times what the dispatch costs.
 //
 // Usage:
 //   bench_interleave_rows [--n 4096] [--reps 15]
@@ -151,34 +151,6 @@ void run_type(std::size_t n, int reps) {
     std::printf("\n\n");
 }
 
-/// The cost of choosing the width per call: gemv at a small n through
-/// detail::mult_generic_rows, which dispatches on the run-time width every
-/// call, against the same width's kernel called directly.
-template <typename T>
-void dispatch_cost(std::size_t n, int reps) {
-    namespace iface = mtl::interface;
-    mtl::mat::dense2D<T> A(n, n);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < n; ++j) A(i, j) = static_cast<T>(static_cast<double>((i + 2 * j) % 7) / 7.0);
-    mtl::vec::dense_vector<T> x(n), y(n);
-    for (std::size_t i = 0; i < n; ++i) x(i) = static_cast<T>(static_cast<double>(i % 5) / 5.0);
-    constexpr int calls = 2000;
-    const auto none = [] {};
-    const double dispatched = median_seconds(none, [&] {
-        for (int c = 0; c < calls; ++c) mtl::detail::mult_generic_rows(A, x, y, 0, n);
-    }, reps) / calls;
-    consume(y);
-    const double direct = iface::with_interleave_rows<T, iface::kernel::gemv>([&](auto w) {
-        return median_seconds(none, [&] {
-            for (int c = 0; c < calls; ++c) mtl::detail::mult_rows_interleaved<decltype(w)::value>(A, x, y, 0, n);
-        }, reps) / calls;
-    });
-    consume(y);
-    std::printf("dispatch %s gemv n=%zu W=%zu: %8.1f ns dispatched, %8.1f ns direct (%+.1f%%)\n", type_name<T>(), n,
-                iface::selected_interleave_rows<T, iface::kernel::gemv>(), dispatched * 1e9, direct * 1e9,
-                (dispatched / direct - 1.0) * 100.0);
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -196,11 +168,6 @@ int main(int argc, char** argv) {
                 n, reps, mtl::interface::vector_registers);
     run_type<double>(n, reps);
     run_type<float>(n, reps);
-    for (std::size_t m : {16, 64}) {
-        dispatch_cost<double>(m, reps);
-        dispatch_cost<float>(m, reps);
-    }
-    std::printf("\n");
     std::printf("A width differing per kernel is set by specializing "
                 "mtl::interface::interleave_rows<T, Kernel>.\n");
 }

@@ -254,6 +254,17 @@ add_executable(bench_interleave_rows bench_interleave_rows.cpp)
 target_link_libraries(bench_interleave_rows PRIVATE MTL5::mtl5)
 # Reports the run-time choice (#778); the sweeps call each width directly.
 target_compile_definitions(bench_interleave_rows PRIVATE MTL5_INTERLEAVE_RUNTIME)
+
+# What run-time selection costs per call (#778): the same generic gemv built
+# with the compile-time width and with run-time selection, to compare.
+add_executable(bench_interleave_dispatch bench_interleave_dispatch.cpp)
+target_link_libraries(bench_interleave_dispatch PRIVATE MTL5::mtl5)
+target_compile_definitions(bench_interleave_dispatch PRIVATE BENCH_COMPILE_TIME_WIDTH)
+set_target_properties(bench_interleave_dispatch PROPERTIES FOLDER "Benchmarks")
+add_executable(bench_interleave_dispatch_runtime bench_interleave_dispatch.cpp)
+target_link_libraries(bench_interleave_dispatch_runtime PRIVATE MTL5::mtl5)
+target_compile_definitions(bench_interleave_dispatch_runtime PRIVATE MTL5_INTERLEAVE_RUNTIME)
+set_target_properties(bench_interleave_dispatch_runtime PROPERTIES FOLDER "Benchmarks")
 set_target_properties(bench_interleave_rows PROPERTIES FOLDER "Benchmarks")
 
 # Future: individual focused benchmarks can be added here
