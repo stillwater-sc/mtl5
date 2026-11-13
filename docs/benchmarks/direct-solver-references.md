@@ -13,7 +13,10 @@ LDLᵀ, takes 6× CHOLMOD's time. Its supernodal LU takes 35× PARDISO's, and is
 slower than its plain LU. The up-looking Cholesky takes 650× CHOLMOD's time.
 The ordering and symbolic analysis are close to the references, and MTL5's
 COLAMD-based LU analysis beats PARDISO's. MTL5's direct solvers show no
-substantial parallel scaling: at 8 threads they gain at most 8%.
+substantial parallel scaling: at 8 threads they gain at most 8%. On the two
+AArch64 boards, against CHOLMOD only, the picture is the same and the gap
+narrower: the supernodal LDLᵀ takes 3.6–4.8× CHOLMOD's time on the 3D grid
+and matches it on the 2D one ([AArch64](#aarch64-cholmod-on-the-jetson-orin-and-the-ventuno-q)).
 
 ## The measurement
 
@@ -120,6 +123,54 @@ MTL5's direct solvers show no substantial parallel scaling: their 2–8% gains
 are about the size of the run-to-run spread at 8 threads (up to 6.3% between
 the two sessions). PARDISO parallelizes over the elimination tree. CHOLMOD gains only what OpenBLAS's threads give its dense updates.
 
+## AArch64: CHOLMOD on the Jetson Orin and the Ventuno Q
+
+The same entries, CHOLMOD only (MKL is x86-only). Second sessions of the
+2026-11-13 pairs, `blas` build, one thread:
+
+- **Jetson Orin:** `20261113T140622Z`, six Cortex-A78AE at 1344 MHz, CHOLMOD
+  3.0 and OpenBLAS 0.3.20. Its first session agrees within ±5% on 793 of 824
+  entries.
+- **Ventuno Q:** `20261113T135246Z`, four Cortex-A78C, CHOLMOD 5.2 and
+  OpenBLAS 0.3.26. Its first session agrees on 780 of 824.
+
+The machine pages have the sessions' details
+([Jetson](jetson-orin.md#sessions-of-2026-11-13-811-and-cholmod),
+[Ventuno](arduino-ventuno-q.md#sessions-of-2026-11-13-811-and-openblas)).
+
+Factorization, median time and in parentheses the multiple of CHOLMOD's:
+
+| machine | problem | `sparse_cholesky` | `supernodal_ldlt` | CHOLMOD |
+|---|---|---:|---:|---:|
+| Jetson Orin | 2D, 96² | 273 ms (13×) | 16.7 ms (0.82×) | 20.4 ms |
+| Jetson Orin | 3D, 20³ | 25.7 s (324×) | 282 ms (3.6×) | 79.4 ms |
+| Ventuno Q | 2D, 96² | 174 ms (15×) | 11.4 ms (1.01×) | 11.3 ms |
+| Ventuno Q | 3D, 20³ | 16.5 s (370×) | 212 ms (4.8×) | 44.5 ms |
+| i7-12700K | 2D, 96² | 88.4 ms (26×) | 4.18 ms (1.23×) | 3.39 ms |
+| i7-12700K | 3D, 20³ | 7.43 s (652×) | 69.6 ms (6.1×) | 11.4 ms |
+
+On the 3D grid, as a fraction of the f64 FMA peak, CHOLMOD is at 36% (Jetson)
+and 41% (Ventuno), and the supernodal LDLᵀ at 10% and 9%.
+
+- **CHOLMOD reaches the same fraction of peak on all three machines**, 35–41%.
+  MTL5's supernodal LDLᵀ does better on the A78 cores (9–10%) than on the
+  i7 (5.7%), so its gap is smaller there: 3.6–4.8× against 6.1×.
+- **On the 2D grid the supernodal LDLᵀ matches CHOLMOD on ARM**, and is 18%
+  faster on the Jetson. The small supernodes leave CHOLMOD's BLAS-3 updates
+  little to gain.
+- **The up-looking `sparse_cholesky` is 13–15× behind in 2D and 324–370× in
+  3D.** On the Jetson its 3D factorization takes 26 s.
+- **The analysis and the solve repeat the i7's pattern.** In 3D the
+  supernodal LDLᵀ's analysis takes 5.7× CHOLMOD's on the Jetson and 6.2× on
+  the Ventuno, `sparse_cholesky`'s 2.7× and 2.8×. The Cholesky solve takes
+  3.3× and 3.2× CHOLMOD's.
+- **Threads.** The Ventuno's CHOLMOD gains 1.6× on four cores in 3D (44.5 →
+  27.7 ms). MTL5's solvers gain 1.06–1.16×, about the ratio of the clock caps
+  of the CPUs a 4-thread run adds (2361 against 2112 MHz). The Jetson's CHOLMOD is 3.7× slower
+  on six threads than on one; that is OpenBLAS 0.3.20's threading on that
+  board, not CHOLMOD's
+  ([the diagnostic](jetson-orin.md#sessions-of-2026-11-13-811-and-cholmod)).
+
 ## Roofline
 
 ![Roofline of the direct solvers, MTL5 and the references, at 1 and 8 threads](../img/benchmarks/intel-i7-12700k/roofline-direct.svg)
@@ -144,9 +195,8 @@ These are directions, not measured fixes:
 
 ## Not covered
 
-- **AArch64.** CHOLMOD was not installed on the Jetson Orin or the Ventuno Q
-  when this was measured, and MKL is x86-only, so `ref_cholmod` on ARM is still
-  to do (#810).
+- **PARDISO on AArch64.** MKL is x86-only, so the ARM boards have CHOLMOD
+  only, and the LU solvers no reference there.
 - **Larger problems.** The `large` class uses 192² and 24³. 32³ and up need a
   faster `sparse_cholesky` first, or that entry left out.
 - **Real matrices.** These are generated grids; the SuiteSparse-collection

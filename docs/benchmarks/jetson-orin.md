@@ -2,17 +2,19 @@
 
 An assessment of the `jetson-orin` system described on the
 [benchmark systems](systems.md#jetson-orin--jetson-orin-nano-tegra234-6-cortex-a78ae)
-page. It is read from the machine's
-[capability card](cards/jetson-orin.md), the platform benchmark of #721, and
-from the interleave sweeps taken in the same sessions (#780).
+page. It is read from the capability cards of the platform benchmark of
+#721, and from the interleave sweeps taken in the same sessions (#780).
 
-**Provenance.** Everything on this page comes from two sessions on 2026-11-11.
-They used the same commit and the same build, and the machine had a cold boot
-between them.
+**Provenance.** Everything on this page except
+[Sessions of 2026-11-13](#sessions-of-2026-11-13-811-and-cholmod) comes from
+two sessions on 2026-11-11. They used the same commit and the same build, and
+the machine had a cold boot between them. The
+[published card](cards/jetson-orin.md) has since moved to the 2026-11-13 pair,
+so its figures differ from the ones quoted outside that section.
 
 | | |
 |---|---|
-| Sessions | `20261111T190610Z` and `20261111T193624Z` (the card shows the second) |
+| Sessions | `20261111T190610Z` and `20261111T193624Z` ([raw data](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/jetson-orin/mtl5_bench/20261111T193624Z)). The card now shows a later pair, `20261113T131507Z` and `20261113T140622Z` |
 | Commit | `bfa1c2822688` |
 | Compiler | GCC 11.4.0, `-O3 -DNDEBUG`, `MTL5_NATIVE_ARCH=ON`. There is no Clang on this machine |
 | Cores | all six Cortex-A78AE, CPUs 0–5, pinned with `taskset` |
@@ -43,16 +45,16 @@ Don't compare figures between the two.
   the data should make f32 faster, not 2.2× slower. The per-ISA defaults of
   #798 set these kernels to W = 2 under GCC on AArch64, which the interleave
   sweep measures at 6.8–6.9 ms. They postdate these sessions.
-- **native-fast column-major `gemv` is 3.2× slower than the generic build**:
-  50.1 ms against 15.6 ms. This shows on every machine of the campaign, so it
-  is a property of the native-fast path, not of the Orin. See
-  [Open observations](#open-observations).
+- **native-fast column-major `gemv` was 3.2× slower than the generic build**:
+  50.1 ms against 15.6 ms, on every machine of the campaign. #809 fixed it
+  (#804); see [Fixed since these sessions](#fixed-since-these-sessions).
 
-## The card by area
+## The 2026-11-11 card by area
 
-The median %roof of each area, from the card's "Across the runs" section.
+The median %roof of each area, from the "Across the runs" section of session
+`20261111T193624Z`'s card.
 Areas without a roofline (orderings, Krylov, preconditioners, sparse
-eigensolvers, integer) are left out. Their times are in the card.
+eigensolvers, integer) are left out. Their times are in that card.
 
 | area | native 1T | native 6T | native-fast 1T | native-fast 6T | blas 1T | blas 6T |
 |---|---:|---:|---:|---:|---:|---:|
@@ -209,7 +211,7 @@ process. The repetitions within one process agree to under 0.5%, but a new
 process can land in a mode 1.4–2× slower. The published session caught the
 slow mode of both:
 
-| entry, 6 threads | session 1 | session 2 (on the card) |
+| entry, 6 threads | session 1 | session 2 |
 |---|---:|---:|
 | `integer/gemm` i16>i32 512³ | 7.09 ms | 14.07 ms |
 | `integer/gemm` i32 512³ | 9.00 ms | 12.79 ms |
@@ -238,18 +240,59 @@ the kernel's traversal (see the
 [i7-12700K page](i7-12700k.md#column-major-gemv-in-native-fast-804-fixed)). In
 its A/B run on this machine (one core, n = 4096), f64 went from 63.92 to
 17.78 ms and f32 from 31.40 to 7.93 ms, against 21.47 and 8.27 ms in the
-generic build. The cards keep the session figures until the next session.
+generic build. The 2026-11-13 sessions confirm it: 12.9 ms in native-fast
+against 16.3 ms in the generic build and 13.0 ms in OpenBLAS, f64, one core.
+
+## Sessions of 2026-11-13: #811 and CHOLMOD
+
+Two more sessions, after SuiteSparse was installed, for the CHOLMOD reference
+entries of #810. The [published card](cards/jetson-orin.md) shows the second.
+
+| | |
+|---|---|
+| Sessions | `20261113T131507Z` and `20261113T140622Z`, a cold boot before each |
+| Commit | `967d20ac6b04`, after #809 (column-major `gemv`), #811 (the thread pool) and #817 (the CHOLMOD 3 build) |
+| Runs | as above, with CHOLMOD 3.0 (SuiteSparse 5.10) in the `blas` build; OpenBLAS 0.3.20 |
+| Failed checks | 0. The 14 PARDISO entries are skipped: MKL is x86-only |
+| Repeatability | 793 of 824 entries (96.2%) within ±5% between the two sessions; 27 of the 31 outliers are in the 6-thread runs |
+
+- **#811 changes little here.** native-fast `factor/lu` f64 512×512 takes
+  35.9 ms on one thread and 24.9 ms on six, against 35.3 and 26.0 ms on
+  2026-11-11. The #811 A/B measured 38.1 → 26.7 ms at six threads on this
+  board, but the platform sessions never showed that slowdown: 26.0 ms on
+  2026-11-11 already.
+- **CHOLMOD's factorization is 3.7–5.7× slower on six threads than on one.**
+  The 3D grid's takes 79 ms on one thread and 295–453 ms on six. CHOLMOD 3 has
+  no thread team of its own, so the threads are OpenBLAS's. One diagnostic
+  run on the idle board after the sessions, 3D factorization:
+
+  | MTL5 pool | OpenBLAS | time |
+  |---:|---:|---:|
+  | 1 | 1 | 72 ms |
+  | 6 | 6 | 299 ms |
+  | 6 | 6, `MTL5_THREAD_POOL_SPIN_US=0` | 305 ms |
+  | 6 | 1 | 72 ms |
+  | 1 | 6 | 367 ms |
+  | 1 | 2 | 58 ms |
+
+  MTL5's pool and #811's spin make no difference, and two OpenBLAS threads are
+  faster than one. So it is OpenBLAS 0.3.20's threading
+  of CHOLMOD's small dense updates on this board. The Ventuno's OpenBLAS 0.3.26
+  gains 1.6× on four cores. Read the 6-thread `ref_cholmod` figures here as
+  that effect, not as CHOLMOD's.
+- **The direct solvers against CHOLMOD** are on the
+  [direct-solver references](direct-solver-references.md) page.
 
 ## Caveats
 
 - **GCC 11 only.** The AArch64 compiler comparison is on the
   [Ventuno Q](arduino-ventuno-q.md#gcc-against-clang), which has both.
-- **The card's last-level cache is 2 MiB**, one cluster's L3. The 4 MiB system
+- **The cards' last-level cache is 2 MiB**, one cluster's L3. The 4 MiB system
   cache that sysfs doesn't expose isn't in the model.
 - **These are 25 W numbers.** The module's other power modes change both the
   clock cap and the online cores.
 - **`medium` class sizes** (512³ for dense level 3) are small for six threads.
-  The card isn't a large-N scaling study.
+  The cards aren't a large-N scaling study.
 
 ## Reproducing
 

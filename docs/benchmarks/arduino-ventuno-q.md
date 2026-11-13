@@ -3,18 +3,20 @@
 An assessment of the `arduino-ventuno-q` system described on the
 [benchmark systems](systems.md#arduino-ventuno-q--arduino-ventuno-q-qualcomm-monaco-4-cortex-a78c--4-cortex-a55)
 page: a Qualcomm "Monaco" with 4× Cortex-A78C and 4× Cortex-A55. It is read
-from the machine's [capability card](cards/arduino-ventuno-q.md), the platform
-benchmark of #721, and from the interleave sweeps taken in the same sessions
-(#780). This is the only machine of the campaign with both GCC and Clang on
+from the capability cards of the platform benchmark of #721, and from the
+interleave sweeps taken in the same sessions (#780). This is the only machine of the campaign with both GCC and Clang on
 AArch64.
 
-**Provenance.** Everything on this page comes from two sessions on 2026-11-11.
-They used the same commit and the same build, and the board had a cold boot
-between them.
+**Provenance.** Everything on this page except
+[Sessions of 2026-11-13](#sessions-of-2026-11-13-811-and-openblas) comes from
+two sessions on 2026-11-11. They used the same commit and the same build, and
+the board had a cold boot between them. The
+[published card](cards/arduino-ventuno-q.md) has since moved to the 2026-11-13
+pair, so its figures differ from the ones quoted outside that section.
 
 | | |
 |---|---|
-| Sessions | `20261111T185721Z` and `20261111T191603Z` (the card shows the second) |
+| Sessions | `20261111T185721Z` and `20261111T191603Z` ([raw data](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/arduino-ventuno-q/mtl5_bench/20261111T191603Z)). The card now shows a later pair, `20261113T131507Z` and `20261113T135246Z` |
 | Commit | `bfa1c2822688` |
 | Compiler | GCC 13.3.0, `-O3 -DNDEBUG`, `MTL5_NATIVE_ARCH=ON`. The build ISA is `NEON DOTPROD`, and Highway's target is `NEON_WITHOUT_AES`. Clang 18.1.3 ran only the interleave sweep |
 | Cores | the four Cortex-A78C, CPUs 0–3, pinned with `taskset`. The A55s (CPUs 4–7) are excluded |
@@ -33,20 +35,23 @@ between them.
   core and 24.8 on four. Bandwidth-bound kernels therefore gain little from
   threads: `gemv` gains 1.25–1.35× in native-fast and `spmv` 1.3×. The
   Jetson's single core reaches less than half its module's bandwidth.
-- **The threaded LU is 4.4× slower on four cores than on one.** `factor/lu`
-  f64 512×512 takes 24.6 ms on one thread and 109 ms on four, in both builds
-  and in both sessions. On the other machines threads make it faster (1.4× on
-  the Jetson, 1.6–2.1× on the i7-12700K). See
-  [Open observations](#open-observations).
+- **The threaded LU was 4.4× slower on four cores than on one (#805); #811
+  fixed it.** `factor/lu` f64 512×512 took 24.6 ms on one thread and 109 ms
+  on four, in both builds and in both sessions. The thread pool's workers
+  slept between parallel regions, and the A78C takes 1.5–1.8 ms to leave its
+  idle state. In the 2026-11-13 sessions four threads take 17.2 ms, 1.4×
+  faster than one. See
+  [Sessions of 2026-11-13](#sessions-of-2026-11-13-811-and-openblas).
 - **GCC's f32 triangular kernels show #795.** In the generic `native` build,
   the f32 `trsv` takes 20.7 ms against 4.95 ms for f64. Clang on the same board
   doesn't show it. The defaults of #798 set W = 2 for these kernels under GCC
   on AArch64. That brings them to 4.7–4.8 ms, but it leaves them 1.45–1.48× slower
   than Clang's W = 4.
 
-## The card by area
+## The 2026-11-11 card by area
 
-The median %roof of each area, from the card's "Across the runs" section.
+The median %roof of each area, from the "Across the runs" section of session
+`20261111T191603Z`'s card.
 Areas without a roofline are left out.
 
 | area | native 1T | native 4T | native-fast 1T | native-fast 4T |
@@ -169,10 +174,6 @@ fastest width.
 
 These are measured but not explained yet. Each has a tracking issue.
 
-- **The threaded LU (#805).** `factor/lu` f64 512×512 is 4.4× slower on four threads
-  than on one (native-fast 24.6 → 109.1 ms; the generic build 26.2 →
-  109.5 ms). The first session agrees (24.7 → 112.4 ms). Cholesky and QR, on
-  the same cores, gain 1.1× and 1.3×.
 - **The quad integer gemm is slower than the plain one (#806).** This build has the
   dot-product extension, so `gemm_quad` i8>i32 should use `SDOT`. It reaches
   11.4 GFLOP/s on one core and 41.2 on four, against 16.2 and 62.6 for the
@@ -188,7 +189,60 @@ kernel's traversal (see the
 [i7-12700K page](i7-12700k.md#column-major-gemv-in-native-fast-804-fixed)). In
 its A/B run on this machine (one core, n = 4096), f64 went from 47.52 to
 7.74 ms and f32 from 22.77 to 4.10 ms, against 10.06 and 4.74 ms in the
-generic build. The cards keep the session figures until the next session.
+generic build. The 2026-11-13 sessions confirm it: 7.73 ms in native-fast
+against 10.03 ms in the generic build, f64, one core.
+
+**The threaded LU (#805).** In these sessions `factor/lu` f64 512×512 is 4.4×
+slower on four threads than on one (native-fast 24.6 → 109.1 ms; the generic
+build 26.2 → 109.5 ms; the first session 24.7 → 112.4 ms). #811 fixed it; the
+[next section](#sessions-of-2026-11-13-811-and-openblas) has the figures.
+
+## Sessions of 2026-11-13: #811 and OpenBLAS
+
+Two more sessions, after OpenBLAS and SuiteSparse were installed on the board.
+The [published card](cards/arduino-ventuno-q.md) shows the second.
+
+| | |
+|---|---|
+| Sessions | `20261113T131507Z` and `20261113T135246Z`, a cold boot before each |
+| Commit | `967d20ac6b04`, after #809 (column-major `gemv`), #811 (the thread pool) and #817 |
+| Runs | `native`, `native-fast` and `blas` (OpenBLAS 0.3.26, with CHOLMOD for the reference entries), each at 1 and 4 threads, class `medium`. The same cores, compiler and clock policy as above |
+| Failed checks | 0. The 14 PARDISO entries are skipped: MKL is x86-only |
+| Repeatability | 780 of 824 entries (94.7%) within ±5% between the two sessions; 26 of the 44 outliers are in the 4-thread runs |
+
+**Threading after #811.** native-fast, f64, the second session of each pair, ms:
+
+| entry | 11-11, 1T | 11-11, 4T | 11-13, 1T | 11-13, 4T | 4T speedup, 11-13 |
+|---|---:|---:|---:|---:|---:|
+| `factor/lu` | 24.6 | 109.1 | 24.7 | 17.2 | 1.43× |
+| `factor/lu_iterative_refine` (f32>f64) | 20.9 | 108.0 | 16.7 | 12.2 | 1.37× |
+| `factor/qr` | 250 | 199 | 251 | 147 | 1.70× |
+| `factor/lq` | 60.6 | 126.4 | 60.8 | 36.7 | 1.66× |
+| `factor/hessenberg` | 348 | 440 | 350 | 200 | 1.75× |
+| `factor/householder` | 1.55 | 1.03 | 1.56 | 0.45 | 3.5× |
+| `factor/inv` | 143 | 224 | 147 | 127 | 1.16× |
+| `factor/cholesky` | 22.3 | 20.1 | 22.4 | 19.9 | 1.12× |
+
+- **Every entry that four threads made slower is now faster on four.** The
+  1-thread times are unchanged, except the refinement's, which fell from 20.9
+  to 16.7 ms between the pairs. The thread pool's workers now spin for up
+  to 1 ms before they sleep (`MTL5_THREAD_POOL_SPIN_US`), so a parallel region
+  that follows within that time no longer pays the A78C's 1.5–1.8 ms wake-up.
+  The unblocked LU opens one region per column, about 150 that split at
+  n = 512, which is why it lost the most.
+- **The LU's 1.4× is now in line with the Jetson's** (1.4× on six cores in its
+  sessions). It is still modest: the unblocked algorithm has little parallel
+  work per column at this size.
+- **`factor/cholesky` didn't change.** Its regions were long enough before.
+
+**The OpenBLAS column.** On one core OpenBLAS's `gemm` reaches 89% of the FMA
+peak (17.9 GFLOP/s), and native-fast's 57% is 64% of it. At four threads they
+are at 80% and 53%. The `factor` median is 41% of the roof in OpenBLAS against
+12% in native-fast. LAPACK's LU takes 9.16 ms on one core and 4.10 ms on four,
+so MTL5's is 2.7× and 4.2× slower.
+
+**The direct solvers against CHOLMOD** are on the
+[direct-solver references](direct-solver-references.md) page.
 
 ## Caveats
 
@@ -201,8 +255,9 @@ generic build. The cards keep the session figures until the next session.
   two.
 - **The 4-thread runs are less repeatable** than the 1-thread runs: 21 of the
   31 entries outside ±5%.
-- **No vendor reference.** Without OpenBLAS on the board, %roof is the only
-  yardstick for native-fast here.
+- **No vendor reference in the 2026-11-11 sessions.** Without OpenBLAS on the
+  board then, %roof is the only yardstick for native-fast in them. The
+  2026-11-13 sessions have an OpenBLAS column.
 
 ## Reproducing
 
