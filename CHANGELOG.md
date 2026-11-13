@@ -11,7 +11,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **The 2D grid caps everyone:** even PARDISO reaches only 7.5–8.8% of peak in the factorization, so the old 0.02–1.7% was partly the problem.
   - **The 3D grid (20³) does not:** CHOLMOD and PARDISO reach 35–41% of peak. MTL5's supernodal LDLᵀ takes 7.2× PARDISO's time, its supernodal LU 35× (slower than its plain LU), and the up-looking `sparse_cholesky` 768×.
   - **Analysis is close:** MTL5's COLAMD-based LU analysis is about 2× faster than PARDISO's. In 3D, the solves are 2.8× (Cholesky) and 7.1× (LU) behind.
-  - **Threads:** PARDISO's 3D factorization is 4.1× faster on 8 cores; none of MTL5's direct solvers gains.
+  - **Threads:** PARDISO's 3D factorization is 4.1× faster on 8 cores; MTL5's direct solvers gain at most 8%.
   - A direct-only roofline (`roofline-direct.svg`), the card now on the new pair, and the i7 page's #804 note updated: in these sessions native-fast column-major `gemv` takes 3.45 ms, against 4.70 ms generic and 3.61 ms OpenBLAS.
 
 - **`mtl5_bench`: the direct solvers one phase at a time, on a 3D grid too, with CHOLMOD and MKL PARDISO beside them** (#810). The `direct` entries ran at 0.02–1.7% of the roofline, and nothing measured on the same problem said how much of that was MTL5.

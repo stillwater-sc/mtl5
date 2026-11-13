@@ -12,8 +12,8 @@ reach 35–41%, and MTL5 is far behind. Its best factorization, the supernodal
 LDLᵀ, takes 6× CHOLMOD's time. Its supernodal LU takes 35× PARDISO's, and is
 slower than its plain LU. The up-looking Cholesky takes 650× CHOLMOD's time.
 The ordering and symbolic analysis are close to the references, and MTL5's
-COLAMD-based LU analysis beats PARDISO's. None of MTL5's direct solvers is
-faster at 8 threads than at 1.
+COLAMD-based LU analysis beats PARDISO's. MTL5's direct solvers show no
+substantial parallel scaling: at 8 threads they gain at most 8%.
 
 ## The measurement
 
@@ -116,8 +116,9 @@ SPD solvers, PARDISO for LU):
 | `supernodal_lu` | 666 ms | 618 ms | 1.08× |
 | `sparse_lu` | 552 ms | 540 ms | 1.02× |
 
-MTL5's direct solvers run serially. PARDISO parallelizes over the elimination
-tree. CHOLMOD gains only what OpenBLAS's threads give its dense updates.
+MTL5's direct solvers show no substantial parallel scaling: their 2–8% gains
+are about the size of the run-to-run spread at 8 threads (up to 6.3% between
+the two sessions). PARDISO parallelizes over the elimination tree. CHOLMOD gains only what OpenBLAS's threads give its dense updates.
 
 ## Roofline
 
