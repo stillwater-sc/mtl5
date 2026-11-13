@@ -7,6 +7,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Two Ventuno Q sessions with native-fast on the cores' own features** (#806). `benchmarks/data/arduino-ventuno-q/mtl5_bench/20261113T170450Z` and `20261113T174232Z`, at `bf315e4` (after #819), every check passed, 780 of 824 entries within ±5% between them; the card moves to the pair.
+  - **The quad integer gemm:** `gemm_quad` i8>i32 at 512³ takes 3.68 ms on one core, 6.4× the baseline-Armv8 build and 4.5× faster than the plain i8 gemm, where it was 30% slower. The u8i8 pairing, still emulated without I8MM, gains 3.8×; the 8-bit dots 2.8–3.4×.
+  - **native-fast's Gauss–Seidel smoother** took 1.9× the generic build's time on baseline Armv8.0-a and now matches it.
+  - Nothing else moves beyond the run-to-run spread: GEMM and the factorizations are unchanged.
+  - **Pages corrected:** the Ventuno and Jetson pages had the two boards' build ISAs the wrong way round. The Jetson's 3.9× quad gemm is the native `SDOT` path; the Ventuno's builds before #819 were baseline Armv8.0-a.
+
 - **Platform sessions on the Jetson Orin and the Ventuno Q after #811, with CHOLMOD on ARM** (#805, #810). Two cold-boot sessions per board at `967d20a`, every check passed: `benchmarks/data/jetson-orin/mtl5_bench/20261113T131507Z` and `20261113T140622Z`, `benchmarks/data/arduino-ventuno-q/mtl5_bench/20261113T131507Z` and `20261113T135246Z`. Both cards move to the new pairs; the analysis pages keep their 2026-11-11 figures and add a section for these sessions.
   - **The Ventuno's threaded LU (#805):** `factor/lu` f64 512×512 in native-fast takes 24.7 ms on one thread and 17.2 ms on four, 1.4× faster; on 2026-11-11 four threads took 109 ms. LQ, Hessenberg, the inverse and the mixed-precision refinement, all slower on four threads then, are now 1.16–1.75× faster; QR's gain grows from 1.26× to 1.70×.
   - **The Ventuno's first OpenBLAS column:** `gemm` at 89% of the FMA peak on one core, native-fast at 64% of it.

@@ -388,7 +388,7 @@ rather than a slow result.
 | Cache | **Not exposed.** The kernel lists L1d, L1i, L2 and L3, but with no sizes (`lscpu -C` prints the levels and blank sizes), so MTL5's sysfs probe reads 0 for every level — see below |
 | ISA | NEON, 128-bit, with dot product (`asimddp`). **No SVE** — like the Orin |
 | OS | Ubuntu 24.04.5 LTS, kernel 6.8.0-1084-qcom |
-| Compilers | GCC 13.3.0, `-O3 -DNDEBUG` (CMake `Release`), `MTL5_NATIVE_ARCH=ON` |
+| Compilers | GCC 13.3.0, `-O3 -DNDEBUG` (CMake `Release`), `MTL5_NATIVE_ARCH=ON`. GCC 13 resolves `-march=native` to baseline Armv8.0-a on this board, which loses DotProd (#806), so the profiles pass `MTL5_NATIVE_ARCH_FLAGS=-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c` from #819 on |
 | Thermal | 35.5 °C before, 35.9 °C after the session; limit 126 °C. The board never came near throttling |
 
 Profile: `benchmarks/machines/arduino-ventuno-q.sh`. It reads the A78C ids from
