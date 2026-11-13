@@ -7,6 +7,21 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`mtl5_bench`: the direct solvers one phase at a time, on a 3D grid too, with CHOLMOD and MKL PARDISO beside them** (#810). The `direct` entries ran at 0.02–1.7% of the roofline, and nothing measured on the same problem said how much of that was MTL5.
+  - **Phase entries** (`benchmarks/platform/entries_direct.hpp`): `sparse_cholesky`, `supernodal_ldlt`, `sparse_lu` and `supernodal_lu` each get `.analyze` (ordering and symbolic), `.factor` and `.solve`. The earlier phases run untimed, and every check is the backward error of a full solve.
+  - **A 3D grid,** area `direct3d`: the 7-point Laplacian and convection-diffusion at 10³, 20³ and 24³ for the three classes. A 2D grid leaves only small supernodes; this one doesn't. The one-shot entries are unchanged, so earlier cards stay comparable.
+  - **References,** with `-DMTL5_BENCH_REFERENCES=ON`, which `platform.sh`'s and `platform.ps1`'s `blas` variant now sets:
+    - `ref_cholmod`: CHOLMOD, supernodal L Lᵀ, AMD.
+    - `ref_pardiso_spd` and `ref_pardiso_lu`: MKL PARDISO, `mtype` 2 and 11, minimum degree.
+
+    Each has a one-shot entry and phase entries on both grids, and takes the run's thread count.
+  - **No MKL link.** `mtl5_bench` loads `libmkl_rt` with `dlopen(RTLD_LOCAL)`, so MKL's BLAS symbols cannot displace the BLAS the build chose for every other entry. CHOLMOD is visible to `mtl5_bench` only.
+  - **Skipped entries:** where a library is missing, its entries are listed as skipped with the reason, on the card ("Skipped in this build"), in the JSON (`"skipped"`) and on the console. The registry gains `skip()`.
+  - **First numbers,** i7-12700K, one thread, 20³ factorization: `sparse_cholesky` 7.35 s and `supernodal_ldlt` 66.6 ms, against 11.5 ms for CHOLMOD and 9.6 ms for PARDISO; `sparse_lu` 538 ms and `supernodal_lu` 625 ms, against 19.0 ms for PARDISO's LU.
+  - **Fix: the direct solvers' check passed an all-NaN solution.** `backward_error` took its maxima with `std::max`, which drops a NaN, so the residual and |x| both stayed 0 and the error was 0. A nonfinite x now fails the check.
+  - **CI:** the `vendors` benchmarks build compiles the reference entries.
+  - **`plot_roofline.py`:** `direct3d` gets its own colour, appended so every earlier area keeps its colour; reference entries are diamonds; `--areas` keeps only the named areas.
+
 - **`benchmarks/publish_platform.cmake` publishes an `mtl5_bench` platform session** (#758, #737). Copying a `platform.sh`/`platform.ps1` results directory into the repository by hand left the raw JSON behind and produced card pages the docs site didn't know about.
   - **Running it:** `cmake -DRESULTS=<results dir> -DMACHINE=<systems.md name> -P benchmarks/publish_platform.cmake`. It needs only CMake, so it runs on the machine that made the session, Windows included.
   - **What it checks first:**

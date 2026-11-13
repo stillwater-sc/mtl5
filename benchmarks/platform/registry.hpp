@@ -73,16 +73,28 @@ struct entry {
     std::function<problem(size_class)> make;
 };
 
+/// An entry this build cannot run (its library was not found, say), with the
+/// reason. Reported on the card and in the JSON, so a missing reference row
+/// reads as "not measured here" rather than as an oversight (#810).
+struct skipped_entry {
+    std::string area, op, dtype, reason;
+};
+
 class registry {
 public:
     void add(std::string area, std::string op, std::string dtype,
              std::function<problem(size_class)> make) {
         entries_.push_back({std::move(area), std::move(op), std::move(dtype), std::move(make)});
     }
+    void skip(std::string area, std::string op, std::string dtype, std::string reason) {
+        skipped_.push_back({std::move(area), std::move(op), std::move(dtype), std::move(reason)});
+    }
     const std::vector<entry>& entries() const { return entries_; }
+    const std::vector<skipped_entry>& skipped() const { return skipped_; }
 
 private:
     std::vector<entry> entries_;
+    std::vector<skipped_entry> skipped_;
 };
 
 } // namespace mtl::bench::platform

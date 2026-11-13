@@ -26,7 +26,12 @@ Left out of every panel, and stated in the caption:
 
   * integer entries: the model has no integer ceiling (the card shows n/a);
   * entries that record no flops or bytes (Krylov solvers, preconditioners,
-    orderings, sparse eigensolvers): they have no intensity to place.
+    orderings, sparse eigensolvers, the direct solvers' .analyze phases): they
+    have no intensity to place.
+
+Reference-library entries (ref_*: the blas variant's CHOLMOD and PARDISO,
+#810) are drawn as diamonds. --areas keeps only the named areas, e.g.
+--areas direct,direct3d for the direct solvers beside their references.
 
 Example:
     benchmarks/plot_roofline.py benchmarks/data/jetson-orin/mtl5_bench/20261111T193624Z \\
@@ -46,11 +51,15 @@ import sys
 from pathlib import Path
 
 # A fixed order and colour per area, so every machine's plot reads the same.
+# direct3d (#810) is last, so adding it left every earlier area's colour as it was.
 AREAS = ["blas1", "blas2", "blas3", "factor", "eigen", "elementwise",
-         "sparse", "direct", "smoother", "mg", "mixed"]
+         "sparse", "direct", "smoother", "mg", "mixed", "direct3d"]
 COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
-          "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#000000"]
+          "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#000000", "#a6761d"]
 MARKERS = {"f64": "o", "f32": "^"}  # anything else (mixed precision): "s"
+# A reference library's entry (ref_cholmod, ref_pardiso_*, #810) is a diamond,
+# so it reads as the target beside the MTL5 entries of its area.
+REF_MARKER = "D"
 TITLES = {"native": "native (generic baseline)", "native-fast": "native-fast (MTL5's best)",
           "blas": "OpenBLAS (target)"}
 
@@ -60,13 +69,17 @@ def placeable(e: dict) -> bool:
             and e.get("area") != "integer")
 
 
-def load_runs(session: Path, variant: str) -> dict[int, dict]:
-    """{threads: run JSON} for one variant; empty if the session didn't run it."""
+def load_runs(session: Path, variant: str, keep: set[str] | None = None) -> dict[int, dict]:
+    """{threads: run JSON} for one variant; empty if the session didn't run it.
+    With `keep`, only the results of those areas remain."""
     runs = {}
     for f in session.glob(f"{variant}-t*.json"):
         m = re.fullmatch(rf"{re.escape(variant)}-t(\d+)\.json", f.name)
         if m:
-            runs[int(m.group(1))] = json.loads(f.read_text())
+            d = json.loads(f.read_text())
+            if keep:
+                d["results"] = [e for e in d["results"] if e["area"] in keep]
+            runs[int(m.group(1))] = d
     return runs
 
 
@@ -107,7 +120,7 @@ def panel(ax, d: dict, title: str, xlim, ylim) -> None:
             continue
         area = e["area"]
         color = COLORS[AREAS.index(area)] if area in AREAS else "#999999"
-        marker = MARKERS.get(e["dtype"], "s")
+        marker = REF_MARKER if e["op"].startswith("ref_") else MARKERS.get(e["dtype"], "s")
         hollow = e.get("cache_resident") or e.get("suspect_model")
         ax.scatter(e["flops"] / e["bytes"], e["gflops"], s=26, marker=marker,
                    facecolors="none" if hollow else color, edgecolors=color, linewidths=1.0,
@@ -132,10 +145,13 @@ def main() -> int:
                     help="comma-separated build variants, one column each "
                          "(default native,native-fast,blas)")
     ap.add_argument("--out", type=Path, required=True, help="output image (.svg or .png)")
+    ap.add_argument("--areas", default="",
+                    help="comma-separated areas to keep (default: every area)")
     args = ap.parse_args()
+    keep = {a for a in args.areas.split(",") if a}
 
     wanted = [v for v in args.variants.split(",") if v]
-    runs = {v: load_runs(args.session, v) for v in wanted}
+    runs = {v: load_runs(args.session, v, keep) for v in wanted}
     variants = [v for v in wanted if runs[v]]
     missing = [v for v in wanted if not runs[v]]
     if not variants:
@@ -193,9 +209,10 @@ def main() -> int:
     areas = sorted(handles, key=AREAS.index)
     fig.legend([handles[a] for a in areas], areas, loc="lower center", ncol=len(areas),
                fontsize=8, frameon=False, bbox_to_anchor=(0.5, 0.04))
-    fig.text(0.5, 0.008, "circle f64, triangle f32, square mixed precision; hollow: cache-resident or "
-             "suspect model.\nNot shown: integer (no integer roof) and entries without flops/bytes "
-             "(Krylov, preconditioners, orderings, sparse eigensolvers).", fontsize=7, color="#555555",
+    fig.text(0.5, 0.008, "circle f64, triangle f32, square mixed precision, diamond reference library "
+             "(CHOLMOD, PARDISO); hollow: cache-resident or suspect model.\nNot shown: integer (no "
+             "integer roof) and entries without flops/bytes (Krylov, preconditioners, orderings, "
+             "sparse eigensolvers, analyze phases).", fontsize=7, color="#555555",
              ha="center", linespacing=1.4)
     fig.tight_layout(rect=(0, 0.075, 1, 0.97))
     args.out.parent.mkdir(parents=True, exist_ok=True)

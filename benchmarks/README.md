@@ -107,7 +107,10 @@ benchmarks/platform.sh                # Windows: .\benchmarks\platform.ps1
    - `native`;
    - `native-fast` (Highway and the blocked GEMM, with `-march=native` except
      on SVE hardware (#720) and macOS);
-   - `blas` (if CMake finds a system BLAS/LAPACK; skipped otherwise).
+   - `blas` (if CMake finds a system BLAS/LAPACK; skipped otherwise). It is
+     configured with `-DMTL5_BENCH_REFERENCES=ON`, which adds the CHOLMOD and
+     MKL PARDISO reference entries for the direct solvers (#810); see
+     [Direct-solver references](#direct-solver-references).
 3. Gates again after the builds.
 4. Runs each variant at 1 thread and at all CPUs. MTL5's pool and every
    vendor library's pool are pinned to the same count.
@@ -392,13 +395,15 @@ high-intensity ones against the FMA peak.
 
 `sparse_qr` runs on half the direct grid's side (see its entry), because one QR solve at 96² took over 4 s.
 
-The registry covers 107 entries:
+The `direct3d` entries use a 3D grid of side 10, 20 and 24 for the three classes. The up-looking `sparse_cholesky` sets that limit: one factorization takes 7.3 s at 20³ on an i7-12700K, and ran for over ten minutes at 32³. The `direct` and `direct3d` areas together take about 90 s of the medium catalogue at 1 thread on that machine, about half of it that one entry.
+
+The registry covers 135 entries, and 156 in a build with the direct-solver references:
 - **BLAS levels 1–3** (#721 milestone M1), plus DotK (`dot_k<3>`, M7), checked on an ill-conditioned integer dot product with an exact int64 answer.
 - **Dense factorizations:** LU, Cholesky, LDLᵀ, Bunch–Kaufman, QR, LQ, Hessenberg, the Householder step, `inv`, and f32→f64 LU refinement.
 - **Eigensolvers and matrix functions:** symmetric (tridiagonal QR and Jacobi), general, Schur, SVD, `expm` and `sylvester`.
 - **Element-wise functions:** `exp`, `log`, `sin`, `sqrt` and `erf` (M3).
 - **Sparse kernels:** SpMV, transposed SpMV, CRS×dense, SpGEMM and the level-scheduled lower solve.
-- **Sparse direct solvers:** Cholesky, LDLᵀ, supernodal LDLᵀ, LU, supernodal LU, native KLU and QR.
+- **Sparse direct solvers:** Cholesky, LDLᵀ, supernodal LDLᵀ, LU, supernodal LU, native KLU and QR, each as one first-time solve. Cholesky, supernodal LDLᵀ, LU and supernodal LU also have one entry per phase (`.analyze`, `.factor`, `.solve`), on the 2D grid (area `direct`) and on a 3D grid (area `direct3d`), where supernodes are large (#810).
 - **Orderings:** AMD, COLAMD, RCM and the block-triangular form (M4).
 - **Krylov solvers:** CG, MINRES, BiCG, BiCGSTAB, BiCGSTAB(ℓ), CGS, GMRES(30), QMR, TFQMR and IDR(s) at s = 1, 2, 4 and 8. Each is checked by the true residual it reaches.
 - **Preconditioner setups:** diagonal, ILU(0), ILUT, IC(0), ILDL, SSOR and block-diagonal. Each must cut the Krylov iteration count by at least a quarter.
@@ -438,6 +443,23 @@ Factorization and eigen rates use the conventional LAPACK operation counts (2/3 
 factory and register it in `platform/entries_*.hpp`. A factory supplies setup,
 run, check, and the flop and byte counts. The runner does the timing, so every
 entry is measured the same way.
+
+### Direct-solver references
+
+The `direct` entries ran at 0.02–1.7% of the roofline, and nothing measured on the same problem said how much of that was MTL5 (#810). In a build configured with `-DMTL5_BENCH_REFERENCES=ON`, `platform.sh`'s `blas` variant, `mtl5_bench` adds tuned libraries beside MTL5's solvers, on the same matrices and with the same backward-error check:
+
+| entries | library | settings | counterpart |
+|---|---|---|---|
+| `ref_cholmod`, `.analyze`, `.factor`, `.solve` | CHOLMOD, through `mtl/interface/cholmod.hpp` | supernodal L Lᵀ and AMD, both forced | `sparse_cholesky`, `supernodal_ldlt` |
+| `ref_pardiso_spd`, … | MKL PARDISO, `mtype` 2 | minimum degree ordering, MKL's AMD | `sparse_cholesky`, `supernodal_ldlt` |
+| `ref_pardiso_lu`, … | MKL PARDISO, `mtype` 11 | minimum degree on A + Aᵀ; MKL's default scaling and matching | `sparse_lu`, `supernodal_lu` |
+
+- **Phases.** Each library has a one-shot entry in `direct` and phase entries in `direct` and `direct3d`, like MTL5's solvers. Earlier phases run untimed, so a library that is faster only at ordering does not look like a faster factorization.
+- **Threads.** CHOLMOD takes the run's thread count (`Common->nthreads_max`) and calls the build's BLAS. PARDISO takes it through `MKL_Set_Num_Threads`.
+- **Finding the libraries.** CHOLMOD is found at configure time, as for `-DMTL5_WITH_SUITESPARSE_CHOLMOD=ON`, but is visible to `mtl5_bench` only. MKL is not linked: `mtl5_bench` loads `libmkl_rt` with `dlopen(RTLD_LOCAL)`, first from the path CMake found (`$MKLROOT`, or `/opt/intel/oneapi/mkl/latest`), then from the loader path. Linking it would put MKL's `dgemm_` beside the build's BLAS, and the link order would then decide which BLAS every other entry measures. MKL runs on its GNU threading layer, so Intel's `libiomp5` need not be on the loader path.
+- **Where a library is missing,** its entries are listed as skipped, with the reason, on the card ("Skipped in this build"), in the JSON (`"skipped"`) and on the console. PARDISO is not loaded on Windows; MKL is x86-only, so the AArch64 machines get CHOLMOD at most.
+- **Builds without the option** register no reference entries and list none as skipped, so the `native` and `native-fast` cards are unchanged.
+- **Plots.** `plot_roofline.py` draws the reference entries as diamonds, and `--areas direct,direct3d` keeps only the direct solvers, for a plot of MTL5's solvers beside their references.
 
 ## Build & run (reproducible, all variants)
 
