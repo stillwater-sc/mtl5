@@ -20,7 +20,7 @@ quoted outside those sections.
 
 | | |
 |---|---|
-| Sessions | `20261111T185721Z` and `20261111T191603Z` ([raw data](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/arduino-ventuno-q/mtl5_bench/20261111T191603Z)). The card now shows a later pair, `20261113T170450Z` and `20261113T174232Z` |
+| Sessions | `20261111T185721Z` and `20261111T191603Z` ([raw data](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/arduino-ventuno-q/mtl5_bench/20261111T191603Z)). The card now shows `20261113T174232Z`, the second of a later pair (the first is `20261113T170450Z`) |
 | Commit | `bfa1c2822688` |
 | Compiler | GCC 13.3.0, `-O3 -DNDEBUG`, `MTL5_NATIVE_ARCH=ON`. The build ISA is `NEON` without DotProd: GCC 13 resolves `-march=native` to baseline Armv8.0-a on this board (#806). Highway's target is `NEON_WITHOUT_AES`. Clang 18.1.3 ran only the interleave sweep |
 | Cores | the four Cortex-A78C, CPUs 0–3, pinned with `taskset`. The A55s (CPUs 4–7) are excluded |
