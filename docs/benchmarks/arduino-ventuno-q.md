@@ -8,19 +8,21 @@ interleave sweeps taken in the same sessions (#780). This is the only machine of
 AArch64.
 
 **Provenance.** Everything on this page comes from two sessions on 2026-11-11,
-except [Sessions of 2026-11-13](#sessions-of-2026-11-13-811-and-openblas) and the
-later figures under [Fixed since these sessions](#fixed-since-these-sessions):
+except the two 2026-11-13 sections
+([#811 and OpenBLAS](#sessions-of-2026-11-13-811-and-openblas),
+[native-fast with DotProd](#sessions-of-2026-11-13-native-fast-with-dotprod-806))
+and the later figures under [Fixed since these sessions](#fixed-since-these-sessions):
 the A/B runs of the fixes and the 2026-11-13 confirmations. The two
 2026-11-11 sessions used the same commit and the same build, and the board had
-a cold boot between them. The [published card](cards/arduino-ventuno-q.md) has since moved to the
-2026-11-13 pair, so its figures differ from the ones quoted outside those
-sections.
+a cold boot between them. The [published card](cards/arduino-ventuno-q.md) has
+since moved to the last 2026-11-13 pair, so its figures differ from the ones
+quoted outside those sections.
 
 | | |
 |---|---|
-| Sessions | `20261111T185721Z` and `20261111T191603Z` ([raw data](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/arduino-ventuno-q/mtl5_bench/20261111T191603Z)). The card now shows a later pair, `20261113T131507Z` and `20261113T135246Z` |
+| Sessions | `20261111T185721Z` and `20261111T191603Z` ([raw data](https://github.com/stillwater-sc/mtl5/tree/main/benchmarks/data/arduino-ventuno-q/mtl5_bench/20261111T191603Z)). The card now shows a later pair, `20261113T170450Z` and `20261113T174232Z` |
 | Commit | `bfa1c2822688` |
-| Compiler | GCC 13.3.0, `-O3 -DNDEBUG`, `MTL5_NATIVE_ARCH=ON`. The build ISA is `NEON DOTPROD`, and Highway's target is `NEON_WITHOUT_AES`. Clang 18.1.3 ran only the interleave sweep |
+| Compiler | GCC 13.3.0, `-O3 -DNDEBUG`, `MTL5_NATIVE_ARCH=ON`. The build ISA is `NEON` without DotProd: GCC 13 resolves `-march=native` to baseline Armv8.0-a on this board (#806). Highway's target is `NEON_WITHOUT_AES`. Clang 18.1.3 ran only the interleave sweep |
 | Cores | the four Cortex-A78C, CPUs 0–3, pinned with `taskset`. The A55s (CPUs 4–7) are excluded |
 | Clock policy | governor `performance` on the A78C policies: 902–2112 MHz on CPUs 0–1, 940–2361 MHz on CPUs 2–3 |
 | Runs | `native` and `native-fast`, each at 1 and 4 threads, class `medium`. CMake found no BLAS/LAPACK on the board, so `platform.sh` skipped the `blas` variant |
@@ -172,16 +174,6 @@ fastest width.
 - **The two compilers are within 2% on f64**, and GCC is 15% faster on f32
   `gemv`.
 
-## Open observations
-
-These are measured but not explained yet. Each has a tracking issue.
-
-- **The quad integer gemm is slower than the plain one (#806).** This build has the
-  dot-product extension, so `gemm_quad` i8>i32 should use `SDOT`. It reaches
-  11.4 GFLOP/s on one core and 41.2 on four, against 16.2 and 62.6 for the
-  plain i8 gemm. On the Jetson, whose build has no `DOTPROD`, the quad form is
-  3.9× faster than the plain one.
-
 ## Fixed since these sessions
 
 **Column-major `gemv` in native-fast (#804).** In these sessions it
@@ -199,10 +191,22 @@ slower on four threads than on one (native-fast 24.6 → 109.1 ms; the generic
 build 26.2 → 109.5 ms; the first session 24.7 → 112.4 ms). #811 fixed it; the
 [next section](#sessions-of-2026-11-13-811-and-openblas) has the figures.
 
+**The quad integer gemm (#806).** In these sessions `gemm_quad` i8>i32 is
+slower than the plain i8 gemm: 11.4 against 16.2 GOP/s on one core, 41.2
+against 62.6 on four. Its cause was the build, not the kernel. GCC 13 resolves
+`-march=native` to baseline Armv8.0-a here, passing no `-march` or `-mcpu` on
+to the compiler, so native-fast had no DotProd and the quad step ran
+Highway's emulation of `SDOT`. #819 added `MTL5_NATIVE_ARCH_FLAGS` and the
+profile now names the cores' features; the
+[last section](#sessions-of-2026-11-13-native-fast-with-dotprod-806) has the
+figures.
+
 ## Sessions of 2026-11-13: #811 and OpenBLAS
 
 Two more sessions, after OpenBLAS and SuiteSparse were installed on the board.
-The [published card](cards/arduino-ventuno-q.md) shows the second.
+Their native-fast build was still baseline Armv8.0-a (#806); the
+[next section](#sessions-of-2026-11-13-native-fast-with-dotprod-806) has the
+pair that fixed it.
 
 | | |
 |---|---|
@@ -245,6 +249,47 @@ so MTL5's is 2.7× and 4.2× slower.
 
 **The direct solvers against CHOLMOD** are on the
 [direct-solver references](direct-solver-references.md) page.
+
+## Sessions of 2026-11-13: native-fast with DotProd (#806)
+
+Two more sessions after #819, with the native-fast build on the cores' own
+features. The [published card](cards/arduino-ventuno-q.md) shows the second.
+
+| | |
+|---|---|
+| Sessions | `20261113T170450Z` and `20261113T174232Z`, a cold boot before each |
+| Commit | `bf315e4`, after #819 (`MTL5_NATIVE_ARCH_FLAGS`) |
+| native-fast flags | `-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c`, what `/proc/cpuinfo` lists on every core. The sidecars record `build_isa=NEON DOTPROD` |
+| Runs | as in the previous pair. `native` and `blas` don't use `MTL5_NATIVE_ARCH` and are unchanged |
+| Failed checks | 0, with the 14 PARDISO entries skipped |
+| Repeatability | 780 of 824 entries (94.7%) within ±5% between the two sessions; 30 of the 44 outliers are in the 4-thread runs |
+
+**What DotProd changes.** native-fast, second session of each pair, ms:
+
+| entry | Armv8.0-a, 1T | DotProd, 1T | speedup | Armv8.0-a, 4T | DotProd, 4T | speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| `integer/gemm_quad` i8>i32 | 23.7 | 3.68 | 6.4× | 5.96 | 0.96 | 6.2× |
+| `integer/gemm_quad` u8i8>i32 | 50.9 | 13.6 | 3.8× | 12.7 | 3.32 | 3.8× |
+| `integer/dot` i8>i32 | 2.33 | 0.695 | 3.4× | 2.12 | 0.677 | 3.1× |
+| `integer/dot` u8i8>i32 | 4.26 | 1.53 | 2.8× | 3.81 | 1.36 | 2.8× |
+| `mixed/block_scaled_dot` i8+f32 | 2.65 | 0.755 | 3.5× | 2.37 | 0.962 | 2.5× |
+| `smoother/gauss_seidel` f64 | 4.67 | 2.50 | 1.9× | 4.07 | 2.27 | 1.8× |
+| `integer/gemm` i8>i32 | 16.6 | 16.6 | 1.0× | 4.19 | 4.20 | 1.0× |
+| `blas3/gemm` f64 | 28.1 | 28.3 | 1.0× | 7.43 | 7.43 | 1.0× |
+
+- **`gemm_quad` i8 is now 4.5× faster than the plain i8 gemm** on one core
+  (72.8 against 16.2 GOP/s) and 4.4× on four, where it was 30% slower. That is
+  the relation the Jetson showed, and for the same reason: its build has
+  DotProd. The u8i8 pairing is emulated even with DotProd (`USDOT` needs I8MM,
+  which the A78C lacks), but the emulation now builds on `SDOT`/`UDOT` and is
+  3.8× faster.
+- **The 8-bit dots gain 2.8–3.4×** for the same reason.
+- **Native-fast's Gauss–Seidel smoother took 1.9× the generic build's time on
+  Armv8.0-a** (4.67 against 2.50 ms) and now matches it (2.50 ms).
+- **Everything else is unchanged.** The median native-fast entry moves by
+  0.1–0.2%, and no other entry by more than 16% (`blas3/kron`, whose run-to-run
+  spread here is about that size). Floating-point FMA and NEON are in
+  Armv8.0-a already, so GEMM and the factorizations don't change.
 
 ## Caveats
 

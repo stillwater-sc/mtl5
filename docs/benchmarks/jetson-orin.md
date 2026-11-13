@@ -223,17 +223,17 @@ session state were ruled out, and #785 lists the hypotheses: buffer placement,
 the uneven 512/6 row split, and false sharing on C. #785 is closed without a
 fix. Read a 6-thread integer gemm figure on this machine as one of two values.
 
-## Open observations
-
-These are measured but not explained yet. Each has a tracking issue.
-
-- **The quad integer gemm (#806).** `gemm_quad` i8>i32, the 4-way multiply-accumulate,
-  is 3.9× faster than the plain i8 gemm in native-fast (31.4 against
-  8.0 GFLOP/s on one core). That holds although this build's ISA is `NEON`
-  without the dot-product extension, so the quad step is emulated. On the
-  Ventuno, which builds with `DOTPROD`, the relation reverses.
-
 ## Fixed since these sessions
+
+**The quad integer gemm, read the wrong way round (#806).** `gemm_quad` i8>i32,
+the 4-way multiply-accumulate, is 3.9× faster than the plain i8 gemm in
+native-fast (31.4 against 8.0 GOP/s on one core). This page used to call that
+the emulated path, and the Ventuno's reversal the native one. The sidecars say
+the opposite: this build's ISA is `NEON DOTPROD`, so its quad gemm is the
+native `SDOT` path, and the Ventuno's build was baseline Armv8.0-a, because GCC
+13 under-detects that board. With its features named, the Ventuno's quad gemm
+is 4.5× its plain one
+([Ventuno page](arduino-ventuno-q.md#sessions-of-2026-11-13-native-fast-with-dotprod-806)).
 
 **Column-major `gemv` in native-fast (#804).** In these sessions it
 takes 50.1 ms on one core against 15.6 ms in the generic build and 12.9 ms in
