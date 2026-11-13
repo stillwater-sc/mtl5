@@ -72,10 +72,6 @@
 #include <utility>
 #include <vector>
 
-#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86) || defined(_M_ARM64))
-#  include <intrin.h>
-#endif
-
 namespace mtl::parallel {
 #if defined(MTL5_SHARED_POOL) && MTL5_HAS_EXCEPTIONS
 inline namespace pool_shared {
@@ -95,27 +91,6 @@ namespace detail {
 /// The process's one spin_pool, defined with the shared thread_pool.
 MTL5_SHARED_POOL_API spin_pool& shared_spin_pool_v1();
 #endif
-
-/// One spin-wait iteration: a pause hint to the core, nothing else.
-inline void cpu_relax() noexcept {
-#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
-    _mm_pause();
-#elif defined(_MSC_VER) && defined(_M_ARM64)
-    __yield();
-#elif defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
-#elif defined(__aarch64__) || defined(__arm__)
-    __asm__ __volatile__("yield" ::: "memory");
-#endif
-}
-
-/// One iteration of a spin wait: a pause, and every 64th iteration a yield,
-/// so a thread the scheduler has queued on this core behind the spinner runs
-/// within a few microseconds instead of after the whole spin.
-inline void spin_step(unsigned i) noexcept {
-    if ((i & 63u) == 63u) std::this_thread::yield();
-    else cpu_relax();
-}
 
 /// Spin iterations from MTL5_POOL_SPIN; `fallback` when unset or invalid.
 inline unsigned resolve_pool_spin(unsigned fallback) {
