@@ -201,12 +201,27 @@ fastest width of every generic row kernel, or within 0.2% of it. The x86-64
 default of #798 is 8, so it costs nothing here. The previous default, 6, cost
 up to 31% under clang-cl (f64 `trmv`).
 
-### Open observation
+### Column-major `gemv` in native-fast (#804, fixed)
 
-Column-major `gemv` in native-fast takes 22.3 ms on one core against 7.8 ms in
-the generic build and 3.6 ms in OpenBLAS: 2.9× slower than the generic build.
-The same gap appears on every machine of the campaign, so it belongs to the
-native-fast path. #804 tracks it.
+In these sessions, column-major `gemv` in native-fast takes 22.3 ms on one core
+against 7.8 ms in the generic build and 3.6 ms in OpenBLAS: 2.9× slower than the
+generic build. The same gap appeared on every machine of the campaign.
+
+The cause was the kernel's traversal, which #809 fixed (see the
+[i7-12700K page](i7-12700k.md#column-major-gemv-in-native-fast-804-fixed)).
+This machine was not part of #809's A/B runs, so it was checked afterwards
+(2026-11-13): MSVC, SSE2, one core, n = 4096, the commit before #809 against
+#809's, two runs each, agreeing within 1%.
+
+| dtype | before #809 | #809 | generic build, these sessions |
+|---|---:|---:|---:|
+| f64 | 22.23 ms | 4.00 ms | 7.8 ms |
+| f32 | 7.24 ms | 2.54 ms | |
+
+Without FMA (MSVC defines no `__FMA__` below AVX2), the kernel takes two columns
+per pass instead of four, and still beats the generic build by 2×. Row-major
+`gemv` doesn't move (3.49 ms in both). The cards keep the session figures until
+the next session.
 
 ## Dense BLAS (single-threaded)
 
