@@ -63,6 +63,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`mtl5_bench`'s `blas` variant didn't build against CHOLMOD before version 5** (#810). The CHOLMOD reference entry set `cholmod_common::nthreads_max`, which CHOLMOD 5 (SuiteSparse 7) introduced, so the build failed on the Jetson Orin, whose Ubuntu 22.04 ships CHOLMOD 3. The member is now set only where it exists; an older CHOLMOD threads only through its BLAS, which `platform.sh` already pins to the run's thread count.
 - **The CHOLMOD binding: a double free on move, an indefinite matrix factored silently, and leaks when its constructor throws** (#774, for #810). `mtl::interface::cholmod_solver` had no unit test, and no CI job built it.
   - **Move:** the move constructor copied the `cholmod_common` struct, so the moved-from object and the new one both freed its workspace. The workspace now lives on the heap and moves as a pointer. Move assignment is added; a moved-from solver throws `std::logic_error` if used.
   - **Indefinite matrices:** a matrix that isn't positive definite now throws `std::runtime_error` from the factorization. On the supernodal path CHOLMOD reported it only in `Common->status`, which the binding never read. On the simplicial path it reported nothing at all: CHOLMOD's simplicial default is L D L^T, which factors an indefinite matrix with status OK. The binding now asks for L L^T (`Common->final_ll`) on both paths, which is what its documentation promised.

@@ -42,8 +42,9 @@
 // PARDISO's CSR arrays are built once in make(). Both are O(nnz), small beside
 // the analysis.
 //
-// THREADS. CHOLMOD takes the run's thread count (Common->nthreads_max) and
-// calls the build's BLAS; PARDISO takes it through MKL_Set_Num_Threads.
+// THREADS. CHOLMOD takes the run's thread count (Common->nthreads_max, from
+// CHOLMOD 5 on) and calls the build's BLAS; PARDISO takes it through
+// MKL_Set_Num_Threads.
 //
 // WORK MODEL, the one entries_sparse.hpp uses, from the AMD-ordered Cholesky
 // pattern of A, whose column counts are c_j and nnz(L) = sum c_j:
@@ -166,6 +167,15 @@ using sn_lu_adapter = mtl5_adapter<decltype(slu_sym(std::declval<const csr&>()))
                                    slu_sym, slu_num>;
 
 #ifdef MTL5_HAS_CHOLMOD
+// cholmod_common::nthreads_max arrived in CHOLMOD 5 (SuiteSparse 7); an older
+// CHOLMOD (Ubuntu 22.04's is 3) has no OpenMP team of its own and threads only
+// through the BLAS, which platform.sh pins. A template, so the requires-check
+// is a SFINAE test and not a hard error on the missing member.
+template <typename Common>
+void set_cholmod_threads(Common& c, int n) {
+    if constexpr (requires { c.nthreads_max; }) c.nthreads_max = n;
+}
+
 struct cholmod_adapter {
     std::optional<mtl::interface::cholmod_solver> s;
     unsigned threads;
@@ -178,7 +188,7 @@ struct cholmod_adapter {
         c.supernodal = CHOLMOD_SUPERNODAL;
         c.nmethods = 1;
         c.method[0].ordering = CHOLMOD_AMD;
-        c.nthreads_max = static_cast<int>(threads);
+        set_cholmod_threads(c, static_cast<int>(threads));
     }
     void reset_factor() {}
     void analyze(const csr& A) { s->analyze(A); }
