@@ -71,13 +71,14 @@ TEMPLATE_TEST_CASE("gemv: row-major and col-major vs naive, all sizes", "[operat
         }
 }
 
-// The col-major kernel sweeps 16 KB strips of y, four columns per pass (#804).
-// kDims stays far below one strip, so take m across the strip boundaries and n
-// across the four-column groups: one row short of a strip, exactly one, one
-// past, and two strips plus a part batch, which leaves rows for the scalar tail.
+// The col-major kernel sweeps 64 KB strips of y, two or four columns per pass
+// (#804). kDims stays far below one strip, so take m across the strip
+// boundaries -- one row short of a strip, exactly one, one past, and two strips
+// plus a part batch, which leaves rows for the scalar tail -- and n across the
+// column groups.
 TEMPLATE_TEST_CASE("gemv: col-major across strip boundaries", "[operation][gemv]",
                    float, double, std::int32_t, std::uint32_t) {
-    constexpr std::size_t S = 16384 / sizeof(TestType);
+    constexpr std::size_t S = 65536 / sizeof(TestType);
     for (std::size_t m : {S - 1, S, S + 1, 2 * S + 5})
         for (std::size_t n : {1, 3, 4, 5, 9}) {
             INFO("m=" << m << " n=" << n);
