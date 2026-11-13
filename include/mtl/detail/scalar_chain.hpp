@@ -29,13 +29,31 @@
 //     few rows a wider block leaves over. At W = 4 it is not a clean win
 //     either: under -march=native f32 gemv got 9% faster but trmv and the
 //     forward substitution 8% slower, while a plain build gained 12-24% in
-//     all three. That was x86-64. On AArch64 (#780), GCC's float gemv is
-//     fastest at 4 with the barrier, but its trmv and forward substitution
-//     run 5.6-7.2x slower at 4 than at 2 and 1.4-4.5x slower at 6 to 12
-//     (#795), so their AArch64 default is 2 (interface/interleave_rows.hpp).
+//     all three. That was x86-64.
+//   - On AArch64, gemv only (keep_scalar_triangular_v). The barrier is what
+//     made GCC's float trmv and forward substitution 5.6-7.2x slower at W = 4
+//     than at 2 there (#795). An A/B with and without it (generic build,
+//     n = 4096, one core, median of 3 runs of bench_interleave_rows --reps 21):
+//
+//                                 with the barrier    without it
+//         Jetson Orin, GCC 11
+//           trmv f32, W = 4         50.04 ms            6.31 ms
+//           trisolve f32, W = 4     39.45 ms            5.58 ms
+//           gemv f32, W = 4          8.23 ms            8.34 ms
+//         Ventuno Q, GCC 13
+//           trmv f32, W = 4         31.66 ms            3.12 ms
+//           trisolve f32, W = 4     26.22 ms            2.99 ms
+//           gemv f32, W = 4          5.51 ms            9.14 ms
+//
+//     Without it, W = 4 is the triangular kernels' fastest width on both
+//     boards, 13-36% faster than the 2 they were held at before. gemv keeps
+//     the barrier: on the Ventuno it is 1.66x faster with it. The upper trmv
+//     wasn't timed (the sweep runs the lower one) but has the same inner
+//     loop, so it follows. On x86-64 nothing changes: all three keep it, as
+//     measured there.
 //
 // The bits are checked by op_test_trmv_trsv_interleaved, whose row-major
-// float cases at W >= 4 take this path in a GCC build.
+// float cases at W >= 4 take this path in a GCC build (gemv only, on AArch64).
 
 #include <cstddef>
 #include <type_traits>
@@ -61,6 +79,16 @@ inline constexpr bool keep_scalar_v =
     W >= 4 && std::is_same_v<T, float> && keep_scalar_row_major<M>();
 #else
     false;
+#endif
+
+/// The same, for the trmv and forward-substitution kernels: as keep_scalar_v
+/// on x86-64, never on AArch64, where it made them 5.6-7.2x slower (#795).
+template <typename T, typename M, std::size_t W>
+inline constexpr bool keep_scalar_triangular_v =
+#if defined(__aarch64__)
+    false;
+#else
+    keep_scalar_v<T, M, W>;
 #endif
 
 /// An empty asm that keeps v in a scalar register of its own, when Enable.

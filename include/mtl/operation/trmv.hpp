@@ -131,7 +131,7 @@ void trmv_upper_rows(const M& A, VX& x, typename M::size_type i, bool unit_diag)
             for (size_type j = i0 + W; j < n; ++j) {
                 const auto& xj = x(j);
                 ((acc[K] += A(i0 + K, j) * xj), ...);
-                (keep_scalar<keep_scalar_v<acc_type, M, W>>(acc[K]), ...);   // #776
+                (keep_scalar<keep_scalar_triangular_v<acc_type, M, W>>(acc[K]), ...);   // #776, #795
             }
             ((x(i0 + K) = acc[K]), ...);
         }
@@ -156,7 +156,7 @@ void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag
             for (size_type j = 0; j < r0; ++j) {
                 const auto& xj = x(j);
                 ((acc[K] += A(r0 + K, j) * xj), ...);
-                (keep_scalar<keep_scalar_v<acc_type, M, W>>(acc[K]), ...);   // #776
+                (keep_scalar<keep_scalar_triangular_v<acc_type, M, W>>(acc[K]), ...);   // #776, #795
             }
             ([&] {
                 for (size_type j = r0; j < r0 + K; ++j) acc[K] += A(r0 + K, j) * x(j);

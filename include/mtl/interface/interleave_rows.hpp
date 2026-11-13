@@ -34,12 +34,10 @@
 //     every kernel and the old 6 was 18-24% slower. Under GCC, gemv agrees on
 //     both machines; on the Jetson Orin, f64 trmv and the forward substitution
 //     are fastest at 2 and lose 12% at 4 (57-59% at 6).
-//   - Except GCC on AArch64 for float trmv and the forward substitution: 2.
-//     At W >= 4 those take the keep_scalar barrier (#776), and there they run
-//     5.6-7.2x slower at 4 than at 2 on both machines, and 1.4-4.5x slower at
-//     6 to 12 (#795). 2 is their fastest width (Arduino: trmv 4.76 ms against
-//     6.79 at 6 and 31.7 at 4). gemv takes
-//     the same barrier but is fastest at 4 on both machines, so keeps 4.
+//     GCC's float trmv and forward substitution were held at 2 until #795:
+//     the keep_scalar barrier (#776) made them 5.6-7.2x slower at 4. Without
+//     it on AArch64 (detail/scalar_chain.hpp), 4 is their fastest width too
+//     (Ventuno Q: trmv 3.12 ms at 4 against 4.71 at 2).
 //   - Other targets: 6, the i7-12700K figure that was the default for every
 //     target before (#772).
 // Each is capped at half the vector registers the target has: 32-bit x86 and
@@ -101,12 +99,6 @@ consteval std::size_t measured_interleave_rows() {
 #if defined(__x86_64__) || defined(_M_X64)
     return 8;
 #elif defined(__aarch64__) || defined(_M_ARM64)
-#  if defined(__GNUC__) && !defined(__clang__)
-    // #795: GCC's float trmv and forward substitution at W >= 4.
-    if constexpr (std::is_same_v<T, float> &&
-                  (std::is_same_v<Kernel, kernel::trmv> || std::is_same_v<Kernel, kernel::lower_trisolve>))
-        return 2;
-#  endif
     return 4;
 #else
     return 6;

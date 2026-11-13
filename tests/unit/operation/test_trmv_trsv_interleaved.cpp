@@ -422,12 +422,7 @@ TEST_CASE("interleave_rows defaults and overrides", "[operation][772]") {
 #if defined(__x86_64__) || defined(_M_X64)
     constexpr std::size_t f64 = 8, f32_gemv = 8, f32_tri = 8;
 #elif defined(__aarch64__) || defined(_M_ARM64)
-    constexpr std::size_t f64 = 4, f32_gemv = 4;
-#  if defined(__GNUC__) && !defined(__clang__)
-    constexpr std::size_t f32_tri = 2;   // #795
-#  else
-    constexpr std::size_t f32_tri = 4;
-#  endif
+    constexpr std::size_t f64 = 4, f32_gemv = 4, f32_tri = 4;   // every compiler since #795
 #else
     constexpr std::size_t f64 = 6, f32_gemv = 6, f32_tri = 6;
 #endif
@@ -448,7 +443,7 @@ TEST_CASE("interleave_rows defaults and overrides", "[operation][772]") {
     STATIC_REQUIRE(interleave_rows_v<long double, kernel::gemv> == 3);
 }
 
-TEST_CASE("keep_scalar applies to row-major float at W >= 4 under GCC only", "[operation][776]") {
+TEST_CASE("keep_scalar applies to row-major float at W >= 4 under GCC only", "[operation][776][795]") {
     // Where it applies, the row-major float cases of the width sweep above
     // check that it leaves the bits alone.
 #if defined(__GNUC__) && !defined(__clang__) && (defined(__x86_64__) || defined(__aarch64__))
@@ -458,6 +453,17 @@ TEST_CASE("keep_scalar applies to row-major float at W >= 4 under GCC only", "[o
 #else
     STATIC_REQUIRE(!detail::keep_scalar_v<float, rm<float>, 6>);
 #endif
+    // The triangular kernels: as gemv on x86-64, never on AArch64 (#795).
+#if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__)
+    STATIC_REQUIRE(detail::keep_scalar_triangular_v<float, rm<float>, 4>);
+    STATIC_REQUIRE(detail::keep_scalar_triangular_v<float, rm<float>, 6>);
+#else
+    STATIC_REQUIRE(!detail::keep_scalar_triangular_v<float, rm<float>, 4>);
+    STATIC_REQUIRE(!detail::keep_scalar_triangular_v<float, rm<float>, 6>);
+#endif
+    STATIC_REQUIRE(!detail::keep_scalar_triangular_v<float, rm<float>, 2>);
+    STATIC_REQUIRE(!detail::keep_scalar_triangular_v<double, rm<double>, 6>);
+    STATIC_REQUIRE(!detail::keep_scalar_triangular_v<float, cm<float>, 6>);
     STATIC_REQUIRE(!detail::keep_scalar_v<float, rm<float>, 1>);
     STATIC_REQUIRE(!detail::keep_scalar_v<float, rm<float>, 3>);
     STATIC_REQUIRE(!detail::keep_scalar_v<float, cm<float>, 6>);

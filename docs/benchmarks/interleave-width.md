@@ -42,13 +42,28 @@ it is the table #778's run-time selection will use.
   W = 6 is 18-24% slower than it. With GCC, gemv agrees: f64 and f32 are
   fastest at 4 on both AArch64 machines. On the Jetson, GCC's f64 `trmv` and
   forward substitution are fastest at 2, and lose 12% at 4.
-- **GCC on AArch64 has a separate problem (#795).** Row-major f32 `trmv` and
-  the forward substitution take 5.6-7.2x longer at W = 4 than at W = 2, and
-  1.4-4.5x longer at W = 6 to 12, on both machines (GCC 11 and 13). Clang on
-  the same machine does not. Only W = 2 avoids it, so GCC's float `trmv` and
-  forward substitution default to 2 on AArch64. The
-  likely cause is the `keep_scalar` barrier from #776, which is on for GCC on
-  AArch64 although it was measured only on x86-64.
+- **GCC on AArch64 had a separate problem, now fixed (#795).** In these
+  sessions row-major f32 `trmv` and the forward substitution take 5.6-7.2x
+  longer at W = 4 than at W = 2, and 1.4-4.5x longer at W = 6 to 12, on both
+  machines (GCC 11 and 13). Clang on the same machine does not. The cause was
+  the `keep_scalar` barrier from #776, which was on for GCC on AArch64 although
+  it had been measured only on x86-64. An A/B on both boards (median of 3 runs,
+  `--reps 21`):
+
+  | GCC, f32 | W = 4, with the barrier | W = 4, without it | W = 2, before |
+  |---|---:|---:|---:|
+  | Jetson Orin, `trmv` | 50.04 ms | 6.31 ms | 7.29 ms |
+  | Jetson Orin, forward substitution | 39.45 ms | 5.58 ms | 7.08 ms |
+  | Ventuno Q, `trmv` | 31.66 ms | 3.12 ms | 4.75 ms |
+  | Ventuno Q, forward substitution | 26.22 ms | 2.99 ms | 4.70 ms |
+  | Jetson Orin, `gemv` | 8.23 ms | 8.34 ms | |
+  | Ventuno Q, `gemv` | 5.51 ms | 9.14 ms | |
+
+  So on AArch64 the triangular kernels no longer take the barrier, and W = 4
+  is their fastest width, 13-36% faster than the 2 they were held at. `gemv`
+  keeps it: it is neutral on the Jetson and 1.66x faster with it on the
+  Ventuno. The tables below are from the 2026-11-11 sessions, with the
+  barrier.
 
 ## Defaults per ISA class
 
@@ -58,7 +73,7 @@ Other targets keep 6. Every target caps the width at half its vector registers.
 | ISA class | float | double | worst loss against the fastest width |
 |---|---|---|---|
 | x86-64 (SSE2, generic build) | 8 | 8 | 10% (i7-12700K, Clang, f32 gemv); 6% on the Xeon |
-| AArch64 (NEON, generic build) | 4 (GCC: 2 for `trmv` and the forward substitution) | 4 | 0% under Clang; 12% under GCC (Jetson, f64 `trmv` and forward substitution) |
+| AArch64 (NEON, generic build) | 4 | 4 | 0% under Clang; 12% under GCC (Jetson, f64 `trmv` and forward substitution) |
 
 - **x86-64 with AVX-512:** none of these machines has it. The Zen 4 machines
   support AVX-512, but the generic build doesn't use it, so that class is
