@@ -72,7 +72,7 @@ public:
     /// cholmod_common struct itself would leave two owners of its buffers,
     /// and both destructors would free them (#774).
     cholmod_solver(cholmod_solver&& o) noexcept
-        : n_(o.n_), common_(std::move(o.common_)),
+        : n_(o.n_), nnz_(o.nnz_), common_(std::move(o.common_)),
           A_(std::exchange(o.A_, nullptr)), L_(std::exchange(o.L_, nullptr)),
           factored_(std::exchange(o.factored_, false)) {}
 
@@ -80,6 +80,7 @@ public:
         if (this != &o) {
             release();
             n_ = o.n_;
+            nnz_ = o.nnz_;
             common_ = std::move(o.common_);
             A_ = std::exchange(o.A_, nullptr);
             L_ = std::exchange(o.L_, nullptr);
@@ -100,6 +101,7 @@ public:
             throw std::length_error("cholmod_solver: n or nnz exceeds the int32 CHOLMOD interface");
         free_factor_and_matrix();
         n_ = A.num_rows();
+        nnz_ = A.nnz();   // not A_->nzmax: CHOLMOD allocates at least one entry
 
         // stype = 1: symmetric, upper triangle used; sorted, packed.
         A_ = cholmod_allocate_sparse(n_, n_, A.nnz(), 1, 1, 1, CHOLMOD_REAL, common_.get());
@@ -128,7 +130,7 @@ public:
     template <typename Parameters>
     void factorize(const mat::compressed2D<double, Parameters>& A) {
         require_analyzed("factorize");
-        if (A.num_rows() != n_ || A.num_cols() != n_ || A.nnz() != A_->nzmax)
+        if (A.num_rows() != n_ || A.num_cols() != n_ || A.nnz() != nnz_)
             throw std::invalid_argument("cholmod_solver::factorize: pattern differs from analyze()");
         copy_ccs(A, /*refill=*/true);   // a mismatch throws with the old factor intact
         factorize();
@@ -179,6 +181,7 @@ public:
 
 private:
     std::size_t n_ = 0;
+    std::size_t nnz_ = 0;
     std::unique_ptr<cholmod_common> common_;
     cholmod_sparse* A_ = nullptr;
     cholmod_factor* L_ = nullptr;

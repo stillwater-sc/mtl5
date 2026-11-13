@@ -15,6 +15,7 @@ using namespace mtl;
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -27,9 +28,12 @@ namespace {
 
 using csr = mat::compressed2D<double>;
 
-/// Normwise backward error ||b - A x||_inf / (||A||_inf ||x||_inf + ||b||_inf).
+/// Normwise backward error ||b - A x||_inf / (||A||_inf ||x||_inf + ||b||_inf);
+/// infinite if x holds a NaN or an infinity, which std::max would drop.
 double backward_error(const csr& A, const vec::dense_vector<double>& x,
                       const vec::dense_vector<double>& b) {
+    for (std::size_t i = 0; i < x.size(); ++i)
+        if (!std::isfinite(x(i))) return std::numeric_limits<double>::infinity();
     const auto& rp = A.ref_major();
     const auto& ci = A.ref_minor();
     const auto& v  = A.ref_data();
@@ -77,6 +81,16 @@ vec::dense_vector<double> rhs(std::size_t n) {
 constexpr double tol = 1e-13;
 
 } // namespace
+
+TEST_CASE("cholmod: the test's backward error rejects a nonfinite solution", "[interface][cholmod]") {
+    const csr A = laplacian(4);
+    const auto b = rhs(A.num_rows());
+    vec::dense_vector<double> x(A.num_rows(), std::numeric_limits<double>::quiet_NaN());
+    REQUIRE_FALSE(backward_error(A, x, b) < tol);
+    x = vec::dense_vector<double>(A.num_rows(), 0.0);
+    x(3) = std::numeric_limits<double>::infinity();
+    REQUIRE_FALSE(backward_error(A, x, b) < tol);
+}
 
 TEST_CASE("cholmod: small SPD system, exact solution", "[interface][cholmod]") {
     // A = [4 1; 1 3], b = [6; 7] => x = [1; 2]
@@ -206,6 +220,11 @@ TEST_CASE("cholmod: n = 1 and n = 0", "[interface][cholmod]") {
     cholmod_solver s(empty);
     s.solve(x0, b0);
     REQUIRE(s.num_rows() == 0);
+    // Refactorizing the unchanged (empty) pattern is accepted: CHOLMOD
+    // allocates at least one entry, so the stored capacity is not nnz.
+    s.factorize(empty);
+    REQUIRE(s.factored());
+    s.solve(x0, b0);
 }
 
 #else
