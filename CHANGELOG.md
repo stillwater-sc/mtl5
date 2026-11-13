@@ -176,6 +176,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **`thread_pool` spins for up to 1 ms before it sleeps, so threaded factorizations no longer slow down on boards with deep idle states** (#805). The default pool woke its workers through a condition variable only, so every gap between parallel regions let their cores go idle. The Arduino Ventuno Q's A78C idle states take 1.45–1.76 ms to leave, and after a gap of 5 µs or more a handoff cost about 1 ms instead of 14–22 µs. The non-LAPACK `lu_factor` opens one region per column, so a 512×512 LU ran 7× slower on four threads than on one.
+  - **The change:** a waiting worker, and the caller in its join, spin for up to `thread_pool::spin_us` before blocking. `generation_` and `remaining_` became atomics so the spins can read them without the lock; they are still written only under the mutex, and the condition-variable predicates are unchanged.
+  - **Setting:** `MTL5_THREAD_POOL_SPIN_US`, default 1000; 0 restores the old behavior. Define it the same in every translation unit. A worker can burn up to that much of a core after the last region of a burst. On the Ventuno at 4 threads, 50 µs left LU at 76 ms, 200 µs fixed LU, QR, LQ and Hessenberg needed 1000 µs, and 3000 µs gained nothing more.
+  - **ABI:** `thread_pool`'s layout changed, so the shared-pool export is now `shared_pool_v2`. A module built against the old header fails to link instead of misbehaving.
+  - **Speed** (`mtl5_bench`, generic build, f64, median of three):
+
+    | | Ventuno 1T | Ventuno 4T, before → after | Jetson 6T, before → after |
+    |---|---:|---:|---:|
+    | `lu` 512² | 23.8 ms | 179.0 → 20.7 ms | 38.1 → 26.7 ms |
+    | `qr` | 252 ms | 329.7 → 149.6 ms | 265.2 → 214.5 ms |
+    | `lq` | 60.7 ms | 208.1 → 42.3 ms | 86.0 → 66.6 ms |
+    | `hessenberg` | 353 ms | 744.6 → 205.8 ms | 379.5 → 315.3 ms |
+
+    On the i7-12700K at 8 threads the factor and BLAS entries are unchanged or up to 9% faster.
+  - **Also:** `cpu_relax` and `spin_step` moved from `spin_pool.hpp` to `thread_pool.hpp`, so both pools use them. `test_thread_pool` no longer calls a Catch2 assertion on a worker thread, which ThreadSanitizer reported as a race.
+
 - **The native-fast `gemv` on a column-major matrix is 2.5–6× faster and no longer slower than the generic build** (#804). Its kernel kept 16 rows of y in registers and swept all n columns for them, so every load came from another column and, at n = 4096, another page. It ran 2.2–5× slower than the generic build's column sweep (#777).
   - **The kernel** (`detail::gemv_colmajor`) now sweeps 64 KB strips of y down the columns, 4 columns per pass where the target has a fused multiply-add and 2 where it has not. Each y[i] gets the same chain of operations as before, so results are bit-identical to the old kernel.
   - **Why 64 KB, not the 16 KB that keeps y in L1:** each strip restarts every column's contiguous run, and the Jetson's Cortex-A78 pays for each restart (f64, n = 4096: 26 ms with 16 KB strips, 17.8 ms with 64 KB).
