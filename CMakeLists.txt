@@ -49,6 +49,8 @@ option(MTL5_WITH_LAPACK             "Link LAPACK library for factorizations"  OF
 option(MTL5_WITH_ZLIB               "Link zlib for transparent gzip (.mtx.gz) Matrix Market reading" OFF)
 option(MTL5_WITH_HIGHWAY            "Use Google Highway for SIMD-accelerated native kernels" OFF)
 option(MTL5_NATIVE_ARCH            "Tune in-tree builds for the host CPU (-march=native; non-portable binaries)" OFF)
+set(MTL5_NATIVE_ARCH_FLAGS "-march=native" CACHE STRING
+    "The flags MTL5_NATIVE_ARCH adds (space-separated). Replace -march=native where it under-detects the host, e.g. on the Ventuno Q (#806)")
 option(MTL5_NATIVE_FAST_GEMM       "Route mtl::mult through the native blocked GEMM / SIMD GEMV path" OFF)
 option(MTL5_WITH_UMFPACK            "Link UMFPACK library (SuiteSparse)"      OFF)
 option(MTL5_WITH_SUPERLU            "Link SuperLU library"                    OFF)
@@ -90,7 +92,11 @@ configure_file(
 # (mtl/util/system_info.hpp) -- flags are the intent, that is the effect.
 set(MTL5_PROVENANCE_FLAGS "${CMAKE_CXX_FLAGS} $<$<CONFIG:Debug>:${CMAKE_CXX_FLAGS_DEBUG}>$<$<CONFIG:Release>:${CMAKE_CXX_FLAGS_RELEASE}>$<$<CONFIG:RelWithDebInfo>:${CMAKE_CXX_FLAGS_RELWITHDEBINFO}>$<$<CONFIG:MinSizeRel>:${CMAKE_CXX_FLAGS_MINSIZEREL}>")
 if(MTL5_NATIVE_ARCH)
-    set(MTL5_PROVENANCE_FLAGS "${MTL5_PROVENANCE_FLAGS} [MTL5_NATIVE_ARCH=ON]")
+    if(MTL5_NATIVE_ARCH_FLAGS STREQUAL "-march=native")
+        set(MTL5_PROVENANCE_FLAGS "${MTL5_PROVENANCE_FLAGS} [MTL5_NATIVE_ARCH=ON]")
+    else()
+        set(MTL5_PROVENANCE_FLAGS "${MTL5_PROVENANCE_FLAGS} [MTL5_NATIVE_ARCH=ON: ${MTL5_NATIVE_ARCH_FLAGS}]")
+    endif()
 endif()
 
 add_custom_target(mtl5_build_info ALL
@@ -146,8 +152,57 @@ target_compile_features(mtl5 INTERFACE cxx_std_20)
 # default to keep binaries portable; -march=native lets the SIMD layer pick the
 # widest ISA (the blocking params in mtl/simd/blocking.hpp adapt accordingly).
 # BUILD_INTERFACE only, so it never leaks into the installed/exported flags.
+#
+# MTL5_NATIVE_ARCH_FLAGS replaces -march=native where the compiler under-detects
+# the host (#806). GCC 13 resolves -march=native to baseline Armv8.0-a on the
+# Arduino Ventuno Q (Cortex-A78C + A55): it passes no -march or -mcpu on to cc1,
+# so the build loses DotProd, and the quad GEMM runs Highway's emulation at
+# about a sixth of SDOT's rate. The guard below catches that case on AArch64 Linux: it
+# compares the features the flags enable with the ones /proc/cpuinfo lists.
 if(MTL5_NATIVE_ARCH AND NOT MSVC)
-    target_compile_options(mtl5 INTERFACE $<BUILD_INTERFACE:-march=native>)
+    separate_arguments(_mtl5_arch_flags NATIVE_COMMAND "${MTL5_NATIVE_ARCH_FLAGS}")
+    foreach(_f IN LISTS _mtl5_arch_flags)
+        target_compile_options(mtl5 INTERFACE $<BUILD_INTERFACE:${_f}>)
+    endforeach()
+
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$" AND
+       CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+       EXISTS "/proc/cpuinfo")
+        file(STRINGS "/proc/cpuinfo" _mtl5_cpu_features REGEX "^Features" LIMIT_COUNT 1)
+        include(CheckCXXSourceCompiles)
+        set(_mtl5_saved_flags "${CMAKE_REQUIRED_FLAGS}")
+        set(CMAKE_REQUIRED_FLAGS "${MTL5_NATIVE_ARCH_FLAGS}")
+        set(_mtl5_missing "")
+        # cpuinfo feature : the predefined macro the flags must produce
+        foreach(_pair "asimddp:__ARM_FEATURE_DOTPROD" "i8mm:__ARM_FEATURE_MATMUL_INT8")
+            string(REPLACE ":" ";" _pair "${_pair}")
+            list(GET _pair 0 _feat)
+            list(GET _pair 1 _macro)
+            if(_mtl5_cpu_features MATCHES "[ \t]${_feat}([ \t]|$)")
+                # Re-checked on every configure: the result depends on the flags.
+                unset(MTL5_NATIVE_ARCH_HAS_${_macro} CACHE)
+                check_cxx_source_compiles("
+                    #ifndef ${_macro}
+                    #error not enabled
+                    #endif
+                    int main() { return 0; }" MTL5_NATIVE_ARCH_HAS_${_macro})
+                if(NOT MTL5_NATIVE_ARCH_HAS_${_macro})
+                    list(APPEND _mtl5_missing "${_feat} (${_macro})")
+                endif()
+            endif()
+        endforeach()
+        set(CMAKE_REQUIRED_FLAGS "${_mtl5_saved_flags}")
+        if(_mtl5_missing)
+            list(JOIN _mtl5_missing ", " _mtl5_missing)
+            message(WARNING
+                "MTL5_NATIVE_ARCH: this CPU has ${_mtl5_missing}, but "
+                "MTL5_NATIVE_ARCH_FLAGS='${MTL5_NATIVE_ARCH_FLAGS}' does not enable it. "
+                "The compiler under-detects this host (GCC 13 does so on heterogeneous "
+                "SoCs such as the Ventuno Q's A78C + A55, #806); the build gets the "
+                "baseline ISA. Set MTL5_NATIVE_ARCH_FLAGS to what the CPU has, for example "
+                "'-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c' on that board.")
+        endif()
+    endif()
 endif()
 
 # Route mtl::mult through the native blocked GEMM / SIMD GEMV path (epic #82).

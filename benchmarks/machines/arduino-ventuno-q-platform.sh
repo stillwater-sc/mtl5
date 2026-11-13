@@ -18,4 +18,11 @@ CPUS=$(awk -F: '/^processor/ { cpu = $2 + 0 }
 [ "$(printf '%s' "$CPUS" | tr ',' '\n' | grep -c .)" -eq 4 ] || { echo "expected 4 A78C cores (part 0xd4b), got '$CPUS'" >&2; exit 2; }
 
 apply_governor performance "$CPUS"
-run_platform arduino-ventuno-q "$CPUS" "governor performance on the A78C policies; $(describe_policies "$CPUS")" "$@"
+# GCC 13 resolves -march=native to baseline Armv8.0-a on this board (#806): it
+# passes no -march or -mcpu on to cc1, so native-fast lost DotProd and the quad
+# GEMM ran Highway's emulation. The flags spell out what /proc/cpuinfo lists on
+# every core (asimddp, asimdhp, lrcpc on Armv8.2) and tune for the A78C cores
+# checked above. Not -mcpu=cortex-a78c: that also enables PAuth, which this
+# kernel doesn't report, and it measured within 4% of these.
+run_platform arduino-ventuno-q "$CPUS" "governor performance on the A78C policies; $(describe_policies "$CPUS")" \
+    --arch "-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c" "$@"
