@@ -223,15 +223,22 @@ fix. Read a 6-thread integer gemm figure on this machine as one of two values.
 
 These are measured but not explained yet. Each has a tracking issue.
 
-- **Column-major `gemv` in native-fast (#804)** takes 50.1 ms on one core against
-  15.6 ms in the generic build and 12.9 ms in OpenBLAS. The same gap appears on
-  every machine of the campaign: 2.2× on the i7-12700K, 2.9× on the Ryzen 9
-  8945HS, 5.0× on the Ventuno Q.
 - **The quad integer gemm (#806).** `gemm_quad` i8>i32, the 4-way multiply-accumulate,
   is 3.9× faster than the plain i8 gemm in native-fast (31.4 against
   8.0 GFLOP/s on one core). That holds although this build's ISA is `NEON`
   without the dot-product extension, so the quad step is emulated. On the
   Ventuno, which builds with `DOTPROD`, the relation reverses.
+
+## Fixed since these sessions
+
+**Column-major `gemv` in native-fast (#804).** In these sessions it
+takes 50.1 ms on one core against 15.6 ms in the generic build and 12.9 ms in
+OpenBLAS; the same gap appeared on every machine of the campaign. #809 fixed
+the kernel's traversal (see the
+[i7-12700K page](i7-12700k.md#column-major-gemv-in-native-fast-804-fixed)). In
+its A/B run on this machine (one core, n = 4096), f64 went from 63.92 to
+17.78 ms and f32 from 31.40 to 7.93 ms, against 21.47 and 8.27 ms in the
+generic build. The cards keep the session figures until the next session.
 
 ## Caveats
 

@@ -173,14 +173,22 @@ These are measured but not explained yet. Each has a tracking issue.
   than on one (native-fast 24.6 → 109.1 ms; the generic build 26.2 →
   109.5 ms). The first session agrees (24.7 → 112.4 ms). Cholesky and QR, on
   the same cores, gain 1.1× and 1.3×.
-- **Column-major `gemv` in native-fast (#804)** takes 49.2 ms on one core against
-  9.8 ms in the generic build: 5.0× slower. The same gap appears on every
-  machine of the campaign (2.2× on the i7-12700K, 3.2× on the Jetson).
 - **The quad integer gemm is slower than the plain one (#806).** This build has the
   dot-product extension, so `gemm_quad` i8>i32 should use `SDOT`. It reaches
   11.4 GFLOP/s on one core and 41.2 on four, against 16.2 and 62.6 for the
   plain i8 gemm. On the Jetson, whose build has no `DOTPROD`, the quad form is
   3.9× faster than the plain one.
+
+## Fixed since these sessions
+
+**Column-major `gemv` in native-fast (#804).** In these sessions it
+takes 49.2 ms on one core against 9.8 ms in the generic build: 5.0× slower,
+and the same gap appeared on every machine of the campaign. #809 fixed the
+kernel's traversal (see the
+[i7-12700K page](i7-12700k.md#column-major-gemv-in-native-fast-804-fixed)). In
+its A/B run on this machine (one core, n = 4096), f64 went from 47.52 to
+7.74 ms and f32 from 22.77 to 4.10 ms, against 10.06 and 4.74 ms in the
+generic build. The cards keep the session figures until the next session.
 
 ## Caveats
 
