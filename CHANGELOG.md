@@ -20,6 +20,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **First numbers,** i7-12700K, one thread, 20³ factorization: `sparse_cholesky` 7.35 s and `supernodal_ldlt` 66.6 ms, against 11.5 ms for CHOLMOD and 9.6 ms for PARDISO; `sparse_lu` 538 ms and `supernodal_lu` 625 ms, against 19.0 ms for PARDISO's LU.
   - **Fix: the direct solvers' check passed an all-NaN solution.** `backward_error` took its maxima with `std::max`, which drops a NaN, so the residual and |x| both stayed 0 and the error was 0. A nonfinite x now fails the check.
   - **CI:** the `vendors` benchmarks build compiles the reference entries.
+  - **`plot_roofline.py`:** `direct3d` gets its own colour, appended so every earlier area keeps its colour; reference entries are diamonds; `--areas` keeps only the named areas.
 
 - **`benchmarks/publish_platform.cmake` publishes an `mtl5_bench` platform session** (#758, #737). Copying a `platform.sh`/`platform.ps1` results directory into the repository by hand left the raw JSON behind and produced card pages the docs site didn't know about.
   - **Running it:** `cmake -DRESULTS=<results dir> -DMACHINE=<systems.md name> -P benchmarks/publish_platform.cmake`. It needs only CMake, so it runs on the machine that made the session, Windows included.

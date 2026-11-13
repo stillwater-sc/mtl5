@@ -459,6 +459,7 @@ The `direct` entries ran at 0.02–1.7% of the roofline, and nothing measured on
 - **Finding the libraries.** CHOLMOD is found at configure time, as for `-DMTL5_WITH_SUITESPARSE_CHOLMOD=ON`, but is visible to `mtl5_bench` only. MKL is not linked: `mtl5_bench` loads `libmkl_rt` with `dlopen(RTLD_LOCAL)`, first from the path CMake found (`$MKLROOT`, or `/opt/intel/oneapi/mkl/latest`), then from the loader path. Linking it would put MKL's `dgemm_` beside the build's BLAS, and the link order would then decide which BLAS every other entry measures. MKL runs on its GNU threading layer, so Intel's `libiomp5` need not be on the loader path.
 - **Where a library is missing,** its entries are listed as skipped, with the reason, on the card ("Skipped in this build"), in the JSON (`"skipped"`) and on the console. PARDISO is not loaded on Windows; MKL is x86-only, so the AArch64 machines get CHOLMOD at most.
 - **Builds without the option** register no reference entries and list none as skipped, so the `native` and `native-fast` cards are unchanged.
+- **Plots.** `plot_roofline.py` draws the reference entries as diamonds, and `--areas direct,direct3d` keeps only the direct solvers, for a plot of MTL5's solvers beside their references.
 
 ## Build & run (reproducible, all variants)
 
