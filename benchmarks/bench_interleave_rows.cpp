@@ -151,30 +151,9 @@ void run_type(std::size_t n, int reps) {
     std::printf("\n\n");
 }
 
-#if defined(_MSC_VER) && !defined(__clang__)
-#  define BENCH_NOINLINE __declspec(noinline)
-#else
-#  define BENCH_NOINLINE __attribute__((noinline))
-#endif
-
-/// gemv through detail::mult_generic_rows, which dispatches on the run-time
-/// width every call. Out of line, as a caller's call would be: inlined into the
-/// timing loop, the compiler can work across the 2000 identical calls, and
-/// that (Clang, AArch64: 12% at n = 64) is not what a caller gets.
-template <typename T>
-BENCH_NOINLINE void gemv_dispatched(const mtl::mat::dense2D<T>& A, const mtl::vec::dense_vector<T>& x,
-                                    mtl::vec::dense_vector<T>& y) {
-    mtl::detail::mult_generic_rows(A, x, y, 0, A.num_rows());
-}
-
-/// The same width's kernel, called directly and just as far out of line.
-template <std::size_t W, typename T>
-BENCH_NOINLINE void gemv_direct(const mtl::mat::dense2D<T>& A, const mtl::vec::dense_vector<T>& x,
-                                mtl::vec::dense_vector<T>& y) {
-    mtl::detail::mult_rows_interleaved<W>(A, x, y, 0, A.num_rows());
-}
-
-/// The cost of choosing the width per call, on a gemv small enough to show it.
+/// The cost of choosing the width per call: gemv at a small n through
+/// detail::mult_generic_rows, which dispatches on the run-time width every
+/// call, against the same width's kernel called directly.
 template <typename T>
 void dispatch_cost(std::size_t n, int reps) {
     namespace iface = mtl::interface;
@@ -186,13 +165,12 @@ void dispatch_cost(std::size_t n, int reps) {
     constexpr int calls = 2000;
     const auto none = [] {};
     const double dispatched = median_seconds(none, [&] {
-        for (int c = 0; c < calls; ++c) gemv_dispatched(A, x, y);
+        for (int c = 0; c < calls; ++c) mtl::detail::mult_generic_rows(A, x, y, 0, n);
     }, reps) / calls;
     consume(y);
-    double direct = 0;
-    iface::with_interleave_rows<T, iface::kernel::gemv>([&](auto w) {
-        direct = median_seconds(none, [&] {
-            for (int c = 0; c < calls; ++c) gemv_direct<decltype(w)::value>(A, x, y);
+    const double direct = iface::with_interleave_rows<T, iface::kernel::gemv>([&](auto w) {
+        return median_seconds(none, [&] {
+            for (int c = 0; c < calls; ++c) mtl::detail::mult_rows_interleaved<decltype(w)::value>(A, x, y, 0, n);
         }, reps) / calls;
     });
     consume(y);
