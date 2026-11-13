@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <utility>
 
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/interface/interleave_runtime.hpp>
@@ -72,10 +73,10 @@ void require_same(const V& u, const V& w) {
 }
 
 /// The public mult_generic, trmv and lower_trisolve against the W = 1 kernels,
-/// at n = 29: a remainder for every width in runtime_interleave_widths.
+/// at order n.
 template <typename T>
-void check_public_matches_one_row() {
-    constexpr std::size_t n = 29;
+void check_public_matches_one_row(std::size_t n) {
+    INFO("n = " << n);
     const auto A = lower<T>(n);
     const auto x0 = vec_of<T>(n);
     vec::dense_vector<T> y(n), z(n);
@@ -100,6 +101,31 @@ void check_public_matches_one_row() {
     lower_trisolve(A, t, x0);
     detail::lower_trisolve_rows<1>(A, s, x0, false);
     require_same(t, s);
+}
+
+/// A rectangular gemv, m x k, against the W = 1 kernel.
+template <typename T>
+void check_rectangular_gemv(std::size_t m, std::size_t k) {
+    INFO("m = " << m << ", k = " << k);
+    mat::dense2D<T> A(m, k);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < k; ++j)
+            A(i, j) = static_cast<T>(static_cast<double>((7 * i + 3 * j) % 11) / 13.0 - 0.4);
+    const auto x = vec_of<T>(k);
+    vec::dense_vector<T> y(m), z(m);
+    detail::mult_generic(A, x, y);
+    detail::mult_rows_interleaved<1>(A, x, z, 0, m);
+    require_same(y, z);
+}
+
+/// Every check at the sizes that matter for width w: empty, 1, around w, and
+/// 29 (a remainder for every width), plus rectangular gemvs.
+template <typename T>
+void check_all(std::size_t w) {
+    for (std::size_t n : {std::size_t{0}, std::size_t{1}, w - 1, w, w + 1, std::size_t{29}})
+        check_public_matches_one_row<T>(n);
+    for (auto [m, k] : {std::pair<std::size_t, std::size_t>{0, 5}, {5, 0}, {w + 1, 3}, {3, w + 1}, {29, 17}})
+        check_rectangular_gemv<T>(m, k);
 }
 
 /// Undo force_interleave_rows however a test case exits.
@@ -140,13 +166,13 @@ TEST_CASE("every width run-time selection can pick gives the one-row loop's bits
         // long double never selects at run time: forcing doesn't reach it.
         REQUIRE(interface::selected_interleave_rows<long double, interface::kernel::trmv>()
                 == interface::interleave_rows_v<long double, interface::kernel::trmv>);
-        check_public_matches_one_row<float>();
-        check_public_matches_one_row<double>();
-        check_public_matches_one_row<long double>();
+        check_all<float>(w);
+        check_all<double>(w);
+        check_all<long double>(w);
     }
     interface::force_interleave_rows(0);
-    check_public_matches_one_row<float>();
-    check_public_matches_one_row<double>();
+    check_all<float>(interface::selected_interleave_rows<float, interface::kernel::gemv>());
+    check_all<double>(interface::selected_interleave_rows<double, interface::kernel::gemv>());
 }
 
 TEST_CASE("force_interleave_rows takes only the compiled widths", "[operation][778]") {
