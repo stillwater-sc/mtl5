@@ -123,14 +123,22 @@ echo
 # that is both configured and built (the preset alone names build-release).
 # FORCE_BUILD=1 rebuilds even when every binary exists, so an experiment whose
 # arms differ from `default` by one macro never compares a stale `default`.
+# A tree configured with other arch flags (a build from before #806, on
+# -march=native) is rebuilt too: its binaries exist, but for the wrong ISA.
+ARCH_FLAGS="-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c"
 need_build=${FORCE_BUILD:-0}
 for a in $ARMS; do
     [ -x "$BUILD_DIR/benchmarks/bench_blocking_ab_$a" ] || need_build=1
 done
+if [ "$need_build" = 0 ] &&
+   ! grep -qxF "MTL5_NATIVE_ARCH_FLAGS:STRING=$ARCH_FLAGS" "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
+    echo "== $BUILD_DIR was configured with other arch flags; rebuilding"
+    need_build=1
+fi
 if [ "$need_build" = 1 ]; then
     echo "== configuring and building $BUILD_DIR"
     cmake --preset release -B "$BUILD_DIR" -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_ARCH=ON \
-        "-DMTL5_NATIVE_ARCH_FLAGS=-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c" >/dev/null
+        "-DMTL5_NATIVE_ARCH_FLAGS=$ARCH_FLAGS" >/dev/null
     targets=""
     for a in $ARMS; do targets="$targets bench_blocking_ab_$a"; done
     # shellcheck disable=SC2086
