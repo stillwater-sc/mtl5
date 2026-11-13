@@ -5,12 +5,14 @@ An assessment of the `jetson-orin` system described on the
 page. It is read from the capability cards of the platform benchmark of
 #721, and from the interleave sweeps taken in the same sessions (#780).
 
-**Provenance.** Everything on this page except
-[Sessions of 2026-11-13](#sessions-of-2026-11-13-811-and-cholmod) comes from
-two sessions on 2026-11-11. They used the same commit and the same build, and
-the machine had a cold boot between them. The
-[published card](cards/jetson-orin.md) has since moved to the 2026-11-13 pair,
-so its figures differ from the ones quoted outside that section.
+**Provenance.** Everything on this page comes from two sessions on 2026-11-11,
+except [Sessions of 2026-11-13](#sessions-of-2026-11-13-811-and-cholmod) and the
+later figures under [Fixed since these sessions](#fixed-since-these-sessions):
+the A/B runs of the fixes and the 2026-11-13 confirmations. The two
+2026-11-11 sessions used the same commit and the same build, and the machine had
+a cold boot between them. The [published card](cards/jetson-orin.md) has since moved to the
+2026-11-13 pair, so its figures differ from the ones quoted outside those
+sections.
 
 | | |
 |---|---|
