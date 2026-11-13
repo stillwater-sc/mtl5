@@ -15,11 +15,17 @@
 // configuration. Bytes are the compulsory traffic, as in mtl5_bench: all of A
 // for gemv, one triangle for trmv and the solve.
 //
+// It is built with MTL5_INTERLEAVE_RUNTIME (#778), which changes none of the
+// timings above: after each type it prints the width run-time selection
+// picks on this CPU and how far that is from the fastest.
+// bench_interleave_dispatch times what the dispatch costs.
+//
 // Usage:
 //   bench_interleave_rows [--n 4096] [--reps 15]
 // Each entry is the median of --reps timed runs after two warm-up runs.
 
 #include <mtl/interface/interleave_rows.hpp>
+#include <mtl/interface/interleave_runtime.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/mult.hpp>
@@ -75,9 +81,9 @@ const char* type_name() { return sizeof(T) == 4 ? "f32" : "f64"; }
 template <typename T>
 const char* define_suffix() { return sizeof(T) == 4 ? "F32" : "F64"; }
 
-/// One kernel at every width: prints a row per width, returns the fastest.
+/// One kernel at every width: prints a row per width, returns them all.
 template <typename T, typename Kernel, typename Call, typename Reset, typename Out>
-std::size_t sweep(const char* kernel, double bytes, Reset&& reset, Call&& call, const Out& out, int reps) {
+std::vector<result> sweep(const char* kernel, double bytes, Reset&& reset, Call&& call, const Out& out, int reps) {
     constexpr std::size_t dflt = mtl::interface::interleave_rows_v<T, Kernel>;
     std::vector<result> rs;
     [&]<std::size_t... W>(std::index_sequence<W...>) {
@@ -91,7 +97,23 @@ std::size_t sweep(const char* kernel, double bytes, Reset&& reset, Call&& call, 
         std::printf("%-15s %-4s W=%-3zu%c %9.3f ms %8.2f GB/s%s\n", kernel, type_name<T>(), r.width,
                     r.width == dflt ? '*' : ' ', r.seconds * 1e3, bytes / r.seconds * 1e-9,
                     &r == &*best ? "  <- fastest" : "");
-    return best->width;
+    return rs;
+}
+
+std::size_t fastest(const std::vector<result>& rs) {
+    return std::min_element(rs.begin(), rs.end(),
+                            [](const result& a, const result& b) { return a.seconds < b.seconds; })->width;
+}
+
+/// "W (time at W / time at the fastest)" for the width run-time selection picks.
+template <typename T, typename Kernel>
+void print_choice(const char* kernel, const std::vector<result>& rs) {
+    const std::size_t w = mtl::interface::selected_interleave_rows<T, Kernel>();
+    const double best = std::min_element(rs.begin(), rs.end(), [](const result& a, const result& b) {
+                            return a.seconds < b.seconds; })->seconds;
+    for (const auto& r : rs)
+        if (r.width == w) { std::printf(" %s %zu (%.3f)", kernel, w, r.seconds / best); return; }
+    std::printf(" %s %zu (not swept)", kernel, w);
 }
 
 template <typename T>
@@ -109,17 +131,23 @@ void run_type(std::size_t n, int reps) {
     const auto none = [] {};
     const auto restore = [&] { x = x0; };
 
-    const std::size_t g = sweep<T, iface::kernel::gemv>("gemv", full, none, [&](auto w) {
+    const auto g = sweep<T, iface::kernel::gemv>("gemv", full, none, [&](auto w) {
         mtl::detail::mult_rows_interleaved<decltype(w)::value>(A, x0, y, 0, n);
     }, y, reps);
-    const std::size_t t = sweep<T, iface::kernel::trmv>("trmv lower", tri, restore, [&](auto w) {
+    const auto t = sweep<T, iface::kernel::trmv>("trmv lower", tri, restore, [&](auto w) {
         mtl::detail::trmv_lower_rows<decltype(w)::value>(A, x, n, false);
     }, x, reps);
-    const std::size_t s = sweep<T, iface::kernel::lower_trisolve>("lower_trisolve", tri, none, [&](auto w) {
+    const auto s = sweep<T, iface::kernel::lower_trisolve>("lower_trisolve", tri, none, [&](auto w) {
         mtl::detail::lower_trisolve_rows<decltype(w)::value>(A, x, x0, false);
     }, x, reps);
-    std::printf("fastest %s: gemv %zu, trmv %zu, lower_trisolve %zu", type_name<T>(), g, t, s);
-    if (g == t && t == s) std::printf("  -> -DMTL5_INTERLEAVE_ROWS_%s=%zu", define_suffix<T>(), g);
+    const std::size_t fg = fastest(g), ft = fastest(t), fs = fastest(s);
+    std::printf("fastest %s: gemv %zu, trmv %zu, lower_trisolve %zu", type_name<T>(), fg, ft, fs);
+    if (fg == ft && ft == fs) std::printf("  -> -DMTL5_INTERLEAVE_ROWS_%s=%zu", define_suffix<T>(), fg);
+    std::printf("\nrun-time choice %s (cpu %s; time / fastest):", type_name<T>(),
+                to_string(iface::runtime_interleave_cpu()));
+    print_choice<T, iface::kernel::gemv>("gemv", g);
+    print_choice<T, iface::kernel::trmv>("trmv", t);
+    print_choice<T, iface::kernel::lower_trisolve>("lower_trisolve", s);
     std::printf("\n\n");
 }
 

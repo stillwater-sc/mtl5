@@ -7,6 +7,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Run-time selection of the interleave width** (#778). With `MTL5_INTERLEAVE_RUNTIME` (CMake option, off by default), the generic `gemv`, `trmv` and forward substitution compile at W = 2, 4, 6, 8 and 12 for float and double, and on first use take the width a table of the #780 sweeps lists for the compiler and the core (`include/mtl/interface/interleave_runtime.hpp`). The core is read from x86 `cpuid` or the Arm part number in `/proc/cpuinfo`.
+  - **Fallbacks:** a CPU or compiler the table doesn't list, an x86-64 build with AVX, and any `MTL5_INTERLEAVE_ROWS*` override or `interleave_rows` specialization keep the compile-time width.
+  - **Results are bit-identical** whichever width runs. `op_test_interleave_runtime` forces each width with `force_interleave_rows` and compares it with the one-row loop.
+  - **Measured with the table in place**, worst kernel against its fastest width (fixed default in brackets): i7-12700K 1.007 under GCC (1.044) and 1.007 under Clang (1.094); Jetson Orin 1.000 (1.128); Ventuno Q 1.000 under both compilers (1.000). The Xeon's and the Ryzens' entries come from their 2026-11-11 sweeps and are still to be measured.
+  - **Costs:** a file calling all three kernels for both types compiles 0.5–0.9 s slower, and the dispatch adds under 1% per call at n = 64, except 1–3.4% on the Ventuno under GCC (`bench_interleave_dispatch`). `bench_interleave_rows` now prints the run-time choice and its distance from the fastest. See `docs/benchmarks/interleave-width.md`.
+
 - **Two Ventuno Q sessions with native-fast on the cores' own features** (#806). `benchmarks/data/arduino-ventuno-q/mtl5_bench/20261113T170450Z` and `20261113T174232Z`, at `bf315e4` (after #819), every check passed, 780 of 824 entries within ±5% between them; the card moves to the pair.
   - **The quad integer gemm:** `gemm_quad` i8>i32 at 512³ takes 3.68 ms on one core, 6.4× the baseline-Armv8 build and 4.5× faster than the plain i8 gemm, where it was 30% slower. The u8i8 pairing, still emulated without I8MM, gains 3.8×; the 8-bit dots 2.8–3.4×.
   - **native-fast's Gauss–Seidel smoother** took 1.9× the generic build's time on baseline Armv8.0-a and now matches it.
