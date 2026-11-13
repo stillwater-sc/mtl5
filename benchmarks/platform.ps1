@@ -204,7 +204,9 @@ foreach ($v in $VariantList) {
     $cfg = @('-S', $RepoRoot, '-B', $dir, '-DCMAKE_BUILD_TYPE=Release', '-DMTL5_BUILD_BENCHMARKS=ON',
              '-DMTL5_BUILD_TESTS=OFF', '-DMTL5_BUILD_EXAMPLES=OFF')
     if ($v -eq 'native-fast') { $cfg += @('-DMTL5_WITH_HIGHWAY=ON', '-DMTL5_NATIVE_FAST_GEMM=ON') }
-    if ($v -eq 'blas')        { $cfg += @('-DMTL5_WITH_BLAS=ON', '-DMTL5_WITH_LAPACK=ON') }
+    # The direct-solver reference entries (#810): CHOLMOD where found; PARDISO is
+    # loaded only on Linux and macOS, so on Windows it is listed as skipped.
+    if ($v -eq 'blas')        { $cfg += @('-DMTL5_WITH_BLAS=ON', '-DMTL5_WITH_LAPACK=ON', '-DMTL5_BENCH_REFERENCES=ON') }
     Write-Host "== build $v"
     if ((Invoke-Native 'cmake' $cfg (Join-Path $Logs "$v.configure")) -ne 0) {
         if ($v -eq 'blas') {

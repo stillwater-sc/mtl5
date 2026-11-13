@@ -14,7 +14,8 @@
 #        native       generic C++, no SIMD library
 #        native-fast  Highway SIMD + MTL5's blocked GEMM, -march=native where
 #                     that is safe (not on SVE hardware: #720; not on macOS)
-#        blas         system BLAS/LAPACK, if CMake finds one (else skipped)
+#        blas         system BLAS/LAPACK, if CMake finds one (else skipped), plus
+#                     the CHOLMOD and MKL PARDISO reference entries where found (#810)
 #      Every variant is built before any is measured, so no measurement runs on
 #      a machine still hot from compiling the next one.
 #   3. preflight again, after the builds: the temperature that matters is the
@@ -220,7 +221,9 @@ variant_flags() {   # variant -> cmake args on stdout, one per line
             else
                 echo -DMTL5_NATIVE_ARCH=ON
             fi ;;
-        blas) printf '%s\n' -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON ;;
+        # The direct-solver reference entries (CHOLMOD, MKL PARDISO, #810) run
+        # here, each where its library is found; elsewhere they are listed as skipped.
+        blas) printf '%s\n' -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON -DMTL5_BENCH_REFERENCES=ON ;;
     esac
 }
 

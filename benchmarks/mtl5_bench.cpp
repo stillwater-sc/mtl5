@@ -24,6 +24,7 @@
 
 #include <benchmarks/platform/entries_blas.hpp>
 #include <benchmarks/platform/entries_dense.hpp>
+#include <benchmarks/platform/entries_direct.hpp>
 #include <benchmarks/platform/entries_sparse.hpp>
 #include <benchmarks/platform/entries_iterative.hpp>
 #include <benchmarks/platform/entries_mixed.hpp>
@@ -164,7 +165,8 @@ std::string blas_vendor_threads_text(const char* unknown) {
 
 /// Returns false if the file could not be opened or a write failed.
 bool write_json(const std::string& path, const std::string& label, const std::string& machine,
-                bp::size_class cls, const bp::probe_results& pr, const std::vector<bp::record>& rs) {
+                bp::size_class cls, const bp::probe_results& pr, const std::vector<bp::record>& rs,
+                const std::vector<bp::skipped_entry>& skipped) {
     std::ofstream os(path);
     if (!os) return false;
     os << "{\n"
@@ -211,7 +213,14 @@ bool write_json(const std::string& path, const std::string& label, const std::st
         if (!r.error.empty()) os << ", \"exception\": \"" << json_escape(r.error) << "\"";
         os << "}" << (i + 1 < rs.size() ? "," : "") << "\n";
     }
-    os << "  ]\n}\n";
+    os << "  ],\n  \"skipped\": [";
+    for (std::size_t i = 0; i < skipped.size(); ++i) {
+        const auto& k = skipped[i];
+        os << (i ? ",\n" : "\n") << "    {\"area\": \"" << json_escape(k.area) << "\", \"op\": \""
+           << json_escape(k.op) << "\", \"dtype\": \"" << json_escape(k.dtype) << "\", \"reason\": \""
+           << json_escape(k.reason) << "\"}";
+    }
+    os << (skipped.empty() ? "]\n}\n" : "\n  ]\n}\n");
     os.flush();
     return static_cast<bool>(os);
 }
@@ -255,7 +264,8 @@ std::string md_cell(const std::string& s) {
 /// summarized (median and best %roof), so a reader sees where the build reaches
 /// the machine and where it does not without reading every row.
 bool write_card(const std::string& path, const std::string& label, const std::string& machine,
-                bp::size_class cls, const bp::probe_results& pr, const std::vector<bp::record>& rs) {
+                bp::size_class cls, const bp::probe_results& pr, const std::vector<bp::record>& rs,
+                const std::vector<bp::skipped_entry>& skipped) {
     std::ofstream md(path);
     if (!md) return false;
     const auto si = mtl::util::identify();
@@ -339,6 +349,21 @@ bool write_card(const std::string& path, const std::string& label, const std::st
     if (any_suspect)
         md << "\n! more than " << std::setprecision(0) << bp::kSuspectRooflinePct
            << "% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong.\n";
+    if (!skipped.empty()) {
+        // One line per reason, so twenty reference entries missing one
+        // library read as one fact, not twenty rows.
+        md << "\nSkipped in this build:\n\n";
+        std::vector<std::string> reasons;
+        for (const auto& k : skipped)
+            if (std::find(reasons.begin(), reasons.end(), k.reason) == reasons.end()) reasons.push_back(k.reason);
+        for (const auto& why : reasons) {
+            md << "- " << md_cell(why) << ":";
+            const char* sep = " ";
+            for (const auto& k : skipped)
+                if (k.reason == why) { md << sep << "`" << k.area << "/" << k.op << "/" << k.dtype << "`"; sep = ", "; }
+            md << "\n";
+        }
+    }
     md << "\n";
     md.flush();
     return static_cast<bool>(md);
@@ -376,12 +401,18 @@ int main(int argc, char** argv) {
     bp::blas::register_all(reg);
     bp::dense::register_all(reg);
     bp::sparse_entries::register_all(reg);
+    bp::direct_entries::register_all(reg);
     bp::iterative::register_all(reg);
     bp::mixed::register_all(reg);
 
     std::vector<const bp::entry*> selected;
     for (const auto& e : reg.entries())
         if (filter.empty() || id_of(e).find(filter) != std::string::npos) selected.push_back(&e);
+
+    std::vector<bp::skipped_entry> skipped;
+    for (const auto& k : reg.skipped())
+        if (filter.empty() || (k.area + "/" + k.op + "/" + k.dtype).find(filter) != std::string::npos)
+            skipped.push_back(k);
 
     if (list) {
         for (const auto* e : selected) std::cout << id_of(*e) << "\n";
@@ -434,7 +465,7 @@ int main(int argc, char** argv) {
               << "probe  triad        " << std::setw(8) << pr.triad_gbytes_per_s << " GB/s  ("
               << (pr.triad_array_bytes >> 20) << " MiB arrays)\n\n";
 
-    std::cout << std::left << std::setw(12) << "area" << std::setw(23) << "op" << std::setw(8) << "type"
+    std::cout << std::left << std::setw(12) << "area" << std::setw(26) << "op" << std::setw(8) << "type"
               << std::setw(30) << "shape" << std::right << std::setw(11) << "median"
               << std::setw(11) << "GFLOP/s" << std::setw(10) << "GB/s" << std::setw(9) << "%roof"
               << "  check\n";
@@ -452,7 +483,7 @@ int main(int argc, char** argv) {
         std::ostringstream t;
         t << std::fixed << std::setprecision(r.median_s < 1e-3 ? 1 : 2)
           << (r.median_s < 1e-3 ? r.median_s * 1e6 : r.median_s * 1e3) << (r.median_s < 1e-3 ? "us" : "ms");
-        std::cout << std::left << std::setw(12) << r.area << std::setw(23) << r.op << std::setw(8) << r.dtype
+        std::cout << std::left << std::setw(12) << r.area << std::setw(26) << r.op << std::setw(8) << r.dtype
                   << std::setw(30) << r.shape << std::right << std::setw(11) << t.str()
                   << std::fixed << std::setprecision(2) << std::setw(11) << r.gflops
                   << std::setw(10) << r.gbytes_per_s << std::setprecision(0) << std::setw(8);
@@ -471,6 +502,10 @@ int main(int argc, char** argv) {
         results.push_back(std::move(r));
     }
 
+    for (const auto& k : skipped)
+        std::cout << std::left << std::setw(12) << k.area << std::setw(26) << k.op << std::setw(8) << k.dtype
+                  << "skipped: " << k.reason << "\n" << std::right;
+
     bool any_cached = false, any_suspect = false;
     for (const auto& r : results) { any_cached |= r.cache_resident; any_suspect |= r.suspect_model; }
     if (any_cached)
@@ -484,7 +519,7 @@ int main(int argc, char** argv) {
     if (!json_path.empty()) {
         // A result without its sidecar is the provenance loss check_sidecars.sh
         // exists to prevent, so a failed write of EITHER file fails the run.
-        const bool json_ok = write_json(json_path, label, machine, cls, pr, results);
+        const bool json_ok = write_json(json_path, label, machine, cls, pr, results, skipped);
         const bool side_ok = json_ok && write_sidecar(json_path + ".sysinfo", label, machine, cls, pr);
         if (!json_ok || !side_ok) {
             std::cerr << "\nerror: could not write " << (json_ok ? json_path + ".sysinfo" : json_path) << "\n";
@@ -493,12 +528,14 @@ int main(int argc, char** argv) {
         std::cout << "\nwrote " << json_path << " and " << json_path << ".sysinfo\n";
     }
     if (!card_path.empty()) {
-        if (!write_card(card_path, label, machine, cls, pr, results)) {
+        if (!write_card(card_path, label, machine, cls, pr, results, skipped)) {
             std::cerr << "\nerror: could not write " << card_path << "\n";
             return 1;
         }
         std::cout << "wrote " << card_path << "\n";
     }
-    std::cout << "\n" << results.size() - failures << " of " << results.size() << " checks passed\n";
+    std::cout << "\n" << results.size() - failures << " of " << results.size() << " checks passed";
+    if (!skipped.empty()) std::cout << ", " << skipped.size() << " entries skipped";
+    std::cout << "\n";
     return failures == 0 ? 0 : 1;
 }

@@ -49,6 +49,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -214,12 +215,22 @@ inline long double inf_norm(const csr& A) {
 }
 
 /// Normwise backward error |b - A x|_inf / (|A|_inf |x|_inf + |b|_inf).
+/// A nonfinite x fails outright: the maxima below use std::max, which drops a
+/// NaN, so an all-NaN solution would otherwise score 0 and pass (#810).
 template <typename V>
 check_result backward_error(const csr& A, const V& x, const V& b) {
     const std::size_t n = A.num_rows();
     std::vector<long double> xl(n), y, ay;
     long double xm = 0, bm = 0, rm = 0;
-    for (std::size_t i = 0; i < n; ++i) { xl[i] = x(i); xm = std::max(xm, std::fabs(xl[i])); }
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!std::isfinite(x(i))) {
+            error_tracker e(tol<double>(n), "normwise backward error of the solve (x not finite)");
+            e.add(std::numeric_limits<long double>::quiet_NaN(), 0.0L, 1.0L);
+            return e.result();
+        }
+        xl[i] = x(i);
+        xm = std::max(xm, std::fabs(xl[i]));
+    }
     ref_mult(A, xl, y, ay);
     for (std::size_t i = 0; i < n; ++i) {
         bm = std::max(bm, std::fabs((long double)b(i)));

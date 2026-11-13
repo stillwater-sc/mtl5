@@ -21,6 +21,43 @@ target_include_directories(mtl5_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(mtl5_bench PROPERTIES FOLDER "Benchmarks")
 add_dependencies(mtl5_bench mtl5_build_info)
 
+# Reference entries for the direct solvers (#810, benchmarks/platform/
+# entries_direct.hpp): CHOLMOD and MKL PARDISO, each where it is found and
+# listed as skipped where it is not. platform.sh turns this on for its blas
+# variant. The library itself is unchanged: CHOLMOD is visible to mtl5_bench
+# only, and MKL is not linked at all -- mtl5_bench dlopen()s libmkl_rt with
+# RTLD_LOCAL, so MKL's BLAS symbols cannot displace the BLAS this build chose.
+option(MTL5_BENCH_REFERENCES
+       "mtl5_bench: CHOLMOD and MKL PARDISO reference entries where found" OFF)
+if(MTL5_BENCH_REFERENCES)
+    target_compile_definitions(mtl5_bench PRIVATE MTL5_BENCH_REFERENCES)
+    if(NOT MTL5_WITH_SUITESPARSE_CHOLMOD)
+        find_path(MTL5_BENCH_CHOLMOD_INCLUDE_DIR cholmod.h
+                  PATH_SUFFIXES suitesparse include/suitesparse)
+        find_library(MTL5_BENCH_CHOLMOD_LIBRARY NAMES cholmod)
+        if(MTL5_BENCH_CHOLMOD_INCLUDE_DIR AND MTL5_BENCH_CHOLMOD_LIBRARY)
+            target_compile_definitions(mtl5_bench PRIVATE MTL5_HAS_CHOLMOD)
+            target_include_directories(mtl5_bench PRIVATE ${MTL5_BENCH_CHOLMOD_INCLUDE_DIR})
+            target_link_libraries(mtl5_bench PRIVATE ${MTL5_BENCH_CHOLMOD_LIBRARY})
+            message(STATUS "mtl5_bench: ref_cholmod entries with ${MTL5_BENCH_CHOLMOD_LIBRARY}")
+        else()
+            message(STATUS "mtl5_bench: CHOLMOD not found -- ref_cholmod entries are skipped")
+        endif()
+    endif()
+    if(NOT WIN32)
+        find_library(MTL5_BENCH_MKL_RT NAMES mkl_rt
+                     HINTS ENV MKLROOT PATH_SUFFIXES lib lib/intel64
+                     PATHS /opt/intel/oneapi/mkl/latest)
+        if(MTL5_BENCH_MKL_RT)
+            target_compile_definitions(mtl5_bench PRIVATE MTL5_BENCH_MKL_RT="${MTL5_BENCH_MKL_RT}")
+            message(STATUS "mtl5_bench: ref_pardiso entries will load ${MTL5_BENCH_MKL_RT}")
+        else()
+            message(STATUS "mtl5_bench: libmkl_rt not found -- ref_pardiso entries look for it at run time")
+        endif()
+        target_link_libraries(mtl5_bench PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+endif()
+
 # Block-scaled integer gemv (#628): per-block reduce_dot_widen vs dequantize +
 # float dot vs reduce_dot_block_scaled, at block 32 and 256. Native-only; the
 # result is only meaningful with MTL5_WITH_HIGHWAY=ON and a -march that names

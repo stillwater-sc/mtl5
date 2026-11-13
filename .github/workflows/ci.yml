@@ -728,7 +728,8 @@ jobs:
   # scoreboards sits behind #ifdef MTL5_HAS_KLU / MTL5_HAS_SUPERLU and is
   # invisible to a plain build:
   #   native  -- no external libraries (the native-only paths)
-  #   vendors -- BLAS/LAPACK + KLU + SuperLU (the guarded comparison paths)
+  #   vendors -- BLAS/LAPACK + KLU + SuperLU (the guarded comparison paths),
+  #              and mtl5_bench's CHOLMOD/PARDISO reference entries (#810)
   benchmarks:
     name: Linux x64 benchmarks build (${{ matrix.config }})
     runs-on: ubuntu-24.04
@@ -742,6 +743,7 @@ jobs:
             cmake_flags: >-
               -DMTL5_WITH_BLAS=ON -DMTL5_WITH_LAPACK=ON
               -DMTL5_WITH_SUITESPARSE_KLU=ON -DMTL5_WITH_SUPERLU=ON
+              -DMTL5_BENCH_REFERENCES=ON
 
     # Same trusted-run gate as the build job: forked PRs skip sccache so they
     # cannot poison the shared GHA cache.
