@@ -9,10 +9,13 @@
 #include <cstddef>
 #include <iterator>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <mtl/config.hpp>
+#include <mtl/concepts/magnitude.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/tag/sparsity.hpp>
 #include <mtl/traits/category.hpp>
@@ -24,6 +27,17 @@ namespace mtl::vec {
 
 /// Sparse vector stored as dual sorted arrays (indices + values).
 /// Indices are maintained in sorted order for O(log n) lookup.
+///
+/// Index checks (#830), by the "check once" policy of #825/#826:
+///   - insert() and operator[], which store an index, check it in every
+///     build and throw std::out_of_range (through detail::throw_or_abort, so
+///     a -fno-exceptions build aborts). There is no finalize step to check
+///     once at, so each insertion checks: one comparison next to the
+///     O(log nnz) search.
+///   - operator(), a read, checks only when bounds_checking is on, as the
+///     other containers' element access does.
+///   - exists() returns false for an index outside the vector.
+/// A signed size_type rejects negative indices too.
 template <typename Value, typename Parameters = parameters<>>
 class sparse_vector {
 public:
@@ -85,7 +99,8 @@ public:
     // -- Read access -- returns zero if absent ---------------------------
     value_type operator()(size_type i) const {
         if constexpr (bounds_checking) {
-            if (i >= dim_) throw std::out_of_range("sparse_vector: index out of range");
+            if (!in_range(i))
+                ::mtl::detail::throw_or_abort(std::out_of_range("sparse_vector: index out of range"));
         }
         auto it = std::lower_bound(indices_.begin(), indices_.end(), i);
         auto pos = static_cast<size_type>(it - indices_.begin());
@@ -96,9 +111,7 @@ public:
 
     // -- Read/write access -- inserts if absent --------------------------
     reference operator[](size_type i) {
-        if constexpr (bounds_checking) {
-            if (i >= dim_) throw std::out_of_range("sparse_vector: index out of range");
-        }
+        check_insert_index(i);   // it inserts, so it checks in every build
         auto it = std::lower_bound(indices_.begin(), indices_.end(), i);
         auto pos = static_cast<size_type>(it - indices_.begin());
         if (it != indices_.end() && *it == i)
@@ -111,13 +124,14 @@ public:
 
     // -- Existence check ------------------------------------------------
     bool exists(size_type i) const {
+        if (!in_range(i)) return false;
         auto it = std::lower_bound(indices_.begin(), indices_.end(), i);
         return it != indices_.end() && *it == i;
     }
 
     // -- Insert maintaining sorted order --------------------------------
     void insert(size_type i, const Value& v) {
-        assert(i < dim_);
+        check_insert_index(i);
         auto it = std::lower_bound(indices_.begin(), indices_.end(), i);
         auto pos = static_cast<size_type>(it - indices_.begin());
         if (it != indices_.end() && *it == i) {
@@ -134,19 +148,32 @@ public:
         values_.clear();
     }
 
+    /// Reserve storage for nnz entries, so that many inserts don't
+    /// reallocate. Out-of-order insertion still moves the later entries.
+    void reserve(size_type nnz) {
+        indices_.reserve(static_cast<std::size_t>(nnz));
+        values_.reserve(static_cast<std::size_t>(nnz));
+    }
+
     // -- Drop entries below threshold -----------------------------------
-    void crop(const Value& threshold) {
-        std::vector<size_type> new_idx;
-        std::vector<Value> new_val;
-        for (size_type k = 0; k < nnz(); ++k) {
-            using std::abs;
-            if (abs(values_[k]) >= threshold) {
-                new_idx.push_back(indices_[k]);
-                new_val.push_back(values_[k]);
+    /// Drops the entries whose magnitude is below threshold, in place. The
+    /// threshold is a magnitude (the real type, for a complex Value). A NaN
+    /// entry is kept: it is not below any threshold, and dropping it would
+    /// hide it (#830).
+    void crop(const magnitude_t<Value>& threshold) {
+        using std::abs;
+        std::size_t out = 0;
+        for (std::size_t k = 0; k < indices_.size(); ++k) {
+            if (!(abs(values_[k]) < threshold)) {
+                if (out != k) {
+                    indices_[out] = indices_[k];
+                    values_[out]  = std::move(values_[k]);
+                }
+                ++out;
             }
         }
-        indices_ = std::move(new_idx);
-        values_  = std::move(new_val);
+        indices_.erase(indices_.begin() + static_cast<std::ptrdiff_t>(out), indices_.end());
+        values_.erase(values_.begin() + static_cast<std::ptrdiff_t>(out), values_.end());
     }
 
     // -- Raw access to internal arrays ----------------------------------
@@ -158,6 +185,15 @@ public:
     const_iterator end()   const { return const_iterator(this, nnz()); }
 
 private:
+    bool in_range(size_type i) const {
+        return std::cmp_greater_equal(i, 0) && std::cmp_less(i, dim_);
+    }
+
+    void check_insert_index(size_type i) const {
+        if (!in_range(i))
+            ::mtl::detail::throw_or_abort(std::out_of_range("sparse_vector: index out of range"));
+    }
+
     size_type dim_;
     std::vector<size_type> indices_;
     std::vector<Value>     values_;

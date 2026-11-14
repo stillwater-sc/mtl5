@@ -1,4 +1,5 @@
-// MTL5 -- dense_vector and dense2D build with exceptions and RTTI disabled (#652)
+// MTL5 -- dense_vector, dense2D and sparse_vector build with exceptions and RTTI
+// disabled (#652, #830)
 //
 // Firmware builds with -fno-exceptions -fno-rtti. tests/CMakeLists.txt builds
 // this file with those flags and -Werror on GCC and Clang, with the default
@@ -15,6 +16,7 @@
 
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/vec/sparse_vector.hpp>
 
 #if MTL5_HAS_EXCEPTIONS
 #  error "this test must be built with exceptions disabled"
@@ -86,6 +88,13 @@ int main() {
     mtl::mat::dense2D<double> h(4, 4);
     h(3, 3) = 7.0;
     check(h(3, 3) == 7.0, "dynamic matrix element access");
+
+    // sparse_vector: its index checks go through throw_or_abort (#830).
+    mtl::vec::sparse_vector<double> sv(10);
+    sv.insert(7, 2.0);
+    sv[3] = 1.0;
+    sv.crop(1.5);
+    check(sv.nnz() == 1 && sv(7) == 2.0, "sparse_vector insert and crop");
 
     // The pool's run() without its try/catch, on more than one thread.
     // configure() clamps to the hardware, so a one-core runner gets one tid.

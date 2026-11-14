@@ -126,13 +126,28 @@ Two mutators carry sparse-vector-specific policy:
   inserter's `update_store`/`update_plus` choice or COO's always-sum — a
   `sparse_vector` is a live object you edit, so last-write-wins is the natural
   semantics, and no policy parameter is offered.
-- **`crop(threshold)` drops small entries.** It rebuilds the arrays keeping only
-  entries with `abs(value) >= threshold`:
+- **Indices are checked when they are stored** (#830). `insert` and
+  `operator[]`, which store an index, check it in every build and throw
+  `std::out_of_range` through `detail::throw_or_abort` (an abort under
+  `-fno-exceptions`). This is the "check once" policy of #825 and #826, but
+  per insertion, because a `sparse_vector` has no finalize step to check once
+  at; the cost is one comparison next to the O(log nnz) search. `operator()`,
+  a read, checks only under `bounds_checking`, like the other containers'
+  element access. A signed `size_type` rejects negative indices too.
+- **`crop(threshold)` drops small entries.** It compacts the arrays in place,
+  keeping the entries whose magnitude is not below the threshold:
 
   ```cpp
-  for (size_type k = 0; k < nnz(); ++k)
-      if (std::abs(values_[k]) >= threshold) { keep index/value }
+  void crop(const magnitude_t<Value>& threshold);
+  for (k ...)
+      if (!(abs(values_[k]) < threshold)) { keep index/value }
   ```
+
+  The threshold is a magnitude, so `crop` works for `std::complex` values,
+  where comparing `abs(z)` with a complex threshold did not compile. A NaN
+  entry is kept: it is not below any threshold, and silently dropping it
+  would hide the NaN (#830). Before #830 the test was `abs(value) >= threshold`,
+  which dropped NaNs, and each call allocated two new arrays.
 
   This is a genuinely sparse-vector operation with no dense or matrix analog:
   numerical **truncation** to keep a vector sparse under repeated updates — the
