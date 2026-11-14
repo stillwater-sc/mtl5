@@ -889,6 +889,13 @@ jobs:
                   -P benchmarks/publish_platform.cmake 2>&1
           }
           absent() { if grep -qF "$1" "$2"; then echo "unexpected '$1' in $2"; exit 1; fi; }
+          # The same text, line endings aside: on Windows the script writes the
+          # files it edits with CRLF. The no-op checks above it use cmp.
+          same() {
+            if ! diff <(tr -d '\r' < "$1") <(tr -d '\r' < "$2") > /dev/null; then
+              echo "$1 differs from $2"; exit 1
+            fi
+          }
           # Rewrite the i7-12700K row's last cell of the snapshot into systems.md.
           set_cell() {
             sed "/^| \`i7-12700K\` |/s#| [^|]*|\$#| $1 |#" "$tmp/systems.md" > "$sys"
@@ -915,7 +922,7 @@ jobs:
             set_cell "$c"
             publish | tee publish4.log
             grep -q 'set the systems.md card cell' publish4.log
-            cmp "$sys" "$tmp/systems.md"
+            same "$sys" "$tmp/systems.md"
           done
           # An older session leaves the page and the cell alone: a later session
           # directory (an empty one is enough for the session list) makes ours older.
@@ -925,7 +932,7 @@ jobs:
           rmdir "$data/99991231T235959Z"
           grep -q 'is older than the latest published session' publish5.log
           absent '(cards/i7-12700k.md)' "$sys"
-          cmp "$card" "$tmp/card.md"
+          same "$card" "$tmp/card.md"
           # A systems.md with no card column and no link gets a warning, not an edit.
           set_cell ''
           sed 's/| mtl5_bench card |/| card |/' "$sys" > "$tmp/no-column.md"
