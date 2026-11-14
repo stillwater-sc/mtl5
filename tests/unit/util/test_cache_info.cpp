@@ -478,3 +478,19 @@ TEST_CASE("sysfs walk: linear in the CPUs, not quadratic", "[util][cache_info][8
     INFO("reads = " << fs.reads);
     CHECK(fs.reads < 256 * 32);       // about 5.4k here; the old walk took about 140k
 }
+
+TEST_CASE("sysfs walk: an unreadable view of a cache does not hide a readable one",
+          "[util][cache_info][840]") {
+    // CodeRabbit on #841: the instance used to be marked seen before its size
+    // was read, so an empty size on the first CPU skipped every other CPU's.
+    fake_sysfs fs;
+    for (int idx = 0; idx < 4; ++idx)
+        fs.files["/sys/devices/system/cpu/cpu0/cache/index" + std::to_string(idx) + "/size"] = "";
+    std::vector<int> cpus(256);
+    for (int i = 0; i < 256; ++i) cpus[std::size_t(i)] = i;
+    mtl::util::cache_info c;
+    mtl::util::detail::fill_caches_sysfs(c, cpus, fs);
+    CHECK(c.l3_bytes == 30720u * 1024u);   // read from cpu1's view; 0 before the fix
+    CHECK(c.l3_sharing_cores == 128);
+    CHECK(c.l1d_bytes == 48 * 1024);       // core 0's L1d, read from cpu128, its sibling
+}

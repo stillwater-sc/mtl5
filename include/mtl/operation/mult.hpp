@@ -706,13 +706,14 @@ void mult_via_temporary(VOut& y, F&& compute) {
 
 } // namespace detail
 
-/// y = A^T x for a transposed compressed2D. A y that shares storage with x is
-/// computed through a temporary, in every build (#840).
+/// y = A^T x for a transposed compressed2D. A y that shares storage with x or
+/// with the matrix's values is computed through a temporary, in every build
+/// (#840).
 template <typename Accumulator = void, typename V, typename P, Vector VIn, Vector VOut>
 void mult(const mat::view::transposed_view<mat::compressed2D<V, P>>& At, const VIn& x, VOut& y) {
     assert(At.num_cols() == x.size());
     assert(At.num_rows() == y.size());
-    if (detail::storage_overlaps(y, x)) {
+    if (detail::storage_overlaps(y, x) || detail::storage_overlaps(y, At)) {
         detail::mult_via_temporary(y, [&](auto& t) { mult<Accumulator>(At, x, t); });
         return;
     }
@@ -721,8 +722,9 @@ void mult(const mat::view::transposed_view<mat::compressed2D<V, P>>& At, const V
 
 /// y = A x. Every kernel writes y while it still reads x and A (the column-major
 /// gemv zeroes y first), so a y that shares storage with either -- the same
-/// vector, or a vector over part of the same buffer -- is computed through a
-/// temporary, in every build (#840). It was a debug-only assert, and it saw
+/// vector, a vector over part of the same buffer, over a compressed matrix's
+/// values, or over the matrix behind a view -- is computed through a temporary,
+/// in every build (#840). It was a debug-only assert, and it saw
 /// only the same object.
 template <typename Accumulator = void, Matrix M, Vector VIn, Vector VOut>
 void mult(const M& A, const VIn& x, VOut& y) {

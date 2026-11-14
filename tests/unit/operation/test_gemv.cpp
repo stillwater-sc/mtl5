@@ -99,7 +99,10 @@ TEMPLATE_TEST_CASE("gemv: col-major rows round alike, SIMD part and tail", "[ope
                    float, double) {
     using T = TestType;
     constexpr std::size_t W = mtl::simd::batch<T>::size;
-    const std::size_t m = 5 * W + (W > 1 ? W - 1 : 0);   // a full tail
+    // About forty rows per lane whatever W is, and a full tail (W - 1 rows).
+    // Without Highway W = 1: no tail, but the rows still need to be enough for
+    // the data to tell a fused chain from an unfused one (the guard below).
+    const std::size_t m = 40 * W + (W > 1 ? W - 1 : 0);
     const std::size_t n = 23;
     std::vector<T> A(m * n), x(n), y(m);
     for (std::size_t i = 0; i < m; ++i)

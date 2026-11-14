@@ -236,12 +236,16 @@ void fill_caches_sysfs(cache_info& c, const std::vector<int>& cpus, Read&& read)
             const std::string type = read(dir + "/type");
             const std::string shared = read(dir + "/shared_cpu_list");
             // A cache is the same instance on every CPU that shares it. Without
-            // a shared_cpu_list it cannot be identified, so examine it.
-            if (!shared.empty() && !seen.insert(lvl + '/' + type + '/' + shared).second) continue;
+            // a shared_cpu_list it cannot be identified, so examine it. It is
+            // marked seen only once its size has been read: a CPU whose view
+            // of it is unreadable must not hide another's readable one.
+            const std::string key = lvl + '/' + type + '/' + shared;
+            if (!shared.empty() && seen.count(key) != 0) continue;
             const std::size_t size = parse_size(read(dir + "/size"));
             const std::size_t line = parse_size(read(dir + "/coherency_line_size"));
             const int level = std::atoi(lvl.c_str());
             if (size == 0) continue;
+            if (!shared.empty()) seen.insert(key);
 
             // 0 means the topology could not be read, and it is STORED as 0 --
             // the struct's contract is that 0 is "unknown", and reporting an

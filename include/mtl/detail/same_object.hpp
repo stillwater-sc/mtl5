@@ -41,22 +41,52 @@ std::pair<const unsigned char*, const unsigned char*> storage_bytes(const T& t) 
     return {lo, lo + span * sizeof(elem)};
 }
 
-/// Whether a and b may share storage (#840). Two collections with contiguous
-/// storage overlap when their byte ranges do: a vector over part of another's
-/// buffer, as zero-copy views make easy, is caught, not just the same object.
-/// Otherwise -- an expression, a sparse vector -- only the same object is seen.
+/// A sparse matrix whose values are one array (compressed2D's ref_data()).
+template <typename T>
+concept value_array_storage = requires(const T& t) {
+    t.ref_data().data();
+    t.ref_data().size();
+};
+
+/// A view over another collection (transposed_view, the triangular and banded
+/// views, ...): its storage is its base's.
+template <typename T>
+concept view_of_storage = requires(const T& t) { t.base(); };
+
+/// The bytes a collection's elements live in, looking through views: a
+/// contiguous collection's elements, a compressed matrix's value array, a
+/// view's base. Empty when the type has none of these (an expression).
+template <typename T>
+std::pair<const unsigned char*, const unsigned char*> storage_range(const T& t) {
+    if constexpr (contiguous_storage<T>) {
+        return storage_bytes(t);
+    } else if constexpr (value_array_storage<T>) {
+        const auto& v = t.ref_data();
+        using elem = std::remove_cvref_t<decltype(*v.data())>;
+        const auto* lo = reinterpret_cast<const unsigned char*>(v.data());
+        if (lo == nullptr || v.size() == 0) return {nullptr, nullptr};
+        return {lo, lo + v.size() * sizeof(elem)};
+    } else if constexpr (view_of_storage<T>) {
+        return storage_range(t.base());
+    } else {
+        static_cast<void>(t);
+        return {nullptr, nullptr};
+    }
+}
+
+/// Whether a and b may share storage (#840): the same object, or element
+/// storage whose byte ranges overlap -- a vector over part of another's buffer,
+/// as zero-copy views make easy; a vector over a compressed matrix's values;
+/// the matrix behind a transposed view. A type with no visible storage (an
+/// expression) is seen only as the same object.
 template <typename T, typename U>
 bool storage_overlaps(const T& a, const U& b) noexcept {
     if (same_object(a, b)) return true;
-    if constexpr (contiguous_storage<T> && contiguous_storage<U>) {
-        const auto [a0, a1] = storage_bytes(a);
-        const auto [b0, b1] = storage_bytes(b);
-        if (a0 == nullptr || b0 == nullptr) return false;
-        const std::less<const unsigned char*> lt;
-        return lt(a0, b1) && lt(b0, a1);
-    } else {
-        return false;
-    }
+    const auto [a0, a1] = storage_range(a);
+    const auto [b0, b1] = storage_range(b);
+    if (a0 == nullptr || b0 == nullptr) return false;
+    const std::less<const unsigned char*> lt;
+    return lt(a0, b1) && lt(b0, a1);
 }
 
 } // namespace mtl::detail

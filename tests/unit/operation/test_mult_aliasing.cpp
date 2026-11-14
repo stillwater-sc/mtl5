@@ -127,6 +127,42 @@ TEST_CASE("mult(A, x, x) for compressed2D and its transpose", "[operation][mult]
     CHECK(ok);
 }
 
+TEST_CASE("mult with y over a compressed matrix's values or a view's base", "[operation][mult][840]") {
+    // CodeRabbit's examples on #841: storage reached through ref_data() and
+    // through a transposed view's base(), which have no data().
+    auto make_S = [] {
+        mat::compressed2D<double> S(2, 2);
+        {   // the inserter finalizes S when it goes out of scope
+            mat::inserter<mat::compressed2D<double>> ins(S);
+            ins[0][0] << 1.0; ins[0][1] << 2.0;
+            ins[1][0] << 4.0; ins[1][1] << 8.0;
+        }
+        return S;
+    };
+    const vec::dense_vector<double> x(2, 1.0);
+    {
+        auto S = make_S();
+        vec::dense_vector<double> y(2, S.ref_data().data() + 2);   // the values 4, 8
+        mult(S, x, y);
+        CHECK(S.ref_data()[2] == 3.0);
+        CHECK(S.ref_data()[3] == 12.0);   // 11 before the fix
+    }
+    {
+        auto S = make_S();
+        vec::dense_vector<double> y(2, S.ref_data().data());       // the values 1, 2
+        mult(trans(S), x, y);
+        CHECK(S.ref_data()[0] == 5.0);
+        CHECK(S.ref_data()[1] == 10.0);   // {4, 8} before the fix
+    }
+    {
+        mat::dense2D<double> A{{1, 2}, {3, 4}};
+        vec::dense_vector<double> y(2, A.data() + 1);              // 2, 3
+        mult<double>(trans(A), x, y);
+        CHECK(A.data()[1] == 4.0);
+        CHECK(A.data()[2] == 6.0);        // 8 before the fix
+    }
+}
+
 TEST_CASE("storage_overlaps", "[operation][mult][840]") {
     std::vector<double> buf(10);
     const auto a = vec::const_view(4, buf.data());
@@ -140,4 +176,8 @@ TEST_CASE("storage_overlaps", "[operation][mult][840]") {
     CHECK(!detail::storage_overlaps(s, vec::const_view(1, buf.data())));
     const vec::dense_vector<double> empty;
     CHECK(!detail::storage_overlaps(empty, a));
+    mat::dense2D<double> M(2, 2);
+    const auto Mv = vec::const_view(2, M.data() + 2);
+    CHECK(detail::storage_overlaps(Mv, trans(M)));   // through the view's base
+    CHECK(!detail::storage_overlaps(vec::const_view(2, buf.data()), trans(M)));
 }
