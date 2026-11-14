@@ -1,4 +1,4 @@
-// MTL5 -- Tests for the CHOLMOD sparse Cholesky binding (#774, #810)
+// MTL5 -- Tests for the CHOLMOD sparse Cholesky binding (#774, #810, #839)
 //
 // These tests only do real work when MTL5_HAS_CHOLMOD is defined (CMake option
 // MTL5_WITH_SUITESPARSE_CHOLMOD=ON with SuiteSparse installed). Otherwise a
@@ -17,8 +17,10 @@ using namespace mtl;
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <mtl/interface/cholmod.hpp>
 
@@ -135,8 +137,9 @@ TEST_CASE("cholmod: an indefinite matrix throws, simplicial and supernodal", "[i
         vec::dense_vector<double> x(A.num_rows(), 0.0);
         REQUIRE_THROWS_AS(s.solve(x, rhs(A.num_rows())), std::logic_error);
     }
-    // The one-call constructor throws too, and frees what it had allocated
-    // (the sanitizer builds would report a leak).
+    // The one-call constructor throws too, and frees what it had allocated.
+    // These two lines prove nothing in a plain build: only the sanitizer
+    // builds (LeakSanitizer) would report the leak.
     REQUIRE_THROWS_AS(cholmod_solver(A), std::runtime_error);
     vec::dense_vector<double> x(A.num_rows(), 0.0);
     REQUIRE_THROWS_AS(interface::cholmod_solve(A, x, rhs(A.num_rows())), std::runtime_error);
@@ -164,12 +167,93 @@ TEST_CASE("cholmod: refactorize with new values, same pattern", "[interface][cho
     REQUIRE(backward_error(A2, x, b) < tol);
 }
 
+TEST_CASE("cholmod: a same-size pattern with other rows is refused", "[interface][cholmod]") {
+    // Both are 4x4 with 8 nonzeros and two entries in every column, so the
+    // column pointers agree and only the row-index check can tell them apart.
+    auto pattern = [](std::size_t a, std::size_t b, std::size_t c, std::size_t d) {
+        csr M(4, 4);
+        mat::inserter<csr> ins(M);
+        for (std::size_t r = 0; r < 4; ++r) ins[r][r] << 4.0;
+        ins[a][b] << -1.0; ins[b][a] << -1.0;
+        ins[c][d] << -1.0; ins[d][c] << -1.0;
+        return M;
+    };
+    const csr A = pattern(0, 1, 2, 3);
+    const csr other = pattern(0, 2, 1, 3);
+    REQUIRE(A.nnz() == other.nnz());
+    const auto b = rhs(4);
+    cholmod_solver s(A);
+    REQUIRE_THROWS_AS(s.factorize(other), std::invalid_argument);
+    REQUIRE(s.factored());   // refused before any value was replaced
+    vec::dense_vector<double> x(4, 0.0);
+    s.solve(x, b);
+    REQUIRE(backward_error(A, x, b) < tol);
+}
+
+TEST_CASE("cholmod: an indefinite refactorize leaves the solver unfactored", "[interface][cholmod]") {
+    const csr A = laplacian(10);
+    const csr bad = laplacian(10, -5.0);    // same pattern, indefinite
+    const csr A2 = laplacian(10, 0.5);
+    const auto b = rhs(A.num_rows());
+    vec::dense_vector<double> x(A.num_rows(), 0.0);
+    for (int method : {CHOLMOD_SIMPLICIAL, CHOLMOD_SUPERNODAL}) {
+        cholmod_solver s;
+        s.common().supernodal = method;
+        s.analyze(A);
+        s.factorize();
+        REQUIRE_THROWS_AS(s.factorize(bad), std::runtime_error);
+        REQUIRE_FALSE(s.factored());
+        REQUIRE(s.analyzed());
+        REQUIRE_THROWS_AS(s.solve(x, b), std::logic_error);
+        // The analysis is kept, and a positive definite refill factors again.
+        s.factorize(A2);
+        REQUIRE(s.factored());
+        s.solve(x, b);
+        REQUIRE(backward_error(A2, x, b) < tol);
+    }
+}
+
 TEST_CASE("cholmod: phases out of order are rejected", "[interface][cholmod]") {
     cholmod_solver s;
     REQUIRE_FALSE(s.analyzed());
     REQUIRE_THROWS_AS(s.factorize(), std::logic_error);
     vec::dense_vector<double> x(4, 0.0), b(4, 1.0);
     REQUIRE_THROWS_AS(s.solve(x, b), std::logic_error);
+    REQUIRE_THROWS_AS(s.analyze(csr(3, 4)), std::invalid_argument);
+    REQUIRE_FALSE(s.analyzed());
+}
+
+TEST_CASE("cholmod: concurrent solves on one const solver", "[interface][cholmod]") {
+    // Each solve runs on a workspace of its own (#839). This is a smoke test:
+    // it checks the answers of concurrent solves, and it passed on the shared
+    // workspace too. The race was on the workspace's counters inside
+    // SuiteSparse, which is not instrumented, so ThreadSanitizer does not see
+    // it either. What rules it out is the code: solve() reads the solver's
+    // cholmod_common only to copy its settings, and otherwise only the factor.
+    const csr A = laplacian(30);
+    const std::size_t n = A.num_rows();
+    const cholmod_solver s(A);
+    constexpr int threads = 4, rounds = 20;
+    std::vector<vec::dense_vector<double>> bs, xs;
+    for (int t = 0; t < threads; ++t) {
+        vec::dense_vector<double> b(n);
+        for (std::size_t i = 0; i < n; ++i) b(i) = 1.0 + double((i + 3 * t) % 11);
+        bs.push_back(b);
+        xs.emplace_back(n, 0.0);
+    }
+    std::vector<int> ok(threads, 0);
+    {
+        std::vector<std::thread> pool;
+        for (int t = 0; t < threads; ++t)
+            pool.emplace_back([&, t] {
+                for (int r = 0; r < rounds; ++r) {
+                    s.solve(xs[t], bs[t]);
+                    ok[t] += backward_error(A, xs[t], bs[t]) < tol;
+                }
+            });
+        for (auto& th : pool) th.join();
+    }
+    for (int t = 0; t < threads; ++t) REQUIRE(ok[t] == rounds);
 }
 
 TEST_CASE("cholmod: move construction and move assignment", "[interface][cholmod]") {
@@ -185,10 +269,15 @@ TEST_CASE("cholmod: move construction and move assignment", "[interface][cholmod
     REQUIRE(backward_error(A, x, b) < tol);
     REQUIRE_THROWS_AS(a.solve(x, b), std::logic_error);   // NOLINT(bugprone-use-after-move)
     REQUIRE_THROWS_AS(a.common(), std::logic_error);      // NOLINT(bugprone-use-after-move)
+    REQUIRE(a.num_rows() == 0);                           // NOLINT(bugprone-use-after-move)
+    REQUIRE(a.num_cols() == 0);                           // NOLINT(bugprone-use-after-move)
+    REQUIRE_FALSE(a.analyzed());                          // NOLINT(bugprone-use-after-move)
+    REQUIRE_FALSE(a.factored());                          // NOLINT(bugprone-use-after-move)
 
     const csr B = laplacian(9, 2.0);
     cholmod_solver c(B);
     c = std::move(moved);                   // frees B's factor, takes A's
+    REQUIRE(moved.num_rows() == 0);         // NOLINT(bugprone-use-after-move)
     std::fill(x.begin(), x.end(), 0.0);
     c.solve(x, b);
     REQUIRE(backward_error(A, x, b) < tol);
