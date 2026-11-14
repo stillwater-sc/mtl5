@@ -7,6 +7,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Zero-copy overlay examples** (#834). `examples/zero_copy/` shows MTL5 vectors and matrices laid over buffers the application owns, so MTL5 algorithms run on the buffer in place. The walkthrough is `docs/examples/zero-copy-overlay.md`.
+  - **`ode_rhs_callback.cpp`:** a C-style RK4 integrator calls `rhs(t, const double* y, double* dydt, ...)`. The callback computes `dydt = L y` with `vec::const_view` and `mult` into the integrator's buffer, checks the heat-equation solution, and times copy-in/copy-out against it: 3.2× slower on an i7-12700K at n = 2·10⁶.
+  - **`shared_frame_pipeline.cpp`:** a producer and a processing thread share double-buffered frames, corrected in place through a `dense2D` over each frame and `ndarray` slices over its tiles.
+  - **`zero_copy_rules.cpp`:** the contract, one checked demonstration per rule.
+  - CTest runs all three. Each exits non-zero if a buffer is copied or a check fails.
+
 - **Read-only vector and matrix views over a caller's const buffer** (`tag::read_only`). `vec::const_view(n, ptr)` and `mat::const_view(rows, cols, ptr)` take a `const Value*` and return a `dense_vector` or `dense2D` that reads the buffer in place, so a callback such as an ODE integrator's `rhs(t, const double* y, double* dydt)` needs no `const_cast` and no copy (#834).
   - **Writing through a view does not compile:** element writes, `data()`, `begin()`, assignment, compound assignment, `change_dim`, `swap` and `vec::fill` are all constrained away.
   - **It works with the existing operations:** a view is still a `dense_vector<V, P>` or `dense2D<V, P>`, so norms, `dot`, `A * x` (dense and `compressed2D`), `mult`, the expression templates and the Krylov solvers accept it, as the new tests show.

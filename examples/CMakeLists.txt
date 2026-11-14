@@ -57,3 +57,10 @@ compile_all("false" "example" "Examples/ukf_bearing_only" "MTL5::mtl5" ${UKF_BEA
 
 file(GLOB ACCURATE_SUM_DOT_SRC "accurate_sum_dot/*.cpp")
 compile_all("false" "example" "Examples/accurate_sum_dot" "MTL5::mtl5" ${ACCURATE_SUM_DOT_SRC})
+
+# Zero-copy overlay (#834). Registered with CTest: each program checks its own
+# claims and exits non-zero if a buffer is copied or a rule misbehaves.
+file(GLOB ZERO_COPY_SRC "zero_copy/*.cpp")
+compile_all("true" "example" "Examples/zero_copy" "MTL5::mtl5" ${ZERO_COPY_SRC})
+find_package(Threads REQUIRED)
+target_link_libraries(example_shared_frame_pipeline PRIVATE Threads::Threads)

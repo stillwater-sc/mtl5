@@ -156,6 +156,7 @@ const FILE_MAP = {
   'examples/circuit-matrix-klu.md':     'examples/circuit-matrix-klu.md',
   'examples/sparse-visualization.md':   'examples/sparse-visualization.md',
   'examples/accurate-sum-dot.md':       'examples/accurate-sum-dot.md',
+  'examples/zero-copy-overlay.md':      'examples/zero-copy-overlay.md',
 
   // ── Generators ──────────────────────────────────────────────────
   'generators/strengthen-LA-tests-with-generator-matrices.md': 'generators/strengthen-tests.md',
