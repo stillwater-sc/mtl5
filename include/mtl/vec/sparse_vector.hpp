@@ -159,8 +159,9 @@ public:
     /// Drops the entries whose magnitude is below threshold, in place. The
     /// threshold is a magnitude (the real type, for a complex Value). A NaN
     /// entry is kept: it is not below any threshold, and dropping it would
-    /// hide it (#830).
-    void crop(const magnitude_t<Value>& threshold) {
+    /// hide it (#830). Taken by value: a reference could alias an entry,
+    /// as in v.crop(v[1]), which the compaction overwrites.
+    void crop(magnitude_t<Value> threshold) {
         using std::abs;
         std::size_t out = 0;
         for (std::size_t k = 0; k < indices_.size(); ++k) {

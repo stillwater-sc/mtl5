@@ -893,10 +893,11 @@ jobs:
           set_cell() {
             sed "/^| \`i7-12700K\` |/s#| [^|]*|\$#| $1 |#" "$tmp/systems.md" > "$sys"
           }
-          # LF first: a Windows checkout may hold CRLF, which the row match and
-          # the byte comparisons below would trip over.
+          # systems.md to LF first: a Windows checkout may hold CRLF, which the
+          # row match in set_cell would miss. The card page is compared as the
+          # script writes it (CRLF on Windows), so its snapshot is a plain copy.
           tr -d '\r' < "$sys" > "$tmp/systems.md" && cp "$tmp/systems.md" "$sys"
-          tr -d '\r' < "$card" > "$tmp/card.md" && cp "$tmp/card.md" "$card"
+          cp "$card" "$tmp/card.md"
           # Publishing the same session again is a no-op: it says so, and it leaves
           # the page and systems.md byte for byte.
           publish | tee publish2.log

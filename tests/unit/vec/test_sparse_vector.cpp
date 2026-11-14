@@ -291,6 +291,17 @@ TEST_CASE("sparse_vector crop: threshold 0, NaN, and the order kept", "[sparse_v
     REQUIRE(v.indices() == std::vector<std::size_t>{1});
 }
 
+TEST_CASE("sparse_vector crop with a threshold that is one of its entries", "[sparse_vector][crop][830]") {
+    vec::sparse_vector<double> v(4);
+    v.insert(0, 0.1);
+    v.insert(1, 2.0);
+    v.insert(2, 3.0);
+    v.insert(3, 2.5);
+    v.crop(v[1]);   // compaction moves 3.0 into slot 1: a reference threshold became 3.0
+    REQUIRE(v.indices() == std::vector<std::size_t>{1, 2, 3});
+    REQUIRE(v(3) == 2.5);
+}
+
 TEST_CASE("sparse_vector crop for complex values takes a real threshold", "[sparse_vector][crop][830]") {
     using C = std::complex<double>;
     vec::sparse_vector<C> v(4);
