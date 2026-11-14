@@ -4,6 +4,7 @@
 #include <mtl/mat/coordinate2D.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/identity2D.hpp>
+#include <mtl/mat/parameter.hpp>
 #include <mtl/operation/operators.hpp>
 
 #include <cstddef>
@@ -190,4 +191,18 @@ TEST_CASE("coordinate2D::compress rejects out-of-range entries", "[mat][coordina
     mat::coordinate2D<double> edge(2, 2);
     edge.insert(1, 1, 1.0);
     REQUIRE_NOTHROW(edge.compress());
+}
+
+TEST_CASE("coordinate2D::compress with a signed size_type rejects negative indices", "[mat][coordinate2D][825]") {
+    using signed_params = mat::parameters<tag::row_major, detail::c_index, mat::non_fixed::dimensions, tag::on_heap, int>;
+    mat::coordinate2D<double, signed_params> bad_row(2, 2);
+    bad_row.insert(-2, 0, 1.0);   // was starts[-1]++
+    REQUIRE_THROWS_AS(bad_row.compress(), std::out_of_range);
+    mat::coordinate2D<double, signed_params> bad_col(2, 2);
+    bad_col.insert(0, -1, 1.0);
+    REQUIRE_THROWS_AS(bad_col.compress(), std::out_of_range);
+    mat::coordinate2D<double, signed_params> ok(2, 2);
+    ok.insert(1, 0, 4.0);
+    const auto A = ok.compress();
+    REQUIRE(A(1, 0) == 4.0);
 }

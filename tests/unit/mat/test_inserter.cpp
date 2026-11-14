@@ -8,6 +8,7 @@
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
+#include <mtl/mat/parameter.hpp>
 
 using namespace mtl;
 using crs = mat::compressed2D<double>;
@@ -168,4 +169,19 @@ TEST_CASE("inserter rejects out-of-range indices", "[mat][inserter][825]") {
     require_well_formed(A);
     REQUIRE(A.nnz() == 2);
     REQUIRE(A(1, 2) == 2.0);
+}
+
+TEST_CASE("inserter with a signed size_type rejects negative indices", "[mat][inserter][825]") {
+    using signed_params = mat::parameters<tag::row_major, detail::c_index, mat::non_fixed::dimensions, tag::on_heap, int>;
+    using scrs = mat::compressed2D<double, signed_params>;
+    scrs A(2, 2);
+    {
+        mat::compressed2D_inserter<double, signed_params> ins(A);
+        REQUIRE_THROWS_AS(ins[-1], std::out_of_range);
+        REQUIRE_THROWS_AS(ins[0][-1], std::out_of_range);
+        REQUIRE_THROWS_AS(ins[2], std::out_of_range);
+        ins[1][1] << 3.0;
+    }
+    REQUIRE(A.nnz() == 1);
+    REQUIRE(A(1, 1) == 3.0);
 }

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include <mtl/detail/exceptions.hpp>
@@ -91,10 +92,11 @@ public:
     /// Throws std::out_of_range (via detail::throw_or_abort) if an entry's row
     /// or column is outside the matrix, in every build: an O(nnz) pass, once
     /// per matrix (#825). Unchecked, a bad row was a heap write out of bounds
-    /// below, at starts[r + 1].
+    /// below, at starts[r + 1]. A negative index is rejected too, for a signed
+    /// Parameters::size_type.
     compressed2D<Value, Parameters> compress() const {
         for (const auto& [r, c, v] : entries_)
-            if (r >= nrows_ || c >= ncols_)
+            if (!in_range(r, nrows_) || !in_range(c, ncols_))
                 ::mtl::detail::throw_or_abort(
                     std::out_of_range("coordinate2D::compress: entry index out of range"));
 
@@ -141,6 +143,12 @@ public:
     const std::vector<triplet_type>& entries() const { return entries_; }
 
 private:
+    /// 0 <= i < n, without a sign-compare (or always-false) warning for either
+    /// signedness of size_type.
+    static constexpr bool in_range(size_type i, size_type n) noexcept {
+        return std::cmp_greater_equal(i, 0) && std::cmp_less(i, n);
+    }
+
     static bool by_position(const triplet_type& a, const triplet_type& b) {
         if (std::get<0>(a) != std::get<0>(b))
             return std::get<0>(a) < std::get<0>(b);

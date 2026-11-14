@@ -42,8 +42,9 @@ struct update_plus {
 /// `m.change_dim(r, c)`). It used to rebuild the matrix from the inserter's own
 /// entries only, so a second inserter silently discarded everything before it.
 ///
-/// Indices are checked in every build (#825): `ins[r]` with r >= num_rows() and
-/// `ins[r][c]` with c >= num_cols() throw std::out_of_range, via
+/// Indices are checked in every build (#825): `ins[r]` with r outside
+/// [0, num_rows()) and `ins[r][c]` with c outside [0, num_cols()) throw
+/// std::out_of_range, via
 /// `detail::throw_or_abort`. The check has to happen at insertion -- the row
 /// indexes the slot arrays straight away, and finalize() runs in the
 /// destructor, which must not throw -- so it is one comparison per index, not
@@ -72,7 +73,7 @@ class compressed2D_inserter {
         size_type row_;
 
         col_proxy operator[](size_type col) {
-            if (col >= ins_.ncols_)
+            if (!in_range(col, ins_.ncols_))
                 ::mtl::detail::throw_or_abort(
                     std::out_of_range("compressed2D_inserter: column index out of range"));
             return col_proxy{ins_, row_, col};
@@ -98,13 +99,18 @@ public:
     compressed2D_inserter& operator=(const compressed2D_inserter&) = delete;
 
     row_proxy operator[](size_type row) {
-        if (row >= nrows_)
+        if (!in_range(row, nrows_))
             ::mtl::detail::throw_or_abort(
                 std::out_of_range("compressed2D_inserter: row index out of range"));
         return row_proxy{*this, row};
     }
 
 private:
+    /// 0 <= i < n: a signed Parameters::size_type can carry a negative index.
+    static constexpr bool in_range(size_type i, size_type n) noexcept {
+        return std::cmp_greater_equal(i, 0) && std::cmp_less(i, n);
+    }
+
     /// Put the matrix's current entries into the slots, the ones past a row's
     /// `slot_size` into the overflow map. CRS rows are sorted and duplicate-free,
     /// so the map keys arrive in increasing order and each emplace is O(1) at
