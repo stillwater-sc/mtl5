@@ -30,6 +30,9 @@ public:
         return -e_(r, c);
     }
 
+    /// The operand, for the aliasing check of an assignment (expr_alias.hpp).
+    const raw_e& operand() const { return e_; }
+
 private:
     E e_;
 };

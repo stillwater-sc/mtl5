@@ -687,7 +687,10 @@ void mult_sparse_crs_transposed(const mat::view::transposed_view<mat::compressed
 /// mat*vec multiply for a transposed sparse view: y = A^T * x, O(nnz).
 /// Mirrors mat::operator*(transposed_view<compressed2D>, dense_vector) but
 /// adds Accumulator support for mixed-precision / quire accumulation.
-template <typename Accumulator = void, typename V, typename P, typename VIn, typename VOut>
+///
+/// Vectors only: a matrix B (trans(S) * B through mat::operator*) takes the
+/// matrix-matrix mult below (#824).
+template <typename Accumulator = void, typename V, typename P, Vector VIn, Vector VOut>
 void mult(const mat::view::transposed_view<mat::compressed2D<V, P>>& At, const VIn& x, VOut& y) {
     assert(At.num_cols() == x.size());
     assert(At.num_rows() == y.size());
@@ -918,11 +921,16 @@ void mult(const MA& A, const MB& B, MC& C) {
     // still instantiates every operand it names, and is_row_major_v<M> needs
     // M::orientation, which compressed2D and transposed_view do not have. The
     // inner condition is only instantiated once the operands are known dense.
+    // ?gemm takes one element type, so mixed operands (float A, double B and C)
+    // take the generic kernel, as on the native-fast path below (#824: they
+    // did not compile here).
     if constexpr (interface::BlasDenseMatrix<MA> &&
                   interface::BlasDenseMatrix<MB> &&
                   interface::BlasDenseMatrix<MC>) {
     if constexpr (interface::is_row_major_v<MA> == interface::is_row_major_v<MC> &&
-                  interface::is_row_major_v<MB> == interface::is_row_major_v<MC>) {
+                  interface::is_row_major_v<MB> == interface::is_row_major_v<MC> &&
+                  std::is_same_v<typename MA::value_type, typename MC::value_type> &&
+                  std::is_same_v<typename MB::value_type, typename MC::value_type>) {
         using T = typename MC::value_type;
         int m = static_cast<int>(A.num_rows());
         int n = static_cast<int>(B.num_cols());

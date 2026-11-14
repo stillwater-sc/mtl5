@@ -290,6 +290,31 @@ Three design points are packed into that signature and body:
 bit-identical to the serial nested loop at `MTL5_NUM_THREADS=1`. `operator+=`
 and `operator-=` follow the same pattern for accumulation.
 
+### When the expression reads the target
+
+Writing straight into the storage is only right if the expression reads the
+target at `(r, c)` alone. `A = A + trans(A)` doesn't: it reads `A(0,1)` to
+compute `A(1,0)`, after `A(0,1)` has been overwritten. Before #824 that gave
+`A(1,0) = 10` for `{{1,2,3},{4,5,6},{7,8,9}}`, where 6 is right, and it was a
+data race under threads.
+
+So `operator=`, `+=` and `-=` first ask
+`detail::alias_reads_target_elsewhere` (`mat/expr/expr_alias.hpp`) whether
+evaluating in place could read an element other than the one being written.
+If it could, the expression is evaluated into a temporary, which is then
+copied into the target's storage. An external-pointer matrix keeps writing
+the caller's buffer.
+
+The walk over the expression tree is conservative:
+
+| reached in the tree | in place? |
+|---|---|
+| `+`, `-`, negation, scaling | as their operands are |
+| the target itself, as a leaf | yes: read at `(r, c)` only, so `A = A + B` and `A = 2*A - A` stay in place |
+| another contiguous matrix | yes, unless its storage overlaps the target's |
+| a view (`trans`, `hermitian`, `upper`, ...) or a lazy product | no, if it reaches the target's storage at all |
+| any other matrix (sparse, block, generated) | no: a `block_diagonal2D` can hold the target as one of its blocks |
+
 ---
 
 ## Move semantics and the valid-empty state

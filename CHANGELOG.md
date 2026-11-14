@@ -82,6 +82,17 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`dense2D` assignment from an expression that reads the target elsewhere, ragged initializer lists, and the generic matrix product** (#824, from the QA sweep #740).
+  - **`A = A + trans(A)` gave a wrong answer**, and was a data race under threads. `operator=(expr)`, `+=` and `-=` wrote element (r, c) while the expression still read A's other elements. For `{{1,2,3},{4,5,6},{7,8,9}}`, A(1,0) came out 10 where 6 is right.
+    - **The fix:** an assignment now goes through a temporary when its expression reads the target through a view or a lazy product, or reads a matrix whose storage overlaps it (`mat/expr/expr_alias.hpp`).
+    - **Unchanged:** element-wise use of the target (`A = A + B`, `A = 2*A - A`) and unaliased dense assignments still evaluate in place. An expression with a sparse, block or other non-contiguous operand takes the temporary, since a `block_diagonal2D` can hold the target as a block. An external-pointer target keeps writing its own buffer.
+  - **A ragged initializer list is rejected** with `std::invalid_argument`, through `throw_or_abort`. `dense2D<double>{{1,2},{3,4,5}}` wrote past the buffer, and a shorter row was padded with zeros.
+  - **`mult` with mixed dense operand types under BLAS** (float A, double B and C) didn't compile: the `?gemm` branch didn't require one element type. Mixed operands now take the generic kernel, as on the native-fast path. And `mult(trans(S), x, y)` for a sparse S is now constrained to vectors, so `trans(S) * B` with a dense B reaches the matrix product.
+  - **The generic `Matrix * Matrix` now calls `mult`.** It was its own unblocked triple loop, reading B down its columns through `operator()`. Dense float and double now get BLAS or the native-fast GEMM, and `compressed2D * dense2D` gets the CRS kernel (#550) instead of a binary search per element. Results for float and double can differ in the last bits from the old loop, as `mult`'s do.
+  - **Tests:**
+    - `test_dense2D.cpp`: initializer lists of every shape, expression construction and assignment, the aliased cases, compound, copy and move assignment, `checked_change_dim`, and swaps of fixed-size and external-pointer matrices.
+    - The new `test_mat_operators.cpp`: the lazy product, negation and right-scalar expressions, and the products at the edges, including sparse operands.
+    - `death_test_mat_expr_shape`: the expressions' shape assertions.
 - **`MTL5_NATIVE_ARCH` built the Arduino Ventuno Q for baseline Armv8.0-a** (#806). GCC 13 resolves `-march=native` to nothing on that board's Cortex-A78C + A55 SoC: the driver passes no `-march` or `-mcpu` on to the compiler. Every `native-fast` build there lacked DotProd, so `mult_quad` ran Highway's emulation of `SDOT`. `gemm_quad` i8>i32 at 512³ took 23.7 ms on one core, slower than the plain i8 gemm's 16.6 ms; with the cores' features enabled it takes 3.7 ms, 72.8 GOP/s.
   - **`MTL5_NATIVE_ARCH_FLAGS`** (default `-march=native`) replaces the flags `MTL5_NATIVE_ARCH` adds. A non-default value is recorded in the build provenance, so the sidecar's `cxx_flags=` names it.
   - **A configure-time guard** on AArch64 Linux: CMake warns when the flags don't enable a feature `/proc/cpuinfo` lists (`asimddp` → DotProd, `i8mm` → I8MM). `platform.sh` repeats the warning on the console.

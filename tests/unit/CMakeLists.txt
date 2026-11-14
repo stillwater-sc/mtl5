@@ -359,6 +359,17 @@ if(NOT MSVC)
             PASS_REGULAR_EXPRESSION "must not alias"
             LABELS "death")
     endforeach()
+
+    # The shape assertions of the matrix expressions (#824).
+    add_executable(death_test_mat_expr_shape death/mat_expr_shape.cpp)
+    target_link_libraries(death_test_mat_expr_shape PRIVATE MTL5::mtl5)
+    set_target_properties(death_test_mat_expr_shape PROPERTIES FOLDER "Tests/death")
+    add_test(NAME death_test_mat_expr_shape_sum COMMAND death_test_mat_expr_shape sum)
+    set_tests_properties(death_test_mat_expr_shape_sum PROPERTIES
+        PASS_REGULAR_EXPRESSION "e1_\\.num_rows\\(\\) == e2_\\.num_rows\\(\\)" LABELS "death")
+    add_test(NAME death_test_mat_expr_shape_product COMMAND death_test_mat_expr_shape product)
+    set_tests_properties(death_test_mat_expr_shape_product PROPERTIES
+        PASS_REGULAR_EXPRESSION "e1_\\.num_cols\\(\\) == e2_\\.num_rows\\(\\)" LABELS "death")
 endif()
 
 # The genericity tests over the number type (#703) carry the `generic` label,

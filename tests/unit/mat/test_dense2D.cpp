@@ -3,8 +3,13 @@
 #include <mtl/concepts/collection.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/mat/block_diagonal2D.hpp>
+#include <mtl/mat/operators.hpp>
+#include <mtl/operation/trans.hpp>
 #include <algorithm>
 #include <numeric>
+#include <stdexcept>
+#include <utility>
 
 using namespace mtl;
 
@@ -314,4 +319,210 @@ TEST_CASE("Free function num_rows/num_cols/size", "[mat][free]") {
     REQUIRE(mtl::mat::num_rows(m) == 3);
     REQUIRE(mtl::mat::num_cols(m) == 5);
     REQUIRE(mtl::mat::size(m) == 15);
+}
+
+// -- Initializer lists of every shape (#824) -----------------------------
+
+TEST_CASE("Initializer list: empty, 1x1 and one row", "[mat][ctor][824]") {
+    dense2D<double> e{};
+    REQUIRE(e.num_rows() == 0);
+    REQUIRE(e.num_cols() == 0);
+    dense2D<double> one{{7.0}};
+    REQUIRE(one.num_rows() == 1);
+    REQUIRE(one.num_cols() == 1);
+    REQUIRE(one(0, 0) == 7.0);
+    dense2D<double> row{{1.0, 2.0, 3.0}};
+    REQUIRE(row.num_rows() == 1);
+    REQUIRE(row.num_cols() == 3);
+    REQUIRE(row(0, 2) == 3.0);
+}
+
+TEST_CASE("Initializer list with rows of unequal length is rejected", "[mat][ctor][824]") {
+    // A longer row wrote past the buffer (ASan: heap-buffer-overflow); a
+    // shorter one was silently padded with zeros.
+    REQUIRE_THROWS_AS((dense2D<double>{{1, 2}, {3, 4, 5}}), std::invalid_argument);
+    REQUIRE_THROWS_AS((dense2D<double>{{1, 2, 3}, {4}, {7, 8, 9}}), std::invalid_argument);
+    REQUIRE_THROWS_AS((dense2D<double>{{1, 2}, {}}), std::invalid_argument);
+}
+
+// -- Assignment from an expression, and aliasing (#824) -------------------
+
+namespace {
+
+dense2D<double> m3() { return {{1, 2, 3}, {4, 5, 6}, {7, 8, 9}}; }
+
+template <typename M>
+void require_equal(const M& a, const dense2D<double>& b) {
+    REQUIRE(a.num_rows() == b.num_rows());
+    REQUIRE(a.num_cols() == b.num_cols());
+    for (std::size_t r = 0; r < b.num_rows(); ++r)
+        for (std::size_t c = 0; c < b.num_cols(); ++c) {
+            INFO("(" << r << ", " << c << ")");
+            REQUIRE(a(r, c) == b(r, c));
+        }
+}
+
+} // namespace
+
+TEST_CASE("Construction and assignment from an expression", "[mat][expr][824]") {
+    const auto A = m3();
+    const dense2D<double> B{{1, 1, 1}, {2, 2, 2}, {3, 3, 3}};
+    dense2D<double> C(A + B);
+    require_equal(C, {{2, 3, 4}, {6, 7, 8}, {10, 11, 12}});
+    dense2D<double> D(1, 1);
+    D = A - B;   // resizes
+    require_equal(D, {{0, 1, 2}, {2, 3, 4}, {4, 5, 6}});
+    D = 2.0 * A;
+    require_equal(D, {{2, 4, 6}, {8, 10, 12}, {14, 16, 18}});
+    D = -A;
+    require_equal(D, {{-1, -2, -3}, {-4, -5, -6}, {-7, -8, -9}});
+    D = A / 2.0;
+    require_equal(D, {{0.5, 1, 1.5}, {2, 2.5, 3}, {3.5, 4, 4.5}});
+}
+
+TEST_CASE("A = A + trans(A) reads A before overwriting it", "[mat][expr][alias][824]") {
+    // In place, A(1,0) read the A(0,1) already written: 10 where 6 is right.
+    auto A = m3();
+    A = A + trans(A);
+    require_equal(A, {{2, 6, 10}, {6, 10, 14}, {10, 14, 18}});
+}
+
+TEST_CASE("Aliased assignment through a view or a lazy product", "[mat][expr][alias][824]") {
+    SECTION("trans() on the right of a scaled sum") {
+        auto A = m3();
+        A = 2.0 * trans(A) - A;
+        require_equal(A, {{1, 6, 11}, {0, 5, 10}, {-1, 4, 9}});
+    }
+    SECTION("a non-square A, whose shape the assignment changes") {
+        dense2D<double> N{{1, 2, 3}, {4, 5, 6}};
+        const dense2D<double> Z{{0, 0}, {0, 0}, {0, 0}};
+        N = trans(N) + Z;
+        require_equal(N, {{1, 4}, {2, 5}, {3, 6}});
+    }
+    SECTION("a lazy product of A with itself") {
+        auto A = m3();
+        const auto expected = A * A;   // eager
+        A = mat::expr::mat_mat_times_expr<const dense2D<double>&, const dense2D<double>&>(A, A) + 0.0 * A;
+        require_equal(A, expected);
+    }
+    SECTION("+= and -= with trans(A)") {
+        auto A = m3();
+        A += 1.0 * trans(A);
+        require_equal(A, {{2, 6, 10}, {6, 10, 14}, {10, 14, 18}});
+        auto B = m3();
+        B -= 1.0 * trans(B);
+        require_equal(B, {{0, -2, -4}, {2, 0, -2}, {4, 2, 0}});
+    }
+    SECTION("a second matrix over the same buffer") {
+        auto A = m3();
+        dense2D<double> alias(3, 3, A.data());   // external pointer, A's storage
+        A = A + trans(alias);
+        require_equal(A, {{2, 6, 10}, {6, 10, 14}, {10, 14, 18}});
+    }
+    SECTION("a block matrix that holds the target as a block") {
+        mat::block_diagonal2D<double> bd{dense2D<double>{{1, 2}, {3, 4}}};
+        auto& A = bd.block(0);
+        A = 1.0 * trans(bd);   // bd(r, c) is A(r, c): trans(bd) reads A elsewhere
+        require_equal(A, {{1, 3}, {2, 4}});
+    }
+    SECTION("an external-pointer target keeps writing its buffer") {
+        double buf[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+        dense2D<double> E(3, 3, buf);
+        E = E + trans(E);
+        REQUIRE(E.data() == buf);
+        REQUIRE(buf[1] == 6.0);
+        REQUIRE(buf[3] == 6.0);
+    }
+}
+
+TEST_CASE("Unaliased and element-wise aliased assignments stay in place", "[mat][expr][alias][824]") {
+    auto A = m3();
+    const double* p = A.data();
+    A = A + A;                  // reads A only at (r, c)
+    A = 0.5 * A - A + A;
+    require_equal(A, m3());
+    REQUIRE(A.data() == p);     // no reallocation
+    const auto B = m3();
+    A = trans(B) + B;           // B is not A
+    require_equal(A, {{2, 6, 10}, {6, 10, 14}, {10, 14, 18}});
+    REQUIRE(A.data() == p);
+}
+
+// -- Compound assignment -------------------------------------------------
+
+TEST_CASE("Compound assignment with a matrix, an expression and a scalar", "[mat][compound][824]") {
+    auto A = m3();
+    const dense2D<double> B{{1, 1, 1}, {1, 1, 1}, {1, 1, 1}};
+    A += B;
+    require_equal(A, {{2, 3, 4}, {5, 6, 7}, {8, 9, 10}});
+    A -= B;
+    require_equal(A, m3());
+    A += B + B;
+    require_equal(A, {{3, 4, 5}, {6, 7, 8}, {9, 10, 11}});
+    A -= 2.0 * B;
+    require_equal(A, m3());
+    A *= 2.0;
+    require_equal(A, {{2, 4, 6}, {8, 10, 12}, {14, 16, 18}});
+    A /= 2.0;
+    require_equal(A, m3());
+}
+
+// -- Copy and move assignment --------------------------------------------
+
+TEST_CASE("Copy and move assignment", "[mat][copy][move][824]") {
+    const auto A = m3();
+    dense2D<double> B(1, 1);
+    B = A;
+    require_equal(B, A);
+    REQUIRE(B.data() != A.data());
+    dense2D<double> C(2, 2);
+    C = std::move(B);
+    require_equal(C, A);
+    REQUIRE(B.num_rows() == 0);
+    REQUIRE(B.num_cols() == 0);
+    auto& self = C;
+    C = self;   // self-assignment
+    require_equal(C, A);
+}
+
+// -- checked_change_dim --------------------------------------------------
+
+TEST_CASE("checked_change_dim resizes a dynamic matrix and rejects a fixed one", "[mat][resize][824]") {
+    dense2D<double> d(2, 2);
+    d.checked_change_dim(3, 4);
+    REQUIRE(d.num_rows() == 3);
+    REQUIRE(d.num_cols() == 4);
+    using fixed_params = mtl::mat::parameters<mtl::tag::row_major, mtl::detail::c_index,
+                                              mtl::mat::fixed::dimensions<2, 2>, mtl::tag::on_stack>;
+    dense2D<double, fixed_params> f;
+    REQUIRE_NOTHROW(f.checked_change_dim(2, 2));
+    REQUIRE_THROWS_AS(f.checked_change_dim(3, 2), std::domain_error);
+}
+
+// -- swap of fixed-size and external-pointer matrices --------------------
+
+TEST_CASE("Swap fixed-size matrices", "[mat][swap][824]") {
+    using fixed_params = mtl::mat::parameters<mtl::tag::row_major, mtl::detail::c_index,
+                                              mtl::mat::fixed::dimensions<2, 2>, mtl::tag::on_stack>;
+    dense2D<int, fixed_params> a, b;
+    a(0, 0) = 1; a(0, 1) = 2; a(1, 0) = 3; a(1, 1) = 4;
+    b(0, 0) = 5; b(0, 1) = 6; b(1, 0) = 7; b(1, 1) = 8;
+    a.swap(b);
+    REQUIRE(a(0, 0) == 5);
+    REQUIRE(a(1, 1) == 8);
+    REQUIRE(b(0, 0) == 1);
+    REQUIRE(b(1, 1) == 4);
+}
+
+TEST_CASE("Swap an external-pointer matrix with an owning one", "[mat][swap][824]") {
+    double buf[4] = {1, 2, 3, 4};
+    dense2D<double> e(2, 2, buf);
+    dense2D<double> o{{5, 6, 7}};
+    e.swap(o);
+    REQUIRE(o.data() == buf);   // the external buffer moved with the swap
+    REQUIRE(o.num_rows() == 2);
+    REQUIRE(o(1, 1) == 4.0);
+    REQUIRE(e.num_rows() == 1);
+    REQUIRE(e.num_cols() == 3);
+    REQUIRE(e(0, 2) == 7.0);
 }

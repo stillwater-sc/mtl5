@@ -21,6 +21,7 @@
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
 #include <mtl/detail/ewise.hpp>
+#include <mtl/mat/expr/expr_alias.hpp>
 #include <mtl/detail/index.hpp>
 #include <mtl/mat/dimension.hpp>
 #include <mtl/mat/parameter.hpp>
@@ -108,9 +109,16 @@ public:
     }
 
     // -- Initializer list of initializer lists ---------------------------
+    // Every row must have the first row's length (#824): a longer one wrote
+    // past the buffer, a shorter one left zeros.
     dense2D(std::initializer_list<std::initializer_list<Value>> il)
         : dense2D(il.size(), il.size() > 0 ? il.begin()->size() : 0)
     {
+        for (const auto& row : il) {
+            if (row.size() != num_cols())
+                ::mtl::detail::throw_or_abort(
+                    std::invalid_argument("dense2D: initializer-list rows differ in length"));
+        }
         size_type r = 0;
         for (const auto& row : il) {
             size_type c = 0;
@@ -167,6 +175,15 @@ public:
         requires (Matrix<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator=(const Expr& expr) {
+        // An expression that reads this matrix other than at (r, c) -- through
+        // trans(), another view or a lazy product -- is evaluated into a
+        // temporary first (#824, mat/expr/expr_alias.hpp).
+        if (reads_this_elsewhere(expr)) {
+            const dense2D tmp(expr);
+            change_dim(tmp.num_rows(), tmp.num_cols());
+            assign_elements(tmp);
+            return *this;
+        }
         change_dim(static_cast<size_type>(expr.num_rows()),
                    static_cast<size_type>(expr.num_cols()));
         detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
@@ -181,6 +198,14 @@ public:
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator+=(const Expr& expr) {
         assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
+        if (reads_this_elsewhere(expr)) {   // as in operator=(expr)
+            const dense2D tmp(expr);
+            detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
+                                      [&](std::size_t r, std::size_t c) {
+                (*this)(r, c) += tmp(r, c);
+            });
+            return *this;
+        }
         detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
                                   [&](std::size_t r, std::size_t c) {
             (*this)(r, c) += static_cast<Value>(expr(r, c));
@@ -193,6 +218,14 @@ public:
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator-=(const Expr& expr) {
         assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
+        if (reads_this_elsewhere(expr)) {   // as in operator=(expr)
+            const dense2D tmp(expr);
+            detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
+                                      [&](std::size_t r, std::size_t c) {
+                (*this)(r, c) -= tmp(r, c);
+            });
+            return *this;
+        }
         detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
                                   [&](std::size_t r, std::size_t c) {
             (*this)(r, c) -= static_cast<Value>(expr(r, c));
@@ -200,6 +233,26 @@ public:
         return *this;
     }
 
+private:
+    /// Whether expr reads this matrix anywhere but at the element it writes.
+    template <typename Expr>
+    bool reads_this_elsewhere(const Expr& expr) const {
+        const auto* lo = reinterpret_cast<const unsigned char*>(mem_.data());
+        const detail::alias_target t{this, lo, lo + size() * sizeof(Value)};
+        return detail::alias_reads_target_elsewhere(expr, t);
+    }
+
+    /// Copy src's elements into this matrix, of the same shape, in place:
+    /// the storage is kept, so an external-pointer matrix keeps writing its
+    /// caller's buffer.
+    void assign_elements(const dense2D& src) {
+        detail::parallel_ewise_2d(num_rows(), num_cols(), 1,
+                                  [&](std::size_t r, std::size_t c) {
+            (*this)(r, c) = src(r, c);
+        });
+    }
+
+public:
     // -- Element access --------------------------------------------------
     reference operator()(size_type r, size_type c) {
         auto ri = index_type::to_internal(r);
