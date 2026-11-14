@@ -2,10 +2,12 @@
 // MTL5 -- COO (coordinate) sparse matrix format
 // Stores triplets (row, col, value). Supports sort() and compress() to CRS.
 #include <algorithm>
-#include <cassert>
 #include <cstddef>
+#include <stdexcept>
 #include <tuple>
 #include <vector>
+
+#include <mtl/detail/exceptions.hpp>
 
 #include <mtl/tag/sparsity.hpp>
 #include <mtl/traits/category.hpp>
@@ -35,9 +37,10 @@ public:
 
     // -- Insertion --------------------------------------------------------
 
-    /// Insert a single entry (accumulates with existing entries on compress)
+    /// Insert a single entry (accumulates with existing entries on compress).
+    /// The indices are not checked here: compress() checks every entry, in
+    /// every build, once per matrix rather than once per insert (#825).
     void insert(size_type r, size_type c, Value v) {
-        assert(r < nrows_ && c < ncols_);
         entries_.emplace_back(r, c, v);
         sorted_ = false;
     }
@@ -66,14 +69,10 @@ public:
 
     // -- Sorting ----------------------------------------------------------
 
-    /// Sort entries by (row, col) in-place.
+    /// Sort entries by (row, col) in-place. Stable: duplicates of one position
+    /// keep their insertion order, so compress() sums them in that order.
     void sort() {
-        std::sort(entries_.begin(), entries_.end(),
-            [](const triplet_type& a, const triplet_type& b) {
-                if (std::get<0>(a) != std::get<0>(b))
-                    return std::get<0>(a) < std::get<0>(b);
-                return std::get<1>(a) < std::get<1>(b);
-            });
+        std::stable_sort(entries_.begin(), entries_.end(), by_position);
         sorted_ = true;
     }
 
@@ -82,15 +81,29 @@ public:
     // -- Compression to CRS -----------------------------------------------
 
     /// Convert to compressed2D, accumulating duplicate entries.
+    ///
+    /// Duplicates are summed in insertion order (#825): the sort is stable, so
+    /// the result is reproducible for rounding-sensitive and non-commutative
+    /// values. It used to be std::sort, which put duplicates in an arbitrary
+    /// order. After sort(), with no insert since, the entries are used as they
+    /// are, with no copy and no sort.
+    ///
+    /// Throws std::out_of_range (via detail::throw_or_abort) if an entry's row
+    /// or column is outside the matrix, in every build: an O(nnz) pass, once
+    /// per matrix (#825). Unchecked, a bad row was a heap write out of bounds
+    /// below, at starts[r + 1].
     compressed2D<Value, Parameters> compress() const {
-        // Work on a sorted copy
-        std::vector<triplet_type> sorted_entries(entries_);
-        std::sort(sorted_entries.begin(), sorted_entries.end(),
-            [](const triplet_type& a, const triplet_type& b) {
-                if (std::get<0>(a) != std::get<0>(b))
-                    return std::get<0>(a) < std::get<0>(b);
-                return std::get<1>(a) < std::get<1>(b);
-            });
+        for (const auto& [r, c, v] : entries_)
+            if (r >= nrows_ || c >= ncols_)
+                ::mtl::detail::throw_or_abort(
+                    std::out_of_range("coordinate2D::compress: entry index out of range"));
+
+        std::vector<triplet_type> copy;
+        if (!sorted_) {
+            copy = entries_;
+            std::stable_sort(copy.begin(), copy.end(), by_position);
+        }
+        const std::vector<triplet_type>& sorted_entries = sorted_ ? entries_ : copy;
 
         // Merge duplicates and build CRS arrays
         std::vector<size_type> starts(nrows_ + 1, size_type(0));
@@ -128,6 +141,12 @@ public:
     const std::vector<triplet_type>& entries() const { return entries_; }
 
 private:
+    static bool by_position(const triplet_type& a, const triplet_type& b) {
+        if (std::get<0>(a) != std::get<0>(b))
+            return std::get<0>(a) < std::get<0>(b);
+        return std::get<1>(a) < std::get<1>(b);
+    }
+
     size_type nrows_, ncols_;
     std::vector<triplet_type> entries_;
     bool sorted_ = true;

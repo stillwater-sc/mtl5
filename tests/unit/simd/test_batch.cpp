@@ -10,7 +10,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <type_traits>
 #include <vector>
 
 using Catch::Approx;
@@ -172,5 +174,91 @@ TEMPLATE_TEST_CASE("written-once axpy over arbitrary (incl. non-multiple) length
         const TestType alpha = TestType(1.5);
         simd_axpy(alpha, x.data(), y.data(), n);
         for (std::size_t i = 0; i < n; ++i) CHECK(y[i] == Approx(alpha * x[i] + ref[i]));
+    }
+}
+
+// -- Value-level load, store, widen and convert (#825) ----------------------
+//
+// The lane-count assertions above say nothing about the values. These go
+// through each lane type's load and store, the widening load and the int->float
+// convert, against the scalar result, so the fixed-length SVE storage path
+// (detail::vec_storage, batch.hpp) is exercised by value in the
+// -msve-vector-bits CI lanes, as are NEON, x86 and the scalar fallback.
+
+TEMPLATE_TEST_CASE("batch load/store round-trip for every lane type", "[simd][825]",
+                   float, double, std::int32_t, std::uint32_t) {
+    using B = mtl::simd::batch<TestType>;
+    constexpr std::size_t N = B::size;
+    // Distinct, and for the integer lanes values that need every byte.
+    alignas(64) TestType in[64];
+    alignas(64) TestType out[64] = {};
+    for (std::size_t i = 0; i < N; ++i) {
+        if constexpr (std::is_integral_v<TestType>)
+            in[i] = static_cast<TestType>(0x01020304u * (i + 1) + (std::is_signed_v<TestType> && i % 2 ? 0x80000000u : 0u));
+        else
+            in[i] = static_cast<TestType>(i) * TestType(1.5) - TestType(4);
+    }
+    B::load_unaligned(in).store_unaligned(out);
+    for (std::size_t i = 0; i < N; ++i) { INFO("lane " << i); CHECK(out[i] == in[i]); }
+
+    // Unaligned by one element, both ways.
+    alignas(64) TestType shifted[65] = {};
+    B::load_aligned(in).store_unaligned(shifted + 1);
+    CHECK(shifted[0] == TestType(0));
+    for (std::size_t i = 0; i < N; ++i) { INFO("lane " << i); CHECK(shifted[i + 1] == in[i]); }
+    B::load_unaligned(shifted + 1).store_aligned(out);
+    for (std::size_t i = 0; i < N; ++i) { INFO("lane " << i); CHECK(out[i] == in[i]); }
+}
+
+TEST_CASE("batch::load_widen widens each lane exactly", "[simd][825]") {
+    SECTION("float -> double") {
+        using B = mtl::simd::batch<double>;
+        float src[64];
+        for (std::size_t i = 0; i < 64; ++i) src[i] = 1.0f + 0x1p-23f * float(i + 1);   // not exact in fewer bits
+        double out[64];
+        B::load_widen(src).store_unaligned(out);
+        for (std::size_t i = 0; i < B::size; ++i) { INFO("lane " << i); CHECK(out[i] == static_cast<double>(src[i])); }
+    }
+    SECTION("int16 -> int32 sign-extends") {
+        using B = mtl::simd::batch<std::int32_t>;
+        std::int16_t src[64];
+        for (std::size_t i = 0; i < 64; ++i) src[i] = static_cast<std::int16_t>(i % 2 ? -32768 + int(i) : 32767 - int(i));
+        std::int32_t out[64];
+        B::load_widen(src).store_unaligned(out);
+        for (std::size_t i = 0; i < B::size; ++i) { INFO("lane " << i); CHECK(out[i] == std::int32_t(src[i])); }
+    }
+    SECTION("uint16 -> uint32 zero-extends") {
+        using B = mtl::simd::batch<std::uint32_t>;
+        std::uint16_t src[64];
+        for (std::size_t i = 0; i < 64; ++i) src[i] = static_cast<std::uint16_t>(0xFFFFu - i);
+        std::uint32_t out[64];
+        B::load_widen(src).store_unaligned(out);
+        for (std::size_t i = 0; i < B::size; ++i) { INFO("lane " << i); CHECK(out[i] == std::uint32_t(src[i])); }
+    }
+}
+
+TEST_CASE("batch<float>::convert rounds each integer lane as static_cast does", "[simd][825]") {
+    using F = mtl::simd::batch<float>;
+    constexpr std::size_t N = F::size;
+    SECTION("int32") {
+        using I = mtl::simd::batch<std::int32_t>;
+        STATIC_REQUIRE(I::size == N);
+        // Exact below 2^24, rounded to nearest-even above it, and negative.
+        const std::int32_t vals[] = {0, -1, 16777216, 16777217, 16777219, -16777217,
+                                     2147483647, -2147483647 - 1, 123456789, -7};
+        std::int32_t src[64];
+        for (std::size_t i = 0; i < 64; ++i) src[i] = vals[i % 10];
+        float out[64];
+        F::convert(I::load_unaligned(src)).store_unaligned(out);
+        for (std::size_t i = 0; i < N; ++i) { INFO("lane " << i << ": " << src[i]); CHECK(out[i] == static_cast<float>(src[i])); }
+    }
+    SECTION("uint32, including values above INT32_MAX") {
+        using U = mtl::simd::batch<std::uint32_t>;
+        const std::uint32_t vals[] = {0u, 1u, 16777217u, 2147483648u, 3000000001u, 4294967295u, 255u};
+        std::uint32_t src[64];
+        for (std::size_t i = 0; i < 64; ++i) src[i] = vals[i % 7];
+        float out[64];
+        F::convert(U::load_unaligned(src)).store_unaligned(out);
+        for (std::size_t i = 0; i < N; ++i) { INFO("lane " << i << ": " << src[i]); CHECK(out[i] == static_cast<float>(src[i])); }
     }
 }

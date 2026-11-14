@@ -82,6 +82,17 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Sparse construction: a second inserter kept only its own entries, insertion indices went unchecked, and `coordinate2D` summed duplicates in an arbitrary order** (#825, from the QA sweep #740).
+  - **`compressed2D_inserter` amends the matrix, as MTL4's does.** The matrix's entries are loaded at construction, so inserting at an existing position applies the updater (`update_store` replaces, `update_plus` adds) and every other entry is kept. A second inserter used to rebuild the matrix from its own entries: after inserting (0,0) and (1,1), a second inserter setting (2,2) left `nnz == 1`. No caller in the library, examples or benchmarks reuses a filled matrix; `make_empty()` or `change_dim()` refills from scratch.
+  - **Indices are checked in every build** (the #825/#826 "check once" policy), throwing `std::out_of_range`:
+    - `coordinate2D::compress()` checks every entry, an O(nnz) pass per matrix. Under `NDEBUG` a bad row was a heap write past `starts`, and a bad column was stored. `insert()` no longer asserts, so the check is the same in every build.
+    - `compressed2D_inserter` checks `ins[r]` and `ins[r][c]` as they are used, one comparison per index. That is the exception to "once per matrix": the row indexes the slot arrays immediately, and the final merge runs in the destructor, which cannot throw. The column was not checked at all.
+  - **`coordinate2D` sums duplicates in insertion order:** `sort()` and `compress()` use `std::stable_sort`, so the result is reproducible for rounding-sensitive values. `compress()` after `sort()` no longer copies and re-sorts.
+  - **The inserter's merge** reserves each row's own entry count and reuses one buffer. It reserved the whole overflow map's size for every row. An insert skips the overflow map lookup while the map is empty.
+  - **`benchmarks/check_coverage.sh` matches manifest targets on a name boundary:** `krylov/gmres30` still passed after its entry was renamed. A trailing `*` asks for a family, as `krylov/idr_s*` now does.
+  - **Not changed:** the sweep's claim that the f32 `gemm` and `trsm` platform checks pass an all-zero result does not hold. `tol<float>(512)` is 2.45e-4, not 0.245, and a zero C fails the Freivalds check by 27× at n = 512 (error 0.0066) and 10× at n = 1024.
+  - **Tests:** `test_inserter` (new) covers reinsertion with both updaters, the overflow map, `slot_size` 0, 0-row and 0-column matrices and the index checks. `test_coordinate2D` covers `compress()` on empty matrices and rows, duplicate order and the index check; `test_ell_matrix` the width-0, non-square and 3-argument cases. `test_batch` adds value-level load and store for all four lane types, `load_widen` and `convert`, which the fixed-length SVE lanes run.
+
 - **Structured matrices and views** (#826, from the QA sweep #740). Construction-time index checks now run once per object, in every build: that is the policy decided for #825 and #826. Element access keeps `bounds_checking`.
   - **`permutation_matrix<double> P({0})` was a 0×0 matrix**, and `P({2})` the 2×2 identity: `{0}` chose the size constructor. A braced list is now the permutation, through an `std::initializer_list` constructor; `P(n)` is still the identity.
   - **Every permutation is validated at construction:** a duplicate or out-of-range entry throws `std::invalid_argument`. It made `inverse()` and `P * x` index out of bounds. `swap_rows` checks its rows under `bounds_checking`.

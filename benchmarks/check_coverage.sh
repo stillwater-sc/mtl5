@@ -47,11 +47,23 @@ fi
 errors=0
 fail() { echo "check_coverage: $*" >&2; errors=$((errors + 1)); }
 
-# A prefix match against the listing: `krylov/idr_s` covers idr_s1..idr_s8.
+# A target matches a listing line (area/op/dtype) only on a NAME BOUNDARY:
+#   - the whole line, or the target followed by `/` or `+` in the line
+#     (`krylov/gmres30` matches krylov/gmres30+ilu0/f64);
+#   - a target that itself ends in `/` or `+` matches as a prefix
+#     (`blas3/gemm/` matches blas3/gemm/f64 and blas3/gemm/f32);
+#   - a trailing `*` asks for a family prefix explicitly
+#     (`krylov/idr_s*` matches idr_s1..idr_s8).
+# A bare prefix used to match anywhere, so `krylov/gmres30` still passed after
+# its entry was renamed to, say, krylov/gmres30x (#825).
 has_entry() {
-    local prefix="$1" e
+    local target="$1" e
     while IFS= read -r e; do
-        case "$e" in "$prefix"*) return 0 ;; esac
+        case "$target" in
+            *\*)    case "$e" in "${target%\*}"*) return 0 ;; esac ;;
+            */|*+)  case "$e" in "$target"*) return 0 ;; esac ;;
+            *)      case "$e" in "$target"|"$target"/*|"$target"+*) return 0 ;; esac ;;
+        esac
     done <<< "$entries"
     return 1
 }
