@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <mtl/detail/aligned_allocator.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/tag/storage.hpp>
 
 namespace mtl::detail {
@@ -19,6 +20,18 @@ enum class memory_category { own, external, view };
 /// Contiguous memory block with compile-time stack/heap selection.
 /// Stack path: StaticSize-element array with alignas.
 /// Heap path:  new[]/delete[] with three ownership modes (own, external, view).
+///
+/// Assignment never re-points a non-owning (external or view) block (#829):
+///   - from a block of the same size, the elements are copied (or moved) into
+///     the caller's buffer, and the block stays non-owning;
+///   - copy assignment from a block of another size throws std::domain_error;
+///   - move assignment from a block of another size is noexcept, so it
+///     asserts; under NDEBUG it falls back to taking over the source's storage.
+/// realloc() to another size is an explicit resize, and it still detaches.
+///
+/// A fixed-size heap block (StaticSize > 0) always holds StaticSize elements:
+/// the default constructor allocates them, and a moved-from block gets fresh
+/// storage (move assignment swaps instead, so it does not allocate).
 template <typename Value, typename Storage, std::size_t StaticSize = 0>
 class contiguous_memory_block {
     static constexpr bool on_stack = std::is_same_v<Storage, tag::on_stack>;
@@ -64,12 +77,23 @@ public:
     using value_type = Value;
     using size_type  = std::size_t;
 
+    static constexpr bool fixed_heap = !on_stack && StaticSize > 0;
+
+    /// Whether assigning a block of other_size writes into this block's
+    /// elements in place, rather than replacing its storage.
+    bool assigns_in_place(std::size_t other_size) const noexcept {
+        if constexpr (on_stack) return true;
+        else return store_.category_ != memory_category::own && store_.size_ == other_size;
+    }
+
     // -- Default constructor ----------------------------------------------
     contiguous_memory_block() {
         if constexpr (on_stack) {
             std::fill_n(store_.data_, StaticSize, Value{});
+        } else if constexpr (fixed_heap) {
+            allocate(StaticSize);
         }
-        // heap: members zero-initialized via heap_data defaults
+        // dynamic heap: members zero-initialized via heap_data defaults
     }
 
     // -- Size constructor (heap only) ------------------------------------
@@ -105,7 +129,8 @@ public:
     }
 
     // -- Move constructor ------------------------------------------------
-    contiguous_memory_block(contiguous_memory_block&& other) noexcept {
+    // A fixed-size heap block gives the source fresh storage, which allocates.
+    contiguous_memory_block(contiguous_memory_block&& other) noexcept(!fixed_heap) {
         if constexpr (on_stack) {
             std::copy_n(other.store_.data_, StaticSize, store_.data_);
         } else {
@@ -115,6 +140,7 @@ public:
             other.store_.data_     = nullptr;
             other.store_.size_     = 0;
             other.store_.category_ = memory_category::own;
+            if constexpr (fixed_heap) other.allocate(StaticSize);
         }
     }
 
@@ -124,9 +150,15 @@ public:
         if constexpr (on_stack) {
             std::copy_n(other.store_.data_, StaticSize, store_.data_);
         } else {
-            if (store_.size_ != other.store_.size_ || store_.category_ != memory_category::own) {
-                deallocate();
-                allocate(other.store_.size_);
+            if (store_.category_ != memory_category::own) {
+                // Write through to the caller's buffer; never re-point it (#829).
+                if (store_.size_ != other.store_.size_)
+                    throw_or_abort(std::domain_error(
+                        "contiguous_memory_block: cannot assign a block of another size to a non-owning block"));
+            } else if (store_.size_ != other.store_.size_) {
+                // Allocate first, so a failed allocation leaves *this unchanged.
+                contiguous_memory_block fresh(other.store_.size_);
+                swap(fresh);
             }
             if (other.store_.data_ && store_.data_) {
                 std::copy_n(other.store_.data_, store_.size_, store_.data_);
@@ -141,6 +173,21 @@ public:
         if constexpr (on_stack) {
             std::copy_n(other.store_.data_, StaticSize, store_.data_);
         } else {
+            if (store_.category_ != memory_category::own) {
+                // Write through to the caller's buffer (#829). The source keeps
+                // its storage and its (moved-from) elements.
+                if (store_.size_ == other.store_.size_) {
+                    if (other.store_.data_ && store_.data_)
+                        std::move(other.store_.data_, other.store_.data_ + store_.size_, store_.data_);
+                    return *this;
+                }
+                assert(false && "contiguous_memory_block: move-assigning a block of another size to a non-owning block");
+            }
+            if constexpr (fixed_heap) {
+                // Both hold StaticSize elements: swap, so neither is left empty.
+                swap(other);
+                return *this;
+            }
             deallocate();
             store_.data_     = other.store_.data_;
             store_.size_     = other.store_.size_;

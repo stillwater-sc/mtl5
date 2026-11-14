@@ -3,6 +3,7 @@
 // Composition-based design with contiguous_memory_block, C++20 concepts
 #include <algorithm>
 #include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <initializer_list>
 #include <stdexcept>
@@ -67,7 +68,13 @@ public:
     }
 
     // -- External pointer constructor ------------------------------------
-    dense_vector(size_type n, Value* ptr) : mem_(ptr, n, false), dim_{} {
+    // A template on the exact pointer type, so a literal 0 in
+    // dense_vector(n, 0) is the fill value, not a null pointer (#829).
+    // Assignment writes the caller's buffer and never re-points it; see
+    // detail::contiguous_memory_block.
+    template <typename Ptr>
+        requires std::same_as<Ptr, Value*>
+    dense_vector(size_type n, Ptr ptr) : mem_(ptr, n, false), dim_{} {
         if constexpr (!dim_type::is_fixed) {
             dim_.set_size(n);
         }
@@ -88,17 +95,22 @@ public:
     dense_vector& operator=(const dense_vector&) = default;
     ~dense_vector() = default;
 
-    dense_vector(dense_vector&& other) noexcept
+    dense_vector(dense_vector&& other) noexcept(std::is_nothrow_move_constructible_v<memory_type>)
         : mem_(std::move(other.mem_)), dim_(other.dim_)
     {
         if constexpr (!dim_type::is_fixed) other.dim_.set_size(0);
     }
 
+    /// A vector over an external buffer of the same size keeps its buffer and
+    /// receives the elements; the source keeps its size (#829).
     dense_vector& operator=(dense_vector&& other) noexcept {
         if (this != &other) {
+            const bool in_place = mem_.assigns_in_place(other.mem_.size());
             mem_ = std::move(other.mem_);
-            dim_ = other.dim_;
-            if constexpr (!dim_type::is_fixed) other.dim_.set_size(0);
+            if (!in_place) {
+                dim_ = other.dim_;
+                if constexpr (!dim_type::is_fixed) other.dim_.set_size(other.mem_.size());
+            }
         }
         return *this;
     }
@@ -120,6 +132,11 @@ public:
         requires (Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector& operator=(const Expr& expr) {
+        // A vector over an external buffer is never re-pointed by assignment;
+        // change_dim on it, an explicit resize, does detach it (#829).
+        if (!owns_memory() && static_cast<size_type>(expr.size()) != size())
+            ::mtl::detail::throw_or_abort(
+                std::domain_error("dense_vector: cannot assign a vector of another size to an external-pointer vector"));
         change_dim(static_cast<size_type>(expr.size()));
         detail::parallel_ewise(size(), 1, [&](std::size_t i) {
             (*this)(i) = static_cast<Value>(expr(i));
@@ -190,6 +207,12 @@ public:
     static constexpr size_type stride() { return 1; }
 
     // -- Data access -----------------------------------------------------
+    /// Whether this vector owns its elements: false for one made over an
+    /// external pointer, whose elements belong to the caller.
+    bool owns_memory() const noexcept {
+        return mem_.category() == ::mtl::detail::memory_category::own;
+    }
+
     pointer       data()       { return mem_.data(); }
     const_pointer data() const { return mem_.data(); }
 
@@ -272,7 +295,7 @@ template <typename Value, typename Parameters>
 auto num_cols(const dense_vector<Value, Parameters>& v) { return v.num_cols(); }
 
 template <typename Value, typename Parameters>
-void fill(dense_vector<Value, Parameters>& v, const Value& val) {
+void fill(dense_vector<Value, Parameters>& v, const std::type_identity_t<Value>& val) {
     std::fill(v.begin(), v.end(), val);
 }
 

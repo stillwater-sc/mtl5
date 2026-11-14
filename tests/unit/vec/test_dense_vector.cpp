@@ -303,3 +303,141 @@ TEST_CASE("Free function num_rows/num_cols", "[vec][free]") {
     REQUIRE(mtl::vec::num_rows(v) == 3);
     REQUIRE(mtl::vec::num_cols(v) == 1);
 }
+
+// -- #829: external-pointer assignment, fixed heap vectors, (n, 0) --------
+
+#include <mtl/vec/operators.hpp>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+namespace {
+using fixed_heap_vec = vec::dense_vector<double,
+    vec::parameters<tag::col_major, vec::fixed::dimension<3>, tag::on_heap>>;
+}
+
+TEST_CASE("dense_vector: copy assignment writes an external buffer", "[vec][dense_vector][829]") {
+    double buf[3] = {1, 2, 3};
+    vec::dense_vector<double> v(3, buf);
+    const vec::dense_vector<double> w(3, 9.0);
+    v = w;   // fails before #829: v detached into a private copy
+    REQUIRE(v.data() == buf);
+    REQUIRE(!v.owns_memory());
+    REQUIRE(buf[0] == 9.0);
+    REQUIRE(buf[2] == 9.0);
+
+    v = vec::dense_vector<double>{4.0, 5.0, 6.0};   // move assignment
+    REQUIRE(v.data() == buf);
+    REQUIRE(buf[1] == 5.0);
+
+    v = w + w;   // expression assignment, already write-through
+    REQUIRE(buf[2] == 18.0);
+}
+
+TEST_CASE("dense_vector: assigning another size to an external vector throws", "[vec][dense_vector][829]") {
+    double buf[3] = {1, 2, 3};
+    vec::dense_vector<double> v(3, buf);
+    const vec::dense_vector<double> w(4, 9.0);
+    REQUIRE_THROWS_AS(v = w, std::domain_error);
+    REQUIRE_THROWS_AS(v = w + w, std::domain_error);
+    REQUIRE(v.size() == 3);
+    REQUIRE(v.data() == buf);
+    REQUIRE(buf[0] == 1.0);
+    v.change_dim(4);   // an explicit resize still detaches
+    REQUIRE(v.owns_memory());
+    REQUIRE(v.size() == 4);
+}
+
+TEST_CASE("dense_vector: owning vectors still resize on assignment", "[vec][dense_vector][829]") {
+    vec::dense_vector<double> v(2, 1.0);
+    const vec::dense_vector<double> w(5, 2.0);
+    v = w;
+    REQUIRE(v.size() == 5);
+    REQUIRE(v(4) == 2.0);
+    v = vec::dense_vector<double>(1, 3.0);
+    REQUIRE(v.size() == 1);
+    v = w + w;
+    REQUIRE(v.size() == 5);
+    REQUIRE(v(0) == 4.0);
+}
+
+TEST_CASE("dense_vector: move leaves the source empty, self-move is a no-op", "[vec][dense_vector][829]") {
+    vec::dense_vector<double> a{1.0, 2.0};
+    vec::dense_vector<double> b(std::move(a));
+    REQUIRE(b.size() == 2);
+    REQUIRE(a.size() == 0);
+    auto& rb = b;
+    b = std::move(rb);
+    REQUIRE(b.size() == 2);
+    REQUIRE(b(1) == 2.0);
+}
+
+TEST_CASE("dense_vector: swap of external and owning vectors", "[vec][dense_vector][829]") {
+    double buf[2] = {1, 2};
+    vec::dense_vector<double> e(2, buf);
+    vec::dense_vector<double> o{7.0, 8.0, 9.0};
+    e.swap(o);
+    REQUIRE(e.size() == 3);
+    REQUIRE(e.owns_memory());
+    REQUIRE(o.size() == 2);
+    REQUIRE(o.data() == buf);
+    std::swap(e, o);   // through the moves: the external vector is re-pointed back
+    REQUIRE(e.data() == buf);
+    REQUIRE(e.size() == 2);
+    REQUIRE(o.size() == 3);
+    REQUIRE(o(2) == 9.0);
+    REQUIRE(buf[0] == 1.0);
+}
+
+TEST_CASE("dense_vector: fixed-size heap vectors always have storage", "[vec][dense_vector][829]") {
+    fixed_heap_vec a;
+    REQUIRE(a.size() == 3);
+    REQUIRE(a.data() != nullptr);   // null before #829
+    a(0) = 1.0;
+    fixed_heap_vec b(std::move(a));
+    REQUIRE(b(0) == 1.0);
+    REQUIRE(a.data() != nullptr);
+    a(2) = 5.0;                     // dereferenced null before #829
+    fixed_heap_vec c;
+    c = std::move(a);
+    REQUIRE(c(2) == 5.0);
+    REQUIRE(a.data() != nullptr);
+    c.swap(b);
+    REQUIRE(c(0) == 1.0);
+    REQUIRE(b(2) == 5.0);
+    REQUIRE_THROWS_AS(c.checked_change_dim(4), std::domain_error);
+    REQUIRE_NOTHROW(c.checked_change_dim(3));
+}
+
+TEST_CASE("dense_vector: checked_change_dim on a dynamic vector", "[vec][dense_vector][829]") {
+    vec::dense_vector<double> v(2, 1.0);
+    v.checked_change_dim(6);
+    REQUIRE(v.size() == 6);
+}
+
+TEST_CASE("dense_vector(n, 0) and fill(v, 0) take 0 as a value", "[vec][dense_vector][829]") {
+    vec::dense_vector<double> v(4, 0);   // ambiguous before #829
+    REQUIRE(v.size() == 4);
+    REQUIRE(v.owns_memory());
+    REQUIRE(v(3) == 0.0);
+    vec::fill(v, 2);                     // did not compile before #829
+    REQUIRE(v(0) == 2.0);
+    STATIC_REQUIRE(!std::is_constructible_v<vec::dense_vector<double>, std::size_t, float*>);
+}
+
+TEST_CASE("dense_vector compound assignment with vectors and expressions", "[vec][dense_vector][829]") {
+    vec::dense_vector<double> v{1.0, 2.0, 3.0};
+    const vec::dense_vector<double> w{10.0, 20.0, 30.0};
+    v += w;
+    REQUIRE(v(2) == 33.0);
+    v -= w;
+    REQUIRE(v(2) == 3.0);
+    v += w + w;
+    REQUIRE(v(0) == 21.0);
+    v -= 2.0 * w;
+    REQUIRE(v(0) == 1.0);
+    v *= 3.0;
+    REQUIRE(v(1) == 6.0);
+    v /= 2.0;
+    REQUIRE(v(1) == 3.0);
+}

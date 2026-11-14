@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 
 #include <mtl/array/ndarray.hpp>
+#include <stdexcept>
 #include <mtl/array/shape.hpp>
 #include <mtl/array/slice.hpp>
 #include <mtl/array/broadcast.hpp>
@@ -487,4 +488,73 @@ TEST_CASE("ndarray order-independent operations are unaffected (#359)",
     for (std::size_t i = 0; i < 2; ++i)
         for (std::size_t j = 0; j < 3; ++j)
             REQUIRE(a(i, j) == Catch::Approx(static_cast<double>(i * 3 + j + 11)));
+}
+
+// -- Copying views and assigning to them (#829) ---------------------------
+
+TEST_CASE("copying a strided view copies its elements", "[array][view][829]") {
+    ndarray<int, 2> a({3, 4}, 0);
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 4; ++j)
+            a(i, j) = static_cast<int>(i * 4 + j);
+    auto col = slice(a, all, 2);   // stride 4: reads elements 2, 6, 10
+    const ndarray<int, 1> c(col);
+    REQUIRE(!c.is_view());
+    REQUIRE(c.is_contiguous());
+    REQUIRE(c(0) == 2);
+    REQUIRE(c(1) == 6);
+    REQUIRE(c(2) == 10);   // read past the 3-element copy before #829
+
+    const auto tv = a.transpose();   // an F-contiguous view
+    const ndarray<int, 2> t(tv);     // a copy, not a move: it owns C-order storage
+    REQUIRE(!t.is_view());
+    REQUIRE(t.is_c_contiguous());
+    REQUIRE(t(3, 2) == a(2, 3));
+}
+
+TEST_CASE("assigning to a view writes the viewed elements", "[array][view][829]") {
+    ndarray<int, 2> a({3, 4}, 0);
+    ndarray<int, 1> src({3}, 0);
+    for (std::size_t i = 0; i < 3; ++i) src(i) = static_cast<int>(100 + i);
+
+    auto col = slice(a, all, 1);
+    col = src;   // detached before #829; a raw write would hit a(0, 1..3)
+    REQUIRE(col.is_view());
+    REQUIRE(a(0, 1) == 100);
+    REQUIRE(a(1, 1) == 101);
+    REQUIRE(a(2, 1) == 102);
+    REQUIRE(a(0, 2) == 0);
+    REQUIRE(a(0, 0) == 0);
+
+    auto row = slice(a, 2, all);
+    row = ndarray<int, 1>({4}, 7);   // move assignment
+    REQUIRE(a(2, 0) == 7);
+    REQUIRE(a(2, 3) == 7);
+    REQUIRE(a(1, 1) == 101);
+
+    const ndarray<int, 1> wrong({5}, 1);
+    REQUIRE_THROWS_AS(row = wrong, std::domain_error);
+    REQUIRE(a(2, 0) == 7);
+}
+
+TEST_CASE("assigning an overlapping view to a view", "[array][view][829]") {
+    ndarray<int, 2> a({2, 2}, 0);
+    a(0, 0) = 1; a(0, 1) = 2; a(1, 0) = 3; a(1, 1) = 4;
+    auto v = a.view();
+    v = a.transpose();   // reads all of the transpose before writing
+    REQUIRE(a(0, 1) == 3);
+    REQUIRE(a(1, 0) == 2);
+    REQUIRE(a(1, 1) == 4);
+}
+
+TEST_CASE("assigning to an owning ndarray replaces it", "[array][829]") {
+    ndarray<int, 2> a({2, 2}, 1);
+    ndarray<int, 2> b({3, 5}, 2);
+    a = b;
+    REQUIRE(!a.is_view());
+    REQUIRE(a.extent(1) == 5);
+    REQUIRE(a(2, 4) == 2);
+    a = ndarray<int, 2>({1, 1}, 9);
+    REQUIRE(a.size() == 1);
+    REQUIRE(a(0, 0) == 9);
 }

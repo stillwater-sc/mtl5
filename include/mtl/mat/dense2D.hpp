@@ -135,20 +135,26 @@ public:
     dense2D& operator=(const dense2D&) = default;
     ~dense2D() = default;
 
-    dense2D(dense2D&& other) noexcept
+    dense2D(dense2D&& other) noexcept(std::is_nothrow_move_constructible_v<memory_type>)
         : mem_(std::move(other.mem_)), dims_(other.dims_), ldim_(other.ldim_)
     {
         if constexpr (!is_fixed) other.dims_.set_dimensions(0, 0);
         other.ldim_ = 0;
     }
 
+    /// A matrix over an external buffer with as many elements keeps its
+    /// buffer and receives the elements, in the source's shape; the source
+    /// keeps its own (#829).
     dense2D& operator=(dense2D&& other) noexcept {
         if (this != &other) {
+            const bool in_place = mem_.assigns_in_place(other.mem_.size());
             mem_ = std::move(other.mem_);
             dims_ = other.dims_;
             ldim_ = other.ldim_;
-            if constexpr (!is_fixed) other.dims_.set_dimensions(0, 0);
-            other.ldim_ = 0;
+            if (!in_place) {
+                if constexpr (!is_fixed) other.dims_.set_dimensions(0, 0);
+                other.ldim_ = 0;
+            }
         }
         return *this;
     }
@@ -175,6 +181,13 @@ public:
         requires (Matrix<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator=(const Expr& expr) {
+        // A matrix over an external buffer is never re-pointed by assignment:
+        // an expression with another element count throws. change_dim on it,
+        // an explicit resize, does detach it (#829).
+        if (!owns_memory()
+            && static_cast<size_type>(expr.num_rows()) * static_cast<size_type>(expr.num_cols()) != size())
+            ::mtl::detail::throw_or_abort(
+                std::domain_error("dense2D: cannot assign a matrix of another size to an external-pointer matrix"));
         // An expression that reads this matrix other than at (r, c) -- through
         // trans(), another view or a lazy product -- is evaluated into a
         // temporary first (#824, mat/expr/expr_alias.hpp).

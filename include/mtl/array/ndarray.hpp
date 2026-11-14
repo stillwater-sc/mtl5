@@ -19,6 +19,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 
 #include <mtl/config.hpp>
 #include <mtl/tag/sparsity.hpp>
@@ -26,6 +27,7 @@
 #include <mtl/traits/ashape.hpp>
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/array/shape.hpp>
 
 namespace mtl::array {
@@ -98,11 +100,59 @@ public:
         init_strides();
     }
 
-    // Copy and move: default (contiguous_memory_block handles ownership)
-    ndarray(const ndarray&) = default;
+    // -- Copy and move -------------------------------------------------------
+    //
+    // A copy owns a contiguous array in this Order, filled element by element,
+    // so copying a strided view (a slice, a transpose) reads its elements, not
+    // the raw memory from its base pointer.
+    //
+    // Assignment to a view writes the viewed elements and keeps the view's
+    // memory, shape and strides (#829). The source must have the same shape:
+    // copy assignment throws std::domain_error otherwise; move assignment is
+    // noexcept, so it asserts, and under NDEBUG takes over the source's storage.
+    // Assignment to an owning array replaces its contents, as before.
+
+    ndarray(const ndarray& other) : shape_(other.shape_), mem_(other.size()) {
+        init_strides();
+        copy_elements_from(other);
+    }
+
     ndarray(ndarray&&) noexcept = default;
-    ndarray& operator=(const ndarray&) = default;
-    ndarray& operator=(ndarray&&) noexcept = default;
+
+    ndarray& operator=(const ndarray& other) {
+        if (this == &other) return *this;
+        if (is_view()) {
+            if (shape_ != other.shape_)
+                ::mtl::detail::throw_or_abort(
+                    std::domain_error("ndarray: cannot assign an array of another shape to a view"));
+            assign_to_view(other);
+            return *this;
+        }
+        ndarray tmp(other);
+        *this = std::move(tmp);
+        return *this;
+    }
+
+    ndarray& operator=(ndarray&& other) noexcept {
+        if (this == &other) return *this;
+        if (is_view()) {
+            if (shape_ == other.shape_) {
+                assign_to_view(other);
+                return *this;
+            }
+            assert(false && "ndarray: move-assigning an array of another shape to a view");
+        }
+        // Take over other's storage, shape and strides. The block itself would
+        // write in place into a non-owning block, so release ours first.
+        memory_type released;
+        mem_.swap(released);
+        mem_.swap(other.mem_);
+        shape_   = other.shape_;
+        strides_ = other.strides_;
+        other.shape_   = shape_type{};
+        other.strides_ = strides_type{};
+        return *this;
+    }
 
     // -- Shape and size ------------------------------------------------------
 
@@ -327,6 +377,29 @@ public:
     }
 
 private:
+    /// Write other's elements into this view, of the same shape. A view
+    /// source may overlap this one (v = v.transpose()), so it is read in full
+    /// first. noexcept callers: a copy that fails to allocate terminates.
+    void assign_to_view(const ndarray& other) {
+        if (other.is_view()) {
+            const ndarray tmp(other);
+            copy_elements_from(tmp);
+        } else {
+            copy_elements_from(other);
+        }
+    }
+
+    /// Element-wise copy from an array of the same shape, in either layout.
+    void copy_elements_from(const ndarray& other) {
+        if (is_contiguous_in_own_order() && other.is_contiguous_in_own_order()) {
+            std::copy_n(other.mem_.data(), size(), mem_.data());
+        } else {
+            iterate_indices([&](const std::array<size_type, N>& idx) {
+                (*this)[idx] = other[idx];
+            });
+        }
+    }
+
     void check_bounds(const std::array<size_type, N>& idx) const {
         for (size_type i = 0; i < N; ++i) {
             if (idx[i] >= shape_[i]) {

@@ -1,5 +1,6 @@
 #pragma once
 // MTL5 -- Unit vector factory: returns dense_vector with 1 at position k, 0 elsewhere
+#include <cassert>
 #include <cstddef>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/math/identity.hpp>

@@ -146,6 +146,23 @@ Two properties of this block matter to the rest of the library:
   alias into someone else's storage) are left untouched. This is what lets
   `dense2D` wrap caller memory — e.g. a buffer from a C API or BLAS — without
   copying and without ever freeing memory it did not allocate.
+- **Assignment never re-points a non-owning block** (#829). Copy, move and
+  expression assignment to an `external` or `view` block write the caller's
+  buffer when the source has as many elements, and the block stays
+  non-owning. With another element count, copy and expression assignment
+  throw `std::domain_error`; move assignment is `noexcept`, so it asserts,
+  and under `NDEBUG` takes over the source's storage. Before #829 copy and
+  move assignment detached the block into a private copy even at equal size,
+  so `v = w` on a vector over a C buffer left the buffer unchanged. Only an
+  explicit resize, `change_dim` or `realloc` to another size, detaches. A
+  copy *constructor* still makes an owning deep copy: a new object has no
+  buffer of its own to write. `ndarray` follows the same rule for its views,
+  element by element in the view's strides, with a shape check in place of
+  the element count.
+- **A fixed-size heap block always holds its `StaticSize` elements.** The
+  default constructor allocates them and a moved-from block gets fresh
+  storage; move assignment swaps. Before #829 both left a null pointer behind
+  a nonzero `size()`.
 
 ---
 
@@ -303,7 +320,8 @@ So `operator=`, `+=` and `-=` first ask
 evaluating in place could read an element other than the one being written.
 If it could, the expression is evaluated into a temporary, which is then
 copied into the target's storage. An external-pointer matrix keeps writing
-the caller's buffer.
+the caller's buffer, and an expression of another element count throws
+rather than detaching it (#829, Decision 3).
 
 The walk over the expression tree is conservative:
 
