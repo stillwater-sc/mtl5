@@ -89,7 +89,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **`map_view` checks its map entries at construction,** and `(r, c)` under `bounds_checking`. Repeated entries are allowed.
   - **Block `mult` summed in float for a double `y`:** the SIMD branch tested only `x`. A float `x` into a double `y` now sums in double, as a non-contiguous `x` already did.
   - **`block_diagonal2D`:**
-    - **`block(k)` no longer exposes the block itself:** the non-const overload returns a `dense2D` over the block's storage. `change_dim` on the old reference left the offsets and the total shape stale. Writing its elements writes the block, and resizing it detaches it. `set_block(k, B)` replaces a block of any shape.
+    - **`block(k)` no longer exposes the block itself:** the non-const overload returns a `dense2D` over the block's storage. `change_dim` on the old reference left the offsets and the total shape stale. Writing its elements writes the block. A resize to another element count detaches it; a reshape to the same count still writes the block, in the new layout. `set_block(k, B)` replaces a block of any shape. Every stored block owns its storage: a `block()` view passed to `set_block`, `add_block` or the vector constructor is copied, where `set_block(k, bd.block(k))` would have freed the buffer the view points into. The new `dense2D::owns_memory()` tells them apart.
     - **`add_block` is O(1)** (it was O(n) per call), and `operator()` finds the block by binary search instead of scanning.
   - **`mxint8` and `mxfp4::decode_element` assert `j < 32`.** For `mxint8`, a larger `j` read past the block.
   - **Not changed:**

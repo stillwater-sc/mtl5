@@ -137,6 +137,7 @@ TEST_CASE("block_diagonal2D: block access", "[mat][block_diagonal]") {
 
 #include <mtl/vec/dense_vector.hpp>
 #include <type_traits>
+#include <utility>
 
 TEST_CASE("block_diagonal2D: non-square blocks", "[mat][block_diagonal][826]") {
     block_diagonal2D<double> BD{mat::dense2D<double>{{1, 2, 3}},          // 1x3
@@ -204,4 +205,41 @@ TEST_CASE("block_diagonal2D: add_block keeps the offsets right", "[mat][block_di
         REQUIRE(BD(2 * k + 1, k) == double(k) + 0.5);
         if (k > 0) REQUIRE(BD(2 * k, k - 1) == 0.0);
     }
+}
+
+TEST_CASE("block_diagonal2D: a same-count reshape of block() keeps the block's shape", "[mat][block_diagonal][826]") {
+    block_diagonal2D<double> BD{mat::dense2D<double>{{1, 2}, {3, 4}}};
+    auto B = BD.block(0);
+    B.change_dim(1, 4);   // same element count: still the block's storage
+    REQUIRE(BD.num_rows() == 2);
+    REQUIRE(BD.num_cols() == 2);
+    REQUIRE(BD.block(0).num_rows() == 2);
+    B(0, 3) = 40.0;       // the block's fourth element, BD(1, 1)
+    REQUIRE(BD(1, 1) == 40.0);
+}
+
+TEST_CASE("block_diagonal2D: passing a block() view back in copies it", "[mat][block_diagonal][826]") {
+    // set_block(k, bd.block(k)) moved a view of blocks_[k] into blocks_[k],
+    // freeing the buffer the view points into: a use after free.
+    block_diagonal2D<double> BD{mat::dense2D<double>{{1, 2}, {3, 4}}, mat::dense2D<double>{{5}}};
+    BD.set_block(0, BD.block(0));
+    REQUIRE(BD(0, 1) == 2.0);
+    REQUIRE(BD(1, 0) == 3.0);
+    REQUIRE(std::as_const(BD).block(0).owns_memory());
+    // A view of block 1 added as a new block is a copy, not a second owner of
+    // block 1's storage.
+    BD.add_block(BD.block(1));
+    REQUIRE(BD.num_blocks() == 3);
+    REQUIRE(std::as_const(BD).block(2).owns_memory());
+    BD.set_block(1, mat::dense2D<double>{{6}});
+    REQUIRE(BD(2, 2) == 6.0);
+    REQUIRE(BD(3, 3) == 5.0);
+    // The vector constructor copies views too.
+    mat::dense2D<double> src{{7, 8}};
+    std::vector<mat::dense2D<double>> v;
+    v.emplace_back(1, 2, src.data());
+    block_diagonal2D<double> W(std::move(v));
+    REQUIRE(std::as_const(W).block(0).owns_memory());
+    src(0, 0) = 0.0;
+    REQUIRE(W(0, 0) == 7.0);
 }

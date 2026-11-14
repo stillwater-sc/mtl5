@@ -30,6 +30,7 @@ public:
     /// Construct from a vector of dense blocks.
     explicit block_diagonal2D(std::vector<dense2D<Value>> blocks)
         : blocks_(std::move(blocks)) {
+        for (auto& b : blocks_) b = owned(std::move(b));
         recompute_offsets();
     }
 
@@ -46,7 +47,7 @@ public:
         col_offsets_.push_back(total_cols_);
         total_rows_ += block.num_rows();
         total_cols_ += block.num_cols();
-        blocks_.push_back(std::move(block));
+        blocks_.push_back(owned(std::move(block)));
     }
 
     /// Element (r, c). The block holding row r is found by binary search over
@@ -76,10 +77,15 @@ public:
     const dense2D<Value>& block(size_type k) const { return blocks_[k]; }
 
     /// Write access to the k-th block's elements: a dense2D over the block's
-    /// storage. Writing its elements writes the block. It used to return the
-    /// block itself, and change_dim on that left the offsets and the total
-    /// shape stale (#826); resizing this one detaches it from the block,
-    /// which keeps its shape. Replace a block's shape with set_block.
+    /// storage, in the block's shape. Writing its elements writes the block.
+    /// It used to return the block itself, and change_dim on that left the
+    /// offsets and the total shape stale (#826). The block keeps its shape
+    /// whatever is done to the returned matrix:
+    ///   - change_dim to a different element count gives it storage of its
+    ///     own, detached from the block;
+    ///   - change_dim to the same count (2x2 to 1x4) keeps the block's
+    ///     storage under the new shape, so its writes still land in the
+    ///     block, in that layout. Don't reshape it; use set_block.
     dense2D<Value> block(size_type k) {
         assert(k < blocks_.size());
         return dense2D<Value>(blocks_[k].num_rows(), blocks_[k].num_cols(), blocks_[k].data());
@@ -88,11 +94,20 @@ public:
     /// Replace the k-th block, of any shape, and update the offsets.
     void set_block(size_type k, dense2D<Value> block) {
         assert(k < blocks_.size());
-        blocks_[k] = std::move(block);
+        blocks_[k] = owned(std::move(block));
         recompute_offsets();
     }
 
 private:
+    /// b itself if it owns its elements, else a copy that does. Every stored
+    /// block owns its storage: a block() view passed back in, as in
+    /// set_block(k, bd.block(k)), would otherwise point into a buffer the
+    /// move frees, or make two blocks share one (#826).
+    static dense2D<Value> owned(dense2D<Value> b) {
+        if (b.owns_memory()) return b;
+        return dense2D<Value>(static_cast<const dense2D<Value>&>(b));
+    }
+
     std::vector<dense2D<Value>> blocks_;
     std::vector<size_type> row_offsets_;
     std::vector<size_type> col_offsets_;
