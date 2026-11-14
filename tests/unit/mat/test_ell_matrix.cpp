@@ -6,6 +6,9 @@
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
+#include <cstddef>
+#include <vector>
+
 using namespace mtl;
 
 static mat::compressed2D<double> make_tridiag(std::size_t n) {
@@ -102,4 +105,59 @@ TEST_CASE("ell_matrix is explicitly row-padded (#355)", "[mat][ell_matrix][regre
     REQUIRE(E(0, 1) == 2.0);
     REQUIRE(E(1, 2) == 4.0);
     REQUIRE(E(0, 2) == 0.0);
+}
+
+// -- Edge cases (#825) ----------------------------------------------------
+
+TEST_CASE("ell_matrix from an all-zero or empty compressed2D has width 0", "[mat][ell_matrix][825]") {
+    const mat::compressed2D<double> Z(3, 4);   // no nonzeros
+    const mat::ell_matrix<double> ell(Z);
+    REQUIRE(ell.num_rows() == 3);
+    REQUIRE(ell.num_cols() == 4);
+    REQUIRE(ell.max_width() == 0);
+    REQUIRE(ell.ref_indices().empty());
+    REQUIRE(ell.ref_data().empty());
+    REQUIRE(ell(2, 3) == 0.0);
+
+    const mat::compressed2D<double> E(0, 0);
+    const mat::ell_matrix<double> none(E);
+    REQUIRE(none.num_rows() == 0);
+    REQUIRE(none.max_width() == 0);
+}
+
+TEST_CASE("ell_matrix from a non-square compressed2D", "[mat][ell_matrix][825]") {
+    mat::compressed2D<double> A(2, 5);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][4] << 1.0;
+        ins[1][0] << 2.0;
+        ins[1][2] << 3.0;
+        ins[1][3] << 4.0;
+    }
+    const mat::ell_matrix<double> ell(A);
+    REQUIRE(ell.num_rows() == 2);
+    REQUIRE(ell.num_cols() == 5);
+    REQUIRE(ell.max_width() == 3);
+    // Row 0 has one entry and two padding slots.
+    REQUIRE(ell.ref_indices() == std::vector<std::size_t>{4, ell.invalid, ell.invalid, 0, 2, 3});
+    for (std::size_t r = 0; r < 2; ++r)
+        for (std::size_t c = 0; c < 5; ++c) {
+            INFO("(" << r << ", " << c << ")");
+            REQUIRE(ell(r, c) == A(r, c));
+        }
+}
+
+TEST_CASE("ell_matrix(nrows, ncols, max_width) allocates padded storage", "[mat][ell_matrix][825]") {
+    const mat::ell_matrix<double> ell(3, 7, 2);
+    REQUIRE(ell.num_rows() == 3);
+    REQUIRE(ell.num_cols() == 7);
+    REQUIRE(ell.size() == 21);
+    REQUIRE(ell.max_width() == 2);
+    REQUIRE(ell.ref_indices() == std::vector<std::size_t>(6, ell.invalid));
+    REQUIRE(ell.ref_data() == std::vector<double>(6, 0.0));
+    REQUIRE(ell(2, 6) == 0.0);
+
+    const mat::ell_matrix<double> narrow(4, 4, 0);
+    REQUIRE(narrow.ref_indices().empty());
+    REQUIRE(narrow(3, 3) == 0.0);
 }

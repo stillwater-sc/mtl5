@@ -8,9 +8,12 @@
 #
 # Line format:  <header under include/mtl>  <kind>  <target>
 #
-#   bench   an entry calls this header's operation directly. <target> is an
-#           entry-name prefix that must match at least one line of
-#           `mtl5_bench --list` (area/op/dtype).
+#   bench   an entry calls this header's operation directly. <target> must
+#           match at least one line of `mtl5_bench --list` (area/op/dtype) on
+#           a name boundary: the whole line, or the target followed by `/` or
+#           `+`; a target ending in `/` or `+` is a prefix; a trailing `*`
+#           names a family (`krylov/idr_s*` for idr_s1..idr_s8). See
+#           has_entry in benchmarks/check_coverage.sh.
 #   via     the operation is measured inside the entry named, which calls it
 #           (lower_trisolve inside trsv, restriction inside the V-cycle, ...).
 #           <target> must match a --list line, as for bench.
@@ -160,7 +163,7 @@ itl/krylov/gmres.hpp                bench   krylov/gmres30+
 itl/krylov/minres.hpp               bench   krylov/minres+
 itl/krylov/qmr.hpp                  bench   krylov/qmr+
 itl/krylov/tfqmr.hpp                bench   krylov/tfqmr+
-itl/krylov/idr_s.hpp                bench   krylov/idr_s
+itl/krylov/idr_s.hpp                bench   krylov/idr_s*
 itl/krylov/apply_operator.hpp       via     krylov/cg+           # the A*x every solver calls
 
 # -- preconditioners, smoothers, multigrid --------------------------------------
@@ -170,12 +173,12 @@ itl/pc/ilut.hpp                     bench   pc/ilut/
 itl/pc/ic_0.hpp                     bench   pc/ic_0/
 itl/pc/ildl.hpp                     bench   pc/ildl/
 itl/pc/ssor.hpp                     bench   pc/ssor/
-itl/pc/block_diagonal.hpp           bench   pc/block_diagonal
+itl/pc/block_diagonal.hpp           bench   pc/block_diagonal4/
 itl/pc/identity.hpp                 exempt  the no-op preconditioner: a copy
 itl/pc/solver.hpp                   exempt  solve(P, x, b) forwarding wrappers
 itl/smoother/jacobi.hpp             bench   smoother/jacobi/
 itl/smoother/gauss_seidel.hpp       bench   smoother/gauss_seidel/
-itl/smoother/sor.hpp                bench   smoother/sor
+itl/smoother/sor.hpp                bench   smoother/sor1.5/
 itl/mg/multigrid.hpp                bench   mg/poisson2d_vcycle/
 itl/mg/restriction.hpp              via     mg/poisson2d_vcycle/
 itl/mg/prolongation.hpp             via     mg/poisson2d_vcycle/
