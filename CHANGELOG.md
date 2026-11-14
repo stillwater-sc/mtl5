@@ -82,6 +82,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Assigning to a vector or matrix over an external buffer detached it, leaving the buffer unchanged** (#829, from the QA sweeps #767 and #816). `double buf[3]; dense_vector<double> v(3, buf); v = w;` gave `v` a private copy, and `bd.block(0) = X` on a `block_diagonal2D` had no effect.
+  - **Copy and move assignment write through** an `external` or `view` `contiguous_memory_block` of the same size, so `dense_vector`, `dense2D` and `block_diagonal2D::block(k)` keep writing the caller's buffer, as expression assignment already did.
+  - **Another size throws `std::domain_error`** for copy and expression assignment, instead of detaching. Move assignment is `noexcept`, so it asserts. `change_dim` and `realloc`, explicit resizes, still detach.
+  - **`ndarray` views:** assignment writes the viewed elements through the view's strides, with a shape check, and reads an overlapping source in full first. Copying a strided view (a slice or a transpose) now copies its elements; it copied the raw memory from the view's base pointer, reading past the end for a slice.
+  - **Fixed-size heap vectors and matrices** always have storage: default-constructed and moved-from ones held a null pointer behind a nonzero `size()`. A moved-from fixed-size `dense2D`, on the stack or the heap, also kept a leading dimension of 0, so every row read row 0.
+  - **Overlap:** two non-owning blocks over overlapping parts of one buffer copy in a safe direction. `a = a.transpose()` on an owning `ndarray` copies the view out before releasing the storage it points into, and a view assigned from an array it shares memory with reads the source in full first. A moved-from `ndarray` is empty.
+  - **`dense_vector(n, 0)`** fills with zeros; it was ambiguous with the external-pointer constructor, which now takes exactly `Value*`. **`vec::fill(v, 0)`** compiles for a `double` vector. `dense_vector` has `owns_memory()`, like `dense2D`.
+  - Tests for `contiguous_memory_block` assignment, `dense_vector`, `dense2D`, `block_diagonal2D` and `ndarray` views, and a new `tests/unit/vec/test_vec_expr.cpp` for the vector expression templates.
+
 - **Sparse construction: a second inserter kept only its own entries, insertion indices went unchecked, and `coordinate2D` summed duplicates in an arbitrary order** (#825, from the QA sweep #740).
   - **`compressed2D_inserter` amends the matrix, as MTL4's does.** The matrix's entries are loaded at construction, so inserting at an existing position applies the updater (`update_store` replaces, `update_plus` adds) and every other entry is kept. A second inserter used to rebuild the matrix from its own entries: after inserting (0,0) and (1,1), a second inserter setting (2,2) left `nnz == 1`. No caller in the library, examples or benchmarks reuses a filled matrix; `make_empty()` or `change_dim()` refills from scratch.
   - **Indices are checked in every build** (the #825/#826 "check once" policy), throwing `std::out_of_range`. A negative index of a signed `Parameters::size_type` is rejected too.

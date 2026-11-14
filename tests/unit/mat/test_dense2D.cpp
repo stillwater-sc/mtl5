@@ -527,3 +527,68 @@ TEST_CASE("Swap an external-pointer matrix with an owning one", "[mat][swap][824
     REQUIRE(e.num_cols() == 3);
     REQUIRE(e(0, 2) == 7.0);
 }
+
+// -- Assignment to an external-pointer matrix (#829) ----------------------
+// Assignment writes the caller's buffer, as expression assignment did (#824).
+
+TEST_CASE("dense2D: assigning to an external-pointer matrix writes through", "[mat][dense2D][829]") {
+    double buf[4] = {0, 0, 0, 0};
+    mat::dense2D<double> E(2, 2, buf);
+    const mat::dense2D<double> B{{1, 2}, {3, 4}};
+    E = B;   // fails before #829: E detached into a private copy
+    REQUIRE(E.data() == buf);
+    REQUIRE(!E.owns_memory());
+    REQUIRE(buf[1] == 2.0);
+    REQUIRE(buf[3] == 4.0);
+
+    E = mat::dense2D<double>{{5, 6}, {7, 8}};   // move assignment, too
+    REQUIRE(E.data() == buf);
+    REQUIRE(buf[0] == 5.0);
+
+    const mat::dense2D<double> C(3, 3);
+    REQUIRE_THROWS_AS(E = C, std::domain_error);
+    REQUIRE_THROWS_AS(E = C + C, std::domain_error);
+    REQUIRE(E.data() == buf);
+    REQUIRE(E.num_rows() == 2);
+    REQUIRE(buf[0] == 5.0);
+
+    // change_dim is an explicit resize, and it still detaches.
+    E.change_dim(3, 3);
+    REQUIRE(E.owns_memory());
+    REQUIRE(buf[0] == 5.0);
+}
+
+TEST_CASE("dense2D: assigning to an owning matrix replaces it", "[mat][dense2D][829]") {
+    mat::dense2D<double> A(2, 2);
+    mat::dense2D<double> C(3, 4);
+    std::fill(C.begin(), C.end(), 1.0);
+    A = C;
+    REQUIRE(A.num_rows() == 3);
+    REQUIRE(A.num_cols() == 4);
+    REQUIRE(A.owns_memory());
+    REQUIRE(A(2, 3) == 1.0);
+}
+
+TEST_CASE("dense2D: a moved-from fixed-size matrix keeps its layout", "[mat][dense2D][fixed][829]") {
+    auto check = [](auto tag) {
+        using params = mtl::mat::parameters<mtl::tag::row_major, mtl::detail::c_index,
+                                            mtl::mat::fixed::dimensions<2, 3>, decltype(tag)>;
+        dense2D<double, params> a;
+        a(1, 2) = 5.0;
+        dense2D<double, params> b(std::move(a));
+        REQUIRE(b(1, 2) == 5.0);
+        REQUIRE(a.get_ldim() == 3);   // was 0: every row mapped to row 0
+        a(0, 1) = 1.0;
+        a(1, 1) = 2.0;
+        REQUIRE(a(0, 1) == 1.0);
+        dense2D<double, params> c;
+        c = std::move(a);
+        REQUIRE(c(1, 1) == 2.0);
+        REQUIRE(a.get_ldim() == 3);
+        a(1, 0) = 4.0;
+        a(0, 0) = 3.0;
+        REQUIRE(a(1, 0) == 4.0);
+    };
+    check(mtl::tag::on_stack{});
+    check(mtl::tag::on_heap{});
+}

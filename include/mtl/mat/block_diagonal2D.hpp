@@ -77,15 +77,21 @@ public:
     const dense2D<Value>& block(size_type k) const { return blocks_[k]; }
 
     /// Write access to the k-th block's elements: a dense2D over the block's
-    /// storage, in the block's shape. Writing its elements writes the block.
-    /// It used to return the block itself, and change_dim on that left the
-    /// offsets and the total shape stale (#826). The block keeps its shape
+    /// storage, in the block's shape. Writing its elements writes the block,
+    /// and so does assigning to it: bd.block(k) = X copies X into the block
+    /// (#829). It used to return the block itself, and change_dim on that left
+    /// the offsets and the total shape stale (#826). The block keeps its shape
     /// whatever is done to the returned matrix:
-    ///   - change_dim to a different element count gives it storage of its
-    ///     own, detached from the block;
-    ///   - change_dim to the same count (2x2 to 1x4) keeps the block's
-    ///     storage under the new shape, so its writes still land in the
-    ///     block, in that layout. Don't reshape it; use set_block.
+    ///   - copy- or expression-assigning a matrix with another element count
+    ///     throws std::domain_error; move-assigning one (a temporary, as in
+    ///     bd.block(k) = dense2D<Value>(3, 3)) is noexcept, so it asserts,
+    ///     and under NDEBUG it leaves the block unchanged;
+    ///   - change_dim to a different element count, an explicit resize, gives
+    ///     it storage of its own, detached from the block;
+    ///   - assigning, or change_dim, with the same count in another shape
+    ///     (2x2 to 1x4) keeps the block's storage under the new shape, so its
+    ///     writes still land in the block, in that layout. Don't reshape it;
+    ///     use set_block.
     dense2D<Value> block(size_type k) {
         assert(k < blocks_.size());
         return dense2D<Value>(blocks_[k].num_rows(), blocks_[k].num_cols(), blocks_[k].data());

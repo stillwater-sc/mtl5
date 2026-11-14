@@ -243,3 +243,23 @@ TEST_CASE("block_diagonal2D: passing a block() view back in copies it", "[mat][b
     src(0, 0) = 0.0;
     REQUIRE(W(0, 0) == 7.0);
 }
+
+#include <mtl/mat/operators.hpp>
+#include <stdexcept>
+
+TEST_CASE("block_diagonal2D: assigning to what block() returns writes the block", "[mat][block_diagonal][829]") {
+    block_diagonal2D<double> BD;
+    BD.add_block(mat::dense2D<double>{{1, 2}, {3, 4}});
+    BD.add_block(mat::dense2D<double>{{5}});
+    const mat::dense2D<double> X{{10, 20}, {30, 40}};
+    BD.block(0) = X;   // a temporary view: fails before #829, which detached it
+    REQUIRE(BD(0, 0) == 10.0);
+    REQUIRE(BD(1, 1) == 40.0);
+    REQUIRE(BD(2, 2) == 5.0);
+    BD.block(0) = X + X;   // expression assignment writes through too
+    REQUIRE(BD(1, 0) == 60.0);
+    // Another element count would have to detach it, so it throws.
+    REQUIRE_THROWS_AS(BD.block(1) = X, std::domain_error);
+    REQUIRE(BD(2, 2) == 5.0);
+    REQUIRE(BD.num_rows() == 3);
+}
