@@ -49,11 +49,18 @@ public:
     using actual_storage = typename Parameters::storage;
     using memory_type = detail::contiguous_memory_block<Value, actual_storage, static_size>;
 
+    /// A read-only view (tag::read_only storage) over a caller's `const Value*`:
+    /// only const access, so writing through it does not compile. It is still a
+    /// dense2D<Value, Parameters>, so every operation that takes
+    /// `const dense2D<V, P>&` accepts it. Copying it gives another view of the
+    /// same buffer; it cannot be assigned to or resized.
+    static constexpr bool read_only = std::is_same_v<actual_storage, tag::read_only>;
+
     // -- Standard type aliases -------------------------------------------
     using value_type      = Value;
-    using reference       = Value&;
+    using reference       = std::conditional_t<read_only, const Value&, Value&>;
     using const_reference = const Value&;
-    using pointer         = Value*;
+    using pointer         = std::conditional_t<read_only, const Value*, Value*>;
     using const_pointer   = const Value*;
 
     // -- Offset computation ----------------------------------------------
@@ -79,7 +86,7 @@ public:
     }
 
     // -- (rows, cols) constructor ----------------------------------------
-    dense2D(size_type rows, size_type cols)
+    dense2D(size_type rows, size_type cols) requires (!read_only)
         : mem_(rows * cols), dims_{}, ldim_{0}
     {
         if constexpr (!is_fixed) {
@@ -92,14 +99,14 @@ public:
     }
 
     // -- Dimension object constructor ------------------------------------
-    explicit dense2D(const dim_type& d) requires (!is_fixed)
+    explicit dense2D(const dim_type& d) requires (!is_fixed && !read_only)
         : mem_(d.num_rows() * d.num_cols()), dims_(d), ldim_{0}
     {
         set_ldim();
     }
 
     // -- External pointer constructor ------------------------------------
-    dense2D(size_type rows, size_type cols, Value* ptr)
+    dense2D(size_type rows, size_type cols, Value* ptr) requires (!read_only)
         : mem_(ptr, rows * cols, false), dims_{}, ldim_{0}
     {
         if constexpr (!is_fixed) {
@@ -108,10 +115,27 @@ public:
         set_ldim();
     }
 
+    // -- Read-only view constructor --------------------------------------
+    // Over a const buffer (or a mutable one, viewed read-only), rows x cols in
+    // this orientation with no padding. The pointer is stored without const
+    // only because the memory block is shared with the mutable matrices; no
+    // member of a read-only matrix writes through it.
+    dense2D(size_type rows, size_type cols, const Value* ptr) requires read_only
+        : mem_(const_cast<Value*>(ptr), rows * cols, true), dims_{}, ldim_{0}
+    {
+        if constexpr (!is_fixed) {
+            dims_.set_dimensions(rows, cols);
+        } else {
+            assert(rows == dim_type::rows && cols == dim_type::cols
+                   && "Size must match fixed dimensions");
+        }
+        set_ldim();
+    }
+
     // -- Initializer list of initializer lists ---------------------------
     // Every row must have the first row's length (#824): a longer one wrote
     // past the buffer, a shorter one left zeros.
-    dense2D(std::initializer_list<std::initializer_list<Value>> il)
+    dense2D(std::initializer_list<std::initializer_list<Value>> il) requires (!read_only)
         : dense2D(il.size(), il.size() > 0 ? il.begin()->size() : 0)
     {
         for (const auto& row : il) {
@@ -131,9 +155,34 @@ public:
     }
 
     // -- Copy / Move -----------------------------------------------------
-    dense2D(const dense2D&) = default;
-    dense2D& operator=(const dense2D&) = default;
+    dense2D(const dense2D&) requires (!read_only) = default;
+    dense2D& operator=(const dense2D&) requires (!read_only) = default;
     ~dense2D() = default;
+
+    /// An owning matrix from a read-only view: copies the elements, so the
+    /// copy can be changed. The view may differ in orientation and index base.
+    template <typename P2>
+        requires (!read_only && !std::same_as<P2, Parameters>
+                  && dense2D<Value, P2>::read_only)
+    dense2D(const dense2D<Value, P2>& view)
+        : dense2D(static_cast<size_type>(view.num_rows()), static_cast<size_type>(view.num_cols()))
+    {
+        using view_orientation = typename P2::orientation;
+        const auto* src = view.data();
+        const std::size_t ld = view.get_ldim();
+        for (size_type r = 0; r < num_rows(); ++r)
+            for (size_type c = 0; c < num_cols(); ++c) {
+                const std::size_t off = std::is_same_v<view_orientation, tag::row_major>
+                    ? std::size_t(r) * ld + std::size_t(c) : std::size_t(c) * ld + std::size_t(r);
+                mem_[compute_offset(r, c, ldim_)] = src[off];
+            }
+    }
+
+    /// Copying a read-only view gives another view of the same buffer.
+    dense2D(const dense2D& other) requires read_only
+        : mem_(const_cast<Value*>(other.data()), other.mem_.size(), true),
+          dims_(other.dims_), ldim_(other.ldim_) {}
+    dense2D& operator=(const dense2D&) requires read_only = delete;
 
     dense2D(dense2D&& other) noexcept(std::is_nothrow_move_constructible_v<memory_type>)
         : mem_(std::move(other.mem_)), dims_(other.dims_), ldim_(other.ldim_)
@@ -149,7 +198,8 @@ public:
     /// A matrix over an external buffer with as many elements keeps its
     /// buffer and receives the elements, in the source's shape; the source
     /// keeps its own (#829).
-    dense2D& operator=(dense2D&& other) noexcept {
+    dense2D& operator=(dense2D&&) requires read_only = delete;
+    dense2D& operator=(dense2D&& other) noexcept requires (!read_only) {
         if (this != &other) {
             const bool in_place = mem_.assigns_in_place(other.mem_.size());
             mem_ = std::move(other.mem_);
@@ -167,7 +217,7 @@ public:
 
     // -- Expression template construction / assignment -------------------
     template <typename Expr>
-        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Matrix<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D(const Expr& expr)
         : dense2D(static_cast<size_type>(expr.num_rows()),
@@ -184,7 +234,7 @@ public:
     }
 
     template <typename Expr>
-        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Matrix<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator=(const Expr& expr) {
         // A matrix over an external buffer is never re-pointed by assignment:
@@ -213,7 +263,7 @@ public:
     }
 
     template <typename Expr>
-        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Matrix<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator+=(const Expr& expr) {
         assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
@@ -233,7 +283,7 @@ public:
     }
 
     template <typename Expr>
-        requires (Matrix<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Matrix<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense2D& operator-=(const Expr& expr) {
         assert(num_rows() == expr.num_rows() && num_cols() == expr.num_cols());
@@ -273,7 +323,7 @@ private:
 
 public:
     // -- Element access --------------------------------------------------
-    reference operator()(size_type r, size_type c) {
+    Value& operator()(size_type r, size_type c) requires (!read_only) {
         auto ri = index_type::to_internal(r);
         auto ci = index_type::to_internal(c);
         if constexpr (bounds_checking) {
@@ -315,16 +365,16 @@ public:
         return mem_.category() == ::mtl::detail::memory_category::own;
     }
 
-    pointer       data()       { return mem_.data(); }
+    Value*        data()        requires (!read_only) { return mem_.data(); }
     const_pointer data() const { return mem_.data(); }
 
-    pointer       begin()       { return data(); }
+    Value*        begin()       requires (!read_only) { return data(); }
     const_pointer begin() const { return data(); }
-    pointer       end()         { return data() + size(); }
+    Value*        end()         requires (!read_only) { return data() + size(); }
     const_pointer end()   const { return data() + size(); }
 
     // -- Dimension modification ------------------------------------------
-    void change_dim(size_type r, size_type c) {
+    void change_dim(size_type r, size_type c) requires (!read_only) {
         if constexpr (is_fixed) {
             assert(r == dim_type::rows && c == dim_type::cols
                    && "Cannot change fixed dimensions");
@@ -338,7 +388,7 @@ public:
         }
     }
 
-    void checked_change_dim(size_type r, size_type c) {
+    void checked_change_dim(size_type r, size_type c) requires (!read_only) {
         if constexpr (is_fixed) {
             if (r != dim_type::rows || c != dim_type::cols)
                 ::mtl::detail::throw_or_abort(std::domain_error("dense2D: cannot resize fixed-size matrix"));
@@ -348,32 +398,32 @@ public:
     }
 
     // -- Compound assignment operators -----------------------------------
-    dense2D& operator+=(const dense2D& other) {
+    dense2D& operator+=(const dense2D& other) requires (!read_only) {
         assert(num_rows() == other.num_rows() && num_cols() == other.num_cols());
         for (size_type i = 0; i < size(); ++i) mem_[i] += other.mem_[i];
         return *this;
     }
 
-    dense2D& operator-=(const dense2D& other) {
+    dense2D& operator-=(const dense2D& other) requires (!read_only) {
         assert(num_rows() == other.num_rows() && num_cols() == other.num_cols());
         for (size_type i = 0; i < size(); ++i) mem_[i] -= other.mem_[i];
         return *this;
     }
 
-    template <typename S> requires Scalar<S>
+    template <typename S> requires (!read_only && Scalar<S>)
     dense2D& operator*=(const S& alpha) {
         for (size_type i = 0; i < size(); ++i) mem_[i] *= alpha;
         return *this;
     }
 
-    template <typename S> requires Field<S>
+    template <typename S> requires (!read_only && Field<S>)
     dense2D& operator/=(const S& alpha) {
         for (size_type i = 0; i < size(); ++i) mem_[i] /= alpha;
         return *this;
     }
 
     // -- Swap ------------------------------------------------------------
-    void swap(dense2D& other) noexcept {
+    void swap(dense2D& other) noexcept requires (!read_only) {
         mem_.swap(other.mem_);
         if constexpr (!is_fixed) {
             auto tr = dims_.num_rows(), tc = dims_.num_cols();
@@ -389,6 +439,39 @@ private:
     [[no_unique_address]] dim_type dims_;
     size_type ldim_;
 };
+
+// -- Read-only views --------------------------------------------------------
+
+/// A read-only dense matrix over memory the caller owns (tag::read_only):
+/// const access only, no allocation, no copy of the elements. The buffer
+/// holds rows x cols elements in Orientation order with no padding.
+template <typename Value, typename Orientation = tag::row_major>
+using const_matrix_view = dense2D<Value,
+    parameters<Orientation, detail::c_index, non_fixed::dimensions, tag::read_only>>;
+
+/// A read-only row-major view of the rows x cols elements at ptr. For a
+/// column-major buffer, use const_matrix_view<Value, tag::col_major> directly.
+/// The buffer must outlive the view.
+template <typename Value>
+const_matrix_view<Value> const_view(std::size_t rows, std::size_t cols, const Value* ptr) {
+    return const_matrix_view<Value>(rows, cols, ptr);
+}
+
+/// A read-only view of A's elements, in A's orientation and index base: hand
+/// a matrix to code that must not change it, without copying it. A must
+/// outlive the view.
+template <typename Value, typename Parameters>
+auto const_view(const dense2D<Value, Parameters>& A) {
+    using view_params = parameters<typename Parameters::orientation, typename Parameters::index_type,
+                                   non_fixed::dimensions, tag::read_only, typename Parameters::size_type>;
+    return dense2D<Value, view_params>(
+        static_cast<typename view_params::size_type>(A.num_rows()),
+        static_cast<typename view_params::size_type>(A.num_cols()), A.data());
+}
+
+/// A view of a temporary would dangle at the end of the full-expression.
+template <typename Value, typename Parameters>
+void const_view(const dense2D<Value, Parameters>&&) = delete;
 
 // -- Free functions in mtl::mat ------------------------------------------
 

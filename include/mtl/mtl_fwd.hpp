@@ -13,6 +13,7 @@ namespace tag {
     struct sparse;
     struct on_stack;
     struct on_heap;
+    struct read_only;
 } // namespace tag
 
 namespace detail {
