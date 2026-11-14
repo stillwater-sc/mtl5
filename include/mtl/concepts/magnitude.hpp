@@ -34,8 +34,10 @@ concept has_abs = requires(T a) {
 };
 } // namespace detail::magnitude_adl
 
-/// Concept: a type has a well-defined magnitude
+/// Concept: a type has a well-defined magnitude. An unsigned type is its own
+/// magnitude: std::abs is ill-formed for unsigned types that do not promote to
+/// int, so the abs functor returns them unchanged, and the concept agrees.
 template <typename T>
-concept Magnitude = detail::magnitude_adl::has_abs<T>;
+concept Magnitude = std::is_unsigned_v<std::remove_cv_t<T>> || detail::magnitude_adl::has_abs<T>;
 
 } // namespace mtl

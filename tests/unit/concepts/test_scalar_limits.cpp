@@ -73,6 +73,9 @@ TEST_CASE("Magnitude finds abs through std and ADL", "[concepts][magnitude][838]
     STATIC_REQUIRE(Magnitude<double>);   // through std::abs, not C's ::abs(int)
     STATIC_REQUIRE(Magnitude<float>);
     STATIC_REQUIRE(Magnitude<std::complex<double>>);
+    STATIC_REQUIRE(Magnitude<unsigned int>);         // its own magnitude, as the abs functor treats it
+    STATIC_REQUIRE(Magnitude<unsigned long long>);
+    STATIC_REQUIRE(Magnitude<const unsigned>);
     STATIC_REQUIRE(!Magnitude<with_limits>);   // no abs of its own
 }
 
