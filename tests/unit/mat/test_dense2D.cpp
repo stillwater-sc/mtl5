@@ -568,3 +568,27 @@ TEST_CASE("dense2D: assigning to an owning matrix replaces it", "[mat][dense2D][
     REQUIRE(A.owns_memory());
     REQUIRE(A(2, 3) == 1.0);
 }
+
+TEST_CASE("dense2D: a moved-from fixed-size matrix keeps its layout", "[mat][dense2D][fixed][829]") {
+    auto check = [](auto tag) {
+        using params = mtl::mat::parameters<mtl::tag::row_major, mtl::detail::c_index,
+                                            mtl::mat::fixed::dimensions<2, 3>, decltype(tag)>;
+        dense2D<double, params> a;
+        a(1, 2) = 5.0;
+        dense2D<double, params> b(std::move(a));
+        REQUIRE(b(1, 2) == 5.0);
+        REQUIRE(a.get_ldim() == 3);   // was 0: every row mapped to row 0
+        a(0, 1) = 1.0;
+        a(1, 1) = 2.0;
+        REQUIRE(a(0, 1) == 1.0);
+        dense2D<double, params> c;
+        c = std::move(a);
+        REQUIRE(c(1, 1) == 2.0);
+        REQUIRE(a.get_ldim() == 3);
+        a(1, 0) = 4.0;
+        a(0, 0) = 3.0;
+        REQUIRE(a(1, 0) == 4.0);
+    };
+    check(mtl::tag::on_stack{});
+    check(mtl::tag::on_heap{});
+}

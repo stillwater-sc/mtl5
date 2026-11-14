@@ -82,8 +82,10 @@ public:
     /// (#829). It used to return the block itself, and change_dim on that left
     /// the offsets and the total shape stale (#826). The block keeps its shape
     /// whatever is done to the returned matrix:
-    ///   - assigning a matrix or expression with another element count
-    ///     throws std::domain_error;
+    ///   - copy- or expression-assigning a matrix with another element count
+    ///     throws std::domain_error; move-assigning one (a temporary, as in
+    ///     bd.block(k) = dense2D<Value>(3, 3)) is noexcept, so it asserts,
+    ///     and under NDEBUG it leaves the block unchanged;
     ///   - change_dim to a different element count, an explicit resize, gives
     ///     it storage of its own, detached from the block;
     ///   - assigning, or change_dim, with the same count in another shape

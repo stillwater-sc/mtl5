@@ -558,3 +558,33 @@ TEST_CASE("assigning to an owning ndarray replaces it", "[array][829]") {
     REQUIRE(a.size() == 1);
     REQUIRE(a(0, 0) == 9);
 }
+
+TEST_CASE("assigning an owning array to a view of it", "[array][view][829]") {
+    ndarray<int, 2> a({2, 2}, 0);
+    a(0, 0) = 1; a(0, 1) = 2; a(1, 0) = 3; a(1, 1) = 4;
+    auto v = a.transpose();
+    v = a;   // v(i, j) = a(i, j) is a(j, i) = a(i, j): a becomes its transpose
+    REQUIRE(a(0, 1) == 3);
+    REQUIRE(a(1, 0) == 2);
+}
+
+TEST_CASE("move-assigning a view of an owning array to it", "[array][view][829]") {
+    ndarray<int, 2> a({2, 3}, 0);
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j)
+            a(i, j) = static_cast<int>(10 * i + j);
+    a = a.transpose();   // released the storage the view points into before #829's review
+    REQUIRE(!a.is_view());
+    REQUIRE(a.extent(0) == 3);
+    REQUIRE(a(2, 1) == 12);
+    REQUIRE(a(0, 1) == 10);
+}
+
+TEST_CASE("a moved-from ndarray is empty", "[array][829]") {
+    ndarray<int, 2> a({2, 2}, 1);
+    ndarray<int, 2> b(std::move(a));
+    REQUIRE(b(1, 1) == 1);
+    REQUIRE(a.size() == 0);
+    const ndarray<int, 2> c(a);   // read a null pointer through the old shape
+    REQUIRE(c.size() == 0);
+}

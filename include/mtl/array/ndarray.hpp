@@ -15,6 +15,7 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <initializer_list>
 #include <numeric>
 #include <stdexcept>
@@ -117,7 +118,12 @@ public:
         copy_elements_from(other);
     }
 
-    ndarray(ndarray&&) noexcept = default;
+    /// The source is left empty: no storage, a zero shape.
+    ndarray(ndarray&& other) noexcept
+        : shape_(other.shape_), strides_(other.strides_), mem_(std::move(other.mem_)) {
+        other.shape_   = shape_type{};
+        other.strides_ = strides_type{};
+    }
 
     ndarray& operator=(const ndarray& other) {
         if (this == &other) return *this;
@@ -141,6 +147,13 @@ public:
                 return *this;
             }
             assert(false && "ndarray: move-assigning an array of another shape to a view");
+        }
+        // A view into our own storage (a = a.transpose()) would dangle once
+        // that storage is released: copy it out first. In a noexcept function,
+        // a copy that fails to allocate terminates.
+        if (other.is_view() && shares_memory_with(other)) {
+            ndarray owned(other);
+            return *this = std::move(owned);
         }
         // Take over other's storage, shape and strides. The block itself would
         // write in place into a non-owning block, so release ours first.
@@ -377,11 +390,32 @@ public:
     }
 
 private:
-    /// Write other's elements into this view, of the same shape. A view
-    /// source may overlap this one (v = v.transpose()), so it is read in full
-    /// first. noexcept callers: a copy that fails to allocate terminates.
+    /// The bytes from this array's first element to its last, in memory
+    /// order; empty for an array with no elements.
+    std::pair<const unsigned char*, const unsigned char*> byte_span() const {
+        if (size() == 0 || mem_.data() == nullptr) return {nullptr, nullptr};
+        size_type last = 0;
+        for (size_type i = 0; i < N; ++i) last += (shape_[i] - 1) * strides_[i];
+        const auto* lo = reinterpret_cast<const unsigned char*>(mem_.data());
+        return {lo, lo + (last + 1) * sizeof(Value)};
+    }
+
+    /// Whether the two arrays' memory spans overlap. Conservative: two
+    /// interleaved strided views with disjoint elements count as overlapping.
+    bool shares_memory_with(const ndarray& other) const {
+        const auto [a0, a1] = byte_span();
+        const auto [b0, b1] = other.byte_span();
+        if (a0 == nullptr || b0 == nullptr) return false;
+        const std::less<const unsigned char*> lt;
+        return lt(a0, b1) && lt(b0, a1);
+    }
+
+    /// Write other's elements into this view, of the same shape. A source
+    /// that shares memory with this view (v = v.transpose(), or v = a for a
+    /// view v of a) is read in full first. noexcept callers: a copy that fails
+    /// to allocate terminates.
     void assign_to_view(const ndarray& other) {
-        if (other.is_view()) {
+        if (shares_memory_with(other)) {
             const ndarray tmp(other);
             copy_elements_from(tmp);
         } else {

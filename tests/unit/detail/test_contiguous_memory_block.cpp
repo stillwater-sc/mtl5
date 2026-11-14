@@ -340,3 +340,44 @@ TEST_CASE("Stack block copy and move assignment", "[detail][memory][stack][829]"
     b = rb;
     REQUIRE(b[0] == 42);
 }
+
+namespace {
+// Not trivially copyable, so std::copy can't become memmove and an
+// overlapping element-by-element copy shows up.
+struct counted {
+    int v = 0;
+    counted() = default;
+    counted(int x) : v(x) {}
+    counted(const counted& o) : v(o.v) {}
+    counted& operator=(const counted& o) { v = o.v; return *this; }
+};
+using counted_block = contiguous_memory_block<counted, mtl::tag::on_heap>;
+} // namespace
+
+TEST_CASE("Assignment between overlapping non-owning blocks", "[detail][memory][829]") {
+    SECTION("copy, destination after the source") {
+        counted buf[4] = {1, 2, 3, 4};
+        counted_block src(buf, 3, true), dst(buf + 1, 3, true);
+        dst = src;
+        REQUIRE(buf[0].v == 1);
+        REQUIRE(buf[1].v == 1);
+        REQUIRE(buf[2].v == 2);   // 1 with a forward copy
+        REQUIRE(buf[3].v == 3);
+    }
+    SECTION("copy, destination before the source") {
+        counted buf[4] = {1, 2, 3, 4};
+        counted_block src(buf + 1, 3, true), dst(buf, 3, true);
+        dst = src;
+        REQUIRE(buf[0].v == 2);
+        REQUIRE(buf[1].v == 3);
+        REQUIRE(buf[2].v == 4);
+    }
+    SECTION("move, destination after the source") {
+        counted buf[4] = {1, 2, 3, 4};
+        counted_block src(buf, 3, true), dst(buf + 1, 3, true);
+        dst = std::move(src);
+        REQUIRE(buf[1].v == 1);
+        REQUIRE(buf[2].v == 2);
+        REQUIRE(buf[3].v == 3);
+    }
+}

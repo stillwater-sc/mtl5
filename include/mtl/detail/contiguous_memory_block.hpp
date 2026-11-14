@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -59,6 +60,19 @@ class contiguous_memory_block {
             store_.data_ = allocate_aligned<Value>(n);   // value-initialized, nullptr if n==0
             store_.size_ = n;
             store_.category_ = memory_category::own;
+        }
+    }
+
+    /// Copy or move n elements from src to dst, which may overlap: two
+    /// non-owning blocks can wrap overlapping parts of one buffer.
+    static void transfer(Value* src, std::size_t n, Value* dst, bool move) {
+        if (src == dst || n == 0) return;
+        if (std::less<const Value*>{}(dst, src)) {   // forward is safe
+            if (move) std::move(src, src + n, dst);
+            else      std::copy(src, src + n, dst);
+        } else {                                     // backward is safe
+            if (move) std::move_backward(src, src + n, dst + n);
+            else      std::copy_backward(src, src + n, dst + n);
         }
     }
 
@@ -134,13 +148,16 @@ public:
         if constexpr (on_stack) {
             std::copy_n(other.store_.data_, StaticSize, store_.data_);
         } else {
+            // Allocate the source's replacement first: if it throws, nothing
+            // has moved and nothing leaks.
+            Value* fresh = nullptr;
+            if constexpr (fixed_heap) fresh = allocate_aligned<Value>(StaticSize);
             store_.data_     = other.store_.data_;
             store_.size_     = other.store_.size_;
             store_.category_ = other.store_.category_;
-            other.store_.data_     = nullptr;
-            other.store_.size_     = 0;
+            other.store_.data_     = fresh;
+            other.store_.size_     = fixed_heap ? StaticSize : 0;
             other.store_.category_ = memory_category::own;
-            if constexpr (fixed_heap) other.allocate(StaticSize);
         }
     }
 
@@ -161,7 +178,7 @@ public:
                 swap(fresh);
             }
             if (other.store_.data_ && store_.data_) {
-                std::copy_n(other.store_.data_, store_.size_, store_.data_);
+                transfer(other.store_.data_, store_.size_, store_.data_, /*move=*/false);
             }
         }
         return *this;
@@ -178,7 +195,7 @@ public:
                 // its storage and its (moved-from) elements.
                 if (store_.size_ == other.store_.size_) {
                     if (other.store_.data_ && store_.data_)
-                        std::move(other.store_.data_, other.store_.data_ + store_.size_, store_.data_);
+                        transfer(other.store_.data_, store_.size_, store_.data_, /*move=*/true);
                     return *this;
                 }
                 assert(false && "contiguous_memory_block: move-assigning a block of another size to a non-owning block");

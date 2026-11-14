@@ -138,8 +138,12 @@ public:
     dense2D(dense2D&& other) noexcept(std::is_nothrow_move_constructible_v<memory_type>)
         : mem_(std::move(other.mem_)), dims_(other.dims_), ldim_(other.ldim_)
     {
-        if constexpr (!is_fixed) other.dims_.set_dimensions(0, 0);
-        other.ldim_ = 0;
+        // A fixed-size source keeps its shape (and, on the heap, gets fresh
+        // storage), so it keeps its leading dimension too.
+        if constexpr (!is_fixed) {
+            other.dims_.set_dimensions(0, 0);
+            other.ldim_ = 0;
+        }
     }
 
     /// A matrix over an external buffer with as many elements keeps its
@@ -152,8 +156,10 @@ public:
             dims_ = other.dims_;
             ldim_ = other.ldim_;
             if (!in_place) {
-                if constexpr (!is_fixed) other.dims_.set_dimensions(0, 0);
-                other.ldim_ = 0;
+                if constexpr (!is_fixed) {
+                    other.dims_.set_dimensions(0, 0);
+                    other.ldim_ = 0;
+                }
             }
         }
         return *this;
