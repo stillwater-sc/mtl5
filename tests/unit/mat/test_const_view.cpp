@@ -76,6 +76,26 @@ TEST_CASE("const_view works with the matrix operations", "[mat][const_view]") {
     REQUIRE(M.owns_memory());
     REQUIRE(M(1, 1) == 3.0);
 
+    // Across orientations, on a rectangular, non-symmetric source, so a
+    // transposed copy or a wrong leading dimension would show.
+    const double cbuf[6] = {1, 2, 3, 4, 5, 6};
+    const mat::const_matrix_view<double, tag::col_major> Bc(2, 3, cbuf);
+    const mat::dense2D<double> N(Bc);   // column-major view -> row-major owner
+    REQUIRE(N.owns_memory());
+    REQUIRE(N(0, 0) == 1.0);
+    REQUIRE(N(0, 1) == 3.0);
+    REQUIRE(N(0, 2) == 5.0);
+    REQUIRE(N(1, 0) == 2.0);
+    REQUIRE(N(1, 1) == 4.0);
+    REQUIRE(N(1, 2) == 6.0);
+
+    const auto Br = mat::const_view(2, 3, cbuf);   // row-major view -> column-major owner
+    const mat::dense2D<double, mat::parameters<tag::col_major>> P(Br);
+    for (std::size_t r = 0; r < 2; ++r)
+        for (std::size_t c = 0; c < 3; ++c)
+            REQUIRE(P(r, c) == cbuf[r * 3 + c]);
+    REQUIRE(P.data()[1] == 4.0);   // column-major storage: (1, 0) is second
+
     mat::dense2D<double> W{{1, 2}, {3, 4}};
     const auto Wv = mat::const_view(W);
     REQUIRE(Wv.data() == W.data());
