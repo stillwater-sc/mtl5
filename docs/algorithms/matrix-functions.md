@@ -210,7 +210,7 @@ It differs from Algorithm 6.1 in three places.
   - This limits how far the `α_p` refinement can lower `s`: at most `K`
     squarings below the norm-based choice, where `K` is 8 for float and 98 for
     double.
-  - A type without `numeric_limits` is not pre-scaled.
+  - A type whose `numeric_limits` radix is not 2 is not pre-scaled.
 
 The function:
 
@@ -268,9 +268,9 @@ the 8- and 16-bit formats.
 At run time:
 
 - **Unit roundoff.** `detail::unit_roundoff<T>()` is half of the machine
-  epsilon. For a type without a `numeric_limits` specialization,
-  `numeric_limits<T>::epsilon()` is zero, so the epsilon is measured instead by
-  halving until `1 + ε/2 == 1`.
+  epsilon, `numeric_limits<T>::epsilon()`. Every MTL5 element type has the
+  specialization (#838); the epsilon used to be measured, by halving, for a
+  type without one.
 - **Table choice.** `expm` uses the table with the largest `u` that does not
   exceed the type's own. That is conservative for a type between two tables.
 - **Below the last table.** A type with `u` below `2^-237` uses the last table,
@@ -292,7 +292,7 @@ degrees pay off there, and that is a possible extension.
   - the identities `exp(A) exp(-A) = I` and `exp(2A) = exp(A)^2`;
   - a 4×4 nonnormal matrix and a complex variant against a 60-digit mpmath
     reference, for double, float, `long double`, `std::complex<double>` and a
-    scalar without `numeric_limits`.
+    class-typed scalar with no `exp`.
 - **Cost.**
   - Up to about 6 matrix products for the powers and the Padé polynomials.
   - One LU factorization and `n` triangular solve pairs.

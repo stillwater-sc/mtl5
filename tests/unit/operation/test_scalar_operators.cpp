@@ -19,6 +19,7 @@
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/operators.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 
@@ -39,6 +40,12 @@ struct real_wrapper {
     real_wrapper& operator/=(real_wrapper o) { v /= o.v; return *this; }
     friend bool operator==(real_wrapper a, real_wrapper b) { return a.v == b.v; }
 };
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<real_wrapper> : public mtl5_test::limits_of<real_wrapper, double> {};
+
+namespace {
 
 static_assert(!std::is_arithmetic_v<real_wrapper>);
 static_assert(Scalar<real_wrapper> && Field<real_wrapper>);

@@ -15,37 +15,44 @@
 #include <stdexcept>
 #include <vector>
 #include <mtl/mtl.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 
 namespace {
 
-/// A class-typed real with no std::numeric_limits specialization and only the
-/// operations schur() may use: + - * /, comparisons, and abs and sqrt by ADL.
-struct unlimited {
+/// A class-typed real with only the operations schur() may use: + - * /,
+/// comparisons, and abs and sqrt by ADL, and its numeric_limits (#838).
+struct class_double {
     double v = 0.0;
-    unlimited() = default;
-    constexpr unlimited(double d) : v(d) {}
-    friend unlimited operator+(unlimited a, unlimited b) { return a.v + b.v; }
-    friend unlimited operator-(unlimited a, unlimited b) { return a.v - b.v; }
-    friend unlimited operator*(unlimited a, unlimited b) { return a.v * b.v; }
-    friend unlimited operator/(unlimited a, unlimited b) { return a.v / b.v; }
-    friend unlimited operator-(unlimited a) { return -a.v; }
-    unlimited& operator+=(unlimited o) { v += o.v; return *this; }
-    unlimited& operator-=(unlimited o) { v -= o.v; return *this; }
-    unlimited& operator*=(unlimited o) { v *= o.v; return *this; }
-    unlimited& operator/=(unlimited o) { v /= o.v; return *this; }
-    friend bool operator==(unlimited a, unlimited b) { return a.v == b.v; }
-    friend auto operator<=>(unlimited a, unlimited b) { return a.v <=> b.v; }
-    friend unlimited sqrt(unlimited a) { return std::sqrt(a.v); }
-    friend unlimited abs(unlimited a) { return std::abs(a.v); }
+    class_double() = default;
+    constexpr class_double(double d) : v(d) {}
+    friend class_double operator+(class_double a, class_double b) { return a.v + b.v; }
+    friend class_double operator-(class_double a, class_double b) { return a.v - b.v; }
+    friend class_double operator*(class_double a, class_double b) { return a.v * b.v; }
+    friend class_double operator/(class_double a, class_double b) { return a.v / b.v; }
+    friend class_double operator-(class_double a) { return -a.v; }
+    class_double& operator+=(class_double o) { v += o.v; return *this; }
+    class_double& operator-=(class_double o) { v -= o.v; return *this; }
+    class_double& operator*=(class_double o) { v *= o.v; return *this; }
+    class_double& operator/=(class_double o) { v /= o.v; return *this; }
+    friend bool operator==(class_double a, class_double b) { return a.v == b.v; }
+    friend auto operator<=>(class_double a, class_double b) { return a.v <=> b.v; }
+    friend class_double sqrt(class_double a) { return std::sqrt(a.v); }
+    friend class_double abs(class_double a) { return std::abs(a.v); }
 };
-static_assert(!std::numeric_limits<unlimited>::is_specialized);
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<class_double> : public mtl5_test::limits_of<class_double, double> {};
+
+namespace {
+static_assert(Scalar<class_double>);   // a class type, with its own numeric_limits (#838)
 
 long double ld(float x) { return x; }
 long double ld(double x) { return x; }
 long double ld(long double x) { return x; }
-long double ld(unlimited x) { return x.v; }
+long double ld(class_double x) { return x.v; }
 
 template <typename T>
 long double eps_of() {
@@ -198,12 +205,12 @@ TEST_CASE("schur: entries near overflow and underflow", "[operation][schur]") {
     }
 }
 
-TEST_CASE("schur: a scalar without numeric_limits", "[operation][schur]") {
-    // The epsilon is measured, and only + - * /, comparisons, abs and sqrt are
-    // used, so the generic path compiles and converges for such a type.
-    REQUIRE(detail::machine_epsilon<unlimited>().v == std::numeric_limits<double>::epsilon());
+TEST_CASE("schur: a class-typed scalar", "[operation][schur]") {
+    // The epsilon is the type's own, and only + - * /, comparisons, abs and
+    // sqrt are used, so the generic path compiles and converges for such a type.
+    REQUIRE(detail::machine_epsilon<class_double>().v == std::numeric_limits<double>::epsilon());
     auto def = [](const auto& A) { return schur(A); };
-    check_families<unlimited>(def, 12, 10);
+    check_families<class_double>(def, 12, 10);
 }
 
 TEST_CASE("schur: eigenvalues from the blocks", "[operation][schur]") {

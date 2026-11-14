@@ -1,32 +1,20 @@
 #pragma once
 // MTL5 -- Machine epsilon and unit roundoff of a scalar type
 //
-// Algorithms that adapt to the working precision need the precision of a type
-// that may not have a std::numeric_limits specialization. For such a type
-// numeric_limits<T>::epsilon() is a value-initialized T, i.e. zero, and a
-// zero epsilon silently turns a tolerance or a precision-dependent choice into
-// its exact-arithmetic limit. These helpers measure it instead.
+// Algorithms that adapt to the working precision read it from
+// std::numeric_limits, which every MTL5 element type specializes (#838).
 #include <limits>
 #include <mtl/math/identity.hpp>
 
 namespace mtl::detail {
 
-/// The machine epsilon of Real: the spacing of Real's values at 1. Taken from
-/// std::numeric_limits when Real has a specialization; otherwise measured by
-/// halving until 1 + eps/2 rounds to 1. The halving is capped so an
-/// exact-arithmetic type cannot loop forever.
+/// The machine epsilon of Real: the spacing of Real's values at 1, from
+/// std::numeric_limits. Every MTL5 element type has a specialization (#838);
+/// a measured fallback for types without one was removed with that rule.
 template <typename Real>
+    requires std::numeric_limits<Real>::is_specialized
 Real machine_epsilon() {
-    if constexpr (std::numeric_limits<Real>::is_specialized) {
-        return std::numeric_limits<Real>::epsilon();
-    } else {
-        const Real one = math::one<Real>();
-        const Real two = one + one;
-        Real eps = one;
-        for (int i = 0; i < 1024 && one + eps / two > one; ++i)
-            eps = eps / two;
-        return eps;
-    }
+    return std::numeric_limits<Real>::epsilon();
 }
 
 /// The unit roundoff u of Real, the bound on the relative error of one

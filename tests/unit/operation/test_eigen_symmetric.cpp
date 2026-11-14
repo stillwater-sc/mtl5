@@ -13,6 +13,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/trans.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 
@@ -270,36 +271,43 @@ TEST_CASE("eigen_symmetric: exactly zero eigenvalues still deflate (#565)", "[op
 }
 
 namespace {
-/// A class-typed real with no std::numeric_limits specialization, so its
-/// numeric_limits<>::epsilon() is a value-initialized zero.
-struct unlimited {
+/// A class-typed real. It had no std::numeric_limits specialization, so its
+/// epsilon() was a value-initialized zero (#565); every MTL5 element type now
+/// has one (#838), and the default tolerance is the type's own epsilon.
+struct class_double {
     double v = 0.0;
-    unlimited() = default;
-    constexpr unlimited(double d) : v(d) {}
-    friend unlimited operator+(unlimited a, unlimited b) { return a.v + b.v; }
-    friend unlimited operator-(unlimited a, unlimited b) { return a.v - b.v; }
-    friend unlimited operator*(unlimited a, unlimited b) { return a.v * b.v; }
-    friend unlimited operator/(unlimited a, unlimited b) { return a.v / b.v; }
-    friend unlimited operator-(unlimited a) { return -a.v; }
-    unlimited& operator+=(unlimited o) { v += o.v; return *this; }
-    unlimited& operator-=(unlimited o) { v -= o.v; return *this; }
-    unlimited& operator*=(unlimited o) { v *= o.v; return *this; }
-    unlimited& operator/=(unlimited o) { v /= o.v; return *this; }
-    friend bool operator==(unlimited a, unlimited b) { return a.v == b.v; }
-    friend auto operator<=>(unlimited a, unlimited b) { return a.v <=> b.v; }
-    friend unlimited sqrt(unlimited a) { return std::sqrt(a.v); }
-    friend unlimited abs(unlimited a) { return std::abs(a.v); }
+    class_double() = default;
+    constexpr class_double(double d) : v(d) {}
+    friend class_double operator+(class_double a, class_double b) { return a.v + b.v; }
+    friend class_double operator-(class_double a, class_double b) { return a.v - b.v; }
+    friend class_double operator*(class_double a, class_double b) { return a.v * b.v; }
+    friend class_double operator/(class_double a, class_double b) { return a.v / b.v; }
+    friend class_double operator-(class_double a) { return -a.v; }
+    class_double& operator+=(class_double o) { v += o.v; return *this; }
+    class_double& operator-=(class_double o) { v -= o.v; return *this; }
+    class_double& operator*=(class_double o) { v *= o.v; return *this; }
+    class_double& operator/=(class_double o) { v /= o.v; return *this; }
+    friend bool operator==(class_double a, class_double b) { return a.v == b.v; }
+    friend auto operator<=>(class_double a, class_double b) { return a.v <=> b.v; }
+    friend class_double sqrt(class_double a) { return std::sqrt(a.v); }
+    friend class_double abs(class_double a) { return std::abs(a.v); }
 };
-static_assert(!std::numeric_limits<unlimited>::is_specialized);
 } // namespace
 
-TEST_CASE("eigen_symmetric: default tolerance for a scalar without numeric_limits (#565)",
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<class_double> : public mtl5_test::limits_of<class_double, double> {};
+
+namespace {
+static_assert(Scalar<class_double>);   // a class type, with its own numeric_limits (#838)
+} // namespace
+
+TEST_CASE("eigen_symmetric: default tolerance for a class-typed scalar (#565)",
           "[operation][eigen]") {
-    // epsilon() of an unspecialized type is zero. A zero tolerance deflates only
-    // exact zeros, so the default max_iter ran out with eigenvalues ~5e-8 off
-    // and nothing reported it. The default is now the measured spacing at 1, and
-    // a non-positive tol maps to it as well.
-    REQUIRE(detail::default_eigen_tolerance<unlimited>().v == std::numeric_limits<double>::epsilon());
+    // A zero tolerance deflates only exact zeros, so the default max_iter ran
+    // out with eigenvalues ~5e-8 off and nothing reported it (#565, when the
+    // type had no numeric_limits). The default is the type's epsilon, and a
+    // non-positive tol maps to it as well.
+    REQUIRE(detail::default_eigen_tolerance<class_double>().v == std::numeric_limits<double>::epsilon());
 
     // About a third of random 10x10 matrices fail to converge at tol = 0 within
     // the default max_iter (measured), so ten of them catch the old default.
@@ -307,7 +315,7 @@ TEST_CASE("eigen_symmetric: default tolerance for a scalar without numeric_limit
     std::mt19937_64 gen(3);
     for (int t = 0; t < 10; ++t) {
         mat::dense2D<double> A(n, n);
-        mat::dense2D<unlimited> U(n, n);
+        mat::dense2D<class_double> U(n, n);
         for (std::size_t i = 0; i < n; ++i)
             for (std::size_t j = 0; j <= i; ++j) {
                 const double v = double(gen() >> 11) * 0x1.0p-53 - 0.5;
@@ -317,9 +325,9 @@ TEST_CASE("eigen_symmetric: default tolerance for a scalar without numeric_limit
         auto ref = eigen_symmetric(A).eigenvalues;
 
         auto e_default = eigen_symmetric(U).eigenvalues;
-        auto e_zero    = eigen_symmetric(U, unlimited(0.0)).eigenvalues;
+        auto e_zero    = eigen_symmetric(U, class_double(0.0)).eigenvalues;
         auto e_values  = eigenvalue_symmetric(U);
-        auto e_generic = eigenvalue_symmetric_generic(U, unlimited(0.0));
+        auto e_generic = eigenvalue_symmetric_generic(U, class_double(0.0));
         for (std::size_t i = 0; i < n; ++i) {
             REQUIRE(std::abs(e_default(i).v - ref(i)) < 1e-14);
             REQUIRE(std::abs(e_zero(i).v    - ref(i)) < 1e-14);

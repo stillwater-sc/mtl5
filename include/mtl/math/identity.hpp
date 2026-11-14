@@ -29,16 +29,29 @@ struct identity_t<mult<T>, T> {
 
 // -- Max identity (lowest value) -----------------------------------------
 
+// The identity of max is the least value: -infinity where the type has one
+// (#838: lowest() is not, since max(-inf, lowest) = lowest), else lowest().
 template <typename T>
 struct identity_t<max_op<T>, T> {
-    constexpr T operator()() const { return std::numeric_limits<T>::lowest(); }
+    static_assert(std::numeric_limits<T>::is_specialized,
+                  "identity of max: T needs a std::numeric_limits specialization");
+    constexpr T operator()() const {
+        if constexpr (std::numeric_limits<T>::has_infinity) return -std::numeric_limits<T>::infinity();
+        else return std::numeric_limits<T>::lowest();
+    }
 };
 
 // -- Min identity (max value) --------------------------------------------
 
+// The identity of min is the greatest value: +infinity where the type has one.
 template <typename T>
 struct identity_t<min_op<T>, T> {
-    constexpr T operator()() const { return std::numeric_limits<T>::max(); }
+    static_assert(std::numeric_limits<T>::is_specialized,
+                  "identity of min: T needs a std::numeric_limits specialization");
+    constexpr T operator()() const {
+        if constexpr (std::numeric_limits<T>::has_infinity) return std::numeric_limits<T>::infinity();
+        else return std::numeric_limits<T>::max();
+    }
 };
 
 // -- Convenience functions -----------------------------------------------

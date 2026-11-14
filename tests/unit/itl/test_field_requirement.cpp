@@ -45,6 +45,7 @@
 #include <mtl/itl/krylov/minres.hpp>
 #include <mtl/itl/krylov/qmr.hpp>
 #include <mtl/itl/krylov/tfqmr.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 using mtl5_test::double_shim;
@@ -55,7 +56,8 @@ namespace {
 /// type (so no hardware path claims it) that divides.
 ///
 /// Deliberately minimal, and not mtl5_test::double_shim (#712): it has the five
-/// field operators and nothing else -- no comparison, no sqrt, no limits -- so a
+/// field operators and the numeric_limits every MTL5 scalar has (#838), and
+/// nothing else -- no comparison, no sqrt -- so a
 /// gate that demands more than Field rejects it and fails the assert below. The
 /// shim has all of those, so it would not notice. It is asserted as a second
 /// accepted type, a realistic one with explicit construction only.
@@ -64,6 +66,12 @@ struct emul {
     emul() = default;
     emul(double d) : x(d) {}
 };
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<emul> : public mtl5_test::limits_of<emul, double> {};
+
+namespace {
 inline emul operator+(emul a, emul b) { return emul{a.x + b.x}; }
 inline emul operator-(emul a, emul b) { return emul{a.x - b.x}; }
 inline emul operator-(emul a)         { return emul{-a.x}; }

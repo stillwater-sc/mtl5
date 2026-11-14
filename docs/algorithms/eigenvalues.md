@@ -165,8 +165,8 @@ formation of `Q`.
 ### User-defined number types
 
 The in-house path uses only `+ − × ÷`, comparisons, and `abs` and `sqrt` found
-by argument-dependent lookup, and measures epsilon for a type without
-`numeric_limits`. Measured against Universal's number systems on the same
+by argument-dependent lookup, and reads epsilon from the type's
+`numeric_limits`, which every MTL5 element type has (#838). Measured against Universal's number systems on the same
 families (worst case, in units of n ε of each type; Universal is not an MTL5
 dependency, so this was a one-off run, not part of MTL5's test suite):
 

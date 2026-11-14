@@ -44,17 +44,15 @@ template <typename T>
 lanv2_constants<T> make_lanv2_constants() {
     lanv2_constants<T> c;
     c.eps = machine_epsilon<T>();
-    if constexpr (std::numeric_limits<T>::is_specialized) {
-        // safmn2 = the power of two nearest sqrt(safmin / eps) from below, as
-        // dlanv2 computes it with logarithms; halving keeps it exact without log.
-        const T target = std::numeric_limits<T>::min() / c.eps;
-        if (target > T(0)) {
-            T p = T(1);
-            while (p * p > target) p = p * T(0.5);
-            c.safmn2 = p;
-            c.safmx2 = T(1) / p;
-            c.have_range = c.safmx2 > c.safmn2;
-        }
+    // safmn2 = the power of two nearest sqrt(safmin / eps) from below, as
+    // dlanv2 computes it with logarithms; halving keeps it exact without log.
+    const T target = std::numeric_limits<T>::min() / c.eps;
+    if (target > T(0)) {
+        T p = T(1);
+        while (p * p > target) p = p * T(0.5);
+        c.safmn2 = p;
+        c.safmx2 = T(1) / p;
+        c.have_range = c.safmx2 > c.safmn2;
     }
     return c;
 }

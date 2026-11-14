@@ -8,6 +8,7 @@
 // posix_memalign / std::aligned_alloc).
 
 #include <cstddef>
+#include <limits>
 #include <memory>        // uninitialized_value_construct_n, destroy_n
 #include <new>           // ::operator new(std::align_val_t), std::align_val_t
 #include <type_traits>   // remove_cv_t
@@ -34,6 +35,9 @@ template <typename T>
 [[nodiscard]] T* allocate_aligned(std::size_t n) {
     using U = std::remove_cv_t<T>;
     if (n == 0) return nullptr;
+    // n * sizeof(U) must not wrap into a small allocation (#838).
+    if (n > std::numeric_limits<std::size_t>::max() / sizeof(U))
+        throw_or_abort(std::bad_array_new_length());
     void* raw = ::operator new(n * sizeof(U), std::align_val_t(block_alignment<U>));
     U* p = static_cast<U*>(raw);
 #if MTL5_HAS_EXCEPTIONS
@@ -77,6 +81,8 @@ public:
 
     [[nodiscard]] T* allocate(std::size_t n) {
         if (n == 0) return nullptr;
+        if (n > std::numeric_limits<std::size_t>::max() / sizeof(T))
+            throw_or_abort(std::bad_array_new_length());   // n * sizeof(T) would wrap (#838)
         return static_cast<T*>(::operator new(n * sizeof(T), std::align_val_t(Align)));
     }
     void deallocate(T* p, std::size_t /*n*/) noexcept {
