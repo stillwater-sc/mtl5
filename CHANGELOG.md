@@ -95,6 +95,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`sparse_vector` and `strided_vector_ref` fixes** (#830, from the QA sweep #767).
+  - **Index checks:** `sparse_vector::insert` and `operator[]` check the index in every build (the #825/#826 policy, per insert since there is no finalize step); a release build used to store index 10 in a size-3 vector. A signed `size_type` rejects negatives. `exists()` returns false outside the vector.
+  - **`-fno-exceptions`:** `sparse_vector` threw directly and did not compile there; it uses `detail::throw_or_abort`, and the no-exceptions test builds it.
+  - **`crop`:** takes a magnitude threshold, so `std::complex` values compile; keeps NaN entries instead of dropping them; compacts in place. `reserve(nnz)` is new.
+  - **`strided_vector_ref`:** the iterator is a base pointer and an index, so `end()` of a column of a row-major matrix no longer forms a pointer beyond one past the end, and stride 0 has a defined distance. An empty `sub_vector` at the end keeps the base pointer.
+  - **CI:** the publish step checks that a repeat publish leaves `systems.md` and the card page byte for byte. It also checks `DRY_RUN`, a blank or different card cell, an older session, and the warning for a `systems.md` without a card column.
+
 - **Assigning to a vector or matrix over an external buffer detached it, leaving the buffer unchanged** (#829, from the QA sweeps #767 and #816). `double buf[3]; dense_vector<double> v(3, buf); v = w;` gave `v` a private copy, and `bd.block(0) = X` on a `block_diagonal2D` had no effect.
   - **Copy and move assignment write through** an `external` or `view` `contiguous_memory_block` of the same size, so `dense_vector`, `dense2D` and `block_diagonal2D::block(k)` keep writing the caller's buffer, as expression assignment already did.
   - **Another size throws `std::domain_error`** for copy and expression assignment, instead of detaching. Move assignment is `noexcept`, so it asserts. `change_dim` and `realloc`, explicit resizes, still detach.

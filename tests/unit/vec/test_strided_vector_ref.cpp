@@ -115,3 +115,64 @@ TEST_CASE("strided_vector_ref traits", "[vec][strided]") {
     using ref_t = vec::strided_vector_ref<double>;
     STATIC_REQUIRE(std::is_same_v<traits::category_t<ref_t>, tag::dense>);
 }
+
+// -- #830: the iterator range, size 0 and 1, const access, expressions ---
+
+#include <algorithm>
+#include <mtl/vec/dense_vector.hpp>
+#include <mtl/operation/dot.hpp>
+
+TEST_CASE("strided_vector_ref sizes 0 and 1", "[vec][strided][830]") {
+    double one = 4.0;
+    vec::strided_vector_ref<double> e(&one, 0, 3);
+    REQUIRE(e.begin() == e.end());
+    REQUIRE(e.end() - e.begin() == 0);
+    vec::strided_vector_ref<double> s(&one, 1, 3);
+    REQUIRE(s.end() - s.begin() == 1);
+    REQUIRE(*s.begin() == 4.0);
+}
+
+TEST_CASE("strided_vector_ref stride 0 views one element", "[vec][strided][830]") {
+    double x = 2.0;
+    const vec::strided_vector_ref<double> b(&x, 5, 0);
+    REQUIRE(b.end() - b.begin() == 5);   // divided by the stride before #830
+    double s = 0;
+    for (double v : b) s += v;
+    REQUIRE(s == 10.0);
+}
+
+TEST_CASE("strided_vector_ref over the last column of a row-major matrix", "[vec][strided][830]") {
+    // Before #830 end() was data + 3 + 3 * 4, past one past the end of the
+    // 12-element buffer. Now no pointer is formed beyond the last element read.
+    mat::dense2D<double> A = {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}};
+    vec::strided_vector_ref<double> col3(A.data() + 3, 3, 4);
+    std::vector<double> got(col3.begin(), col3.end());
+    REQUIRE(got == std::vector<double>{4, 8, 12});
+    REQUIRE(std::count(col3.begin(), col3.end(), 8.0) == 1);
+    auto last = col3.end();
+    --last;
+    REQUIRE(*last == 12.0);
+    REQUIRE(col3.begin()[2] == 12.0);
+}
+
+TEST_CASE("strided_vector_ref const iterators and const sub_vector", "[vec][strided][830]") {
+    double data[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    const vec::strided_vector_ref<double> v(data, 4, 2);   // 0 2 4 6
+    double s = 0;
+    for (auto it = v.begin(); it != v.end(); ++it) s += *it;
+    REQUIRE(s == 12.0);
+    auto sub = vec::sub_vector(v, 1, 3);                   // 2 4, read-only
+    STATIC_REQUIRE(std::is_same_v<decltype(sub), vec::strided_vector_ref<const double>>);
+    REQUIRE(sub.size() == 2);
+    REQUIRE(sub(0) == 2.0);
+    REQUIRE(sub(1) == 4.0);
+    auto tail = vec::sub_vector(v, 4, 4);                  // empty, at the end
+    REQUIRE(tail.size() == 0);
+    REQUIRE(tail.begin() == tail.end());
+}
+
+TEST_CASE("strided_vector_ref as an operand", "[vec][strided][830]") {
+    mat::dense2D<double> A = {{1, 2}, {3, 4}, {5, 6}};
+    const vec::strided_vector_ref<double> c0(A.data(), 3, 2), c1(A.data() + 1, 3, 2);
+    REQUIRE(dot(c0, c1) == 1 * 2 + 3 * 4 + 5 * 6);
+}
