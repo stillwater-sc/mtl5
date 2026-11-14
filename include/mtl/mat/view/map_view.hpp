@@ -2,13 +2,20 @@
 // MTL5 -- Map view: reindex matrix access via row and column permutation vectors.
 // map_view(A, row_map, col_map): A_view(i,j) = A(row_map[i], col_map[j])
 #include <cstddef>
+#include <stdexcept>
 #include <vector>
+#include <mtl/config.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
 
 namespace mtl::mat::view {
 
 /// Non-owning view with index remapping via permutation vectors.
+///
+/// Every map entry must index the matrix, checked once at construction in
+/// every build (#826); an entry may repeat. Element access (r, c) is checked
+/// when bounds_checking is on, as dense2D's is.
 template <typename Matrix>
 class map_view {
 public:
@@ -20,9 +27,20 @@ public:
     map_view(const Matrix& m,
              const std::vector<size_type>& row_map,
              const std::vector<size_type>& col_map)
-        : ref_(m), row_map_(row_map), col_map_(col_map) {}
+        : ref_(m), row_map_(row_map), col_map_(col_map) {
+        for (size_type r : row_map_)
+            if (r >= m.num_rows())
+                ::mtl::detail::throw_or_abort(std::out_of_range("map_view: row map entry out of range"));
+        for (size_type c : col_map_)
+            if (c >= m.num_cols())
+                ::mtl::detail::throw_or_abort(std::out_of_range("map_view: column map entry out of range"));
+    }
 
     value_type operator()(size_type r, size_type c) const {
+        if constexpr (bounds_checking) {
+            if (r >= row_map_.size() || c >= col_map_.size())
+                ::mtl::detail::throw_or_abort(std::out_of_range("map_view: index out of range"));
+        }
         return ref_(row_map_[r], col_map_[c]);
     }
 

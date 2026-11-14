@@ -28,6 +28,7 @@
 // Universal's mxfloat. They are small enough to check exhaustively, and
 // tests/unit/mat/test_block_matrix_view.cpp does.
 
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -55,7 +56,10 @@ struct mxint8 {
     static constexpr std::size_t block_size  = 32;
     static constexpr std::size_t block_bytes = 1 + 32;
 
+    /// Element j < block_size of the block at src: asserted, as element
+    /// access is (#826). For j >= 32 it read past the block.
     static float decode_element(const std::byte* src, std::size_t j) noexcept {
+        assert(j < block_size);
         const auto e = static_cast<std::uint8_t>(src[0]);
         if (e == 0xFF) return std::numeric_limits<float>::quiet_NaN();
         std::int8_t q;
@@ -77,7 +81,9 @@ struct mxfp4 {
     static constexpr std::size_t block_size  = 32;
     static constexpr std::size_t block_bytes = 1 + 16;
 
+    /// Element j < block_size of the block at src (asserted, #826).
     static float decode_element(const std::byte* src, std::size_t j) noexcept {
+        assert(j < block_size);
         const auto e = static_cast<std::uint8_t>(src[0]);
         if (e == 0xFF) return std::numeric_limits<float>::quiet_NaN();
         const auto byte = static_cast<std::uint8_t>(src[1 + (j % 16)]);

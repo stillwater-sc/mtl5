@@ -85,3 +85,50 @@ TEST_CASE("permutation_matrix: P^{-1} * P * x = x", "[mat][permutation]") {
     for (std::size_t i = 0; i < 4; ++i)
         REQUIRE_THAT(y(i), Catch::Matchers::WithinAbs(x(i), 1e-10));
 }
+
+// -- #826: braced construction, validation, P*A ---------------------------
+
+#include <mtl/operation/reorder.hpp>
+#include <stdexcept>
+
+TEST_CASE("permutation_matrix: a braced list is the permutation", "[mat][permutation][826]") {
+    // {0} used to pick the size constructor: a 0x0 matrix.
+    permutation_matrix<double> P1({0});
+    REQUIRE(P1.num_rows() == 1);
+    REQUIRE(P1(0, 0) == 1.0);
+    permutation_matrix<double> P3{2, 0, 1};
+    REQUIRE(P3.num_rows() == 3);
+    REQUIRE(P3(0, 2) == 1.0);
+    REQUIRE(P3(1, 0) == 1.0);
+    // The identity of size n is P(n), with parentheses.
+    permutation_matrix<double> I(3);
+    REQUIRE(I.num_rows() == 3);
+    REQUIRE(I(2, 2) == 1.0);
+}
+
+TEST_CASE("permutation_matrix: empty", "[mat][permutation][826]") {
+    permutation_matrix<double> E(std::vector<std::size_t>{});
+    REQUIRE(E.num_rows() == 0);
+    REQUIRE(E.inverse().num_rows() == 0);
+    permutation_matrix<double> Z(std::size_t{0});
+    REQUIRE(Z.num_rows() == 0);
+}
+
+TEST_CASE("permutation_matrix: an invalid permutation is rejected", "[mat][permutation][826]") {
+    // {2} used to be the 2x2 identity; a duplicate or out-of-range entry made
+    // inverse() and P * x index out of bounds.
+    REQUIRE_THROWS_AS(permutation_matrix<double>({2}), std::invalid_argument);
+    REQUIRE_THROWS_AS(permutation_matrix<double>(std::vector<std::size_t>{0, 0}), std::invalid_argument);
+    REQUIRE_THROWS_AS(permutation_matrix<double>(std::vector<std::size_t>{0, 3, 1}), std::invalid_argument);
+    REQUIRE_THROWS_AS((permutation_matrix<double>{1, 1, 0}), std::invalid_argument);
+}
+
+TEST_CASE("permutation_matrix: P * A permutes the rows", "[mat][permutation][826]") {
+    permutation_matrix<double> P{2, 0, 1};
+    mat::dense2D<double> A{{1, 2}, {3, 4}, {5, 6}};
+    const auto B = P * A;   // operation/reorder.hpp
+    REQUIRE(B.num_rows() == 3);
+    REQUIRE(B(0, 0) == 5.0);
+    REQUIRE(B(1, 1) == 2.0);
+    REQUIRE(B(2, 0) == 3.0);
+}

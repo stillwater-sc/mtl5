@@ -443,3 +443,83 @@ TEST_CASE("a fused kernel's scratch comes from the caller, or from mult for one 
         for (std::size_t r = 0; r < 3; ++r) CHECK(yd(r) == double(yref(r)));
     }
 }
+
+// -- #826: shapes, precision of a double y, non-contiguous x ----------------
+
+#include <mtl/vec/strided_vector_ref.hpp>
+
+TEST_CASE("block_matrix_view: no rows, no columns, one block", "[block][view][826]") {
+    const std::vector<std::byte> none;
+    const block_matrix_view<mtl::mx::mxint8> R0(0, 64, none);
+    mtl::vec::dense_vector<float> x64(64, 1.0f), y0(0);
+    mtl::mult(R0, x64, y0);
+    REQUIRE(R0.num_rows() == 0);
+    REQUIRE(mtl::convert<double>(R0).num_rows() == 0);
+    const block_matrix_view<mtl::mx::mxint8> C0(3, 0, none);
+    mtl::vec::dense_vector<float> x0(0), y3(3, 7.0f);
+    mtl::mult(C0, x0, y3);   // empty rows: zero
+    for (std::size_t r = 0; r < 3; ++r) REQUIRE(y3(r) == 0.0f);
+    const auto bytes = random_mxint8(1, 32, 3);
+    const block_matrix_view<mtl::mx::mxint8> One(1, 32, bytes);
+    const auto D = mtl::convert<double>(One);
+    mtl::vec::dense_vector<double> xd(32, 1.0), y(1);
+    mtl::mult(One, xd, y);
+    double ref = 0;
+    for (std::size_t c = 0; c < 32; ++c) ref += D(0, c);
+    REQUIRE(y(0) == ref);   // exact: decoded values are short binary fractions
+}
+
+TEST_CASE("block_matrix_view: float x into a double y sums in double", "[block][mult][826]") {
+    // The SIMD branch tested only x and summed in float. Mixed signs and
+    // magnitudes make the float sum lose bits a double sum keeps.
+    const std::size_t rows = 5, cols = 256;
+    const auto bytes = random_mxint8(rows, cols, 11);
+    const block_matrix_view<mtl::mx::mxint8> A(rows, cols, bytes);
+    const auto D = mtl::convert<double>(A);
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<float> d(-1.0f, 1.0f);
+    mtl::vec::dense_vector<float> x(cols);
+    for (std::size_t c = 0; c < cols; ++c) x(c) = d(rng) * std::ldexp(1.0f, int(c % 9) - 4);
+    mtl::vec::dense_vector<double> y(rows);
+    mtl::mult(A, x, y);
+    // The generic branch: acc + a * b with a, b float (generic_fma does not
+    // convert), so each product is rounded to float and summed in double, in
+    // column order.
+    for (std::size_t r = 0; r < rows; ++r) {
+        double acc = 0;
+        for (std::size_t c = 0; c < cols; ++c) {
+            const float p = static_cast<float>(D(r, c)) * x(c);
+            acc = acc + static_cast<double>(p);
+        }
+        INFO("row " << r);
+        REQUIRE(y(r) == acc);
+    }
+}
+
+TEST_CASE("block_matrix_view: a non-contiguous float x", "[block][mult][826]") {
+    const std::size_t rows = 4, cols = 64;
+    const auto bytes = random_mxint8(rows, cols, 13);
+    const block_matrix_view<mtl::mx::mxint8> A(rows, cols, bytes);
+    std::vector<float> storage(2 * cols);
+    for (std::size_t c = 0; c < cols; ++c) storage[2 * c] = float(int(c % 7) - 3) / 8.0f;
+    mtl::vec::strided_vector_ref<float> xs(storage.data(), cols, 2);
+    mtl::vec::dense_vector<float> xc(cols), ys(rows), yc(rows);
+    for (std::size_t c = 0; c < cols; ++c) xc(c) = storage[2 * c];
+    mtl::mult(A, xs, ys);
+    mtl::mult(A, xc, yc);
+    // Short binary fractions: both sums are exact in float, whatever the order.
+    for (std::size_t r = 0; r < rows; ++r) REQUIRE(ys(r) == yc(r));
+}
+
+TEST_CASE("decode_element agrees with decode up to the last element", "[block][mx][826]") {
+    const auto i8 = random_mxint8(1, 32, 17);
+    const auto f4 = random_mxfp4(1, 32, 19);
+    std::array<float, 32> a{}, b{};
+    mtl::mx::mxint8::decode(i8.data(), a.data());
+    mtl::mx::mxfp4::decode(f4.data(), b.data());
+    for (std::size_t j = 0; j < 32; ++j) {   // j = 31 is the last valid index
+        INFO("j = " << j);
+        REQUIRE(mtl::mx::mxint8::decode_element(i8.data(), j) == a[j]);
+        REQUIRE(mtl::mx::mxfp4::decode_element(f4.data(), j) == b[j]);
+    }
+}

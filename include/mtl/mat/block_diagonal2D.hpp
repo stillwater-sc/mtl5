@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- Block diagonal matrix: stores a sequence of dense2D blocks on the diagonal.
 // Off-diagonal blocks are implicitly zero. Efficient matvec: apply each block independently.
+#include <algorithm>
 #include <cstddef>
 #include <vector>
 #include <cassert>
@@ -38,21 +39,29 @@ public:
         recompute_offsets();
     }
 
-    /// Add a block to the diagonal.
+    /// Add a block to the diagonal. O(1): it appends the new block's
+    /// offsets, where it recomputed all of them, O(n) per call (#826).
     void add_block(dense2D<Value> block) {
+        row_offsets_.push_back(total_rows_);
+        col_offsets_.push_back(total_cols_);
+        total_rows_ += block.num_rows();
+        total_cols_ += block.num_cols();
         blocks_.push_back(std::move(block));
-        recompute_offsets();
     }
 
+    /// Element (r, c). The block holding row r is found by binary search over
+    /// the row offsets: O(log blocks), where it scanned every block (#826).
+    /// A block with no rows holds no element, so the last block starting at
+    /// or before r is the only candidate.
     value_type operator()(size_type r, size_type c) const {
-        for (size_type b = 0; b < blocks_.size(); ++b) {
-            size_type r0 = row_offsets_[b];
-            size_type c0 = col_offsets_[b];
-            size_type br = blocks_[b].num_rows();
-            size_type bc = blocks_[b].num_cols();
-            if (r >= r0 && r < r0 + br && c >= c0 && c < c0 + bc)
-                return blocks_[b](r - r0, c - c0);
-        }
+        if (blocks_.empty()) return math::zero<Value>();
+        const auto it = std::upper_bound(row_offsets_.begin(), row_offsets_.end(), r);
+        if (it == row_offsets_.begin()) return math::zero<Value>();
+        const auto b = static_cast<size_type>(it - row_offsets_.begin()) - 1;
+        const size_type r0 = row_offsets_[b];
+        const size_type c0 = col_offsets_[b];
+        if (r < r0 + blocks_[b].num_rows() && c >= c0 && c < c0 + blocks_[b].num_cols())
+            return blocks_[b](r - r0, c - c0);
         return math::zero<Value>();
     }
 
@@ -65,7 +74,23 @@ public:
 
     /// Access the k-th block.
     const dense2D<Value>& block(size_type k) const { return blocks_[k]; }
-    dense2D<Value>&       block(size_type k)       { return blocks_[k]; }
+
+    /// Write access to the k-th block's elements: a dense2D over the block's
+    /// storage. Writing its elements writes the block. It used to return the
+    /// block itself, and change_dim on that left the offsets and the total
+    /// shape stale (#826); resizing this one detaches it from the block,
+    /// which keeps its shape. Replace a block's shape with set_block.
+    dense2D<Value> block(size_type k) {
+        assert(k < blocks_.size());
+        return dense2D<Value>(blocks_[k].num_rows(), blocks_[k].num_cols(), blocks_[k].data());
+    }
+
+    /// Replace the k-th block, of any shape, and update the offsets.
+    void set_block(size_type k, dense2D<Value> block) {
+        assert(k < blocks_.size());
+        blocks_[k] = std::move(block);
+        recompute_offsets();
+    }
 
 private:
     std::vector<dense2D<Value>> blocks_;

@@ -2,6 +2,8 @@
 // MTL5 -- Hermitian view: reads upper triangle and mirrors with conjugation.
 // For real matrices, behaves as a symmetric view.
 #include <cstddef>
+#include <stdexcept>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
@@ -10,6 +12,12 @@ namespace mtl::mat::view {
 
 /// Non-owning hermitian view: A(r,c) = conj(A(c,r)) when r > c.
 /// Assumes the upper triangle of the underlying matrix is stored.
+///
+/// The matrix must be square, checked once at construction in every build
+/// (#826): for a 3x2 A, H(2,0) read A(0,2). The diagonal is returned as
+/// stored. A Hermitian matrix has a real diagonal, so for one the view is
+/// exact; for a matrix whose stored diagonal is not real, the view is not
+/// Hermitian there, and it does not take the real part for you.
 template <typename Matrix>
 class hermitian_view {
 public:
@@ -18,7 +26,10 @@ public:
     using const_reference = value_type;
     using reference       = value_type;
 
-    explicit hermitian_view(const Matrix& m) : ref_(m) {}
+    explicit hermitian_view(const Matrix& m) : ref_(m) {
+        if (m.num_rows() != m.num_cols())
+            ::mtl::detail::throw_or_abort(std::invalid_argument("hermitian_view: matrix is not square"));
+    }
 
     value_type operator()(size_type r, size_type c) const {
         if (r <= c)

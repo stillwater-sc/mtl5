@@ -98,7 +98,11 @@ TEST_CASE("view factories still accept a named matrix", "[mat][view][695]") {
     REQUIRE(mtl::triu(A, 1)(0, 1) == A(0, 1));
     REQUIRE(mtl::tril(A, -1)(1, 0) == A(1, 0));
     REQUIRE(mtl::banded(A, 0, 0)(0, 1) == 0.0);
-    REQUIRE(mtl::hermitian(A)(2, 1) == A(1, 2));
+    // hermitian needs a square matrix (#826): its view of a 2x3 A read A(c, r)
+    // outside A, and (2, 1) was outside the view's own two rows.
+    D S(2, 2);
+    S(0, 0) = 1; S(0, 1) = 2; S(1, 0) = 9; S(1, 1) = 4;
+    REQUIRE(mtl::hermitian(S)(1, 0) == S(0, 1));
     const index_map rows = {1, 0}, cols = {2, 1, 0};
     REQUIRE(mtl::mapped(A, rows, cols)(0, 0) == A(1, 2));
 }
