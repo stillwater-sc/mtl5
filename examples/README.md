@@ -202,3 +202,15 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 |---------|-------------|
 | `accurate_sum_dot.cpp` | Plain, FMA, Sum2/Dot2, SumK/DotK, XBLAS double-double and exact: accuracy sweeps, bound checks, Table 6.2 and timings. `--out DIR`, `--samples N`, `--quick` |
 | `plot_accurate_sum_dot.py` | Plots the example's CSV output (Python and matplotlib); the results are in [docs/examples/accurate-sum-dot.md](../docs/examples/accurate-sum-dot.md) |
+
+---
+
+## zero_copy/
+
+**MTL5 vectors and matrices over buffers you already own.** A vector or matrix built over a caller's pointer is a conduit: MTL5 algorithms read and write the buffer in place, with no copy in or out. One program wraps an ODE integrator's callback pointers, with a read-only view of its `const double* y`. One processes frames in place in a buffer shared between two threads. One tours the rules: write-through, size, resize, copy construction, read-only views, aliasing, layout, lifetime and synchronization. CTest runs all three, and each checks its own claims. See [docs/examples/zero-copy-overlay.md](../docs/examples/zero-copy-overlay.md).
+
+| Example | Description |
+|---------|-------------|
+| `ode_rhs_callback.cpp` | `rhs(t, const double* y, double* dydt)` written with `vec::const_view` and `mult` into the integrator's buffer; the heat equation, checked, and timed against copy-in/copy-out |
+| `shared_frame_pipeline.cpp` | Producer and processing threads share double-buffered frames; dark/gain correction through a `dense2D` and per-tile flattening through `ndarray` slices, in place |
+| `zero_copy_rules.cpp` | The contract of a type over your buffer, one checked demonstration per rule |
