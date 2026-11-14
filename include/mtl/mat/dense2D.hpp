@@ -290,6 +290,12 @@ public:
     size_type get_ldim() const { return ldim_; }
 
     // -- Data access -----------------------------------------------------
+    /// Whether this matrix owns its elements: false for one made over an
+    /// external pointer, whose elements belong to the caller.
+    bool owns_memory() const noexcept {
+        return mem_.category() == ::mtl::detail::memory_category::own;
+    }
+
     pointer       data()       { return mem_.data(); }
     const_pointer data() const { return mem_.data(); }
 

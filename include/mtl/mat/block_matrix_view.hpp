@@ -262,7 +262,10 @@ void block_mult_rows(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y,
                                 static_cast<Value>(x(static_cast<typename VIn::size_type>(c))));
             y(static_cast<typename VOut::size_type>(r)) = AT::template value<Result>(acc);
         } else if constexpr (interface::SimdDenseVector<VIn> &&
-                             std::is_same_v<typename VIn::value_type, float>) {
+                             std::is_same_v<typename VIn::value_type, float> &&
+                             std::is_same_v<Result, float>) {
+            // Float y only: a double y sums in Result below, as with a
+            // non-contiguous x (#826). The float dot here lost the precision.
             y(static_cast<typename VOut::size_type>(r)) =
                 static_cast<Result>(simd::reduce_dot<float>(buf.data(), x.data(), n));
         } else {

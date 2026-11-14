@@ -421,9 +421,10 @@ TEST_CASE("Aliased assignment through a view or a lazy product", "[mat][expr][al
     }
     SECTION("a block matrix that holds the target as a block") {
         mat::block_diagonal2D<double> bd{dense2D<double>{{1, 2}, {3, 4}}};
-        auto& A = bd.block(0);
-        A = 1.0 * trans(bd);   // bd(r, c) is A(r, c): trans(bd) reads A elsewhere
+        auto A = bd.block(0);   // a dense2D over the block's storage
+        A = 1.0 * trans(bd);    // bd(r, c) is A(r, c): trans(bd) reads A elsewhere
         require_equal(A, {{1, 3}, {2, 4}});
+        require_equal(bd.block(0), {{1, 3}, {2, 4}});
     }
     SECTION("an external-pointer target keeps writing its buffer") {
         double buf[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};

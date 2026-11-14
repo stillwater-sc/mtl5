@@ -180,3 +180,21 @@ TEST_CASE("upper + strict_lower = original matrix", "[mat][view][decomposition]"
             REQUIRE_THAT(U(i, j) + SL(i, j),
                          Catch::Matchers::WithinAbs(A(i, j), 1e-10));
 }
+
+// -- #826: non-square -------------------------------------------------------
+
+TEST_CASE("strict_lower and strict_upper on a non-square matrix", "[mat][view][826]") {
+    mat::dense2D<double> A{{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}};   // 3x4
+    auto L = mtl::strict_lower(A);
+    auto U = mtl::strict_upper(A);
+    REQUIRE(L.num_rows() == 3);
+    REQUIRE(L.num_cols() == 4);
+    REQUIRE(L(1, 0) == 5.0);
+    REQUIRE(L(2, 1) == 10.0);
+    REQUIRE(L(2, 2) == 0.0);
+    REQUIRE(L(0, 3) == 0.0);
+    REQUIRE(U(0, 3) == 4.0);
+    REQUIRE(U(2, 3) == 12.0);
+    REQUIRE(U(2, 2) == 0.0);
+    REQUIRE(U(1, 0) == 0.0);
+}

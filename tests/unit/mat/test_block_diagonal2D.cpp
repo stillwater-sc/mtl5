@@ -132,3 +132,114 @@ TEST_CASE("block_diagonal2D: block access", "[mat][block_diagonal]") {
     REQUIRE_THAT(BD.block(0)(0, 0), Catch::Matchers::WithinAbs(1.0, 1e-10));
     REQUIRE_THAT(BD.block(1)(0, 0), Catch::Matchers::WithinAbs(5.0, 1e-10));
 }
+
+// -- #826: shapes, mutation, lookup ----------------------------------------
+
+#include <mtl/vec/dense_vector.hpp>
+#include <type_traits>
+#include <utility>
+
+TEST_CASE("block_diagonal2D: non-square blocks", "[mat][block_diagonal][826]") {
+    block_diagonal2D<double> BD{mat::dense2D<double>{{1, 2, 3}},          // 1x3
+                                mat::dense2D<double>{{4}, {5}}};           // 2x1
+    REQUIRE(BD.num_rows() == 3);
+    REQUIRE(BD.num_cols() == 4);
+    REQUIRE(BD(0, 2) == 3.0);
+    REQUIRE(BD(1, 3) == 4.0);
+    REQUIRE(BD(2, 3) == 5.0);
+    REQUIRE(BD(1, 0) == 0.0);
+    REQUIRE(BD(0, 3) == 0.0);
+    vec::dense_vector<double> x(4, 1.0);
+    const auto y = BD * x;
+    REQUIRE(y.size() == 3);
+    REQUIRE(y(0) == 6.0);
+    REQUIRE(y(2) == 5.0);
+}
+
+TEST_CASE("block_diagonal2D: empty, and empty blocks", "[mat][block_diagonal][826]") {
+    block_diagonal2D<double> E;
+    REQUIRE(E.num_rows() == 0);
+    REQUIRE(E.num_blocks() == 0);
+    block_diagonal2D<double> L(std::vector<mat::dense2D<double>>{});
+    REQUIRE(L.num_cols() == 0);
+    block_diagonal2D<double> Z{mat::dense2D<double>{{1}}, mat::dense2D<double>(0, 0),
+                               mat::dense2D<double>{{2}}};
+    REQUIRE(Z.num_rows() == 2);
+    REQUIRE(Z(0, 0) == 1.0);
+    REQUIRE(Z(1, 1) == 2.0);
+    REQUIRE(Z(1, 0) == 0.0);
+}
+
+TEST_CASE("block_diagonal2D: mixed value types in the matvec", "[mat][block_diagonal][826]") {
+    block_diagonal2D<float> BD{mat::dense2D<float>{{1, 2}, {3, 4}}};
+    vec::dense_vector<double> x(2);
+    x(0) = 0.5; x(1) = 0.25;
+    const auto y = BD * x;
+    STATIC_REQUIRE(std::is_same_v<std::remove_cvref_t<decltype(y(0))>, double>);
+    REQUIRE(y(0) == 1.0);
+    REQUIRE(y(1) == 2.5);
+}
+
+TEST_CASE("block_diagonal2D: writing a block, and resizing what block() returns", "[mat][block_diagonal][826]") {
+    block_diagonal2D<double> BD{mat::dense2D<double>{{1, 2}, {3, 4}}, mat::dense2D<double>{{5}}};
+    auto B0 = BD.block(0);
+    B0(0, 1) = 20.0;                 // writes the block
+    REQUIRE(BD(0, 1) == 20.0);
+    B0.change_dim(5, 5);             // detaches; the block and the offsets stand
+    REQUIRE(BD.num_rows() == 3);
+    REQUIRE(BD.block(0).num_rows() == 2);
+    REQUIRE(BD(2, 2) == 5.0);
+    BD.set_block(0, mat::dense2D<double>{{7}});   // a new shape, offsets updated
+    REQUIRE(BD.num_rows() == 2);
+    REQUIRE(BD(0, 0) == 7.0);
+    REQUIRE(BD(1, 1) == 5.0);
+}
+
+TEST_CASE("block_diagonal2D: add_block keeps the offsets right", "[mat][block_diagonal][826]") {
+    block_diagonal2D<double> BD;
+    for (int k = 0; k < 50; ++k) BD.add_block(mat::dense2D<double>{{double(k)}, {double(k) + 0.5}});
+    REQUIRE(BD.num_rows() == 100);
+    REQUIRE(BD.num_cols() == 50);
+    for (std::size_t k = 0; k < 50; ++k) {
+        REQUIRE(BD(2 * k, k) == double(k));
+        REQUIRE(BD(2 * k + 1, k) == double(k) + 0.5);
+        if (k > 0) REQUIRE(BD(2 * k, k - 1) == 0.0);
+    }
+}
+
+TEST_CASE("block_diagonal2D: a same-count reshape of block() keeps the block's shape", "[mat][block_diagonal][826]") {
+    block_diagonal2D<double> BD{mat::dense2D<double>{{1, 2}, {3, 4}}};
+    auto B = BD.block(0);
+    B.change_dim(1, 4);   // same element count: still the block's storage
+    REQUIRE(BD.num_rows() == 2);
+    REQUIRE(BD.num_cols() == 2);
+    REQUIRE(BD.block(0).num_rows() == 2);
+    B(0, 3) = 40.0;       // the block's fourth element, BD(1, 1)
+    REQUIRE(BD(1, 1) == 40.0);
+}
+
+TEST_CASE("block_diagonal2D: passing a block() view back in copies it", "[mat][block_diagonal][826]") {
+    // set_block(k, bd.block(k)) moved a view of blocks_[k] into blocks_[k],
+    // freeing the buffer the view points into: a use after free.
+    block_diagonal2D<double> BD{mat::dense2D<double>{{1, 2}, {3, 4}}, mat::dense2D<double>{{5}}};
+    BD.set_block(0, BD.block(0));
+    REQUIRE(BD(0, 1) == 2.0);
+    REQUIRE(BD(1, 0) == 3.0);
+    REQUIRE(std::as_const(BD).block(0).owns_memory());
+    // A view of block 1 added as a new block is a copy, not a second owner of
+    // block 1's storage.
+    BD.add_block(BD.block(1));
+    REQUIRE(BD.num_blocks() == 3);
+    REQUIRE(std::as_const(BD).block(2).owns_memory());
+    BD.set_block(1, mat::dense2D<double>{{6}});
+    REQUIRE(BD(2, 2) == 6.0);
+    REQUIRE(BD(3, 3) == 5.0);
+    // The vector constructor copies views too.
+    mat::dense2D<double> src{{7, 8}};
+    std::vector<mat::dense2D<double>> v;
+    v.emplace_back(1, 2, src.data());
+    block_diagonal2D<double> W(std::move(v));
+    REQUIRE(std::as_const(W).block(0).owns_memory());
+    src(0, 0) = 0.0;
+    REQUIRE(W(0, 0) == 7.0);
+}

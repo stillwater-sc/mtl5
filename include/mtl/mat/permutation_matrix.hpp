@@ -1,12 +1,18 @@
 #pragma once
 // MTL5 -- Implicit permutation matrix (stores only the permutation vector)
 // P(r,c) = 1 if perm[r] == c, else 0. No matrix storage.
-// Efficient P*x and P*A via direct index remapping.
+// Efficient P*x via direct index remapping, here. P*A for a dense2D A (row
+// i of the result is row perm[i] of A) is in operation/reorder.hpp.
 #include <cstddef>
 #include <vector>
 #include <cassert>
 #include <algorithm>
+#include <initializer_list>
 #include <numeric>
+#include <stdexcept>
+#include <type_traits>
+#include <mtl/config.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/tag/sparsity.hpp>
 #include <mtl/traits/category.hpp>
@@ -26,8 +32,22 @@ public:
     using reference       = Value;
 
     /// Construct from permutation vector: perm[i] = column of the 1 in row i.
+    /// It must be a permutation of 0..n-1, checked once, in every build
+    /// (#826): a duplicate or out-of-range entry made inverse() and P * x
+    /// index out of bounds. Throws std::invalid_argument (throw_or_abort).
     explicit permutation_matrix(std::vector<size_type> perm)
-        : perm_(std::move(perm)) {}
+        : perm_(std::move(perm)) {
+        validate();
+    }
+
+    /// Construct from a braced list of entries: P({2, 0, 1}), and P({0}) is
+    /// the 1x1 permutation. Without it, {0} picked the size constructor and
+    /// gave a 0x0 matrix, and {2} the 2x2 identity (#826). For the identity
+    /// of size n, use P(n) with parentheses.
+    permutation_matrix(std::initializer_list<size_type> perm)
+        : perm_(perm) {
+        validate();
+    }
 
     /// Construct identity permutation of size n.
     explicit permutation_matrix(size_type n)
@@ -48,6 +68,10 @@ public:
 
     /// Swap rows i and j (elementary row transposition).
     void swap_rows(size_type i, size_type j) {
+        if constexpr (bounds_checking) {
+            if (i >= perm_.size() || j >= perm_.size())
+                ::mtl::detail::throw_or_abort(std::out_of_range("permutation_matrix: row out of range"));
+        }
         std::swap(perm_[i], perm_[j]);
     }
 
@@ -61,6 +85,16 @@ public:
 
 private:
     std::vector<size_type> perm_;
+
+    void validate() const {
+        std::vector<bool> seen(perm_.size(), false);
+        for (size_type p : perm_) {
+            if (p >= perm_.size() || seen[p])
+                ::mtl::detail::throw_or_abort(
+                    std::invalid_argument("permutation_matrix: not a permutation of 0..n-1"));
+            seen[p] = true;
+        }
+    }
 };
 
 // -- Efficient permutation-vector multiply ------------------------------

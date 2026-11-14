@@ -370,6 +370,17 @@ if(NOT MSVC)
     add_test(NAME death_test_mat_expr_shape_product COMMAND death_test_mat_expr_shape product)
     set_tests_properties(death_test_mat_expr_shape_product PROPERTIES
         PASS_REGULAR_EXPRESSION "e1_\\.num_cols\\(\\) == e2_\\.num_rows\\(\\)" LABELS "death")
+
+    # The element-access assertions of block_matrix_view and the MX schemes (#826).
+    add_executable(death_test_mat_index_asserts death/mat_index_asserts.cpp)
+    target_link_libraries(death_test_mat_index_asserts PRIVATE MTL5::mtl5)
+    set_target_properties(death_test_mat_index_asserts PROPERTIES FOLDER "Tests/death")
+    add_test(NAME death_test_mat_index_asserts_block_row COMMAND death_test_mat_index_asserts block_row)
+    set_tests_properties(death_test_mat_index_asserts_block_row PROPERTIES
+        PASS_REGULAR_EXPRESSION "r < rows_" LABELS "death")
+    add_test(NAME death_test_mat_index_asserts_decode_element COMMAND death_test_mat_index_asserts decode_element)
+    set_tests_properties(death_test_mat_index_asserts_decode_element PROPERTIES
+        PASS_REGULAR_EXPRESSION "j < block_size" LABELS "death")
 endif()
 
 # The genericity tests over the number type (#703) carry the `generic` label,

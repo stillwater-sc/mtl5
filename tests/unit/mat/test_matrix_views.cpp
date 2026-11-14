@@ -117,3 +117,63 @@ TEST_CASE("map_view: submatrix extraction", "[mat][view][map]") {
     REQUIRE_THAT(S(1, 0), Catch::Matchers::WithinAbs(12.0, 1e-10)); // A(3,0)
     REQUIRE_THAT(S(1, 1), Catch::Matchers::WithinAbs(14.0, 1e-10)); // A(3,2)
 }
+
+// -- #826: complex, non-square and invalid maps ----------------------------
+
+#include <complex>
+#include <stdexcept>
+
+TEST_CASE("hermitian_view: complex", "[mat][view][hermitian][826]") {
+    using C = std::complex<double>;
+    mat::dense2D<C> A(2, 2);
+    A(0, 0) = C(1, 0); A(0, 1) = C(2, 3);
+    A(1, 0) = C(9, 9); A(1, 1) = C(4, 0);   // the lower triangle is not read
+    auto H = mtl::hermitian(A);
+    REQUIRE(H(0, 1) == C(2, 3));
+    REQUIRE(H(1, 0) == C(2, -3));
+    REQUIRE(H(0, 0) == C(1, 0));
+    REQUIRE(H(1, 1) == C(4, 0));
+}
+
+TEST_CASE("hermitian_view: a non-square matrix is rejected", "[mat][view][hermitian][826]") {
+    // For a 3x2 A, H(2,0) read A(0,2).
+    mat::dense2D<double> A(3, 2);
+    REQUIRE_THROWS_AS(mtl::hermitian(A), std::invalid_argument);
+}
+
+TEST_CASE("banded_view: negative bandwidths and non-square", "[mat][view][banded][826]") {
+    mat::dense2D<double> A{{1, 2, 3, 4}, {5, 6, 7, 8}};   // 2x4
+    // lower = -1: the band starts one above the diagonal, c - r in [1, 2].
+    auto B = mtl::banded(A, -1, 2);
+    REQUIRE(B.num_rows() == 2);
+    REQUIRE(B.num_cols() == 4);
+    REQUIRE(B(0, 0) == 0.0);
+    REQUIRE(B(0, 1) == 2.0);
+    REQUIRE(B(0, 2) == 3.0);
+    REQUIRE(B(0, 3) == 0.0);
+    REQUIRE(B(1, 3) == 8.0);
+    // upper < -lower: an empty band.
+    auto Z = mtl::banded(A, 0, -1);
+    for (std::size_t r = 0; r < 2; ++r)
+        for (std::size_t c = 0; c < 4; ++c) REQUIRE(Z(r, c) == 0.0);
+}
+
+TEST_CASE("map_view: empty and repeated-index maps", "[mat][view][map][826]") {
+    mat::dense2D<double> A{{1, 2}, {3, 4}};
+    auto E = mtl::mapped(A, std::vector<std::size_t>{}, std::vector<std::size_t>{0, 1});
+    REQUIRE(E.num_rows() == 0);
+    REQUIRE(E.num_cols() == 2);
+    auto R = mtl::mapped(A, std::vector<std::size_t>{1, 1, 0}, std::vector<std::size_t>{0, 0});
+    REQUIRE(R.num_rows() == 3);
+    REQUIRE(R(0, 0) == 3.0);
+    REQUIRE(R(1, 1) == 3.0);
+    REQUIRE(R(2, 1) == 1.0);
+}
+
+TEST_CASE("map_view: a map entry out of range is rejected", "[mat][view][map][826]") {
+    mat::dense2D<double> A{{1, 2}, {3, 4}};
+    REQUIRE_THROWS_AS(mtl::mapped(A, std::vector<std::size_t>{0, 2}, std::vector<std::size_t>{0}),
+                      std::out_of_range);
+    REQUIRE_THROWS_AS(mtl::mapped(A, std::vector<std::size_t>{0}, std::vector<std::size_t>{5}),
+                      std::out_of_range);
+}

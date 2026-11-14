@@ -82,6 +82,21 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Structured matrices and views** (#826, from the QA sweep #740). Construction-time index checks now run once per object, in every build: that is the policy decided for #825 and #826. Element access keeps `bounds_checking`.
+  - **`permutation_matrix<double> P({0})` was a 0×0 matrix**, and `P({2})` the 2×2 identity: `{0}` chose the size constructor. A braced list is now the permutation, through an `std::initializer_list` constructor; `P(n)` is still the identity.
+  - **Every permutation is validated at construction:** a duplicate or out-of-range entry throws `std::invalid_argument`. It made `inverse()` and `P * x` index out of bounds. `swap_rows` checks its rows under `bounds_checking`.
+  - **`hermitian_view` requires a square matrix:** for a 3×2 A, `H(2,0)` read `A(0,2)`. The diagonal is returned as stored, which is exact for a Hermitian matrix, and that is now documented.
+  - **`map_view` checks its map entries at construction,** and `(r, c)` under `bounds_checking`. Repeated entries are allowed.
+  - **Block `mult` summed in float for a double `y`:** the SIMD branch tested only `x`. A float `x` into a double `y` now sums in double, as a non-contiguous `x` already did.
+  - **`block_diagonal2D`:**
+    - **`block(k)` no longer exposes the block itself:** the non-const overload returns a `dense2D` over the block's storage. `change_dim` on the old reference left the offsets and the total shape stale. Writing its elements writes the block. A resize to another element count detaches it; a reshape to the same count still writes the block, in the new layout. `set_block(k, B)` replaces a block of any shape. Every stored block owns its storage: a `block()` view passed to `set_block`, `add_block` or the vector constructor is copied, where `set_block(k, bd.block(k))` would have freed the buffer the view points into. The new `dense2D::owns_memory()` tells them apart.
+    - **`add_block` is O(1)** (it was O(n) per call), and `operator()` finds the block by binary search instead of scanning.
+  - **`mxint8` and `mxfp4::decode_element` assert `j < 32`.** For `mxint8`, a larger `j` read past the block.
+  - **Not changed:**
+    - `std::common_type_t` in the `permutation_matrix` and `block_diagonal2D` products works for same-type posits and LNS, and mixed types follow `mult`'s rule, as for #824.
+    - `P * A` already existed for a dense2D A, in `operation/reorder.hpp`. The header now says so.
+  - **Tests:** `test_permutation_matrix`, `test_block_diagonal2D`, `test_matrix_views`, `test_triangular_views` and `test_block_matrix_view` cover the cases the sweep listed. The float-x/double-y test fails before the fix. `death_test_mat_index_asserts` covers `block_matrix_view::row` and `decode_element`.
+
 - **`dense2D` assignment from an expression that reads the target elsewhere, ragged initializer lists, and the generic matrix product** (#824, from the QA sweep #740).
   - **`A = A + trans(A)` gave a wrong answer**, and was a data race under threads. `operator=(expr)`, `+=` and `-=` wrote element (r, c) while the expression still read A's other elements. For `{{1,2,3},{4,5,6},{7,8,9}}`, A(1,0) came out 10 where 6 is right.
     - **The fix:** an assignment now goes through a temporary when its expression reads the target through a view or a lazy product, or reads a matrix whose storage overlaps it (`mat/expr/expr_alias.hpp`).
