@@ -70,7 +70,7 @@ A tour of the contract, one checked demonstration per rule.
 | **Assignment writes through** | `v = w`, `v = f()`, `v = a + b` and `v *= s` write the buffer, and `v` stays non-owning. |
 | **The buffer fixes the size** | Copy or expression assignment of another size throws `std::domain_error`. A move of another size asserts, because a move can't throw. |
 | **An explicit resize detaches** | `change_dim` to another size gives the object its own storage; writes stop reaching the buffer, and `owns_memory()` becomes true. |
-| **Copy construction copies** | `auto w = v;` is an owning deep copy. Keep the conduit with a reference, or a second wrapper over the same pointer. Pass conduits by reference. |
+| **Copying a mutable vector copies** | `auto w = v;` is an owning deep copy. Keep the conduit with a reference, or a second wrapper over the same pointer. Pass conduits by reference. A read-only view is the exception: copying it gives another view of the same buffer, bound by the same lifetime. |
 | **Read-only buffers get read-only views** | `vec::const_view` and `mat::const_view` take a `const T*`. A write through them does not compile, and every operation that reads a `dense_vector` or `dense2D` accepts them. `dense_vector<double> w(view)` makes an owning copy. |
 | **Overlap and aliasing** | Two wrappers over overlapping parts of one buffer copy safely. An expression that reads the target elsewhere, such as `E = E + trans(E)`, goes through a temporary and still lands in the buffer. MTL5 cannot see another thread writing the buffer during an expression: that is a data race. |
 | **Layout** | `dense2D(rows, cols, ptr)` assumes rows (or columns) are packed with no padding. Over a padded buffer, such as an image with a row pitch, it reads the padding. Use an `ndarray` with the real strides instead. |
@@ -80,10 +80,14 @@ A tour of the contract, one checked demonstration per rule.
 ## Running them
 
 ```bash
-cmake -B build -DMTL5_BUILD_EXAMPLES=ON
-cmake --build build --target example_ode_rhs_callback example_shared_frame_pipeline example_zero_copy_rules -j4
-ctest --test-dir build -R example_ --output-on-failure
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DMTL5_BUILD_EXAMPLES=ON
+cmake --build build --config Release -j4 \
+      --target example_ode_rhs_callback example_shared_frame_pipeline example_zero_copy_rules
+ctest --test-dir build -C Release -R "example_(ode_rhs_callback|shared_frame_pipeline|zero_copy_rules)" \
+      --output-on-failure
 ```
+
+`--config` and `-C` select the configuration for a multi-configuration generator (Visual Studio, Xcode, Ninja Multi-Config), which otherwise leaves the tests unrunnable; a single-configuration generator ignores them. The examples are registered with CTest only when the unit tests are enabled too (`MTL5_BUILD_TESTS`, on by default), since that is where `enable_testing()` is called. Use a Release build to see the timing difference in `ode_rhs_callback`.
 
 ## Related
 

@@ -7,7 +7,8 @@
 //   1. Assignment writes through to your buffer.
 //   2. The buffer fixes the size: a source of another size is an error.
 //   3. An explicit resize detaches.
-//   4. Copy construction always copies; keep the conduit with a reference.
+//   4. Copying a mutable vector copies; keep the conduit with a reference.
+//      (Copying a read-only view gives another view: see 5.)
 //   5. Read-only buffers get read-only views; writes don't compile.
 //   6. Overlap and aliasing that MTL5 handles, and what it can't.
 //   7. Layout: dense2D needs an unpadded buffer; use ndarray strides otherwise.
@@ -86,7 +87,7 @@ int main() {
         check(buf[0] == 1.0, "and writes no longer reach buf");
     }
 
-    section("4. Copy construction always copies");
+    section("4. Copying a mutable vector copies");
     {
         double buf[2] = {1, 2};
         vec::dense_vector<double> v(2, buf);
@@ -111,6 +112,10 @@ int main() {
         static_assert(!writable<vec::const_vector_view<double>>);
         static_assert(!matrix_writable<mat::const_matrix_view<double>>);
         std::cout << "  [ok]   y(0) = 1 and A(0, 0) = 1 do not compile (static_assert)\n";
+        const auto y2 = y;                             // the exception to rule 4: a copy of a
+        check(y2.data() == cbuf, "copying a read-only view gives another view of the buffer");
+        //                                                read-only view is another view, so
+        //                                                it too must not outlive the buffer
         const vec::dense_vector<double> owned(y);      // an owning copy when you need one
         check(owned.owns_memory() && owned(3) == 4.0, "an owning copy of a view can be changed");
     }
