@@ -352,7 +352,9 @@ if(NOT MSVC)
     add_executable(death_test_mult_alias death/mult_alias.cpp)
     target_link_libraries(death_test_mult_alias PRIVATE MTL5::mtl5)
     set_target_properties(death_test_mult_alias PROPERTIES FOLDER "Tests/death")
-    foreach(death_case matvec_x matmat_a matmat_b acc_matvec_x acc_matmat_a)
+    # The matrix-vector cases left with #840, which computes an aliased y
+    # through a temporary instead of asserting.
+    foreach(death_case matmat_a matmat_b acc_matmat_a)
         add_test(NAME death_test_mult_alias_${death_case}
                  COMMAND death_test_mult_alias ${death_case})
         set_tests_properties(death_test_mult_alias_${death_case} PROPERTIES

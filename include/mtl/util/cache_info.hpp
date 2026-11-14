@@ -26,18 +26,19 @@
 // it never means "a cache of size zero".
 
 #include <cstddef>
+#include <cstdlib>
+#include <map>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <mtl/util/cpuid.hpp>
 
 #if defined(__linux__)
 #  include <cerrno>
-#  include <cstdlib>
 #  include <fstream>
 #  include <sched.h>
-#  include <set>
-#  include <string>
-#  include <utility>
-#  include <vector>
 #elif defined(__APPLE__)
 #  include <sys/sysctl.h>
 #endif
@@ -148,16 +149,6 @@ inline void fill_caches_apple(cache_info& c) {
 
 #endif // MTL5_HAS_X86_CPUID
 
-#if defined(__linux__)
-
-/// Read a whole sysfs attribute; empty on failure.
-inline std::string read_sysfs(const std::string& path) {
-    std::ifstream in(path);
-    std::string   s;
-    if (in) std::getline(in, s);
-    return s;
-}
-
 /// Parse the kernel's cache size spelling: a decimal with an optional K/M/G.
 inline std::size_t parse_size(const std::string& s) {
     if (s.empty()) return 0;
@@ -200,17 +191,114 @@ inline std::vector<int> parse_cpu_list(const std::string& s) {
 /// How many distinct PHYSICAL cores appear in a cpu list. SMT siblings collapse
 /// to one; a 4-core cluster counts 4. Identity is (package, core_id), because
 /// core_id is only unique within a package.
-inline std::size_t distinct_cores(const std::vector<int>& cpus) {
+///
+/// `read` maps a sysfs path to its first line (empty if absent): read_sysfs on
+/// Linux, an in-memory tree in the tests.
+template <typename Read>
+std::size_t distinct_cores(const std::vector<int>& cpus, Read&& read) {
     std::set<std::pair<int, int>> cores;
     for (int cpu : cpus) {
         const std::string topo =
             "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/topology/";
-        const std::string core = read_sysfs(topo + "core_id");
+        const std::string core = read(topo + "core_id");
         if (core.empty()) continue;                 // topology unavailable
-        const std::string pkg = read_sysfs(topo + "physical_package_id");
+        const std::string pkg = read(topo + "physical_package_id");
         cores.insert({pkg.empty() ? 0 : std::atoi(pkg.c_str()), std::atoi(core.c_str())});
     }
     return cores.size();
+}
+
+/// The sysfs walk behind fill_caches_sysfs, over the CPUs `cpus`, reading
+/// through `read` (a path to its first line; empty if absent), so a test can
+/// serve a synthetic tree.
+///
+/// Every CPU lists each cache it uses, so a cache shared by k CPUs appears k
+/// times. Each instance -- (level, type, shared_cpu_list) -- is examined once,
+/// and its distinct-core count is computed once per shared_cpu_list. Before
+/// #840 both were redone for every CPU, O(cpus^2 * files): about 130k small
+/// reads for one L3 shared by 256 threads. The result is the same: a repeated
+/// instance has the same per-core budget, which never beats itself.
+template <typename Read>
+void fill_caches_sysfs(cache_info& c, const std::vector<int>& cpus, Read&& read) {
+    std::size_t best_l1 = static_cast<std::size_t>(-1);
+    std::size_t best_l2 = static_cast<std::size_t>(-1);
+    std::size_t best_l3 = static_cast<std::size_t>(-1);
+    std::set<std::string> seen;                          // cache instances examined
+    std::map<std::string, std::size_t> sharers_of;       // shared_cpu_list -> cores
+
+    for (int cpu : cpus) {
+        const std::string base =
+            "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cache/index";
+        for (int i = 0; i < 10; ++i) {
+            const std::string dir = base + std::to_string(i);
+            const std::string lvl = read(dir + "/level");
+            if (lvl.empty()) break;                 // no more index<N> entries
+            const std::string type = read(dir + "/type");
+            const std::string shared = read(dir + "/shared_cpu_list");
+            // A cache is the same instance on every CPU that shares it. Without
+            // a shared_cpu_list it cannot be identified, so examine it. It is
+            // marked seen only once its size has been read: a CPU whose view
+            // of it is unreadable must not hide another's readable one.
+            const std::string key = lvl + '/' + type + '/' + shared;
+            if (!shared.empty() && seen.count(key) != 0) continue;
+            const std::size_t size = parse_size(read(dir + "/size"));
+            const std::size_t line = parse_size(read(dir + "/coherency_line_size"));
+            const int level = std::atoi(lvl.c_str());
+            if (size == 0) continue;
+            if (!shared.empty()) seen.insert(key);
+
+            // 0 means the topology could not be read, and it is STORED as 0 --
+            // the struct's contract is that 0 is "unknown", and reporting an
+            // unreadable topology as "shared by exactly one core" would claim
+            // knowledge of a private cache we do not have. Only the local divisor
+            // treats it as 1; with_detected_caches makes the same assumption at
+            // the point where it actually spends the budget.
+            auto it = sharers_of.find(shared);
+            if (it == sharers_of.end())
+                it = sharers_of.emplace(shared, distinct_cores(parse_cpu_list(shared), read)).first;
+            const std::size_t sharers = it->second;
+            const std::size_t per_core = size / (sharers ? sharers : 1);
+
+            if (c.line_bytes == 0 && line != 0) c.line_bytes = line;
+            const bool is_instruction = (type == "Instruction");
+            if (level == 1 && type == "Data") {
+                if (per_core < best_l1) {
+                    best_l1 = per_core;
+                    c.l1d_bytes = size;
+                    c.l1d_sharing_cores = sharers;
+                    c.l1d_assoc = parse_size(read(dir + "/ways_of_associativity"));
+                }
+            } else if (level == 2 && !is_instruction) {
+                if (per_core < best_l2) {
+                    best_l2 = per_core;
+                    c.l2_bytes = size;
+                    c.l2_sharing_cores = sharers;
+                }
+            } else if (level == 3 && !is_instruction) {
+                if (per_core < best_l3) {
+                    best_l3 = per_core;
+                    c.l3_bytes = size;
+                    c.l3_sharing_cores = sharers;
+                }
+            }
+        }
+    }
+}
+
+#if defined(__linux__)
+
+/// Read a whole sysfs attribute; empty on failure.
+inline std::string read_sysfs(const std::string& path) {
+    std::ifstream in(path);
+    std::string   s;
+    if (in) std::getline(in, s);
+    return s;
+}
+
+
+/// distinct_cores over the real sysfs.
+inline std::size_t distinct_cores(const std::vector<int>& cpus) {
+    return distinct_cores(cpus, read_sysfs);
 }
 
 /// CPUs this process may actually be scheduled on. Under `taskset` that is the
@@ -267,56 +355,7 @@ inline std::vector<int> allowed_cpus() {
 /// the smaller kind. Either way it is a property of the machine and the affinity
 /// mask, not of the scheduler's whim.
 inline void fill_caches_sysfs(cache_info& c) {
-    std::size_t best_l1 = static_cast<std::size_t>(-1);
-    std::size_t best_l2 = static_cast<std::size_t>(-1);
-    std::size_t best_l3 = static_cast<std::size_t>(-1);
-
-    for (int cpu : allowed_cpus()) {
-        const std::string base =
-            "/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cache/index";
-        for (int i = 0; i < 10; ++i) {
-            const std::string dir = base + std::to_string(i);
-            const std::string lvl = read_sysfs(dir + "/level");
-            if (lvl.empty()) break;                 // no more index<N> entries
-            const std::string type = read_sysfs(dir + "/type");
-            const std::size_t size = parse_size(read_sysfs(dir + "/size"));
-            const std::size_t line = parse_size(read_sysfs(dir + "/coherency_line_size"));
-            const int level = std::atoi(lvl.c_str());
-            if (size == 0) continue;
-
-            // 0 means the topology could not be read, and it is STORED as 0 --
-            // the struct's contract is that 0 is "unknown", and reporting an
-            // unreadable topology as "shared by exactly one core" would claim
-            // knowledge of a private cache we do not have. Only the local divisor
-            // treats it as 1; with_detected_caches makes the same assumption at
-            // the point where it actually spends the budget.
-            const std::size_t sharers = distinct_cores(parse_cpu_list(read_sysfs(dir + "/shared_cpu_list")));
-            const std::size_t per_core = size / (sharers ? sharers : 1);
-
-            if (c.line_bytes == 0 && line != 0) c.line_bytes = line;
-            const bool is_instruction = (type == "Instruction");
-            if (level == 1 && type == "Data") {
-                if (per_core < best_l1) {
-                    best_l1 = per_core;
-                    c.l1d_bytes = size;
-                    c.l1d_sharing_cores = sharers;
-                    c.l1d_assoc = parse_size(read_sysfs(dir + "/ways_of_associativity"));
-                }
-            } else if (level == 2 && !is_instruction) {
-                if (per_core < best_l2) {
-                    best_l2 = per_core;
-                    c.l2_bytes = size;
-                    c.l2_sharing_cores = sharers;
-                }
-            } else if (level == 3 && !is_instruction) {
-                if (per_core < best_l3) {
-                    best_l3 = per_core;
-                    c.l3_bytes = size;
-                    c.l3_sharing_cores = sharers;
-                }
-            }
-        }
-    }
+    fill_caches_sysfs(c, allowed_cpus(), read_sysfs);
 }
 
 #endif // __linux__

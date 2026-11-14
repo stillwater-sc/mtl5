@@ -18,6 +18,7 @@
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/view/transposed_view.hpp>
+#include <mtl/vec/dense_vector.hpp>
 // The pool is NOT part of the native-fast-GEMM option. Threading the generic
 // row loop is orthogonal to routing through the blocked/SIMD kernels (#446), and
 // every other threaded operation header -- dot, axpy, scale, norms, lu,
@@ -690,19 +691,49 @@ void mult_sparse_crs_transposed(const mat::view::transposed_view<mat::compressed
 ///
 /// Vectors only: a matrix B (trans(S) * B through mat::operator*) takes the
 /// matrix-matrix mult below (#824).
+namespace detail {
+
+/// y = op(x) through a temporary, then copied into y element by element, so a
+/// y that is a view keeps writing its buffer (#833). For a y that shares
+/// storage with an input, which the kernels would overwrite while reading.
+template <typename VOut, typename F>
+void mult_via_temporary(VOut& y, F&& compute) {
+    using value_type = std::remove_cvref_t<typename VOut::value_type>;
+    vec::dense_vector<value_type> t(y.size());
+    compute(t);
+    for (std::size_t i = 0; i < static_cast<std::size_t>(y.size()); ++i) y(i) = t(i);
+}
+
+} // namespace detail
+
+/// y = A^T x for a transposed compressed2D. A y that shares storage with x or
+/// with the matrix's values is computed through a temporary, in every build
+/// (#840).
 template <typename Accumulator = void, typename V, typename P, Vector VIn, Vector VOut>
 void mult(const mat::view::transposed_view<mat::compressed2D<V, P>>& At, const VIn& x, VOut& y) {
     assert(At.num_cols() == x.size());
     assert(At.num_rows() == y.size());
-    assert(!detail::same_object(y, x) && "mult: y must not alias x");
+    if (detail::storage_overlaps(y, x) || detail::storage_overlaps(y, At)) {
+        detail::mult_via_temporary(y, [&](auto& t) { mult<Accumulator>(At, x, t); });
+        return;
+    }
     detail::mult_sparse_crs_transposed<Accumulator>(At, x, y);
 }
 
+/// y = A x. Every kernel writes y while it still reads x and A (the column-major
+/// gemv zeroes y first), so a y that shares storage with either -- the same
+/// vector, a vector over part of the same buffer, over a compressed matrix's
+/// values, or over the matrix behind a view -- is computed through a temporary,
+/// in every build (#840). It was a debug-only assert, and it saw
+/// only the same object.
 template <typename Accumulator = void, Matrix M, Vector VIn, Vector VOut>
 void mult(const M& A, const VIn& x, VOut& y) {
     assert(A.num_cols() == x.size());
     assert(A.num_rows() == y.size());
-    assert(!detail::same_object(y, x) && "mult: y must not alias x");
+    if (detail::storage_overlaps(y, x) || detail::storage_overlaps(y, A)) {
+        detail::mult_via_temporary(y, [&](auto& t) { mult<Accumulator>(A, x, t); });
+        return;
+    }
 
     if constexpr (interface::is_compressed2D_v<M>) {
         detail::mult_sparse_crs_par<Accumulator>(A, x, y);
