@@ -68,7 +68,9 @@ so does the table [run-time selection](#run-time-selection-778) uses (#778).
 ## Defaults per ISA class
 
 These are the built defaults (`include/mtl/interface/interleave_rows.hpp`).
-Other targets keep 6. Every target caps the width at half its vector registers.
+Every target caps the width at half its vector registers. Targets other than
+x86-64 and AArch64 are assumed to have 8, so they get 4: the measured 6 that
+was the default before #772 is capped there, as it is on 32-bit x86.
 
 | ISA class | float | double | worst loss against the fastest width |
 |---|---|---|---|

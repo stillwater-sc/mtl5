@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -78,12 +79,53 @@ TEMPLATE_TEST_CASE("gemv: row-major and col-major vs naive, all sizes", "[operat
 // column groups.
 TEMPLATE_TEST_CASE("gemv: col-major across strip boundaries", "[operation][gemv]",
                    float, double, std::int32_t, std::uint32_t) {
-    constexpr std::size_t S = 65536 / sizeof(TestType);
+    // The kernel's own strip, which rounds 64 KB down to whole batches (#840).
+    constexpr std::size_t S = mtl::detail::gemv_colmajor_strip_rows<TestType>;
     for (std::size_t m : {S - 1, S, S + 1, 2 * S + 5})
-        for (std::size_t n : {1, 3, 4, 5, 9}) {
+        for (std::size_t n : {1, 3, 4, 5, 9, 37}) {   // 37: many passes of 2 or 4 columns
             INFO("m=" << m << " n=" << n);
             CHECK(gemv_matches<TestType>(m, n, false));
         }
+}
+
+// The data above are small integers, so every product and sum is exact and a
+// fused and an unfused chain agree: those cases cannot see the rounding. Here
+// the data are not, and the reference is the chain the kernel promises every
+// row -- y[i] = fma(x[j], A(i, j), y[i]) for j ascending from zero, through the
+// batch's own fma (simd::scalar_fma) -- compared bit for bit, the tail rows
+// (i >= m - m % W) included. Before #840 the tail used a separate multiply and
+// add, so on a target whose batch fma fuses, the tail rows differed.
+TEMPLATE_TEST_CASE("gemv: col-major rows round alike, SIMD part and tail", "[operation][gemv][840]",
+                   float, double) {
+    using T = TestType;
+    constexpr std::size_t W = mtl::simd::batch<T>::size;
+    const std::size_t m = 5 * W + (W > 1 ? W - 1 : 0);   // a full tail
+    const std::size_t n = 23;
+    std::vector<T> A(m * n), x(n), y(m);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A[j * m + i] = T(1) / T(3 + i + 7 * j) + T(0.1) * T(j % 5);
+    for (std::size_t j = 0; j < n; ++j) x[j] = T(1) / T(1 + j) - T(0.37);
+    mtl::detail::gemv_colmajor<T>(m, n, A.data(), m, x.data(), y.data());
+
+    bool all = true, chains_differ = false;
+    for (std::size_t i = 0; i < m; ++i) {
+        T fused = 0, unfused = 0;
+        for (std::size_t j = 0; j < n; ++j) {
+            fused = mtl::simd::scalar_fma(x[j], A[j * m + i], fused);
+            // volatile: the compiler may not contract this into an fma.
+            const volatile T p = x[j] * A[j * m + i];
+            unfused = unfused + p;
+        }
+        all = all && (y[i] == fused);
+        chains_differ = chains_differ || (fused != unfused);
+    }
+    CHECK(all);
+    // Whether the batch fma fuses here: if it does, the data must tell the
+    // chains apart, or the comparison above proves nothing.
+    const T a = T(1) + std::numeric_limits<T>::epsilon();
+    const bool batch_fuses = mtl::simd::scalar_fma(a, a, -(a * a)) != T(0);
+    if (batch_fuses) CHECK(chains_differ);
 }
 
 // mult(A,x,y) dispatch: with MTL5_NATIVE_FAST_GEMM defined, a dense2D over any
@@ -115,7 +157,10 @@ bool mult_matches(std::size_t m, std::size_t n) {
 
 TEMPLATE_TEST_CASE("mult() native GEMV dispatch matches naive (row- and col-major A)",
                    "[operation][gemv][dispatch]", float, double, std::int32_t, std::uint32_t) {
-    const std::size_t cases[][2] = {{0, 0}, {0, 5}, {7, 0}, {1, 1}, {7, 5}, {16, 16}, {33, 20}, {100, 64}};
+    // The last case is more than one 64 KB strip of y for every type (#840).
+    const std::size_t S = mtl::detail::gemv_colmajor_strip_rows<TestType>;
+    const std::size_t cases[][2] = {{0, 0}, {0, 5}, {7, 0}, {1, 1}, {7, 5}, {16, 16}, {33, 20}, {100, 64},
+                                    {S + 3, 6}};
     for (auto& c : cases) {
         INFO("m=" << c[0] << " n=" << c[1]);
         CHECK(mult_matches<mtl::mat::dense2D<TestType, rowmaj>>(c[0], c[1]));

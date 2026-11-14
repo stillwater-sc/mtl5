@@ -80,6 +80,14 @@ inline constexpr std::size_t gemv_colmajor_columns = 4;
 inline constexpr std::size_t gemv_colmajor_columns = 2;
 #endif
 
+/// Rows per strip of the col-major gemv: 64 KB of y, a whole number of
+/// batches (at least one).
+template <typename T>
+inline constexpr std::size_t gemv_colmajor_strip_rows =
+    (65536 / sizeof(T)) / simd::batch<T>::size * simd::batch<T>::size > 0
+        ? (65536 / sizeof(T)) / simd::batch<T>::size * simd::batch<T>::size
+        : simd::batch<T>::size;
+
 /// y[m] := A[m x n] * x[n], A col-major (columns contiguous, lda = m).
 ///
 /// The rows are swept in STRIPS of S rows (64 KB of y), and each strip walks
@@ -96,9 +104,12 @@ inline constexpr std::size_t gemv_colmajor_columns = 2;
 /// 17.2 ms with 64 KB ones, and no machine measured got slower. Columns per pass:
 /// gemv_colmajor_columns.
 ///
-/// Each y[i] still sees the same FMA chain, in ascending column order from zero,
-/// as the register-strip kernel gave it, so the result is bit-identical to that
-/// kernel and independent of how the caller partitions the rows across threads.
+/// Each y[i] sees the same FMA chain, in ascending column order from zero, as
+/// the register-strip kernel gave it, so the result is independent of how the
+/// caller partitions the rows across threads. That includes the last m mod W
+/// rows, which run one at a time through simd::scalar_fma, the batch's own
+/// fma on one lane (#840). They used a separate multiply and add, so a row's
+/// rounding depended on whether it fell in the SIMD part or the tail.
 template <typename T>
     requires mtl::Scalar<T>
 void gemv_colmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
@@ -106,8 +117,7 @@ void gemv_colmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
     using B = simd::batch<T>;
     constexpr std::size_t W = B::size;
     constexpr std::size_t CP = gemv_colmajor_columns;
-    // Rows per strip: 64 KB of y, a whole number of batches.
-    constexpr std::size_t S = (65536 / sizeof(T)) / W * W > 0 ? (65536 / sizeof(T)) / W * W : W;
+    constexpr std::size_t S = gemv_colmajor_strip_rows<T>;
 
     const std::size_t mv = m / W * W;             // rows the SIMD strips cover
     for (std::size_t i0 = 0; i0 < mv; i0 += S) {
@@ -135,10 +145,13 @@ void gemv_colmajor(std::size_t m, std::size_t n, const T* A, std::size_t lda,
                 fma(xj, B::load_unaligned(c + i), B::load_unaligned(y + i)).store_unaligned(y + i);
         }
     }
-    for (std::size_t i = mv; i < m; ++i) {        // remaining rows (< W), scalar
+    for (std::size_t i = mv; i < m; ++i) {        // remaining rows (< W)
+        // The SIMD rows' chain, acc = fma(x[j], A(i, j), acc), on one lane:
+        // scalar_fma IS the batch fma, so it fuses exactly when the body does,
+        // and wraps on integer lanes as the body does (#840).
         T s = T(0);
         for (std::size_t j = 0; j < n; ++j)
-            s = mtl::detail::wrap_add(s, mtl::detail::wrap_mul(A[j * lda + i], x[j]));
+            s = simd::scalar_fma(x[j], A[j * lda + i], s);
         y[i] = s;
     }
 }

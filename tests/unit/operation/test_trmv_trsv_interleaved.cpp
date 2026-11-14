@@ -416,9 +416,10 @@ TEST_CASE("interleave_rows defaults and overrides", "[operation][772]") {
     using namespace mtl::interface;
 #if !defined(MTL5_INTERLEAVE_ROWS) && !defined(MTL5_INTERLEAVE_ROWS_F32) && !defined(MTL5_INTERLEAVE_ROWS_F64)
     // Hardware float types: measured per ISA class (#780), at most half the
-    // registers.
-    constexpr std::size_t cap = vector_registers / 2;
-    constexpr auto capped = [](std::size_t w) { return w < cap ? w : cap; };
+    // registers. These restate the table in interleave_rows.hpp on purpose:
+    // they pin it against an accidental edit, rather than test a rule. The
+    // rule, the cap, is tested for every register count below (#840).
+    constexpr auto capped = [](std::size_t w) { return interleave_cap(w, vector_registers); };
 #if defined(__x86_64__) || defined(_M_X64)
     constexpr std::size_t f64 = 8, f32_gemv = 8, f32_tri = 8;
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -562,4 +563,19 @@ TEST_CASE("the column sweep applies to contiguous column-major arithmetic types 
     STATIC_REQUIRE(!detail::column_sweep_v<double, rm<double>>);
     STATIC_REQUIRE(detail::column_strip_rows<float> == 4096);
     STATIC_REQUIRE(detail::column_strip_rows<double> == 2048);
+}
+
+TEST_CASE("interleave_cap: half the vector registers, for every target", "[operation][840]") {
+    using mtl::interface::interleave_cap;
+    // 8 registers: 32-bit x86, and every target the macros don't recognize,
+    // where the measured 6 becomes 4.
+    STATIC_REQUIRE(interleave_cap(6, 8) == 4);
+    STATIC_REQUIRE(interleave_cap(8, 8) == 4);
+    STATIC_REQUIRE(interleave_cap(2, 8) == 2);
+    // 16 (x86-64 without AVX-512) and 32 (AVX-512, AArch64).
+    STATIC_REQUIRE(interleave_cap(8, 16) == 8);
+    STATIC_REQUIRE(interleave_cap(12, 16) == 8);
+    STATIC_REQUIRE(interleave_cap(8, 32) == 8);
+    STATIC_REQUIRE(interleave_cap(4, 32) == 4);
+    STATIC_REQUIRE(interleave_cap(20, 32) == 16);
 }

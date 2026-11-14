@@ -398,3 +398,83 @@ TEST_CASE("detection levels are separable", "[util][cache_info][blocking]") {
         REQUIRE(kc_only.mc != mc_only.mc);
     }
 }
+
+// -- The sysfs walk on a synthetic tree (#840) ---------------------------------
+// fill_caches_sysfs takes its reader as a parameter, so a test can serve a tree
+// from memory, on any platform, and count the reads. The walk used to redo each
+// shared cache for every CPU that lists it and recount its cores every time:
+// O(cpus^2 * files), about 130k reads for one L3 shared by 256 threads.
+
+#include <map>
+#include <string>
+#include <vector>
+
+namespace {
+
+/// 128 cores, 2 SMT threads each (256 CPUs; cpu c and c + 128 are siblings).
+/// Per core: a private 48K L1d, 32K L1i and 1280K L2; one 30M L3 for all.
+struct fake_sysfs {
+    std::map<std::string, std::string> files;
+    mutable std::size_t reads = 0;
+
+    fake_sysfs() {
+        const int cores = 128, cpus = 256;
+        for (int cpu = 0; cpu < cpus; ++cpu) {
+            const int core = cpu % cores;
+            const std::string root = "/sys/devices/system/cpu/cpu" + std::to_string(cpu);
+            files[root + "/topology/core_id"] = std::to_string(core);
+            files[root + "/topology/physical_package_id"] = "0";
+            const std::string pair = std::to_string(core) + "," + std::to_string(core + cores);
+            auto cache = [&](int idx, const char* level, const char* type, const char* size,
+                             const std::string& shared) {
+                const std::string d = root + "/cache/index" + std::to_string(idx);
+                files[d + "/level"] = level;
+                files[d + "/type"] = type;
+                files[d + "/size"] = size;
+                files[d + "/coherency_line_size"] = "64";
+                files[d + "/ways_of_associativity"] = "12";
+                files[d + "/shared_cpu_list"] = shared;
+            };
+            cache(0, "1", "Data", "48K", pair);
+            cache(1, "1", "Instruction", "32K", pair);
+            cache(2, "2", "Unified", "1280K", pair);
+            cache(3, "3", "Unified", "30720K", "0-255");
+        }
+    }
+    std::string operator()(const std::string& path) const {
+        ++reads;
+        const auto it = files.find(path);
+        return it == files.end() ? std::string{} : it->second;
+    }
+};
+
+} // namespace
+
+TEST_CASE("sysfs walk: the result on a 256-CPU synthetic tree", "[util][cache_info][840]") {
+    const fake_sysfs fs;
+    std::vector<int> cpus(256);
+    for (int i = 0; i < 256; ++i) cpus[std::size_t(i)] = i;
+    mtl::util::cache_info c;
+    mtl::util::detail::fill_caches_sysfs(c, cpus, fs);
+    CHECK(c.line_bytes == 64);
+    CHECK(c.l1d_bytes == 48 * 1024);
+    CHECK(c.l1d_sharing_cores == 1);      // SMT siblings are one core
+    CHECK(c.l1d_assoc == 12);
+    CHECK(c.l2_bytes == 1280 * 1024);
+    CHECK(c.l2_sharing_cores == 1);
+    CHECK(c.l3_bytes == 30720u * 1024u);
+    CHECK(c.l3_sharing_cores == 128);
+}
+
+TEST_CASE("sysfs walk: linear in the CPUs, not quadratic", "[util][cache_info][840]") {
+    const fake_sysfs fs;
+    std::vector<int> cpus(256);
+    for (int i = 0; i < 256; ++i) cpus[std::size_t(i)] = i;
+    mtl::util::cache_info c;
+    mtl::util::detail::fill_caches_sysfs(c, cpus, fs);
+    // Per CPU: 4 indices x (level, type, shared_cpu_list) + the end probe; per
+    // distinct cache, its size/line/assoc and one core count of its CPUs. The
+    // old walk read about 256 * 256 * 2 topology files for the L3 alone.
+    INFO("reads = " << fs.reads);
+    CHECK(fs.reads < 256 * 32);       // about 5.4k here; the old walk took about 140k
+}

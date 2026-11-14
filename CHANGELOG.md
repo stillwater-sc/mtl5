@@ -95,6 +95,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`mult(A, x, y)` with `y` sharing storage with `x` or `A`, the column-major `gemv` tail, and the `cache_info` sysfs scan** (#840, from the QA sweep #816).
+  - **Aliasing:** every kernel writes `y` while still reading its inputs, and the column-major `gemv` zeroes `y` first. A `y` that is the same vector as `x`, or a vector over part of `x`'s or `A`'s buffer, gave wrong results under `NDEBUG`; a debug-only `assert` caught only the same object. `mult` now checks the address ranges (`detail::storage_overlaps`) in every build and computes through a temporary, still writing `y`'s own buffer. The transposed-`compressed2D` overload does the same.
+  - **The column-major `gemv` tail:** the last `m mod W` rows used a separate multiply and add while the SIMD rows used FMA, so a row's rounding depended on where it fell. The tail now uses `simd::scalar_fma`, the batch's own `fma`. Every row gets the same chain, as the kernel's comment claimed. This changes the tail rows' last bit where the batch `fma` fuses (Highway builds with FMA).
+  - **`cache_info`:** the Linux sysfs walk examined each shared cache once per CPU that lists it and recounted its cores each time: O(cpus² · files), about 140k reads for one L3 shared by 256 threads. Each cache instance is now examined once and each `shared_cpu_list` counted once, with the same result. The walk takes its reader as a parameter, and a test runs it on a synthetic 256-CPU tree.
+  - **Interleave cap:** `interface::interleave_cap(measured, registers)` is tested for 8, 16 and 32 registers. The docs now say that targets other than x86-64 and AArch64 get 4 (the measured 6, capped), where they said 6.
+
 - **`sparse_vector` and `strided_vector_ref` fixes** (#830, from the QA sweep #767).
   - **Index checks:** `sparse_vector::insert` and `operator[]` check the index in every build (the #825/#826 policy, per insert since there is no finalize step); a release build used to store index 10 in a size-3 vector. A signed `size_type` rejects negatives. `exists()` returns false outside the vector.
   - **`-fno-exceptions`:** `sparse_vector` threw directly and did not compile there; it uses `detail::throw_or_abort`, and the no-exceptions test builds it.

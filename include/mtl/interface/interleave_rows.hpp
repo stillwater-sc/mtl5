@@ -39,9 +39,10 @@
 //     it on AArch64 (detail/scalar_chain.hpp), 4 is their fastest width too
 //     (Ventuno Q: trmv 3.12 ms at 4 against 4.71 at 2).
 //   - Other targets: 6, the i7-12700K figure that was the default for every
-//     target before (#772).
-// Each is capped at half the vector registers the target has: 32-bit x86 and
-// unrecognized targets get 4. The default is 4 for every other type: long
+//     target before (#772). Every other target is assumed to have 8 vector
+//     registers, so the cap below makes it 4 in practice (#840).
+// Each is capped at half the vector registers the target has
+// (interleave_cap): 32-bit x86 and every other unrecognized target get 4. The default is 4 for every other type: long
 // double (x87 has eight stack slots), integers, and software number types,
 // whose cost only the user knows.
 //
@@ -112,14 +113,20 @@ consteval std::size_t measured_interleave_rows() {
 #endif
 }
 
+/// A measured width capped at half of `registers` vector registers: the other
+/// half holds the batches of A and x. A function of the register count, so the
+/// rule can be tested for every target on any one (#840).
+constexpr std::size_t interleave_cap(std::size_t measured, std::size_t registers) {
+    const std::size_t cap = registers / 2;
+    return measured < cap ? measured : cap;
+}
+
 /// The default width for T and Kernel, before any override (see the top of
 /// this file).
 template <typename T, typename Kernel>
 consteval std::size_t default_interleave_rows() {
     if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) {
-        constexpr std::size_t measured = measured_interleave_rows<T, Kernel>();
-        constexpr std::size_t cap = vector_registers / 2;   // the rest hold A and x
-        return measured < cap ? measured : cap;
+        return interleave_cap(measured_interleave_rows<T, Kernel>(), vector_registers);
     } else {
         return 4;
     }
