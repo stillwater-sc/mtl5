@@ -38,10 +38,12 @@ constexpr magnitude_t<T> cabs1(const T& z) {
 /// Threshold separating "this matrix has this structure" from "rounding noise",
 /// scaled by the size of the problem and the magnitude of the data.
 ///
-/// For a type without a std::numeric_limits specialization epsilon() is 0, so
-/// this degrades to an exact test rather than to something arbitrary -- which
-/// matters for the custom number types this library targets.
+/// Every MTL5 element type has a std::numeric_limits specialization (#838), so
+/// epsilon() is the type's own. Before that rule, a type without one got an
+/// epsilon of 0 and an exact test, and the ldlt/cholesky symmetry guards
+/// rejected a matrix symmetric only to rounding.
 template <typename Mag>
+    requires std::numeric_limits<Mag>::is_specialized
 constexpr Mag structure_tol(std::size_t n, Mag scale) {
     return static_cast<Mag>(n) * std::numeric_limits<Mag>::epsilon() * scale;
 }

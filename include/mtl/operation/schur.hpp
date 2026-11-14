@@ -178,7 +178,7 @@ auto schur(const M& A) {
     opt.tol = detail::machine_epsilon<value_type>();
     opt.lanv2 = detail::make_lanv2_constants<value_type>();
     opt.deflation_floor = value_type(0);
-    if constexpr (std::numeric_limits<value_type>::is_specialized) {
+    {
         // LAPACK dlahqr's smlnum = safmin * (n / ulp). A fixed-point type's
         // smallest value is not a safe minimum in that sense and gives a floor
         // of order 1, so the floor is used only when it is below epsilon.

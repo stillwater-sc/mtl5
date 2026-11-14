@@ -99,8 +99,7 @@ of it.
   `ε / (safmin m n)`, and it also suits half, whose safe minimum is far from
   `1 / max`. It is for callers that need only the direction or relative size of
   `X`, such as condition estimators, which solve many nearly singular
-  equations. A type without `numeric_limits` has no threshold and always gets
-  `scale = 1`. Scaling can push entries of `X` much smaller than its largest
+  equations. Scaling can push entries of `X` much smaller than its largest
   into the subnormals or to zero.
 
 With LAPACK, `trsyl` scales by its own rule in both calls.

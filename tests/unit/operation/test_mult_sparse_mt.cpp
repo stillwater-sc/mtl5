@@ -43,6 +43,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 
@@ -81,6 +82,12 @@ struct emul {
     explicit operator double() const { return x; }
     emul& operator+=(emul o) { x += o.x; return *this; }
 };
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<emul> : public mtl5_test::limits_of<emul, double> {};
+
+namespace {
 
 emul operator+(emul a, emul b) { return emul{a.x + b.x}; }
 emul operator-(emul a, emul b) { return emul{a.x - b.x}; }

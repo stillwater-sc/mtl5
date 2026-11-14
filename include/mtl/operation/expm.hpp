@@ -382,9 +382,9 @@ auto expm(const M& A_in) {
     // overflows at ||A|| ~ 7e3) that overflows, so A is first scaled by 2^-s_pre to
     // bring ||A|| within theta_13 2^K, K = max_exponent / 10 - 4. This only
     // limits how far the alpha_p refinement can lower s, to K steps below
-    // the norm-based choice. A type without numeric_limits is not pre-scaled.
+    // the norm-based choice. A non-binary type is not pre-scaled.
     int s_pre = 0;
-    if constexpr (std::numeric_limits<R>::is_specialized && std::numeric_limits<R>::radix == 2) {
+    if constexpr (std::numeric_limits<R>::radix == 2) {
         const int K = std::max(0, std::numeric_limits<R>::max_exponent / 10 - 4);
         const int s_norm = s_by_norm(normA);
         if (s_norm > K) s_pre = s_norm - K;

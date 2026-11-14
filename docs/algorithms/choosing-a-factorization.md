@@ -56,8 +56,8 @@ accumulate in different orders — is Hermitian only to rounding. An exact test
 passes on matrices written as literals and fails on matrices that are computed;
 during #352 a **one-ULP** perturbation defeated an exact guard and produced an
 answer wrong in the first significant digit. The threshold is `n · eps · scale`
-(`detail/structure_tol.hpp`), degrading to an exact test for element types
-without a `std::numeric_limits` specialization.
+(`detail/structure_tol.hpp`), with `eps` from the element type's
+`std::numeric_limits`, which every MTL5 element type has (#838).
 
 ## When you want the plain forms
 

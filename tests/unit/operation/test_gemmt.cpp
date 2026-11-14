@@ -19,6 +19,7 @@
 #include <mtl/operation/gemmt.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/trans.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 
@@ -43,6 +44,12 @@ struct fl {
     friend bool operator==(fl a, fl b) { return a.v == b.v; }
     friend auto operator<=>(fl a, fl b) { return a.v <=> b.v; }
 };
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<fl> : public mtl5_test::limits_of<fl, float> {};
+
+namespace {
 
 double dbl(double x) { return x; }
 double dbl(float x) { return x; }

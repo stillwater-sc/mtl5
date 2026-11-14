@@ -95,6 +95,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Foundations fixes from the QA sweep #816** (#838).
+  - `functor::scalar::abs` and `signum` compile for unsigned types; `signum(NaN)` is NaN, not 0.
+  - The `max` and `min` identities are `-inf` and `+inf` for types with infinities. They were `lowest()` and `max()`, so a max over `-inf` values gave `lowest()`.
+  - `magnitude_t` and `is_complex_v` ignore cv-qualifiers.
+  - The `Magnitude` concept finds `abs` through `std` and ADL; `Magnitude<double>` had held only through C's `::abs(int)`.
+  - `aligned_allocator` and `allocate_aligned` reject an `n` whose `n * sizeof(T)` overflows, with `std::bad_array_new_length`.
+  - `f_index`'s precondition (index 0 is out of range) is documented.
+  - Tests: the 26 untested scalar functors; `cabs1`, `structure_tol`, `same_object`, `expr_store_t`, `c_index`/`f_index`, `transposed_orientation`; the `LinearOperator`, `Preconditioner`, `FieldVector`, `NdArray` and `MutableNdArray` concepts.
+
 - **`mult(A, x, y)` with `y` sharing storage with `x` or `A`, the column-major `gemv` tail, and the `cache_info` sysfs scan** (#840, from the QA sweep #816).
   - **Aliasing:** every kernel writes `y` while still reading its inputs, and the column-major `gemv` zeroes `y` first. A `y` that is the same vector as `x`, or a vector over part of `x`'s or `A`'s buffer, gave wrong results under `NDEBUG`; a debug-only `assert` caught only the same object. `mult` now checks the address ranges (`detail::storage_overlaps`, which also sees a `compressed2D`'s value array and the matrix behind a view) in every build and computes through a temporary, still writing `y`'s own buffer. The transposed-`compressed2D` overload does the same.
   - **The column-major `gemv` tail:** the last `m mod W` rows used a separate multiply and add while the SIMD rows used FMA, so a row's rounding depended on where it fell. The tail now uses `simd::scalar_fma`, the batch's own `fma`. Every row gets the same chain, as the kernel's comment claimed. This changes the tail rows' last bit where the batch `fma` fuses (Highway builds with FMA).
@@ -250,6 +259,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     It passes in a BLAS build too. Against the old header, 7 of the 22 test cases in the first version of this change fail.
 
 ### Changed
+
+- **BREAKING: `Scalar` requires `std::numeric_limits` on the element type's magnitude type** (#838, from the QA sweep #816). `Scalar<T>` now includes `HasNumericLimits<T>`, which is `std::numeric_limits<magnitude_t<T>>::is_specialized`. It applies to the magnitude type because the standard has no `numeric_limits<std::complex<T>>`, so `std::complex<T>` qualifies through `T`.
+  - **Why:** one source for a type's precision and range, instead of per-algorithm fallbacks that disagreed. A type without limits used to get a measured epsilon in `expm`, `schur`, `sylvester` and `eigen_symmetric`; an exact comparison in the `ldlt`/`cholesky` structure guards (`structure_tol`), which then rejected matrices symmetric only to rounding; no scaling in `sylvester` and `svd`; and a zero identity for `min`/`max`. Those paths are removed: `machine_epsilon` and `structure_tol` read `numeric_limits`, and the eight `is_specialized` branches are gone.
+  - **Migrating:** a custom number type specializes `std::numeric_limits`, as every Universal number system does. The one Universal scalar type without it, `unum2`, is stillwater-sc/universal#2075. The tests' class stand-ins use the new `tests/support/mtl5_test/limits_of.hpp`.
 
 - **The docs site's Benchmarking section keeps the capability cards apart from the analyses** (#799, step 1). The generated cards and the written analyses were listed together in alphabetical order, so the i7-12700K analysis sat next to its card with nothing to tell them apart.
   - **Where the cards are:** they moved from `docs/benchmarks/<machine>-mtl5-bench.md` to `docs/benchmarks/cards/<machine>.md`.

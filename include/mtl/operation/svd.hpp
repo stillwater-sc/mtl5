@@ -139,13 +139,9 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
     // skipped every rotation, so the columns were never orthogonalized
     // (measured: a matrix scaled by 1e-160 came back with |U^T U - I| = 0.87).
     // One scale shared by both columns keeps zeta, and hence the rotation,
-    // unchanged. A type without numeric_limits always takes the scaled path.
-    constexpr bool raw_ok = std::numeric_limits<value_type>::is_specialized;
-    value_type lo = math::zero<value_type>(), hi = math::zero<value_type>();
-    if constexpr (raw_ok) {
-        lo = sqrt(std::numeric_limits<value_type>::min()) / eps;
-        hi = sqrt(std::numeric_limits<value_type>::max()) / value_type(2);
-    }
+    // unchanged.
+    const value_type lo = sqrt(std::numeric_limits<value_type>::min()) / eps;
+    const value_type hi = sqrt(std::numeric_limits<value_type>::max()) / value_type(2);
 
     for (size_type sweep = 0; sweep < max_sweeps; ++sweep) {
         bool rotated = false;
@@ -156,13 +152,10 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
                 value_type alpha = math::zero<value_type>();
                 value_type gamma = math::zero<value_type>();
                 value_type betac = math::zero<value_type>();
-                bool in_range = false;
-                if constexpr (raw_ok) {
-                    svd_pair_sums<Accumulator>(m, [&](size_type i) {
-                        return std::pair<value_type, value_type>{bp_[i], bq_[i]};
-                    }, alpha, betac, gamma);
-                    in_range = alpha >= lo && alpha <= hi && betac >= lo && betac <= hi;
-                }
+                svd_pair_sums<Accumulator>(m, [&](size_type i) {
+                    return std::pair<value_type, value_type>{bp_[i], bq_[i]};
+                }, alpha, betac, gamma);
+                const bool in_range = alpha >= lo && alpha <= hi && betac >= lo && betac <= hi;
                 if (!in_range) {
                     value_type cs = math::zero<value_type>();
                     for (size_type i = 0; i < m; ++i) {

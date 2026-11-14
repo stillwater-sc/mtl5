@@ -6,6 +6,7 @@
 #include <limits>
 #include <stdexcept>
 #include <mtl/mtl.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
@@ -84,38 +85,45 @@ const long double ref_complex[4][4][2] = {
     {{1.103987194306377031646428148212760273933L, -1.920303690497402803459721981354667379182L}, {1.584371128027309080411896424799212621023L, 0.9751455807446523753270647194753632852267L}, {0.4871186898565871102529351416168032374486L, 3.792942458841047327929298955056830318857L}, {-3.771012848931200386517440739023792793315L, 0.06391251631364020992750207588553070147115L}},
 };
 
-/// A class-typed real with no std::numeric_limits specialization and no exp,
-/// as in test_eigen_symmetric.cpp: expm must measure its unit roundoff, and a
-/// triangular matrix of it takes the general path.
-struct unlimited {
+/// A class-typed real with no exp, as in test_eigen_symmetric.cpp: a
+/// triangular matrix of it takes the general path. Its precision comes from
+/// its own numeric_limits specialization, which every MTL5 element type has
+/// (#838); before that rule it had none and expm measured its unit roundoff.
+struct class_double {
     double v = 0.0;
-    unlimited() = default;
-    constexpr unlimited(double d) : v(d) {}
-    friend unlimited operator+(unlimited a, unlimited b) { return a.v + b.v; }
-    friend unlimited operator-(unlimited a, unlimited b) { return a.v - b.v; }
-    friend unlimited operator*(unlimited a, unlimited b) { return a.v * b.v; }
-    friend unlimited operator/(unlimited a, unlimited b) { return a.v / b.v; }
-    friend unlimited operator-(unlimited a) { return -a.v; }
-    unlimited& operator+=(unlimited o) { v += o.v; return *this; }
-    unlimited& operator-=(unlimited o) { v -= o.v; return *this; }
-    unlimited& operator*=(unlimited o) { v *= o.v; return *this; }
-    unlimited& operator/=(unlimited o) { v /= o.v; return *this; }
-    friend bool operator==(unlimited a, unlimited b) { return a.v == b.v; }
-    friend auto operator<=>(unlimited a, unlimited b) { return a.v <=> b.v; }
-    friend unlimited sqrt(unlimited a) { return std::sqrt(a.v); }
-    friend unlimited abs(unlimited a) { return std::abs(a.v); }
+    class_double() = default;
+    constexpr class_double(double d) : v(d) {}
+    friend class_double operator+(class_double a, class_double b) { return a.v + b.v; }
+    friend class_double operator-(class_double a, class_double b) { return a.v - b.v; }
+    friend class_double operator*(class_double a, class_double b) { return a.v * b.v; }
+    friend class_double operator/(class_double a, class_double b) { return a.v / b.v; }
+    friend class_double operator-(class_double a) { return -a.v; }
+    class_double& operator+=(class_double o) { v += o.v; return *this; }
+    class_double& operator-=(class_double o) { v -= o.v; return *this; }
+    class_double& operator*=(class_double o) { v *= o.v; return *this; }
+    class_double& operator/=(class_double o) { v /= o.v; return *this; }
+    friend bool operator==(class_double a, class_double b) { return a.v == b.v; }
+    friend auto operator<=>(class_double a, class_double b) { return a.v <=> b.v; }
+    friend class_double sqrt(class_double a) { return std::sqrt(a.v); }
+    friend class_double abs(class_double a) { return std::abs(a.v); }
 };
-static_assert(!std::numeric_limits<unlimited>::is_specialized);
-static_assert(!detail::expm_impl::adl::has_exp_sinh<unlimited>);
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<class_double> : public mtl5_test::limits_of<class_double, double> {};
+
+namespace {
+static_assert(Scalar<class_double>);   // a class type, with its own numeric_limits (#838)
+static_assert(!detail::expm_impl::adl::has_exp_sinh<class_double>);
 
 } // namespace
 
-TEST_CASE("unit_roundoff: half the machine epsilon, measured without numeric_limits",
+TEST_CASE("unit_roundoff: half the machine epsilon, from the type's numeric_limits",
           "[operation][expm]") {
     REQUIRE(detail::unit_roundoff<double>() == std::ldexp(1.0, -53));
     REQUIRE(detail::unit_roundoff<float>() == std::ldexp(1.0f, -24));
-    REQUIRE(detail::unit_roundoff<unlimited>().v == std::ldexp(1.0, -53));
-    REQUIRE(detail::machine_epsilon<unlimited>().v == std::numeric_limits<double>::epsilon());
+    REQUIRE(detail::unit_roundoff<class_double>().v == std::ldexp(1.0, -53));
+    REQUIRE(detail::machine_epsilon<class_double>().v == std::numeric_limits<double>::epsilon());
 }
 
 TEST_CASE("expm: the theta table follows the type's unit roundoff", "[operation][expm]") {
@@ -123,7 +131,7 @@ TEST_CASE("expm: the theta table follows the type's unit roundoff", "[operation]
     using detail::expm_impl::theta_table;
     REQUIRE(theta_table[table_index<float>()].t == 24);
     REQUIRE(theta_table[table_index<double>()].t == 53);
-    REQUIRE(theta_table[table_index<unlimited>()].t == 53);
+    REQUIRE(theta_table[table_index<class_double>()].t == 53);
     // long double is x87 extended, double, or binary128 depending on the
     // platform; whichever it is, the table is the first with 2^-t <= u.
     const std::size_t k = table_index<long double>();
@@ -164,8 +172,8 @@ TEST_CASE("expm: diagonal and triangular matrices", "[operation][expm]") {
     auto ref = make<double>({{1.0, 1.0, 3.5}, {0.0, 1.0, 3.0}, {0.0, 0.0, 1.0}});
     REQUIRE(rel_err(EN, ref) < 1e-15);
 
-    // The same through the general path: unlimited has no exp.
-    auto Nu = make<unlimited>({{0.0, 1.0, 2.0}, {0.0, 0.0, 3.0}, {0.0, 0.0, 0.0}});
+    // The same through the general path: class_double has no exp.
+    auto Nu = make<class_double>({{0.0, 1.0, 2.0}, {0.0, 0.0, 3.0}, {0.0, 0.0, 0.0}});
     auto ENu = expm(Nu);
     for (std::size_t i = 0; i < 3; ++i)
         for (std::size_t j = 0; j < 3; ++j)
@@ -199,7 +207,7 @@ TEST_CASE("expm: against a 60-digit reference, double, float, long double, compl
     REQUIRE(rel_err(expm(test_matrix<long double>()), ref) <
             200 * std::numeric_limits<long double>::epsilon());
 
-    auto Au = test_matrix<unlimited>();
+    auto Au = test_matrix<class_double>();
     auto Eu = expm(Au);
     mat::dense2D<double> Ed(4, 4);
     for (std::size_t i = 0; i < 4; ++i)

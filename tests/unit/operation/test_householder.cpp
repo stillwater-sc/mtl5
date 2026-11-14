@@ -10,6 +10,7 @@
 #include <limits>
 #include <random>
 #include <mtl/mtl.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 
@@ -35,6 +36,17 @@ struct short_range {
     friend short_range sqrt(short_range a) { return std::sqrt(a.v); }
     friend short_range abs(short_range a) { return std::abs(a.v); }
 };
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<short_range> : public mtl5_test::limits_of<short_range, double> {
+public:
+    // Flushes to zero below 2^-20.
+    static constexpr short_range min() noexcept { return 0x1.0p-20; }
+    static constexpr short_range denorm_min() noexcept { return 0x1.0p-20; }
+};
+
+namespace {
 
 /// A fixed-point real like fixpnt<16,8> with saturation: every result is
 /// rounded to a multiple of 2^-8 and clamped to +-(128 - 2^-8).
@@ -62,6 +74,23 @@ struct coarse_fixed {
     friend coarse_fixed sqrt(coarse_fixed a) { return std::sqrt(a.v); }
     friend coarse_fixed abs(coarse_fixed a) { return std::abs(a.v); }
 };
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<coarse_fixed> : public mtl5_test::limits_of<coarse_fixed, double> {
+public:
+    // fixpnt<16,8>-like: steps of 2^-8, saturating at 128 - 2^-8, no infinity.
+    static constexpr bool is_exact = false;
+    static constexpr bool has_infinity = false;
+    static constexpr int digits = 15;
+    static constexpr coarse_fixed epsilon() noexcept { return 1.0 / 256.0; }
+    static constexpr coarse_fixed min() noexcept { return 1.0 / 256.0; }
+    static constexpr coarse_fixed denorm_min() noexcept { return 1.0 / 256.0; }
+    static constexpr coarse_fixed max() noexcept { return 128.0 - 1.0 / 256.0; }
+    static constexpr coarse_fixed lowest() noexcept { return -(128.0 - 1.0 / 256.0); }
+};
+
+namespace {
 
 /// A real with little range above 1, like an 8-bit float: every result of
 /// magnitude 4 or more becomes infinite.
@@ -85,6 +114,17 @@ struct short_max {
     friend short_max sqrt(short_max a) { return std::sqrt(a.v); }
     friend short_max abs(short_max a) { return std::abs(a.v); }
 };
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<short_max> : public mtl5_test::limits_of<short_max, double> {
+public:
+    // Every magnitude of 4 or more is infinite.
+    static constexpr short_max max() noexcept { return 0x1.fffffffffffffp+1; }
+    static constexpr short_max lowest() noexcept { return -0x1.fffffffffffffp+1; }
+};
+
+namespace {
 
 double dbl(double x) { return x; }
 double dbl(short_range x) { return x.v; }

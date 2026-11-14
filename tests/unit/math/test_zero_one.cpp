@@ -34,14 +34,16 @@ TEST_CASE("math::zero and math::one are constexpr", "[math][identity]") {
     STATIC_REQUIRE(o == 1.0);
 }
 
-TEST_CASE("identity_t for max_op is lowest", "[math][identity]") {
+// -inf and +inf for a type with infinities (#838): lowest() and max() are not
+// identities, since max(-inf, lowest) is lowest. See test_identity_limits.cpp.
+TEST_CASE("identity_t for max_op is -infinity", "[math][identity]") {
     auto v = mtl::math::identity_t<mtl::math::max_op<double>, double>{}();
-    REQUIRE(v == std::numeric_limits<double>::lowest());
+    REQUIRE(v == -std::numeric_limits<double>::infinity());
 }
 
-TEST_CASE("identity_t for min_op is max", "[math][identity]") {
+TEST_CASE("identity_t for min_op is +infinity", "[math][identity]") {
     auto v = mtl::math::identity_t<mtl::math::min_op<double>, double>{}();
-    REQUIRE(v == std::numeric_limits<double>::max());
+    REQUIRE(v == std::numeric_limits<double>::infinity());
 }
 
 TEST_CASE("operation functors produce correct results", "[math][operations]") {

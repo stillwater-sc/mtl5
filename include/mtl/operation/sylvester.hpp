@@ -121,18 +121,16 @@ struct sylvester_limits {
 template <typename R>
 sylvester_limits<R> make_sylvester_limits(std::size_t m, std::size_t n, const R& eps) {
     sylvester_limits<R> l;
-    if constexpr (std::numeric_limits<R>::is_specialized) {
-        const R mn(double(m) * double(n));
-        const R smlnum = std::numeric_limits<R>::min() * (mn / eps);
-        if (smlnum > R(0) && smlnum < eps) {
-            l.smlnum = smlnum;
-            l.have_floor = true;
-        }
-        const R bignum = std::numeric_limits<R>::max() * eps / mn;
-        if (bignum > R(1)) {
-            l.bignum = bignum;
-            l.have_bignum = true;
-        }
+    const R mn(double(m) * double(n));
+    const R smlnum = std::numeric_limits<R>::min() * (mn / eps);
+    if (smlnum > R(0) && smlnum < eps) {
+        l.smlnum = smlnum;
+        l.have_floor = true;
+    }
+    const R bignum = std::numeric_limits<R>::max() * eps / mn;
+    if (bignum > R(1)) {
+        l.bignum = bignum;
+        l.have_bignum = true;
     }
     return l;
 }
@@ -471,14 +469,11 @@ auto sylvester_triangular(const MA& A, const MB& B, const MC& C,
     if (!(s.scale == real_type(1))) {
         // Only LAPACK trsyl scales here. X = X_scaled / scale is returned when
         // it is representable.
-        bool fits = false;
-        if constexpr (std::numeric_limits<real_type>::is_specialized) {
-            real_type amax(0);
-            for (std::size_t i = 0; i < m; ++i)
-                for (std::size_t j = 0; j < n; ++j)
-                    if (amax < abs(s.X(i, j))) amax = abs(s.X(i, j));
-            fits = amax <= std::numeric_limits<real_type>::max() * s.scale;
-        }
+        real_type amax(0);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n; ++j)
+                if (amax < abs(s.X(i, j))) amax = abs(s.X(i, j));
+        const bool fits = amax <= std::numeric_limits<real_type>::max() * s.scale;
         if (!fits) throw std::overflow_error(overflow_message);
         const value_type sc(s.scale);
         for (std::size_t i = 0; i < m; ++i)
@@ -490,9 +485,8 @@ auto sylvester_triangular(const MA& A, const MB& B, const MC& C,
     for (std::size_t i = 0; i < m; ++i)
         for (std::size_t j = 0; j < n; ++j) {
             const value_type& x = s.X(i, j);
-            bool bad = !(x - x == value_type(0));
-            if constexpr (std::numeric_limits<real_type>::is_specialized)
-                bad = bad || !(abs(x) < std::numeric_limits<real_type>::max());
+            const bool bad = !(x - x == value_type(0))
+                          || !(abs(x) < std::numeric_limits<real_type>::max());
             if (bad) throw std::overflow_error(overflow_message);
         }
     return sylvester_result<value_type>{std::move(s.X), s.perturbed};

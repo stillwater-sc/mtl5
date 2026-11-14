@@ -55,7 +55,7 @@ using std::sqrt;
 
 template <typename Mag>
 concept rescalable_sum_squares =
-    std::numeric_limits<Mag>::is_specialized && !std::numeric_limits<Mag>::is_integer &&
+    !std::numeric_limits<Mag>::is_integer &&
     requires(Mag a, int* e, int k) {
         frexp(a, e);
         { ldexp(a, k) } -> std::convertible_to<Mag>;

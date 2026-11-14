@@ -14,37 +14,44 @@
 #include <stdexcept>
 #include <vector>
 #include <mtl/mtl.hpp>
+#include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
 
 namespace {
 
-/// A class-typed real with no std::numeric_limits specialization and only the
-/// operations the solvers may use: + - * /, comparisons, and abs and sqrt by ADL.
-struct unlimited {
+/// A class-typed real with only the operations the solvers may use: + - * /,
+/// comparisons, and abs and sqrt by ADL, and its numeric_limits (#838).
+struct class_double {
     double v = 0.0;
-    unlimited() = default;
-    constexpr unlimited(double d) : v(d) {}
-    friend unlimited operator+(unlimited a, unlimited b) { return a.v + b.v; }
-    friend unlimited operator-(unlimited a, unlimited b) { return a.v - b.v; }
-    friend unlimited operator*(unlimited a, unlimited b) { return a.v * b.v; }
-    friend unlimited operator/(unlimited a, unlimited b) { return a.v / b.v; }
-    friend unlimited operator-(unlimited a) { return -a.v; }
-    unlimited& operator+=(unlimited o) { v += o.v; return *this; }
-    unlimited& operator-=(unlimited o) { v -= o.v; return *this; }
-    unlimited& operator*=(unlimited o) { v *= o.v; return *this; }
-    unlimited& operator/=(unlimited o) { v /= o.v; return *this; }
-    friend bool operator==(unlimited a, unlimited b) { return a.v == b.v; }
-    friend auto operator<=>(unlimited a, unlimited b) { return a.v <=> b.v; }
-    friend unlimited sqrt(unlimited a) { return std::sqrt(a.v); }
-    friend unlimited abs(unlimited a) { return std::abs(a.v); }
+    class_double() = default;
+    constexpr class_double(double d) : v(d) {}
+    friend class_double operator+(class_double a, class_double b) { return a.v + b.v; }
+    friend class_double operator-(class_double a, class_double b) { return a.v - b.v; }
+    friend class_double operator*(class_double a, class_double b) { return a.v * b.v; }
+    friend class_double operator/(class_double a, class_double b) { return a.v / b.v; }
+    friend class_double operator-(class_double a) { return -a.v; }
+    class_double& operator+=(class_double o) { v += o.v; return *this; }
+    class_double& operator-=(class_double o) { v -= o.v; return *this; }
+    class_double& operator*=(class_double o) { v *= o.v; return *this; }
+    class_double& operator/=(class_double o) { v /= o.v; return *this; }
+    friend bool operator==(class_double a, class_double b) { return a.v == b.v; }
+    friend auto operator<=>(class_double a, class_double b) { return a.v <=> b.v; }
+    friend class_double sqrt(class_double a) { return std::sqrt(a.v); }
+    friend class_double abs(class_double a) { return std::abs(a.v); }
 };
-static_assert(!std::numeric_limits<unlimited>::is_specialized);
+} // namespace
+
+// Every MTL5 element type has numeric_limits (#838).
+template <> class std::numeric_limits<class_double> : public mtl5_test::limits_of<class_double, double> {};
+
+namespace {
+static_assert(Scalar<class_double>);   // a class type, with its own numeric_limits (#838)
 
 long double ld(float x) { return x; }
 long double ld(double x) { return x; }
 long double ld(long double x) { return x; }
-long double ld(unlimited x) { return x.v; }
+long double ld(class_double x) { return x.v; }
 template <typename R>
 std::complex<long double> ldc(const std::complex<R>& z) { return {ld(z.real()), ld(z.imag())}; }
 template <typename T>
@@ -165,7 +172,7 @@ TEST_CASE("sylvester_triangular: real quasi-triangular A and B", "[operation][sy
     check_triangular_family<long double, void>(3);
     check_triangular_family<double, double>(4);           // in-house path with LAPACK
     check_triangular_family<float, double>(5);            // wider accumulator
-    check_triangular_family<unlimited, void>(6);          // no numeric_limits
+    check_triangular_family<class_double, void>(6);          // a class type
 }
 
 TEST_CASE("sylvester_triangular: every 1x1/2x2 block pairing", "[operation][sylvester]") {
@@ -308,7 +315,7 @@ TEST_CASE("sylvester: general real A and B (Bartels-Stewart)", "[operation][sylv
                 }
             }
 
-    // Generic element types: float and the type without numeric_limits.
+    // Generic element types: float and a class type.
     for (std::size_t n : {3u, 7u}) {
         auto Af = random_matrix<float>(n, n, g);
         auto Bf = random_matrix<float>(n, n, g);
@@ -317,12 +324,12 @@ TEST_CASE("sylvester: general real A and B (Bartels-Stewart)", "[operation][sylv
         auto Cf = apply(Af, Bf, Xf, sylvester_sign::plus);
         CHECK(residual(Af, Bf, Cf, sylvester(Af, Bf, Cf).X, sylvester_sign::plus) <= 10.0L * n);
 
-        mat::dense2D<unlimited> Au(n, n), Bu(n, n), Xu(n, n);
+        mat::dense2D<class_double> Au(n, n), Bu(n, n), Xu(n, n);
         for (std::size_t i = 0; i < n; ++i)
             for (std::size_t j = 0; j < n; ++j) {
-                Au(i, j) = unlimited(double(Af(i, j)));
-                Bu(i, j) = unlimited(double(Bf(i, j)));
-                Xu(i, j) = unlimited(double(Xf(i, j)));
+                Au(i, j) = class_double(double(Af(i, j)));
+                Bu(i, j) = class_double(double(Bf(i, j)));
+                Xu(i, j) = class_double(double(Xf(i, j)));
             }
         auto Cu = apply(Au, Bu, Xu, sylvester_sign::plus);
         auto [X, perturbed] = sylvester(Au, Bu, Cu);
