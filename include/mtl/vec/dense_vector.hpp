@@ -43,18 +43,25 @@ public:
     using actual_storage = typename Parameters::storage;
     using memory_type = detail::contiguous_memory_block<Value, actual_storage, static_size>;
 
+    /// A read-only view (tag::read_only storage) over a caller's `const Value*`:
+    /// only const access, so writing through it does not compile. It is still a
+    /// dense_vector<Value, Parameters>, so every operation that takes
+    /// `const dense_vector<V, P>&` accepts it. Copying it gives another view of
+    /// the same buffer; it cannot be assigned to or resized.
+    static constexpr bool read_only = std::is_same_v<actual_storage, tag::read_only>;
+
     // -- Standard type aliases -------------------------------------------
     using value_type      = Value;
-    using reference       = Value&;
+    using reference       = std::conditional_t<read_only, const Value&, Value&>;
     using const_reference = const Value&;
-    using pointer         = Value*;
+    using pointer         = std::conditional_t<read_only, const Value*, Value*>;
     using const_pointer   = const Value*;
 
     // -- Default constructor ---------------------------------------------
     dense_vector() : mem_{}, dim_{} {}
 
     // -- Size constructor (dynamic only) ---------------------------------
-    explicit dense_vector(size_type n) : mem_(n), dim_{} {
+    explicit dense_vector(size_type n) requires (!read_only) : mem_(n), dim_{} {
         if constexpr (!dim_type::is_fixed) {
             dim_.set_size(n);
         } else {
@@ -63,7 +70,7 @@ public:
     }
 
     // -- Size + fill value constructor -----------------------------------
-    dense_vector(size_type n, const Value& val) : dense_vector(n) {
+    dense_vector(size_type n, const Value& val) requires (!read_only) : dense_vector(n) {
         std::fill_n(mem_.data(), size(), val);
     }
 
@@ -73,27 +80,56 @@ public:
     // Assignment writes the caller's buffer and never re-points it; see
     // detail::contiguous_memory_block.
     template <typename Ptr>
-        requires std::same_as<Ptr, Value*>
+        requires (!read_only && std::same_as<Ptr, Value*>)
     dense_vector(size_type n, Ptr ptr) : mem_(ptr, n, false), dim_{} {
         if constexpr (!dim_type::is_fixed) {
             dim_.set_size(n);
         }
     }
 
+    // -- Read-only view constructor --------------------------------------
+    // Over a const buffer (or a mutable one, viewed read-only). The pointer is
+    // stored without const only because the memory block is shared with the
+    // mutable vectors; no member of a read-only vector writes through it.
+    template <typename Ptr>
+        requires (read_only && (std::same_as<Ptr, const Value*> || std::same_as<Ptr, Value*>))
+    dense_vector(size_type n, Ptr ptr) : mem_(const_cast<Value*>(ptr), n, true), dim_{} {
+        if constexpr (!dim_type::is_fixed) {
+            dim_.set_size(n);
+        } else {
+            assert(n == static_size && "Size must match fixed dimension");
+        }
+    }
+
     // -- Initializer list constructor ------------------------------------
-    dense_vector(std::initializer_list<Value> il) : dense_vector(il.size()) {
+    dense_vector(std::initializer_list<Value> il) requires (!read_only) : dense_vector(il.size()) {
         std::copy(il.begin(), il.end(), mem_.data());
     }
 
     // -- Construct from std::vector --------------------------------------
-    explicit dense_vector(const std::vector<Value>& v) : dense_vector(v.size()) {
+    explicit dense_vector(const std::vector<Value>& v) requires (!read_only) : dense_vector(v.size()) {
         std::copy(v.begin(), v.end(), mem_.data());
     }
 
     // -- Copy / Move -----------------------------------------------------
-    dense_vector(const dense_vector&) = default;
-    dense_vector& operator=(const dense_vector&) = default;
+    dense_vector(const dense_vector&) requires (!read_only) = default;
+    dense_vector& operator=(const dense_vector&) requires (!read_only) = default;
     ~dense_vector() = default;
+
+    /// An owning (or external) vector from a read-only view: copies the
+    /// elements, so the copy can be changed.
+    template <typename P2>
+        requires (!read_only && !std::same_as<P2, Parameters>
+                  && dense_vector<Value, P2>::read_only)
+    dense_vector(const dense_vector<Value, P2>& view)
+        : dense_vector(static_cast<size_type>(view.size())) {
+        std::copy(view.begin(), view.end(), mem_.data());
+    }
+
+    /// Copying a read-only view gives another view of the same buffer.
+    dense_vector(const dense_vector& other) requires read_only
+        : mem_(const_cast<Value*>(other.data()), other.size(), true), dim_(other.dim_) {}
+    dense_vector& operator=(const dense_vector&) requires read_only = delete;
 
     dense_vector(dense_vector&& other) noexcept(std::is_nothrow_move_constructible_v<memory_type>)
         : mem_(std::move(other.mem_)), dim_(other.dim_)
@@ -103,7 +139,8 @@ public:
 
     /// A vector over an external buffer of the same size keeps its buffer and
     /// receives the elements; the source keeps its size (#829).
-    dense_vector& operator=(dense_vector&& other) noexcept {
+    dense_vector& operator=(dense_vector&&) requires read_only = delete;
+    dense_vector& operator=(dense_vector&& other) noexcept requires (!read_only) {
         if (this != &other) {
             const bool in_place = mem_.assigns_in_place(other.mem_.size());
             mem_ = std::move(other.mem_);
@@ -117,7 +154,7 @@ public:
 
     // -- Expression template construction / assignment -------------------
     template <typename Expr>
-        requires (Vector<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector(const Expr& expr) : dense_vector(static_cast<size_type>(expr.size())) {
         // Element-wise sweep: each element is independent, so the contiguous
@@ -129,7 +166,7 @@ public:
     }
 
     template <typename Expr>
-        requires (Vector<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector& operator=(const Expr& expr) {
         // A vector over an external buffer is never re-pointed by assignment;
@@ -145,7 +182,7 @@ public:
     }
 
     template <typename Expr>
-        requires (Vector<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector& operator+=(const Expr& expr) {
         assert(size() == expr.size());
@@ -156,7 +193,7 @@ public:
     }
 
     template <typename Expr>
-        requires (Vector<Expr> && traits::is_expression_v<Expr>
+        requires (!read_only && Vector<Expr> && traits::is_expression_v<Expr>
                   && std::convertible_to<typename Expr::value_type, Value>)
     dense_vector& operator-=(const Expr& expr) {
         assert(size() == expr.size());
@@ -167,7 +204,7 @@ public:
     }
 
     // -- Element access --------------------------------------------------
-    reference operator()(size_type i) {
+    Value& operator()(size_type i) requires (!read_only) {
         if constexpr (bounds_checking) {
             if (i >= size()) ::mtl::detail::throw_or_abort(std::out_of_range("dense_vector: index out of range"));
         }
@@ -181,7 +218,7 @@ public:
         return mem_[i];
     }
 
-    reference operator[](size_type i) { return operator()(i); }
+    Value& operator[](size_type i) requires (!read_only) { return operator()(i); }
     const_reference operator[](size_type i) const { return operator()(i); }
 
     // -- Size / shape ----------------------------------------------------
@@ -213,16 +250,16 @@ public:
         return mem_.category() == ::mtl::detail::memory_category::own;
     }
 
-    pointer       data()       { return mem_.data(); }
+    Value*        data()        requires (!read_only) { return mem_.data(); }
     const_pointer data() const { return mem_.data(); }
 
-    pointer       begin()       { return data(); }
+    Value*        begin()       requires (!read_only) { return data(); }
     const_pointer begin() const { return data(); }
-    pointer       end()         { return data() + size(); }
+    Value*        end()         requires (!read_only) { return data() + size(); }
     const_pointer end()   const { return data() + size(); }
 
     // -- Dimension modification ------------------------------------------
-    void change_dim(size_type n) {
+    void change_dim(size_type n) requires (!read_only) {
         if constexpr (dim_type::is_fixed) {
             assert(n == static_size && "Cannot change fixed dimension");
         } else {
@@ -233,7 +270,7 @@ public:
         }
     }
 
-    void checked_change_dim(size_type n) {
+    void checked_change_dim(size_type n) requires (!read_only) {
         if constexpr (dim_type::is_fixed) {
             if (n != static_size)
                 ::mtl::detail::throw_or_abort(std::domain_error("dense_vector: cannot resize fixed-size vector"));
@@ -243,32 +280,32 @@ public:
     }
 
     // -- Compound assignment operators -----------------------------------
-    dense_vector& operator+=(const dense_vector& other) {
+    dense_vector& operator+=(const dense_vector& other) requires (!read_only) {
         assert(size() == other.size());
         for (size_type i = 0; i < size(); ++i) mem_[i] += other.mem_[i];
         return *this;
     }
 
-    dense_vector& operator-=(const dense_vector& other) {
+    dense_vector& operator-=(const dense_vector& other) requires (!read_only) {
         assert(size() == other.size());
         for (size_type i = 0; i < size(); ++i) mem_[i] -= other.mem_[i];
         return *this;
     }
 
-    template <typename S> requires Scalar<S>
+    template <typename S> requires (!read_only && Scalar<S>)
     dense_vector& operator*=(const S& alpha) {
         for (size_type i = 0; i < size(); ++i) mem_[i] *= alpha;
         return *this;
     }
 
-    template <typename S> requires Field<S>
+    template <typename S> requires (!read_only && Field<S>)
     dense_vector& operator/=(const S& alpha) {
         for (size_type i = 0; i < size(); ++i) mem_[i] /= alpha;
         return *this;
     }
 
     // -- Swap ------------------------------------------------------------
-    void swap(dense_vector& other) noexcept {
+    void swap(dense_vector& other) noexcept requires (!read_only) {
         mem_.swap(other.mem_);
         if constexpr (!dim_type::is_fixed) {
             using std::swap;
@@ -283,6 +320,39 @@ private:
     [[no_unique_address]] dim_type dim_;
 };
 
+// -- Read-only views --------------------------------------------------------
+
+/// A read-only dense vector over memory the caller owns (tag::read_only):
+/// const access only, no allocation, no copy of the elements.
+template <typename Value, typename Orientation = tag::col_major>
+using const_vector_view =
+    dense_vector<Value, parameters<Orientation, non_fixed::dimension, tag::read_only>>;
+
+/// A read-only view of the n elements at ptr. The buffer must outlive the view.
+///   void rhs(double t, const double* y, double* dydt, std::size_t n) {
+///       const auto Y = vec::const_view(n, y);          // no const_cast
+///       vec::dense_vector<double> dY(n, dydt);         // writes dydt in place
+///       dY = A * Y;
+///   }
+template <typename Value>
+const_vector_view<Value> const_view(std::size_t n, const Value* ptr) {
+    return const_vector_view<Value>(n, ptr);
+}
+
+/// A read-only view of v's elements, in v's orientation: hand a vector to
+/// code that must not change it, without copying it. v must outlive the view.
+template <typename Value, typename Parameters>
+auto const_view(const dense_vector<Value, Parameters>& v) {
+    using view_params = parameters<typename Parameters::orientation, non_fixed::dimension,
+                                   tag::read_only, typename Parameters::size_type>;
+    return dense_vector<Value, view_params>(
+        static_cast<typename view_params::size_type>(v.size()), v.data());
+}
+
+/// A view of a temporary would dangle at the end of the full-expression.
+template <typename Value, typename Parameters>
+void const_view(const dense_vector<Value, Parameters>&&) = delete;
+
 // -- Free functions in mtl::vec ------------------------------------------
 
 template <typename Value, typename Parameters>
@@ -295,6 +365,7 @@ template <typename Value, typename Parameters>
 auto num_cols(const dense_vector<Value, Parameters>& v) { return v.num_cols(); }
 
 template <typename Value, typename Parameters>
+    requires (!dense_vector<Value, Parameters>::read_only)
 void fill(dense_vector<Value, Parameters>& v, const std::type_identity_t<Value>& val) {
     std::fill(v.begin(), v.end(), val);
 }

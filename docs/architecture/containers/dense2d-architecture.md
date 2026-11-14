@@ -159,6 +159,22 @@ Two properties of this block matter to the rest of the library:
   buffer of its own to write. `ndarray` follows the same rule for its views,
   element by element in the view's strides, with a shape check in place of
   the element count.
+- **Read-only views are a storage tag, not a new type.** A buffer the
+  caller can only read (`const double*`, from a callback such as an ODE
+  integrator's `rhs(t, const double* y, double* dydt)`) is wrapped by
+  `vec::const_view(n, y)` or `mat::const_view(rows, cols, a)`, which give a
+  `dense_vector` or `dense2D` with `tag::read_only` storage. Every mutator,
+  the non-const element access, `data()`, `begin()` and `end()` are
+  constrained on `!read_only`, so a write through the view is a compile
+  error, not a `const_cast` hidden in user code. Because it is still a
+  `dense_vector<V, P>` or `dense2D<V, P>`, every operation that takes
+  `const dense_vector<V, P>&` or `const dense2D<V, P>&` accepts it, along
+  with the expressions and the generic `Vector` and `Matrix` operations. A
+  copy of a view is another view of the same buffer; a view cannot be
+  assigned to or resized; an owning vector or matrix can be built from one,
+  which copies the elements. A separate view class was the alternative, and it
+  would have needed an overload in every operation hardcoded on
+  `dense_vector`.
 - **A fixed-size heap block always holds its `StaticSize` elements.** The
   default constructor allocates them and a moved-from block gets fresh
   storage; move assignment swaps. Before #829 both left a null pointer behind

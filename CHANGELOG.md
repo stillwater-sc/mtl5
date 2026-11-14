@@ -7,6 +7,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Read-only vector and matrix views over a caller's const buffer** (`tag::read_only`). `vec::const_view(n, ptr)` and `mat::const_view(rows, cols, ptr)` take a `const Value*` and return a `dense_vector` or `dense2D` that reads the buffer in place, so a callback such as an ODE integrator's `rhs(t, const double* y, double* dydt)` needs no `const_cast` and no copy (#834).
+  - **Writing through a view does not compile:** element writes, `data()`, `begin()`, assignment, compound assignment, `change_dim`, `swap` and `vec::fill` are all constrained away.
+  - **It works with the existing operations:** a view is still a `dense_vector<V, P>` or `dense2D<V, P>`, so norms, `dot`, `A * x` (dense and `compressed2D`), `mult`, the expression templates and the Krylov solvers accept it, as the new tests show.
+  - **Aliases and overloads:** `vec::const_vector_view<V, Orientation>` and `mat::const_matrix_view<V, Orientation>` name the types. `const_view(v)` gives a read-only view of an existing vector or matrix; the rvalue overload is deleted, since a view of a temporary would dangle.
+  - **Copy semantics:** copying a view gives another view of the same buffer. `dense_vector<double> y(view)` and `dense2D<double> M(view)` make owning copies.
+  - Tests: `tests/unit/vec/test_const_view.cpp` and `tests/unit/mat/test_const_view.cpp`.
+
 - **Run-time selection of the interleave width** (#778). With `MTL5_INTERLEAVE_RUNTIME` (CMake option, off by default), the generic `gemv`, `trmv` and forward substitution compile at W = 2, 4, 6, 8 and 12 for float and double, and on first use take the width a table of the #780 sweeps lists for the compiler and the core (`include/mtl/interface/interleave_runtime.hpp`). The core is read from x86 `cpuid` or the Arm part number in `/proc/cpuinfo`.
   - **Fallbacks:** a CPU or compiler the table doesn't list, an x86-64 build with AVX, and any `MTL5_INTERLEAVE_ROWS*` override or `interleave_rows` specialization keep the compile-time width.
   - **Results are bit-identical** whichever width runs. `op_test_interleave_runtime` forces each width with `force_interleave_rows` and compares it with the one-row loop.
