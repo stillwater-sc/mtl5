@@ -102,14 +102,14 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **`wilkinson(n)`** follows MATLAB for any n ≥ 1, so an even n gets the half-integer diagonal `abs(-(n-1)/2 : (n-1)/2)`. Under `NDEBUG` an even n used to build a wrong matrix, and n = 0 wrapped. n = 0 now throws `std::invalid_argument`, and so does an even n with an integer value type.
   - **`rosser`'s** documented eigenvalues listed 1020 twice and lacked 510 − 100√26, so they summed to 5059.9 instead of the trace 4040. The header and the docs now give the true spectrum.
   - **Reproducible random generators:** `fill_random`, `random_vector`, `random_matrix`, `randorth`, `randsvd`, `randsym` and `randspd` gain a `std::uint64_t` seed overload and a `std::mt19937_64&` overload.
-    - The draws come from the raw engine stream, as in `gen_dot` and `gen_sum`, so a seed gives the same values with libstdc++, libc++ and MSVC.
+    - The draws come from the raw engine stream, as in `gen_dot` and `gen_sum`, so a seed gives the same values with libstdc++, libc++ and MSVC. Each value is formed with an explicit `fma`, so the compiler's contraction setting cannot change its rounding.
     - Calls without a seed stay non-deterministic, seeded from `std::random_device`. Their values are now drawn the same portable way, not through `std::uniform_real_distribution`.
     - The square `randsvd` with a kappa takes a seed through `randsvd(n, n, kappa, mode, seed)`.
   - **`randsym` and `randspd`** are now exactly symmetric: they average A(i,j) and A(j,i) after forming Q·Λ·Qᵀ.
   - **Argument checks** now throw `std::invalid_argument` in every build. They used to be `assert`s. They cover:
-    - kappa < 1 and a mode outside 1–5 (an invalid mode used to fall back to mode 3);
+    - kappa < 1 or infinite, and a mode outside 1–5 (an invalid mode used to fall back to mode 3);
     - a σ or eigenvalue list of the wrong length, and a non-positive `randspd` eigenvalue;
-    - hi < lo in the random fills;
+    - hi < lo or an infinite bound in the random fills (an infinite bound never returned);
     - `gen_dot` and `gen_sum`'s n, c < 1 and c beyond the type's range;
     - NaN endpoints in `geomspace`.
   - **Genericity:** `clement` and `kahan` call `sqrt`, `sin` and `cos` through ADL, and `test_shim_genericity` covers them.
@@ -127,7 +127,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - `test_random_seed.cpp` checks that a seed reproduces exact values of the mt19937_64 stream, covers the [lo, hi) bounds, and checks the condition number in every `randsvd` mode.
     - `test_testsuite.cpp` loads all 20 catalog matrices, not 7, and checks each one's 2-norm condition number from the SVD.
     - Every fix has a test that fails on the previous code.
-  - **Catalog condition numbers:** the check found 6 of the 20 published `testsuite::kappa()` values that are not the 2-norm condition number they are documented as. `faires74x3` is the ∞-norm value. `steam3` and `fs_183_1` are 1-norm values. `fs_183_3` repeats `fs_183_1`'s value, and `west0167` repeats `steam1`'s (2.827e7, against a computed 4.785e10). `rump6x6ill` is an estimate. The values are unchanged; the test records each discrepancy.
+  - **Catalog condition numbers:** `testsuite::kappa()` is documented as the 2-norm condition number, but six entries held something else. `faires74x3` had the ∞-norm value. `steam3` and `fs_183_1` had 1-norm values. `fs_183_3` repeated `fs_183_1`'s value, and `west0167` repeated `steam1`'s (2.827e7, where the true value is 4.785e10). `rump6x6ill` had an estimate of 1e16, where the true value is 7.84e24. All six are now singular-value ratios computed in 60-digit arithmetic. The other 14 published values agree with the computed ones to 1%, and the test now holds all 20 to that.
 
 - **Matrix Market and element-list I/O: header and entry validation, symmetric array files, complex values, the nan/inf round trip, gzip errors, PNG sizes** (#843, from the QA sweep #789).
   - **Sizes:**

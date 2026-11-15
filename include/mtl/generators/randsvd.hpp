@@ -37,11 +37,12 @@ namespace detail {
 ///   3  geometric:  sigma_i = kappa^(-i/(p-1))
 ///   4  arithmetic: sigma_i = 1 - i (1 - 1/kappa) / (p-1)
 ///   5  random, with log(sigma) uniform on [log(1/kappa), 0), drawn from `gen`
-/// Throws std::invalid_argument for kappa < 1 (or NaN) and a mode outside 1-5.
+/// Throws std::invalid_argument for kappa < 1, an infinite or NaN kappa, and a
+/// mode outside 1-5.
 template <typename T>
 auto make_sigma(std::size_t p, T kappa, int mode, std::mt19937_64& gen) -> std::vector<T> {
-    if (!(kappa >= T(1)))
-        throw std::invalid_argument("randsvd: kappa must be >= 1");
+    if (!(kappa >= T(1)) || !(kappa - kappa == T(0)))
+        throw std::invalid_argument("randsvd: kappa must be finite and >= 1");
     if (mode < 1 || mode > 5)
         throw std::invalid_argument("randsvd: mode must be 1-5, got " + std::to_string(mode));
 
@@ -112,7 +113,8 @@ mat::dense2D<T> diagonal_matrix(std::size_t m, std::size_t n, const std::vector<
 
 /// Q * diag(lambda) * Q^T for a random orthogonal Q from `gen`, made exactly
 /// symmetric: the product is not bitwise symmetric, so each pair of entries is
-/// replaced by its average.
+/// replaced by its average, a/2 + b/2, which cannot overflow where (a + b)/2
+/// would (eigenvalues near the type's maximum).
 template <typename T>
 mat::dense2D<T> random_symmetric(std::size_t n, const std::vector<T>& lambda,
                                  std::mt19937_64& gen) {
@@ -121,7 +123,7 @@ mat::dense2D<T> random_symmetric(std::size_t n, const std::vector<T>& lambda,
     mat::dense2D<T> A = QL * trans(Q);
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = i + 1; j < n; ++j) {
-            const T a = (A(i, j) + A(j, i)) / T(2);
+            const T a = A(i, j) / T(2) + A(j, i) / T(2);
             A(i, j) = a;
             A(j, i) = a;
         }

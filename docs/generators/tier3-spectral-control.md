@@ -130,7 +130,7 @@ Every random generator has three forms: `randorth`, `randsvd`, `randsym` and `ra
 
 The draws come from the raw `std::mt19937_64` stream, not from `std::uniform_real_distribution`. The standard specifies the engine bit for bit, but each standard library chooses its own distribution algorithm. So a seed gives the same random matrix with libstdc++, libc++ and MSVC, as in [`gen_dot` and `gen_sum`](ill-conditioned.md).
 
-One uniform value on [lo, hi) is computed as follows. Draw u = (gen() >> 11) · 2⁻⁵³ on [0, 1), and take lo·(1−u) + hi·u, rounded to the value type. A value that rounds up to hi is drawn again. Matrices are filled row by row, whatever their orientation. The orthogonal factors are then the same up to the rounding of the QR factorization.
+One uniform value on [lo, hi) is computed as follows. Draw u = (gen() >> 11) · 2⁻⁵³ on [0, 1), and take `fma(hi, u, lo·(1−u))` in the value type. A value that rounds up to hi is drawn again. The explicit `fma` keeps the rounding the same whether or not the compiler contracts floating-point expressions. The bounds must be finite. Matrices are filled row by row, whatever their orientation. The orthogonal factors are then the same up to the rounding of the QR factorization.
 
 The square `randsvd` with a kappa takes its seed through the rectangular form, `randsvd<double>(n, n, kappa, mode, seed)`. A `randsvd(n, kappa, mode, seed)` overload would be ambiguous with `randsvd(m, n, kappa, mode)`.
 

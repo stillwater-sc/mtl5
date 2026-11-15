@@ -14,9 +14,12 @@
 // std::uniform_real_distribution, whose algorithm each standard library chooses
 // for itself. So a seed gives the same values with every compiler and standard
 // library, as in generators/ill_conditioned.hpp. A draw is u = (gen() >> 11) *
-// 2^-53, uniform on [0, 1), and the value is lo * (1 - u) + hi * u, rounded to
-// the value type; a value that rounds up to hi is drawn again, so every value is
-// in [lo, hi). Matrices are filled row by row, whatever their orientation.
+// 2^-53, uniform on [0, 1), and the value is fma(hi, u, lo * (1 - u)) in the
+// value type; a value that rounds up to hi is drawn again, so every value is in
+// [lo, hi). The fma keeps the rounding independent of the compiler's
+// floating-point contraction setting. Matrices are filled row by row, whatever
+// their orientation. The bounds must be finite, with lo <= hi.
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <random>
@@ -44,11 +47,14 @@ inline double random_unit(std::mt19937_64& gen) {
     return static_cast<double>(gen() >> 11) * 0x1p-53;
 }
 
-/// Throws unless lo <= hi (a NaN bound fails too).
+/// Throws unless lo and hi are finite and lo <= hi. x - x is 0 only for a
+/// finite x (inf - inf and NaN - NaN are NaN), which works for any number type.
 template <typename T>
 void check_random_bounds(const T& lo, const T& hi, const char* who) {
     static_assert(!std::is_integral_v<T>,
                   "random fills need a non-integral value type");
+    if (!(lo - lo == T(0)) || !(hi - hi == T(0)))
+        throw std::invalid_argument(std::string(who) + ": bounds must be finite");
     if (!(lo <= hi))
         throw std::invalid_argument(std::string(who) + ": requires lo <= hi");
 }
@@ -57,9 +63,14 @@ void check_random_bounds(const T& lo, const T& hi, const char* who) {
 template <typename T>
 T random_uniform(std::mt19937_64& gen, const T& lo, const T& hi) {
     if (!(lo < hi)) return lo;
+    using std::fma;
     for (;;) {
         const T u = static_cast<T>(random_unit(gen));
-        const T v = lo * (T(1) - u) + hi * u;   // no hi - lo, which can overflow
+        // lo (1 - u) + hi u, with no hi - lo, which can overflow. The explicit
+        // fma fixes the rounding: a compiler that contracted a written-out
+        // a*b + c into an fma in one build and not in another would give a
+        // seed different values.
+        const T v = fma(hi, u, lo * (T(1) - u));
         if (v < hi) return v;
     }
 }

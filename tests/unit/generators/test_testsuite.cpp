@@ -38,6 +38,7 @@ TEST_CASE("testsuite: published condition numbers", "[generators][testsuite]") {
     REQUIRE(testsuite::kappa("lambers_well") == 10.0);
     REQUIRE(testsuite::kappa("gre_343")      > 1.0e2);
     REQUIRE(testsuite::kappa("fs_183_1")     > 1.0e12);   // notoriously ill-conditioned
+    REQUIRE(testsuite::kappa("rump6x6ill")   > 1.0e24);   // beyond 1/eps in double
 }
 
 TEST_CASE("testsuite: unknown name throws", "[generators][testsuite]") {
@@ -48,12 +49,20 @@ TEST_CASE("testsuite: unknown name throws", "[generators][testsuite]") {
 TEST_CASE("testsuite: every catalog matrix loads with its condition number", "[generators][testsuite]") {
     // All 20 are loaded and their 2-norm condition number computed by the SVD,
     // so a corrupt or truncated .mtx fails here; the 7 loaded above were
-    // checked only for shape (#844). The reference column is that computed
-    // value (4 significant digits). rump6x6ill is beyond 1/eps, where the SVD
-    // is not accurate, so it only has to be that large.
+    // checked only for shape (#844). The reference column is the value
+    // computed in 60-digit arithmetic (4 significant digits).
+    //
+    // kappa() must agree with it to 1%. It did not for six entries, which held
+    // other norms or copied values: faires74x3 (15999, the infinity-norm one),
+    // steam3 (5.51e10) and fs_183_1 (1.5129e13, 1-norm ones), fs_183_3
+    // (fs_183_1's), west0167 (2.827e7, steam1's) and rump6x6ill (1e16, an
+    // estimate). Those are now the computed values.
+    //
+    // rump6x6ill's kappa_2 = 7.84e24 is beyond 1/eps, so a double SVD cannot
+    // measure it; it only has to come out above 1e15.
     struct Case { const char* name; std::size_t n; double kappa2; };
     const Case cases[] = {
-        {"lambers_well", 2, 1.000e1},   {"lambers_ill", 2, 1.869e8},  {"rump6x6ill", 6, 0.0},
+        {"lambers_well", 2, 1.000e1},   {"lambers_ill", 2, 1.869e8},  {"rump6x6ill", 6, 7.842e24},
         {"faires74x3", 3, 1.424e4},     {"wilk21", 21, 4.234e1},      {"Trefethen_20", 20, 6.309e1},
         {"pores_1", 30, 1.813e6},       {"gre_343", 343, 1.120e2},    {"bcsstk05", 153, 1.428e4},
         {"bcsstk22", 138, 1.107e5},     {"bcsstk01", 48, 8.823e5},    {"bcsstk03", 112, 6.792e6},
@@ -61,12 +70,6 @@ TEST_CASE("testsuite: every catalog matrix loads with its condition number", "[g
         {"fs_183_1", 183, 2.193e13},    {"fs_183_3", 183, 3.266e13},  {"west0132", 132, 4.206e11},
         {"west0167", 167, 4.785e10},    {"saylr1", 238, 7.781e8},
     };
-    // Published values that are not this 2-norm condition number:
-    //   faires74x3 (15999) is the infinity-norm one (16000); steam3 (5.51e10)
-    //   and fs_183_1 (1.5129e13) are 1-norm ones; fs_183_3 repeats fs_183_1's,
-    //   and west0167 (2.827e7) repeats steam1's; rump6x6ill's is an estimate.
-    const std::set<std::string> not_2norm = {"rump6x6ill", "faires74x3", "steam3",
-                                             "fs_183_1", "fs_183_3", "west0167"};
     std::set<std::string> seen;
     for (const auto& c : cases) {
         CAPTURE(c.name);
@@ -74,14 +77,12 @@ TEST_CASE("testsuite: every catalog matrix loads with its condition number", "[g
         const auto A = testsuite::by_name(c.name);
         REQUIRE(num_rows(A) == c.n);
         REQUIRE(num_cols(A) == c.n);
+        REQUIRE_THAT(testsuite::kappa(c.name), Catch::Matchers::WithinRel(c.kappa2, 1e-2));
         const double k = condition_number(A);
-        if (c.kappa2 == 0.0) {
+        if (c.kappa2 > 1e16)
             REQUIRE(k > 1e15);
-            continue;
-        }
-        REQUIRE_THAT(k, Catch::Matchers::WithinRel(c.kappa2, 1e-3));
-        if (!not_2norm.count(c.name))
-            REQUIRE_THAT(testsuite::kappa(c.name), Catch::Matchers::WithinRel(k, 1e-2));
+        else
+            REQUIRE_THAT(k, Catch::Matchers::WithinRel(c.kappa2, 1e-3));
     }
     const auto names = testsuite::names();
     REQUIRE(seen == std::set<std::string>(names.begin(), names.end()));

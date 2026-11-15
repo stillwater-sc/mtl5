@@ -116,9 +116,25 @@ TEST_CASE("random values stay in [lo, hi)", "[random]") {
         const auto v = random_vector<double>(3, 2.5, 2.5, std::uint64_t(3));
         for (std::size_t i = 0; i < 3; ++i) REQUIRE(v(i) == 2.5);
     }
-    SECTION("hi < lo and NaN bounds throw") {
+    SECTION("hi < lo, NaN and infinite bounds throw") {
+        const double inf = std::numeric_limits<double>::infinity();
         REQUIRE_THROWS_AS(random_vector<double>(3, 1.0, 0.0), std::invalid_argument);
         REQUIRE_THROWS_AS(random_vector<double>(3, std::nan(""), 1.0, std::uint64_t(1)), std::invalid_argument);
+        // an infinite bound made every draw inf or NaN, so the redraw never ended
+        REQUIRE_THROWS_AS(random_vector<double>(1, 0.0, inf, std::uint64_t(42)), std::invalid_argument);
+        REQUIRE_THROWS_AS(random_vector<double>(1, -inf, 0.0, std::uint64_t(42)), std::invalid_argument);
+        REQUIRE_THROWS_AS(random_vector<double>(1, -inf, inf, std::uint64_t(42)), std::invalid_argument);
+    }
+    SECTION("the draw is fma(hi, u, lo (1 - u)), whatever the contraction setting") {
+        const double lo = -0.3, hi = 2.7;
+        const auto v = random_vector<double>(64, lo, hi, std::uint64_t(8));
+        std::mt19937_64 g(8);
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const double u = double(g() >> 11) * 0x1p-53;
+            const double w = std::fma(hi, u, lo * (1.0 - u));
+            if (w < hi) REQUIRE(v(i) == w);
+            else break;   // a redraw shifts the stream; never happens for this seed
+        }
     }
 }
 
@@ -165,6 +181,11 @@ TEST_CASE("randsym and randspd are exactly symmetric", "[generators][randsym][ra
         REQUIRE(bitwise_symmetric(generators::randspd<double>(7, 1e3, 3, seed)));
         REQUIRE(bitwise_symmetric(generators::randsym<double>(6, std::vector<double>{-3, -1, 0, 1, 2, 5}, seed)));
     }
+    // eigenvalues near the double maximum: (a + b) / 2 overflowed to -inf
+    const auto B = generators::randsym<double>(2, std::vector<double>{-1e308, 1e308}, std::uint64_t(42));
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 2; ++j) REQUIRE(std::isfinite(B(i, j)));
+    REQUIRE(bitwise_symmetric(B));
     REQUIRE(bitwise_symmetric(generators::randspd<double>(9, 50.0)));
 }
 
@@ -230,6 +251,8 @@ TEST_CASE("make_sigma modes and argument checks", "[generators][randsvd]") {
     REQUIRE_THROWS_AS(make_sigma(4, 10.0, 6), std::invalid_argument);
     REQUIRE_THROWS_AS(make_sigma(4, 0.5, 3), std::invalid_argument);
     REQUIRE_THROWS_AS(make_sigma(4, std::nan(""), 3), std::invalid_argument);
+    // mode 5 draws on [log(1/kappa), 0), which never returned for kappa = inf
+    REQUIRE_THROWS_AS(make_sigma(4, std::numeric_limits<double>::infinity(), 5), std::invalid_argument);
     REQUIRE_THROWS_AS(generators::randsvd<double>(4, 10.0, 7), std::invalid_argument);
     REQUIRE_THROWS_AS(generators::randspd<double>(4, 0.5, 3), std::invalid_argument);
     REQUIRE_THROWS_AS(generators::randsym<double>(4, 0.5, 3), std::invalid_argument);
