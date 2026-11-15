@@ -132,6 +132,15 @@ inline void write_png(const std::filesystem::path& path, const std::uint8_t* pix
         throw std::runtime_error("write_png: zero image dimension");
     if (channels != 1 && channels != 3)
         throw std::runtime_error("write_png: channels must be 1 (gray) or 3 (RGB)");
+    // The PNG header stores each dimension in 31 bits; a larger one used to be
+    // truncated into a wrong header (#843). The scanline buffer is also sized
+    // here, so h * (1 + w*channels) must not overflow.
+    constexpr std::size_t png_max_dim = 0x7FFFFFFFu;
+    if (w > png_max_dim || h > png_max_dim)
+        throw std::runtime_error("write_png: image dimension exceeds the PNG limit of 2^31 - 1");
+    if (w > (static_cast<std::size_t>(-1) - 1) / static_cast<std::size_t>(channels) ||
+        h > static_cast<std::size_t>(-1) / (1 + w * static_cast<std::size_t>(channels)))
+        throw std::runtime_error("write_png: image too large");
 
     std::ofstream os(path, std::ios::binary);
     if (!os)
