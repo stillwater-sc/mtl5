@@ -356,6 +356,11 @@ TEST_CASE("storage_overlaps sees coordinate2D, ell_matrix and block_diagonal2D s
         mat::inserter<mat::compressed2D<double>> ins(S);
         ins[0][0] << 1.0; ins[1][1] << 2.0; ins[2][0] << 3.0;
     }
+    // The index arrays too: a y over them would corrupt the indices the
+    // kernel is still reading.
+    CHECK(detail::storage_overlaps(vec::const_view(1, S.ref_minor().data() + 1), S));
+    CHECK(detail::storage_overlaps(vec::const_view(1, S.ref_major().data()), S));
+
     const mat::ell_matrix<double> E(S);
     CHECK(detail::storage_overlaps(vec::const_view(1, E.ref_data().data() + 1), E));
     CHECK(!detail::storage_overlaps(vec::const_view(1, S.ref_data().data()), E));

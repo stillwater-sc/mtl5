@@ -50,6 +50,20 @@ std::pair<const unsigned char*, const unsigned char*> array_bytes(const A& v) {
     return {lo, lo + static_cast<std::size_t>(v.size()) * sizeof(elem)};
 }
 
+/// A compressed matrix's index arrays (compressed2D's ref_minor() and
+/// ref_major()): a writable output over them would corrupt the indices the
+/// kernel is still reading.
+template <typename T>
+concept minor_array_storage = requires(const T& t) {
+    t.ref_minor().data();
+    t.ref_minor().size();
+};
+template <typename T>
+concept major_array_storage = requires(const T& t) {
+    t.ref_major().data();
+    t.ref_major().size();
+};
+
 /// A sparse matrix whose values are one array (compressed2D's and
 /// ell_matrix's ref_data()).
 template <typename T>
@@ -100,6 +114,8 @@ void for_each_storage_range(const T& t, F&& f) {
         visit(storage_bytes(t));
     } else if constexpr (value_array_storage<T>) {
         visit(array_bytes(t.ref_data()));
+        if constexpr (minor_array_storage<T>) visit(array_bytes(t.ref_minor()));
+        if constexpr (major_array_storage<T>) visit(array_bytes(t.ref_major()));
     } else if constexpr (entry_array_storage<T>) {
         visit(array_bytes(t.ref_entries()));
     } else if constexpr (block_list_storage<T>) {

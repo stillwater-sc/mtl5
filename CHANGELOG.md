@@ -101,7 +101,6 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **gzip:** lines are split from `gzread` chunks instead of with `gzgets`, which cut a line at an embedded NUL byte and dropped the rest. The NUL now reaches the parser, which rejects it.
   - **Aliased products:** `mult(A, B, C)`, `mult_quad`, `symv` and the `block_matrix_view` mat-vec compute through a temporary, in every build, when the output shares storage with an input, as the mat-vec `mult` does since #840. They were debug-only asserts that saw only the same object: `mult(A, B, A)` on a 3x3 `dense2D<double>` under `NDEBUG` differed in all 9 entries.
   - **`storage_overlaps`** also sees a `coordinate2D`'s triplets, each block of a `block_diagonal2D`, and a `block_matrix_view`'s encoded bytes (new `bytes()`).
-  - **The owning `dense_vector` and `dense2D` constructors from a read-only view are `explicit`.**
   - **A `compressed2D_inserter` that inserts nothing costs O(1)** and leaves the matrix as it was. The slots are set up on the first `ins[r]`; before, every inserter paid O(nrows * slot_size + nnz), so many small inserters on a large matrix were quadratic.
   - **Tests:** the cases above; `parse_float_strto` called directly; `mm_read_dense` on coordinate skew-symmetric and Hermitian files; `mult(A, B, A)` in both orientations and for float, through `trans(A)` and with an Accumulator; a C over part of A; `mult(A, x, x)` with a column-major A, float, and `trans(A)`; read-only views as does-not-compile checks; `mat::const_view` of column-major, Fortran-index and fixed-size matrices; `signum<bool>`. The gemv tail test compares with a `std::fma` chain instead of `simd::scalar_fma`, the function the tail calls.
 
@@ -362,6 +361,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     It passes in a BLAS build too. Against the old header, 7 of the 22 test cases in the first version of this change fail.
 
 ### Changed
+
+- **BREAKING: an owning `dense_vector` or `dense2D` is constructed from a read-only view only explicitly** (issue 855, from QA sweep #848). The converting constructors from `vec::const_vector_view` and `mat::const_matrix_view` are `explicit`. Implicit, they let a view passed to a by-value `dense_vector` or `dense2D` parameter deep-copy with nothing at the call site to show it.
+  - **What no longer compiles:** copy-initialization, `vec::dense_vector<double> v = view;`, and passing a view where an owning vector or matrix is taken by value.
+  - **Migrating:** write the copy out: `vec::dense_vector<double> v(view);`, `f(vec::dense_vector<double>(view))`, or `mat::dense2D<double> M(view);`. Code that only reads should take the view, or `const dense_vector<V, P>&` with the view's parameters, and copy nothing.
 
 - **BREAKING: `Scalar` requires `std::numeric_limits` on the element type's magnitude type** (#838, from the QA sweep #816). `Scalar<T>` now includes `HasNumericLimits<T>`, which is `std::numeric_limits<magnitude_t<T>>::is_specialized`. It applies to the magnitude type because the standard has no `numeric_limits<std::complex<T>>`, so `std::complex<T>` qualifies through `T`.
   - **Why:** one source for a type's precision and range, instead of per-algorithm fallbacks that disagreed. A type without limits used to get a measured epsilon in `expm`, `schur`, `sylvester` and `eigen_symmetric`; an exact comparison in the `ldlt`/`cholesky` structure guards (`structure_tol`), which then rejected matrices symmetric only to rounding; no scaling in `sylvester` and `svd`; and a zero identity for `min`/`max`. Those paths are removed: `machine_epsilon` and `structure_tol` read `numeric_limits`, and the eight `is_specialized` branches are gone.

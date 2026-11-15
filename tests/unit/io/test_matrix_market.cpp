@@ -738,7 +738,8 @@ TEST_CASE("Matrix Market: a coordinate file whose m*n overflows size_t (#855)",
           "[io][matrix_market][855]") {
     // m*n is never formed for a sparse result: 4 rows cost 5 row pointers.
     // mm_read threw "matrix dimensions overflow".
-    const std::size_t big = std::size_t(1) << 62;
+    // 4 * big overflows size_t of any width.
+    const std::size_t big = std::size_t(1) << (std::numeric_limits<std::size_t>::digits - 2);
     temp_mtx f("huge_cols", coord + "4 " + std::to_string(big) + " 1\n3 " + std::to_string(big)
                                 + " 4.5\n");
     const auto A = io::mm_read(f.path);
@@ -800,10 +801,11 @@ TEST_CASE("text_parse: the strto* path has from_chars' grammar (#855)", "[io][te
     CHECK(!strto("1.5x", v));
     CHECK(!strto("", v));
     CHECK(!strto("-+5", v));
+    const std::string_view f_tok = "2.5", l_tok = "0.25";   // both ends from one object
     float f = 0;
-    CHECK((io::detail::parse_float_strto("2.5", "2.5" + 3, f) && f == 2.5f));
+    CHECK((io::detail::parse_float_strto(f_tok.data(), f_tok.data() + f_tok.size(), f) && f == 2.5f));
     long double l = 0;
-    CHECK((io::detail::parse_float_strto("0.25", "0.25" + 4, l) && l == 0.25L));
+    CHECK((io::detail::parse_float_strto(l_tok.data(), l_tok.data() + l_tok.size(), l) && l == 0.25L));
 
     // And parse_value: one sign at most, for floating point and integers.
     CHECK(!io::detail::parse_value("+-5", v));

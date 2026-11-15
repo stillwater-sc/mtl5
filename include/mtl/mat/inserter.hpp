@@ -113,18 +113,23 @@ private:
         return std::cmp_greater_equal(i, 0) && std::cmp_less(i, n);
     }
 
+    /// Set up the slots and load the matrix's entries into them. loaded_ is
+    /// set only once that has succeeded: if an allocation throws part way, the
+    /// destructor must not finalize the partial state, which would replace the
+    /// matrix with the entries loaded so far. A later ins[r] starts over.
+    void load() {
+        overflow_.clear();
+        slots_.assign(nrows_ * slot_size_, Value());
+        col_idx_.assign(nrows_ * slot_size_, size_type(-1));
+        count_.assign(nrows_, size_type(0));
+        load_existing();
+        loaded_ = true;
+    }
+
     /// Put the matrix's current entries into the slots, the ones past a row's
     /// `slot_size` into the overflow map. CRS rows are sorted and duplicate-free,
     /// so the map keys arrive in increasing order and each emplace is O(1) at
     /// the end hint.
-    void load() {
-        slots_.resize(nrows_ * slot_size_);
-        col_idx_.assign(nrows_ * slot_size_, size_type(-1));
-        count_.assign(nrows_, size_type(0));
-        loaded_ = true;
-        load_existing();
-    }
-
     void load_existing() {
         const auto& starts  = mat_.ref_major();
         const auto& indices = mat_.ref_minor();

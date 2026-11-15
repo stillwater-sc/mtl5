@@ -81,11 +81,13 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
     const bool beta_zero  = (beta == math::zero<S>());
     // Every path writes y(i) while later rows still read x (and A), so a y
     // that shares storage with x or A is computed into a copy of y (beta*y
-    // reads it) and copied back, in every build (#855). It was a debug-only
-    // assert, on one path, that saw only the same object.
+    // reads it; with beta == 0 y is not read, as on every other path) and
+    // copied back, in every build (#855). It was a debug-only assert, on one
+    // path, that saw only the same object.
     if (detail::storage_overlaps(y, x) || detail::storage_overlaps(y, A)) {
         vec::dense_vector<std::remove_cvref_t<value_type>> t(y.size());
-        for (size_type i = 0; i < n; ++i) t(i) = y(i);
+        if (!beta_zero)
+            for (size_type i = 0; i < n; ++i) t(i) = y(i);
         symv<Accumulator>(alpha, A, x, beta, t);
         for (size_type i = 0; i < n; ++i) y(i) = t(i);
         return;

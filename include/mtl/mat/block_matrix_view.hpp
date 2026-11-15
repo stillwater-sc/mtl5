@@ -337,7 +337,13 @@ void mult(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y,
     if (detail::storage_overlaps(y, x) || detail::storage_overlaps(y, A)) {
         using Y = std::remove_cvref_t<typename VOut::value_type>;
         vec::dense_vector<Y> t(y.size());
-        mult<Accumulator>(A, x, t, scratch);
+        // The path y itself would take: a dense float t qualifies for the
+        // fused kernel where a strided y does not, and the scratch was sized
+        // for y's path.
+        if constexpr (detail::block_fused_gemv_v<Accumulator, S, VIn, VOut>)
+            mult<Accumulator>(A, x, t, scratch);
+        else
+            detail::block_mult_decode<Accumulator>(A, x, t);
         for (std::size_t i = 0; i < static_cast<std::size_t>(y.size()); ++i) y(i) = t(i);
         return;
     }

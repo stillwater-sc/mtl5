@@ -545,6 +545,20 @@ TEST_CASE("block_matrix_view: mult with y aliasing x or the encoded bytes", "[bl
     check(block_matrix_view<int8x4_fused>(4, 4, bytes));
     CHECK(fused_calls > 0);
 
+    // A strided y over x, with a scheme whose fused kernel needs scratch: y
+    // takes the decode path, and so must the temporary. A dense float
+    // temporary qualified for the fused kernel and got the empty scratch
+    // sized for y's path, so the call threw.
+    {
+        const block_matrix_view<int8x4_scratch> S(4, 4, bytes);
+        std::vector<float> xs = {1, 0, 2, 0, 3, 0, 4, 0};
+        mtl::vec::dense_vector<float> x0{1.0f, 2.0f, 3.0f, 4.0f}, want(4);
+        mtl::mult(S, x0, want);
+        mtl::vec::strided_vector_ref<float> ys(xs.data(), 4, 2);   // 1, 2, 3, 4 at stride 2
+        mtl::mult(S, ys, ys);
+        for (std::size_t i = 0; i < 4; ++i) CHECK(xs[2 * i] == want(i));
+    }
+
     const block_matrix_view<int8x4_scaled> A(4, 4, bytes);
     CHECK(mtl::detail::storage_overlaps(
         mtl::vec::const_view(1, reinterpret_cast<const float*>(bytes.data() + 4)), A));
