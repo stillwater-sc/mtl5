@@ -177,7 +177,7 @@ Score score_matrix(const std::string& name,
 #ifdef MTL5_HAS_SUPERLU
     try {
         mtl::vec::dense_vector<double> x(n, 0.0);
-        // Construct the solver (CCS conversion) and solve, timed together to
+        // Construct the solver (CCS conversion and factorization) and solve, timed together to
         // match the native factor+solve measurement; read its factor nnz after.
         s.ext_s = seconds([&] {
             mtl::interface::superlu_solver solver(A);

@@ -22,6 +22,7 @@ using Catch::Matchers::WithinAbs;
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <stdexcept>
 #include <utility>
 
 #include <mtl/interface/klu.hpp>
@@ -63,23 +64,25 @@ mat::compressed2D<double> make_unsym_tridiag(std::size_t n) {
 } // namespace
 
 TEST_CASE("klu_solve on small unsymmetric system", "[interface][klu]") {
-    // A = [2 1; 1 3], b = [5; 10] => x = [1; 3]
-    mat::compressed2D<double> A(2, 2);
+    // Unsymmetric, so a transposed CRS-to-CCS conversion would be caught
+    // (#850; this case used the symmetric [2 1; 1 3]):
+    // A = [4 1 0; 2 5 1; 0 3 6], b = [6 15 24] => x = [1 2 3].
+    mat::compressed2D<double> A(3, 3);
     {
         mat::inserter<mat::compressed2D<double>> ins(A);
-        ins[0][0] << 2.0;
-        ins[0][1] << 1.0;
-        ins[1][0] << 1.0;
-        ins[1][1] << 3.0;
+        ins[0][0] << 4.0; ins[0][1] << 1.0;
+        ins[1][0] << 2.0; ins[1][1] << 5.0; ins[1][2] << 1.0;
+        ins[2][1] << 3.0; ins[2][2] << 6.0;
     }
 
-    vec::dense_vector<double> b = {5.0, 10.0};
-    vec::dense_vector<double> x(2, 0.0);
+    vec::dense_vector<double> b = {6.0, 15.0, 24.0};
+    vec::dense_vector<double> x(3, 0.0);
 
     interface::klu_solve(A, x, b);
 
-    REQUIRE_THAT(x(0), WithinAbs(1.0, 1e-10));
-    REQUIRE_THAT(x(1), WithinAbs(3.0, 1e-10));
+    REQUIRE_THAT(x(0), WithinAbs(1.0, 1e-12));
+    REQUIRE_THAT(x(1), WithinAbs(2.0, 1e-12));
+    REQUIRE_THAT(x(2), WithinAbs(3.0, 1e-12));
 }
 
 TEST_CASE("klu_solver RAII class on identity", "[interface][klu]") {
@@ -185,6 +188,41 @@ TEST_CASE("klu_solver rejects non-square matrix", "[interface][klu]") {
         ins[1][1] << 1.0;
     }
     REQUIRE_THROWS_AS(interface::klu_solver(A), std::invalid_argument);
+}
+
+TEST_CASE("klu_solver throws on a singular matrix", "[interface][klu][850]") {
+    // Numerically singular: rows 0 and 1 are proportional.
+    mat::compressed2D<double> A(3, 3);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][0] << 1.0; ins[0][1] << 2.0;
+        ins[1][0] << 2.0; ins[1][1] << 4.0;
+        ins[2][2] << 1.0;
+    }
+    REQUIRE_THROWS_AS(interface::klu_solver(A), std::runtime_error);
+
+    // Structurally singular: column 1 is empty.
+    mat::compressed2D<double> S(3, 3);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(S);
+        ins[0][0] << 1.0; ins[1][0] << 1.0; ins[2][2] << 1.0;
+    }
+    REQUIRE_THROWS_AS(interface::klu_solver(S), std::runtime_error);
+}
+
+TEST_CASE("klu_solver on 0x0 and 1x1 matrices", "[interface][klu][850]") {
+    mat::compressed2D<double> E(0, 0);
+    interface::klu_solver empty(E);   // used to throw: klu_analyze rejects n = 0
+    REQUIRE(empty.num_rows() == 0);
+    REQUIRE(empty.factor_nnz() == 0);
+    vec::dense_vector<double> e0(0), x0(0);
+    empty.solve(x0, e0);
+
+    mat::compressed2D<double> A(1, 1);
+    { mat::inserter<mat::compressed2D<double>> ins(A); ins[0][0] << 4.0; }
+    vec::dense_vector<double> b(1, 2.0), x(1, 0.0);
+    interface::klu_solve(A, x, b);
+    REQUIRE(x(0) == 0.5);
 }
 
 #else // !MTL5_HAS_KLU

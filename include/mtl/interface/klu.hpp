@@ -12,6 +12,7 @@
 
 #ifdef MTL5_HAS_KLU
 
+#include <climits>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -29,30 +30,49 @@ namespace mtl::interface {
 /// Usage:
 ///   klu_solver solver(A);
 ///   solver.solve(x, b);
+///
+/// Throws std::invalid_argument for a non-square A, std::length_error when n or
+/// nnz exceed KLU's int32 interface, and std::runtime_error when KLU fails or
+/// reports A singular (#850). A 0x0 A is valid: solve() then takes empty
+/// vectors and does nothing, and factor_nnz() is 0.
 class klu_solver {
 public:
     template <typename Parameters>
     explicit klu_solver(const mat::compressed2D<double, Parameters>& A)
-        : n_(static_cast<int>(A.num_rows())),
-          symbolic_(nullptr), numeric_(nullptr)
+        : n_(0), symbolic_(nullptr), numeric_(nullptr)
     {
         if (A.num_rows() != A.num_cols()) {
             throw std::invalid_argument("klu_solver: matrix must be square");
         }
+        if (A.num_rows() > std::size_t(INT_MAX) || A.nnz() > std::size_t(INT_MAX)) {
+            throw std::length_error("klu_solver: n or nnz exceeds the int32 KLU interface");
+        }
+        n_ = static_cast<int>(A.num_rows());
 
         klu_defaults(&common_);
+        if (n_ == 0) return;   // klu_analyze rejects n = 0; there is nothing to factor
         convert_to_ccs(A);
 
         symbolic_ = klu_analyze(n_, Cp_.data(), Ci_.data(), &common_);
         if (!symbolic_) {
-            throw std::runtime_error("KLU symbolic analysis failed");
+            throw std::runtime_error("KLU symbolic analysis failed (status "
+                                     + std::to_string(common_.status) + ")");
         }
 
+        // A singular A is KLU_SINGULAR, a warning (status > 0): with the default
+        // halt_if_singular KLU frees the Numeric and returns null, otherwise it
+        // returns a Numeric whose solve divides by zero. Either way it is an
+        // error here (#850).
         numeric_ = klu_factor(Cp_.data(), Ci_.data(), Cx_.data(),
                               symbolic_, &common_);
-        if (!numeric_) {
+        if (!numeric_ || common_.status != KLU_OK) {
+            const int status = common_.status;
+            if (numeric_) klu_free_numeric(&numeric_, &common_);
             klu_free_symbolic(&symbolic_, &common_);
-            throw std::runtime_error("KLU numeric factorization failed");
+            if (status == KLU_SINGULAR)
+                throw std::runtime_error("KLU numeric factorization: matrix is singular");
+            throw std::runtime_error("KLU numeric factorization failed (status "
+                                     + std::to_string(status) + ")");
         }
     }
 
@@ -94,9 +114,10 @@ public:
     void solve(vec::dense_vector<double, ParamsX>& x,
                const vec::dense_vector<double, ParamsB>& b) const
     {
-        if (static_cast<int>(x.size()) != n_ || static_cast<int>(b.size()) != n_) {
+        if (x.size() != num_rows() || b.size() != num_rows()) {
             throw std::invalid_argument("klu_solver::solve: vector size mismatch");
         }
+        if (n_ == 0) return;
 
         // KLU solves in-place: copy b into x, then solve
         for (int i = 0; i < n_; ++i)
@@ -104,8 +125,9 @@ public:
 
         klu_common common_copy = common_;
         int ok = klu_solve(symbolic_, numeric_, n_, 1, x.data(), &common_copy);
-        if (!ok) {
-            throw std::runtime_error("KLU solve failed");
+        if (!ok || common_copy.status != KLU_OK) {
+            throw std::runtime_error("KLU solve failed (status "
+                                     + std::to_string(common_copy.status) + ")");
         }
     }
 
@@ -117,6 +139,7 @@ public:
     /// coupling (Numeric->nzoff) -- matching the native fill convention so the
     /// two are directly comparable.
     std::size_t factor_nnz() const {
+        if (n_ == 0) return 0;
         if (!numeric_) {
             throw std::logic_error(
                 "klu_solver::factor_nnz: called on a moved-from solver");

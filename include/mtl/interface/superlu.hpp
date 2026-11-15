@@ -10,9 +10,11 @@
 
 #ifdef MTL5_HAS_SUPERLU
 
+#include <climits>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -194,85 +196,100 @@ namespace mtl::interface {
 /// RAII wrapper for SuperLU sparse LU solver.
 ///
 /// Usage:
-///   superlu_solver solver(A);
-///   solver.solve(x, b);
+///   superlu_solver solver(A);   // factors A once (COLAMD + dgstrf)
+///   solver.solve(x, b);         // dgstrs with the stored factors
+///   solver.solve(x2, b2);       // reuses them
+///
+/// The constructor factors A, so factor_nnz() is set as soon as it returns,
+/// and each solve() is only the two triangular solves (#850; it used to run
+/// dgssv, a full factorization, per call).
+///
+/// Throws std::invalid_argument for a non-square A, std::length_error when n or
+/// nnz exceed SuperLU's int interface, and std::runtime_error when dgstrf
+/// fails, for a singular A among others; nothing is leaked when the
+/// constructor throws. A 0x0 A is valid: solve() then takes empty vectors and
+/// does nothing, and factor_nnz() is 0. A moved-from solver has size 0 and its
+/// solve() throws std::logic_error.
 class superlu_solver {
 public:
     template <typename Parameters>
     explicit superlu_solver(const mat::compressed2D<double, Parameters>& A)
-        : n_(static_cast<int>(A.num_rows()))
+        : n_(0), factored_(false), valid_(true)
     {
         if (A.num_rows() != A.num_cols()) {
             throw std::invalid_argument("superlu_solver: matrix must be square");
         }
+        if (A.num_rows() > std::size_t(INT_MAX) || A.nnz() > std::size_t(INT_MAX)) {
+            throw std::length_error("superlu_solver: n or nnz exceeds the int SuperLU interface");
+        }
+        n_ = static_cast<int>(A.num_rows());
+        if (n_ == 0) return;
         convert_to_ccs(A);
+        factor();
     }
 
-    ~superlu_solver() = default;
+    ~superlu_solver() { release(); }
 
     superlu_solver(const superlu_solver&) = delete;
     superlu_solver& operator=(const superlu_solver&) = delete;
-    superlu_solver(superlu_solver&&) noexcept = default;
-    superlu_solver& operator=(superlu_solver&&) noexcept = default;
 
-    /// Solve A*x = b. Each call performs a fresh factorization via dgssv.
+    superlu_solver(superlu_solver&& o) noexcept
+        : n_(o.n_), col_ptr_(std::move(o.col_ptr_)), row_ind_(std::move(o.row_ind_)),
+          values_(std::move(o.values_)), perm_c_(std::move(o.perm_c_)),
+          perm_r_(std::move(o.perm_r_)), L_(o.L_), U_(o.U_),
+          factor_nnz_(o.factor_nnz_), factored_(o.factored_), valid_(o.valid_)
+    {
+        o.forget();
+    }
+
+    superlu_solver& operator=(superlu_solver&& o) noexcept {
+        if (this != &o) {
+            release();
+            n_ = o.n_;
+            col_ptr_ = std::move(o.col_ptr_);
+            row_ind_ = std::move(o.row_ind_);
+            values_ = std::move(o.values_);
+            perm_c_ = std::move(o.perm_c_);
+            perm_r_ = std::move(o.perm_r_);
+            L_ = o.L_;
+            U_ = o.U_;
+            factor_nnz_ = o.factor_nnz_;
+            factored_ = o.factored_;
+            valid_ = o.valid_;
+            o.forget();
+        }
+        return *this;
+    }
+
+    /// Solve A*x = b with the factors computed by the constructor.
     template <typename ParamsX, typename ParamsB>
     void solve(vec::dense_vector<double, ParamsX>& x,
                const vec::dense_vector<double, ParamsB>& b) const
     {
-        if (static_cast<int>(x.size()) != n_ || static_cast<int>(b.size()) != n_) {
+        if (!valid_) {
+            throw std::logic_error("superlu_solver::solve: moved-from solver");
+        }
+        if (x.size() != num_rows() || b.size() != num_rows()) {
             throw std::invalid_argument("superlu_solver::solve: vector size mismatch");
         }
+        if (n_ == 0) return;
 
-        // Copy b into x (dgssv overwrites the RHS in-place)
+        // dgstrs overwrites the right-hand side with the solution.
         for (int i = 0; i < n_; ++i)
             x(i) = b(i);
 
-        // Local copies for SuperLU (it may modify the matrix)
-        auto col_ptr = col_ptr_;
-        auto row_ind = row_ind_;
-        auto values  = values_;
-
-        SuperMatrix A_slu, B_slu, L_slu, U_slu;
-        int nnz = static_cast<int>(values.size());
-
-        dCreate_CompCol_Matrix(&A_slu, n_, n_, nnz,
-                               values.data(), row_ind.data(), col_ptr.data(),
-                               SLU_NC, SLU_D, SLU_GE);
-        dCreate_Dense_Matrix(&B_slu, n_, 1, x.data(), n_,
-                             SLU_DN, SLU_D, SLU_GE);
-
-        superlu_options_t options;
-        set_default_options(&options);
-
-        std::vector<int> perm_c(n_), perm_r(n_);
+        SuperMatrix B_slu;
+        dCreate_Dense_Matrix(&B_slu, n_, 1, x.data(), n_, SLU_DN, SLU_D, SLU_GE);
         SuperLUStat_t stat;
         StatInit(&stat);
-
         int info = 0;
-        factor_nnz_ = 0;  // clear stale fill so a failed solve never reports it
-        dgssv(&options, &A_slu, perm_c.data(), perm_r.data(),
-              &L_slu, &U_slu, &B_slu, &stat, &info);
-
-        if (info == 0) {
-            // Record the factor fill (nnz of L + U). SuperLU stores L
-            // supernodally, so its nnz includes the structural zeros inside the
-            // supernodes -- i.e. SuperLU's actual factor storage footprint, the
-            // honest quantity to compare against a scalar factor's nnz.
-            factor_nnz_ = static_cast<std::size_t>(
-                              static_cast<SCformat*>(L_slu.Store)->nnz)
-                        + static_cast<std::size_t>(
-                              static_cast<NCformat*>(U_slu.Store)->nnz);
-        }
-
+        // dgstrs only reads L and U; its prototype is not const-qualified.
+        dgstrs(NOTRANS, &L_, &U_, perm_c_.data(), perm_r_.data(), &B_slu, &stat, &info);
         StatFree(&stat);
-        Destroy_SuperMatrix_Store(&A_slu);
         Destroy_SuperMatrix_Store(&B_slu);
-        Destroy_SuperNode_Matrix(&L_slu);
-        Destroy_CompCol_Matrix(&U_slu);
 
         if (info != 0) {
-            throw std::runtime_error("SuperLU dgssv failed (info="
+            throw std::runtime_error("SuperLU dgstrs failed (info="
                                       + std::to_string(info) + ")");
         }
     }
@@ -280,15 +297,81 @@ public:
     std::size_t num_rows() const { return static_cast<std::size_t>(n_); }
     std::size_t num_cols() const { return static_cast<std::size_t>(n_); }
 
-    /// Fill of the most recent factorization: nnz(L) + nnz(U) (L counted
-    /// supernodally, as SuperLU stores it). Zero until solve() has run.
+    /// Fill of the factorization: nnz(L) + nnz(U), L counted supernodally (as
+    /// SuperLU stores it, so including the structural zeros inside the
+    /// supernodes -- SuperLU's actual factor storage, the honest quantity to
+    /// compare against a scalar factor's nnz). 0 for a 0x0 A.
     std::size_t factor_nnz() const { return factor_nnz_; }
 
 private:
     int n_;
     std::vector<int> col_ptr_, row_ind_;
     std::vector<double> values_;
-    mutable std::size_t factor_nnz_ = 0;
+    std::vector<int> perm_c_, perm_r_;
+    mutable SuperMatrix L_{}, U_{};   // mutable: dgstrs takes them non-const
+    std::size_t factor_nnz_ = 0;
+    bool factored_;
+    bool valid_;
+
+    // The steps of dgssv up to the factorization: COLAMD column ordering,
+    // elimination tree and column permutation (sp_preorder), then dgstrf.
+    void factor() {
+        superlu_options_t options;
+        set_default_options(&options);
+
+        SuperMatrix A_slu, AC;
+        dCreate_CompCol_Matrix(&A_slu, n_, n_, static_cast<int>(values_.size()),
+                               values_.data(), row_ind_.data(), col_ptr_.data(),
+                               SLU_NC, SLU_D, SLU_GE);
+        perm_c_.assign(static_cast<std::size_t>(n_), 0);
+        perm_r_.assign(static_cast<std::size_t>(n_), 0);
+        std::vector<int> etree(static_cast<std::size_t>(n_));
+        get_perm_c(options.ColPerm, &A_slu, perm_c_.data());
+        sp_preorder(&options, &A_slu, perm_c_.data(), etree.data(), &AC);
+
+        SuperLUStat_t stat;
+        StatInit(&stat);
+        GlobalLU_t glu;
+        int info = 0;
+        dgstrf(&options, &AC, sp_ienv(2), sp_ienv(1), etree.data(), nullptr, 0,
+               perm_c_.data(), perm_r_.data(), &L_, &U_, &glu, &stat, &info);
+        StatFree(&stat);
+        Destroy_CompCol_Permuted(&AC);
+        Destroy_SuperMatrix_Store(&A_slu);   // the arrays are ours
+
+        // 0 < info <= n: U(info-1, info-1) is exactly zero, and L and U are
+        // allocated. info > n: an allocation failed, and they are not.
+        if (info != 0) {
+            if (info <= n_) {
+                Destroy_SuperNode_Matrix(&L_);
+                Destroy_CompCol_Matrix(&U_);
+                throw std::runtime_error("SuperLU dgstrf: matrix is singular (zero pivot in column "
+                                          + std::to_string(info - 1) + ")");
+            }
+            throw std::runtime_error("SuperLU dgstrf failed (info="
+                                      + std::to_string(info) + ")");
+        }
+        factored_ = true;
+        factor_nnz_ = static_cast<std::size_t>(static_cast<SCformat*>(L_.Store)->nnz)
+                    + static_cast<std::size_t>(static_cast<NCformat*>(U_.Store)->nnz);
+    }
+
+    void release() noexcept {
+        if (factored_) {
+            Destroy_SuperNode_Matrix(&L_);
+            Destroy_CompCol_Matrix(&U_);
+            factored_ = false;
+        }
+    }
+
+    void forget() noexcept {
+        n_ = 0;
+        L_ = SuperMatrix{};
+        U_ = SuperMatrix{};
+        factor_nnz_ = 0;
+        factored_ = false;
+        valid_ = false;
+    }
 
     template <typename Parameters>
     void convert_to_ccs(const mat::compressed2D<double, Parameters>& A) {
