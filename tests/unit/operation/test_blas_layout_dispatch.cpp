@@ -16,22 +16,33 @@
 //     filled with NaN, so a flipped uplo poisons the result.
 //
 // Without BLAS the same cases exercise the generic paths, which must agree.
+//
+// #849 added mat*mat mult (?gemm) and ger to the list: both were gated on
+// operands of one orientation (mult) or on a column-major A (ger), so the
+// default row-major dense2D never reached BLAS for ger, and no mixed mult
+// did. trmv and trsv, which already took either orientation, get their trait
+// checks here too.
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <tuple>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
+#include <mtl/operation/ger.hpp>
+#include <mtl/operation/mult.hpp>
 #include <mtl/operation/symm.hpp>
 #include <mtl/operation/symv.hpp>
 #include <mtl/operation/syr2k.hpp>
 #include <mtl/operation/syrk.hpp>
 #include <mtl/operation/trmm.hpp>
+#include <mtl/operation/trmv.hpp>
 #include <mtl/operation/trsm.hpp>
+#include <mtl/operation/trsv.hpp>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
@@ -82,11 +93,49 @@ static_assert(detail::syr2k_dispatches_blas_v<void, cm<double>, cm<double>, rm<d
 static_assert(!detail::syr2k_dispatches_blas_v<void, rm<double>, cm<double>, rm<double>>);  // A, B differ
 static_assert(!detail::syr2k_dispatches_blas_v<double, rm<double>, rm<double>, rm<double>>);
 
+// mat*mat mult: every orientation of A, B and C (#849); one element type only.
+static_assert(detail::gemm_dispatches_blas_v<void, rm<double>, rm<double>, rm<double>> == blas);
+static_assert(detail::gemm_dispatches_blas_v<void, rm<double>, cm<double>, rm<double>> == blas);
+static_assert(detail::gemm_dispatches_blas_v<void, cm<double>, rm<double>, cm<double>> == blas);
+static_assert(detail::gemm_dispatches_blas_v<void, cm<float>, cm<float>, rm<float>> == blas);
+static_assert(detail::gemm_dispatches_blas_v<void, cm<float>, cm<float>, cm<float>> == blas);
+static_assert(!detail::gemm_dispatches_blas_v<void, rm<float>, rm<double>, rm<double>>);
+static_assert(!detail::gemm_dispatches_blas_v<double, rm<double>, rm<double>, rm<double>>);
+static_assert(!detail::gemm_dispatches_blas_v<void, rm<long double>, rm<long double>, rm<long double>>);
+
+// ger: either orientation of A (#849). The scalar must not be wider than A's
+// element type: ?ger would round a double alpha to float.
+static_assert(detail::ger_dispatches_blas_v<void, double, rm<double>, vec::dense_vector<double>,
+                                            vec::dense_vector<double>> == blas);
+static_assert(detail::ger_dispatches_blas_v<void, float, cm<float>, vec::dense_vector<float>,
+                                            vec::dense_vector<float>> == blas);
+static_assert(detail::ger_dispatches_blas_v<void, int, rm<float>, vec::dense_vector<float>,
+                                            vec::dense_vector<float>> == blas);
+static_assert(detail::ger_dispatches_blas_v<void, float, rm<double>, vec::dense_vector<double>,
+                                            vec::dense_vector<double>> == blas);
+static_assert(!detail::ger_dispatches_blas_v<void, double, rm<float>, vec::dense_vector<float>,
+                                             vec::dense_vector<float>>);
+static_assert(!detail::ger_dispatches_blas_v<void, double, rm<double>, vec::dense_vector<float>,
+                                             vec::dense_vector<double>>);
+static_assert(!detail::ger_dispatches_blas_v<double, double, rm<double>, vec::dense_vector<double>,
+                                             vec::dense_vector<double>>);
+
+// trmv and trsv: either orientation of A; not under an accumulator, not for
+// long double.
+static_assert(detail::trmv_dispatches_blas_v<void, rm<double>, vec::dense_vector<double>> == blas);
+static_assert(detail::trmv_dispatches_blas_v<void, cm<float>, vec::dense_vector<float>> == blas);
+static_assert(!detail::trmv_dispatches_blas_v<double, rm<double>, vec::dense_vector<double>>);
+static_assert(!detail::trmv_dispatches_blas_v<void, rm<long double>, vec::dense_vector<long double>>);
+static_assert(detail::trsv_dispatches_blas_v<void, rm<double>, vec::dense_vector<double>> == blas);
+static_assert(detail::trsv_dispatches_blas_v<void, cm<float>, vec::dense_vector<float>> == blas);
+static_assert(!detail::trsv_dispatches_blas_v<double, rm<double>, vec::dense_vector<double>>);
+static_assert(!detail::trsv_dispatches_blas_v<void, rm<long double>, vec::dense_vector<long double>>);
+
 // -- inputs and references -----------------------------------------------------
 
 /// Deterministic values in [-1, 1], distinct per (seed, i, j).
 long double val(std::size_t seed, std::size_t i, std::size_t j) {
-    std::size_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
+    std::uint64_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
     h ^= h >> 31;
     h *= 0xD6E8FEB86659FD93ull;
     h ^= h >> 32;
@@ -284,4 +333,54 @@ TEMPLATE_TEST_CASE("symv: either orientation of A", "[operation][blas][724]",
         INFO("y(" << i << ")");
         REQUIRE(std::fabs(static_cast<long double>(y(i)) - want) <= tol<T>() * (1 + std::fabs(want)));
     }
+}
+
+TEMPLATE_TEST_CASE("mult mat*mat: every orientation of A, B and C (#849)", "[operation][blas][849]",
+                   d_RRR, d_RRK, d_RKR, d_RKK, d_KRR, d_KRK, d_KKR, d_KKK,
+                   f_RRR, f_RRK, f_RKR, f_RKK, f_KRR, f_KRK, f_KKR, f_KKK) {
+    using T = typename TestType::value;
+    // m, n and k all differ, so a swapped dimension or leading dimension is
+    // wrong rather than transposed. k = 0 must give a zero C.
+    for (const std::size_t k : {std::size_t{5}, std::size_t{0}}) {
+        const std::size_t m = 7, n = 3;
+        CAPTURE(k);
+        const auto A = filled<typename TestType::A>(m, k, 12);
+        const auto B = filled<typename TestType::B>(k, n, 13);
+        auto C = filled<typename TestType::C>(m, n, 14);   // overwritten
+        mult(A, B, C);
+        require_close<T>(C, m, n, [&](std::size_t i, std::size_t j) {
+            long double s = 0;
+            for (std::size_t l = 0; l < k; ++l) s += at(A, i, l) * at(B, l, j);
+            return s;
+        });
+    }
+}
+
+TEMPLATE_TEST_CASE("ger: either orientation of A (#849)", "[operation][blas][849]",
+                   d_RR, d_KK, f_RR, f_KK) {
+    using T = typename TestType::value;
+    const std::size_t m = 7, n = 4;
+    const auto A0 = filled<typename TestType::A>(m, n, 15);
+    vec::dense_vector<T> x(m), y(n);
+    for (std::size_t i = 0; i < m; ++i) x(i) = static_cast<T>(val(16, i, 0));
+    for (std::size_t j = 0; j < n; ++j) y(j) = static_cast<T>(val(17, j, 0));
+    auto A = A0;
+    ger(T(-1.5), x, y, A);
+    require_close<T>(A, m, n, [&](std::size_t i, std::size_t j) {
+        return at(A0, i, j) - 1.5L * static_cast<long double>(x(i)) * static_cast<long double>(y(j));
+    });
+}
+
+TEMPLATE_TEST_CASE("ger: a double alpha with a float A is not rounded to float first (#849)",
+                   "[operation][blas][849]", rm<float>, cm<float>) {
+    // alpha = 2^-150 is below float's smallest subnormal and rounds to 0, and
+    // ?ger returns without an update for a zero alpha. The generic path forms
+    // alpha x y = 2^-150 * 2^100 * 2^50 = 1 in double.
+    TestType A(1, 1);
+    A(0, 0) = 0.0f;
+    vec::dense_vector<float> x(1), y(1);
+    x(0) = 0x1p100f;
+    y(0) = 0x1p50f;
+    ger(0x1p-150, x, y, A);
+    REQUIRE(A(0, 0) == 1.0f);
 }

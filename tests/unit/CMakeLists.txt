@@ -393,3 +393,16 @@ foreach(_generic_test concept_test_native_shim concept_test_shim_genericity)
         set_tests_properties(${_generic_test} PROPERTIES LABELS generic)
     endif()
 endforeach()
+
+# A bad argument to a BLAS or LAPACK routine is reported by its error handler,
+# xerbla, which prints "** On entry to DSYEV parameter number 5 had an illegal
+# value". Reference LAPACK's xerbla then ends the process with status 0, so a
+# test that reaches it stops early and still passes; OpenBLAS's xerbla prints
+# and returns. Either way the message means MTL5 called the library wrongly,
+# so it fails the test (#849: syev and gesdd on an empty matrix).
+if(MTL5_WITH_BLAS OR MTL5_WITH_LAPACK)
+    get_property(_unit_tests DIRECTORY PROPERTY TESTS)
+    foreach(_unit_test IN LISTS _unit_tests)
+        set_property(TEST ${_unit_test} APPEND PROPERTY FAIL_REGULAR_EXPRESSION "had an illegal value")
+    endforeach()
+endif()

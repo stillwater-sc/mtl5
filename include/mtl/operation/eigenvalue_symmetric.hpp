@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cassert>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/scalar.hpp>
@@ -234,6 +236,9 @@ auto eigenvalue_symmetric(const M& A,
         using size_type  = typename M::size_type;
         const size_type n = A.num_rows();
         assert(n == A.num_cols());
+        // syev rejects lda = 0 (reference LAPACK prints "parameter number 5
+        // had an illegal value" and exits), so an empty A never reaches it.
+        if (n == 0) return vec::dense_vector<value_type>(0);
         // LAPACK syev: eigenvalues only ('N'), lower triangle ('L')
         // Work on a column-major copy
         std::vector<value_type> A_copy(n * n);
@@ -244,12 +249,24 @@ auto eigenvalue_symmetric(const M& A,
         std::vector<value_type> W(n);
         // Workspace query
         value_type work_opt;
-        interface::lapack::syev('N', 'L', static_cast<int>(n),
+        const int qinfo = interface::lapack::syev('N', 'L', static_cast<int>(n),
             A_copy.data(), static_cast<int>(n), W.data(), &work_opt, -1);
+        if (qinfo != 0)
+            throw std::runtime_error("mtl::eigenvalue_symmetric: LAPACK syev workspace query failed (info = "
+                                     + std::to_string(qinfo) + ")");
         int lwork = static_cast<int>(work_opt);
-        std::vector<value_type> work(lwork);
-        interface::lapack::syev('N', 'L', static_cast<int>(n),
+        if (lwork < 1) lwork = 1;
+        std::vector<value_type> work(static_cast<size_type>(lwork));
+        const int info = interface::lapack::syev('N', 'L', static_cast<int>(n),
             A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork);
+        // info < 0: a bad argument; info > 0: the QL/QR iteration did not
+        // converge, which is what a NaN or Inf in A usually gives (info = 2
+        // for a 3x3, with reference LAPACK and OpenBLAS). Either way W holds
+        // no eigenvalues. Not every non-finite A fails: syev copies a 1x1 A
+        // to W without iterating, so [Inf] returns {Inf} with info = 0.
+        if (info != 0)
+            throw std::runtime_error("mtl::eigenvalue_symmetric: LAPACK syev failed (info = "
+                                     + std::to_string(info) + ")");
 
         // LAPACK returns eigenvalues in ascending order
         vec::dense_vector<value_type> result(n);
@@ -278,13 +295,21 @@ auto eigenvalue_symmetric(const M& A,
         std::vector<real_t> rwork(std::max<size_type>(size_type(1), 3 * n - 2));
         // Workspace query: the optimal lwork comes back in the real part of work_opt.
         value_type work_opt;
-        interface::lapack::heev('N', 'L', static_cast<int>(n),
+        const int qinfo = interface::lapack::heev('N', 'L', static_cast<int>(n),
             A_copy.data(), static_cast<int>(n), W.data(), &work_opt, -1, rwork.data());
+        if (qinfo != 0)
+            throw std::runtime_error("mtl::eigenvalue_symmetric: LAPACK heev workspace query failed (info = "
+                                     + std::to_string(qinfo) + ")");
         int lwork = static_cast<int>(work_opt.real());
         if (lwork < 1) lwork = 1;
         std::vector<value_type> work(static_cast<size_type>(lwork));
-        interface::lapack::heev('N', 'L', static_cast<int>(n),
+        const int info = interface::lapack::heev('N', 'L', static_cast<int>(n),
             A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork, rwork.data());
+        // As for syev: a bad argument, or no convergence (usually what a NaN
+        // or Inf in A gives; a 1x1 A is copied without iterating).
+        if (info != 0)
+            throw std::runtime_error("mtl::eigenvalue_symmetric: LAPACK heev failed (info = "
+                                     + std::to_string(info) + ")");
 
         // LAPACK returns eigenvalues in ascending order (real for Hermitian).
         vec::dense_vector<real_t> result(n);

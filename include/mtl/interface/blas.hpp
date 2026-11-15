@@ -201,6 +201,28 @@ inline double nrm2(int n, const double* x, int incx) {
     return dnrm2_(&n, x, &incx);
 }
 
+/// Sum of |x_i| over n elements (?asum). For complex BLAS this would be
+/// |re| + |im|; only the real wrappers exist here.
+inline float asum(int n, const float* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    return sasum_(&n, x, &incx);
+}
+inline double asum(int n, const double* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    return dasum_(&n, x, &incx);
+}
+
+/// Index of the first element of largest |x_i| (i?amax). The index is
+/// 1-based, as BLAS returns it; 0 means n < 1 (or incx < 1).
+inline int iamax(int n, const float* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    return isamax_(&n, x, &incx);
+}
+inline int iamax(int n, const double* x, int incx) {
+    ::mtl::interface::detail::nested_blas_cap cap;
+    return idamax_(&n, x, &incx);
+}
+
 // -- Level 2 ------------------------------------------------------------
 
 inline void gemv(char trans, int m, int n, float alpha,

@@ -12,7 +12,9 @@
 // The default path takes W rows at a time (detail::lower_trisolve_rows, #749,
 // with W from interface::interleave_rows, #772), or on a contiguous
 // column-major L the column sweep (#777), both bit-identical to the one-row
-// loop. upper_trisolve cannot do the same: its row i sums in ascending j, so
+// loop when a product and its add are contracted the same way in both forms
+// (-ffp-contract=off, as the tests build; with contraction on the last bit
+// can differ, #849). upper_trisolve cannot do the same: its row i sums in ascending j, so
 // its FIRST term needs x(i+1), and no two rows' reductions can overlap
 // without reordering them.
 //

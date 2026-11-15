@@ -353,60 +353,65 @@ void svd(const M& A,
     // row-major and column-major M alike (see #417).
     if constexpr (interface::BlasDenseMatrix<M> &&
                   interface::accumulator_allows_blas_v<Accumulator>) {
-        // LAPACK gesdd: A_copy is overwritten, returns U, S_vec, VT
-        U.change_dim(m, m);
-        S.change_dim(m, n);
-        V.change_dim(n, n);
+        // gesdd rejects lda = 0 (an empty A: "parameter number 5" for 0x0,
+        // 10 for m x 0) and stops the process, so an empty A takes the generic
+        // path below, which sizes U, S and V and returns identity U and V.
+        if (mn > 0) {
+            // LAPACK gesdd: A_copy is overwritten, returns U, S_vec, VT
+            U.change_dim(m, m);
+            S.change_dim(m, n);
+            V.change_dim(n, n);
 
-        // Work on a copy (LAPACK overwrites input)
-        std::vector<value_type> A_copy(m * n);
-        for (size_type i = 0; i < m; ++i)
-            for (size_type j = 0; j < n; ++j)
-                A_copy[j * m + i] = A(i, j);  // column-major copy
+            // Work on a copy (LAPACK overwrites input)
+            std::vector<value_type> A_copy(m * n);
+            for (size_type i = 0; i < m; ++i)
+                for (size_type j = 0; j < n; ++j)
+                    A_copy[j * m + i] = A(i, j);  // column-major copy
 
-        std::vector<value_type> S_vec(mn);
-        std::vector<value_type> U_data(m * m);
-        std::vector<value_type> VT_data(n * n);
-        std::vector<int> iwork(8 * mn);
+            std::vector<value_type> S_vec(mn);
+            std::vector<value_type> U_data(m * m);
+            std::vector<value_type> VT_data(n * n);
+            std::vector<int> iwork(8 * mn);
 
-        // Workspace query
-        value_type work_opt;
-        const int qinfo = interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
-            A_copy.data(), static_cast<int>(m), S_vec.data(),
-            U_data.data(), static_cast<int>(m),
-            VT_data.data(), static_cast<int>(n),
-            &work_opt, -1, iwork.data());
-        if (qinfo != 0)
-            throw std::runtime_error("mtl::svd: LAPACK gesdd workspace query failed (info = " + std::to_string(qinfo) + ")");
-        int lwork = static_cast<int>(work_opt);
-        std::vector<value_type> work(lwork);
-        const int info = interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
-            A_copy.data(), static_cast<int>(m), S_vec.data(),
-            U_data.data(), static_cast<int>(m),
-            VT_data.data(), static_cast<int>(n),
-            work.data(), lwork, iwork.data());
-        // info < 0: a bad argument, including a NaN in A (LAPACK 3.10+);
-        // info > 0: the bidiagonal divide and conquer did not converge.
-        // Either way U, S and V hold no decomposition.
-        if (info != 0)
-            throw std::runtime_error("mtl::svd: LAPACK gesdd failed (info = " + std::to_string(info) + ")");
+            // Workspace query
+            value_type work_opt;
+            const int qinfo = interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
+                A_copy.data(), static_cast<int>(m), S_vec.data(),
+                U_data.data(), static_cast<int>(m),
+                VT_data.data(), static_cast<int>(n),
+                &work_opt, -1, iwork.data());
+            if (qinfo != 0)
+                throw std::runtime_error("mtl::svd: LAPACK gesdd workspace query failed (info = " + std::to_string(qinfo) + ")");
+            int lwork = static_cast<int>(work_opt);
+            std::vector<value_type> work(lwork);
+            const int info = interface::lapack::gesdd('A', static_cast<int>(m), static_cast<int>(n),
+                A_copy.data(), static_cast<int>(m), S_vec.data(),
+                U_data.data(), static_cast<int>(m),
+                VT_data.data(), static_cast<int>(n),
+                work.data(), lwork, iwork.data());
+            // info < 0: a bad argument, including a NaN in A (LAPACK 3.10+);
+            // info > 0: the bidiagonal divide and conquer did not converge.
+            // Either way U, S and V hold no decomposition.
+            if (info != 0)
+                throw std::runtime_error("mtl::svd: LAPACK gesdd failed (info = " + std::to_string(info) + ")");
 
-        // Copy results: U from column-major U_data
-        for (size_type i = 0; i < m; ++i)
-            for (size_type j = 0; j < m; ++j)
-                U(i, j) = U_data[j * m + i];
+            // Copy results: U from column-major U_data
+            for (size_type i = 0; i < m; ++i)
+                for (size_type j = 0; j < m; ++j)
+                    U(i, j) = U_data[j * m + i];
 
-        // S as diagonal m x n matrix
-        for (size_type i = 0; i < m; ++i)
-            for (size_type j = 0; j < n; ++j)
-                S(i, j) = (i == j && i < mn) ? S_vec[i] : math::zero<value_type>();
+            // S as diagonal m x n matrix
+            for (size_type i = 0; i < m; ++i)
+                for (size_type j = 0; j < n; ++j)
+                    S(i, j) = (i == j && i < mn) ? S_vec[i] : math::zero<value_type>();
 
-        // V from VT (transpose): V(i,j) = VT(j,i) = VT_data[i * n + j]
-        for (size_type i = 0; i < n; ++i)
-            for (size_type j = 0; j < n; ++j)
-                V(i, j) = VT_data[i * n + j];
+            // V from VT (transpose): V(i,j) = VT(j,i) = VT_data[i * n + j]
+            for (size_type i = 0; i < n; ++i)
+                for (size_type j = 0; j < n; ++j)
+                    V(i, j) = VT_data[i * n + j];
 
-        return;
+            return;
+        }
     }
 #endif
 

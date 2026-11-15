@@ -827,6 +827,31 @@ void mult(const M& A, const VIn& x, VOut& y) {
     }
 }
 
+namespace detail {
+
+/// Whether mult<Accumulator>(A, B, C), mat*mat, calls ?gemm: dense float or
+/// double operands of one element type under the default accumulator, in any
+/// mix of orientations (#849; before, only A, B and C of one orientation did).
+/// Nested conditions, not one conjunction: `&&` in a constant expression
+/// still instantiates every operand it names, and the value types are only
+/// looked at once the operands are known dense.
+template <typename Accumulator, typename MA, typename MB, typename MC>
+inline constexpr bool gemm_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> &&
+                  interface::BlasDenseMatrix<MA> && interface::BlasDenseMatrix<MB> &&
+                  interface::BlasDenseMatrix<MC>)
+        return std::is_same_v<typename MA::value_type, typename MC::value_type> &&
+               std::is_same_v<typename MB::value_type, typename MC::value_type>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
+
 /// mat*mat multiply into pre-allocated C: C = A * B.
 ///
 /// Mixed precision: pass an explicit `Accumulator` to sum each C element in a
@@ -948,20 +973,14 @@ void mult(const MA& A, const MB& B, MC& C) {
     } else {
 
 #ifdef MTL5_HAS_BLAS
-    // Two nested conditions, not one conjunction: `&&` in a constant expression
-    // still instantiates every operand it names, and is_row_major_v<M> needs
-    // M::orientation, which compressed2D and transposed_view do not have. The
-    // inner condition is only instantiated once the operands are known dense.
     // ?gemm takes one element type, so mixed operands (float A, double B and C)
     // take the generic kernel, as on the native-fast path below (#824: they
-    // did not compile here).
-    if constexpr (interface::BlasDenseMatrix<MA> &&
-                  interface::BlasDenseMatrix<MB> &&
-                  interface::BlasDenseMatrix<MC>) {
-    if constexpr (interface::is_row_major_v<MA> == interface::is_row_major_v<MC> &&
-                  interface::is_row_major_v<MB> == interface::is_row_major_v<MC> &&
-                  std::is_same_v<typename MA::value_type, typename MC::value_type> &&
-                  std::is_same_v<typename MB::value_type, typename MC::value_type>) {
+    // did not compile here). Any mix of orientations goes to ?gemm (#849): a
+    // row-major r x c buffer is the column-major c x r transpose, which ?gemm
+    // reads through its 'T' flag. is_row_major_v needs M::orientation, which
+    // compressed2D and transposed_view do not have; the trait is false for
+    // them, so it is only named once the operands are known dense.
+    if constexpr (detail::gemm_dispatches_blas_v<Accumulator, MA, MB, MC>) {
         using T = typename MC::value_type;
         int m = static_cast<int>(A.num_rows());
         int n = static_cast<int>(B.num_cols());
@@ -972,20 +991,26 @@ void mult(const MA& A, const MB& B, MC& C) {
         // is empty: BLIS rejects k == 0 with ld 0 and leaves C untouched,
         // where OpenBLAS accepts it and zeroes C.
         auto ld = [](int d) { return d < 1 ? 1 : d; };
+        constexpr bool ra = interface::is_row_major_v<MA>;
+        constexpr bool rb = interface::is_row_major_v<MB>;
         if constexpr (interface::is_row_major_v<MC>) {
-            // Row-major: C_row = A_row * B_row
-            // C = A*B in row-major = (B^T * A^T)^T in col-major
-            // So call gemm with swapped A and B pointers.
-            interface::blas::gemm('N', 'N', n, m, k, alpha,
-                                  B.data(), ld(n), A.data(), ld(k),
+            // ?gemm writes a column-major C, and a row-major C is the
+            // column-major C^T = B^T A^T (n x m, ldc = n). A row-major B's
+            // buffer is B^T (n x k, ld n) as it stands; a column-major one is
+            // B (k x n, ld k), read transposed. Likewise A^T: row-major A is
+            // A^T (k x m, ld k), column-major A is A (m x k, ld m).
+            interface::blas::gemm(rb ? 'N' : 'T', ra ? 'N' : 'T', n, m, k, alpha,
+                                  B.data(), ld(rb ? n : k), A.data(), ld(ra ? k : m),
                                   beta, C.data(), ld(n));
         } else {
-            interface::blas::gemm('N', 'N', m, n, k, alpha,
-                                  A.data(), ld(m), B.data(), ld(k),
+            // A column-major A is A (m x k, ld m); a row-major one is A^T
+            // (k x m, ld k), read transposed. Likewise B: column-major is B
+            // (k x n, ld k), row-major is B^T (n x k, ld n).
+            interface::blas::gemm(ra ? 'T' : 'N', rb ? 'T' : 'N', m, n, k, alpha,
+                                  A.data(), ld(ra ? k : m), B.data(), ld(rb ? n : k),
                                   beta, C.data(), ld(m));
         }
         return;
-    }
     }
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM

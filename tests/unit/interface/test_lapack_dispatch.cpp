@@ -20,6 +20,8 @@
 #include <cmath>
 #include <complex>
 #include <algorithm>
+#include <cstddef>
+#include <stdexcept>
 
 using namespace mtl;
 using Catch::Matchers::WithinAbs;
@@ -366,3 +368,87 @@ TEST_CASE("row-major dispatch: general eigenvalue (geev) known real spectrum",
     for (std::size_t i = 0; i < 3; ++i)
         REQUIRE_THAT(eigs(i).imag(), WithinAbs(0.0, 1e-9));
 }
+
+// -- Empty input and failing info codes (#849) --------------------------------
+//
+// With LAPACK, syev and gesdd were called with lda = 0 for an empty A; both
+// reject it, and reference LAPACK's xerbla prints the bad parameter and stops
+// the process, so before #849 these cases did not fail: they ended the test
+// binary. Without LAPACK the same cases check the generic paths.
+
+TEST_CASE("eigenvalue_symmetric of a 0x0 matrix is empty (#849)", "[interface][lapack][849]") {
+    mat::dense2D<double> A(0, 0);
+    REQUIRE(eigenvalue_symmetric(A).size() == 0);
+    mat::dense2D<float> Af(0, 0);
+    REQUIRE(eigenvalue_symmetric(Af).size() == 0);
+    mat::dense2D<cplxd> Ac(0, 0);
+    REQUIRE(eigenvalue_symmetric(Ac).size() == 0);
+}
+
+TEST_CASE("full svd of an empty matrix: identity U and V, empty S (#849)", "[interface][lapack][849]") {
+    const auto check = [](std::size_t m, std::size_t n) {
+        INFO("A is " << m << " x " << n);
+        mat::dense2D<double> A(m, n), U, S, V;
+        svd(A, U, S, V);
+        REQUIRE(U.num_rows() == m);
+        REQUIRE(U.num_cols() == m);
+        REQUIRE(S.num_rows() == m);
+        REQUIRE(S.num_cols() == n);
+        REQUIRE(V.num_rows() == n);
+        REQUIRE(V.num_cols() == n);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < m; ++j) REQUIRE(U(i, j) == (i == j ? 1.0 : 0.0));
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j) REQUIRE(V(i, j) == (i == j ? 1.0 : 0.0));
+    };
+    check(0, 0);
+    check(3, 0);
+    check(0, 3);
+
+    mat::dense2D<float> Af(2, 0), Uf, Sf, Vf;
+    svd(Af, Uf, Sf, Vf);
+    REQUIRE(Uf.num_rows() == 2);
+    REQUIRE(Sf.num_cols() == 0);
+    REQUIRE(Vf.num_rows() == 0);
+}
+
+#ifdef MTL5_HAS_LAPACK
+// syev and heev return info > 0 for a NaN or Inf in A (the QL/QR iteration
+// does not converge; info = 2 for this 3x3 with reference LAPACK and
+// OpenBLAS). Before #849 the info code was dropped and NaN eigenvalues came
+// back as a result. The generic path has no such check yet, so this case is
+// LAPACK only.
+TEST_CASE("eigenvalue_symmetric throws when syev or heev fails (#849)", "[interface][lapack][849]") {
+    for (const double bad : {std::nan(""), HUGE_VAL}) {
+        INFO("bad entry " << bad);
+        mat::dense2D<double> A(3, 3);
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 3; ++j) A(i, j) = 0.0;
+        A(0, 0) = 2; A(1, 1) = bad; A(2, 2) = 2;
+        A(0, 1) = A(1, 0) = 1; A(1, 2) = A(2, 1) = 1;
+        REQUIRE_THROWS_AS(eigenvalue_symmetric(A), std::runtime_error);
+
+        mat::dense2D<float> Af(3, 3);
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 3; ++j) Af(i, j) = static_cast<float>(A(i, j));
+        REQUIRE_THROWS_AS(eigenvalue_symmetric(Af), std::runtime_error);
+
+        mat::dense2D<cplxd> Ac(3, 3);
+        for (std::size_t i = 0; i < 3; ++i)
+            for (std::size_t j = 0; j < 3; ++j) Ac(i, j) = cplxd(A(i, j), 0.0);
+        REQUIRE_THROWS_AS(eigenvalue_symmetric(Ac), std::runtime_error);
+    }
+}
+
+// Not every non-finite input fails: syev copies a 1x1 A to W without
+// iterating and returns info = 0, so [Inf] comes back as {Inf}. This pins
+// what docs/algorithms/eigenvalues.md says about it.
+TEST_CASE("eigenvalue_symmetric of a 1x1 [Inf] returns {Inf} (#849)", "[interface][lapack][849]") {
+    mat::dense2D<double> A(1, 1);
+    A(0, 0) = HUGE_VAL;
+    vec::dense_vector<double> w(0);
+    REQUIRE_NOTHROW(w = eigenvalue_symmetric(A));
+    REQUIRE(w.size() == 1);
+    REQUIRE(std::isinf(w(0)));
+}
+#endif

@@ -27,6 +27,16 @@
 //
 // Built with -ffp-contract=off (tests/unit/CMakeLists.txt): with contraction
 // on, a compiler may fuse a product into its add in one form and not the other.
+// A user's build with contraction on can round the W-row forms differently
+// from the one-row loops (both still correct); the kernels say so too.
+//
+// What this test is: it pins the bits of a refactor. The references are the
+// old loops verbatim, so it could not have failed before #749; it fails if a
+// later change to the W-row forms moves a bit. The cases added in #849 run the
+// same comparison on a user-defined scalar (native_shim), on a matrix that is
+// not dense storage (a transposed_view), and on lower_trisolve(L, x, x) with b
+// aliasing x. The threaded mat*vec, with bands that start inside a W-row
+// block, is in test_mult_generic_mt.cpp, which runs with a pool of 4.
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -43,6 +53,7 @@
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
+#include <mtl/mat/view/transposed_view.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/trmv.hpp>
@@ -50,6 +61,7 @@
 #include <mtl/operation/upper_trisolve.hpp>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl5_test/native_shim.hpp>
 
 // A user's width for one type and one kernel (#772): long double gemv takes 3
 // rows, which also puts the public mat*vec tests below on an odd width with a
@@ -164,7 +176,7 @@ void old_mult_generic(const M& A, const VIn& x, VOut& y) {
 // -- inputs and comparison --------------------------------------------------------
 
 double val(std::size_t seed, std::size_t i, std::size_t j) {
-    std::size_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
+    std::uint64_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
     h ^= h >> 29; h *= 0xD6E8FEB86659FD93ull; h ^= h >> 32;
     return static_cast<double>(h % 1000003) / 500001.5 - 1.0;   // many distinct mantissas
 }
@@ -578,4 +590,129 @@ TEST_CASE("interleave_cap: half the vector registers, for every target", "[opera
     STATIC_REQUIRE(interleave_cap(8, 32) == 8);
     STATIC_REQUIRE(interleave_cap(4, 32) == 4);
     STATIC_REQUIRE(interleave_cap(20, 32) == 16);
+}
+
+// -- #849: a user-defined scalar, a non-dense A, an aliased b ---------------------
+
+namespace {
+
+using shim = mtl5_test::native_shim<double>;
+
+/// u and w hold the same doubles, the sign of zero included.
+template <typename V>
+void require_identical_shim(const V& u, const V& w) {
+    REQUIRE(u.size() == w.size());
+    for (std::size_t i = 0; i < u.size(); ++i) {
+        const double a = static_cast<double>(u(i)), b = static_cast<double>(w(i));
+        INFO("i = " << i << ": " << a << " vs " << b);
+        REQUIRE(identical(a, b));
+    }
+}
+
+template <typename MS>
+MS to_shim(const rm<double>& A) {
+    MS B(A.num_rows(), A.num_cols());
+    for (std::size_t i = 0; i < A.num_rows(); ++i)
+        for (std::size_t j = 0; j < A.num_cols(); ++j) B(i, j) = shim(A(i, j));
+    return B;
+}
+
+vec::dense_vector<shim> to_shim(const vec::dense_vector<double>& v) {
+    vec::dense_vector<shim> w(v.size());
+    for (std::size_t i = 0; i < v.size(); ++i) w(i) = shim(v(i));
+    return w;
+}
+
+} // namespace
+
+TEMPLATE_TEST_CASE("the W-row forms are bit-identical on a user-defined scalar (#849)", "[operation][749][849]",
+                   rm<shim>, cm<shim>) {
+    // native_shim is a class: no BLAS, no column sweep (arithmetic types
+    // only), no SIMD, so every public call below takes the W-row forms with
+    // the width a non-native type gets.
+    using M = TestType;
+    using V = vec::dense_vector<shim>;
+    static_assert(!detail::trmv_dispatches_blas_v<void, M, V>);
+    static_assert(!detail::trsv_dispatches_blas_v<void, M, V>);
+    for (std::size_t n : sizes)
+        for (bool upper : {false, true})
+            for (bool unit : {false, true}) {
+                INFO("n = " << n << (upper ? " upper" : " lower") << (unit ? " unit" : ""));
+                const M A = to_shim<M>(triangular<rm<double>>(n, 41 + n));
+                const V x0 = to_shim(filled<double>(n, 42 + n));
+
+                V x = x0, y = x0;
+                trmv(A, x, upper, unit);
+                old_trmv(A, y, upper, unit);
+                require_identical_shim(x, y);
+
+                V p = x0, q = x0;
+                trsv(A, p, upper, unit);
+                if (upper) old_upper_trisolve(A, q, unit); else old_lower_trisolve(A, q, unit);
+                require_identical_shim(p, q);
+
+                const V b = to_shim(filled<double>(n, 43 + n));
+                V u(n), w(n);
+                lower_trisolve(A, u, b, unit);
+                old_lower_trisolve(A, w, b, unit);
+                require_identical_shim(u, w);
+
+                V z(n), r(n);
+                detail::mult_generic(A, x0, z);
+                old_mult_generic(A, x0, r);
+                require_identical_shim(z, r);
+            }
+}
+
+TEST_CASE("the W-row forms are bit-identical on a matrix that is not dense storage (#849)",
+          "[operation][749][849]") {
+    // A transposed_view has no data() and no orientation, so it can only take
+    // the generic W-row forms; it reads through operator(), as any user matrix
+    // type would.
+    using V = vec::dense_vector<double>;
+    using TV = mat::view::transposed_view<rm<double>>;
+    static_assert(!detail::trmv_dispatches_blas_v<void, TV, V>);
+    static_assert(!detail::trsv_dispatches_blas_v<void, TV, V>);
+    for (std::size_t n : sizes)
+        for (bool upper : {false, true})
+            for (bool unit : {false, true}) {
+                INFO("n = " << n << (upper ? " upper" : " lower") << (unit ? " unit" : ""));
+                const rm<double> At = triangular<rm<double>>(n, 51 + n);
+                const TV A(At);   // A(i, j) = At(j, i)
+                const V x0 = filled<double>(n, 52 + n);
+
+                V x = x0, y = x0;
+                trmv(A, x, upper, unit);
+                old_trmv(A, y, upper, unit);
+                require_identical(x, y);
+
+                V p = x0, q = x0;
+                trsv(A, p, upper, unit);
+                if (upper) old_upper_trisolve(A, q, unit); else old_lower_trisolve(A, q, unit);
+                require_identical(p, q);
+
+                V z(n), r(n);
+                detail::mult_generic(A, x0, z);
+                old_mult_generic(A, x0, r);
+                require_identical(z, r);
+            }
+}
+
+TEMPLATE_TEST_CASE("lower_trisolve(L, x, x): b aliasing x is the in-place solve (#849)", "[operation][749][849]",
+                   rm<float>, rm<double>, rm<long double>, cm<float>, cm<double>, cm<long double>) {
+    // Each W-row block reads b(i) for its rows and writes x(i): with b and x
+    // one vector, a block must read b(i) before any row of it writes x(i).
+    using M = TestType;
+    using T = typename M::value_type;
+    using V = vec::dense_vector<T>;
+    for (std::size_t n : sizes)
+        for (bool unit : {false, true}) {
+            INFO("n = " << n << (unit ? " unit" : ""));
+            const M A = triangular<M>(n, 61 + n);
+            const V x0 = filled<T>(n, 62 + n);
+            V x = x0, y = x0;
+            lower_trisolve(A, x, x, unit);
+            old_lower_trisolve(A, y, unit);
+            require_identical(x, y);
+        }
 }
