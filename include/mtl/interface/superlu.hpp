@@ -283,7 +283,6 @@ public:
         SuperLUStat_t stat;
         StatInit(&stat);
         int info = 0;
-        // dgstrs only reads L and U; its prototype is not const-qualified.
         dgstrs(NOTRANS, &L_, &U_, perm_c_.data(), perm_r_.data(), &B_slu, &stat, &info);
         StatFree(&stat);
         Destroy_SuperMatrix_Store(&B_slu);
@@ -307,8 +306,11 @@ private:
     int n_;
     std::vector<int> col_ptr_, row_ind_;
     std::vector<double> values_;
-    std::vector<int> perm_c_, perm_r_;
-    mutable SuperMatrix L_{}, U_{};   // mutable: dgstrs takes them non-const
+    // mutable: dgstrs only reads the factors and the permutations, but takes L
+    // and U as non-const pointers, and the permutations as int* before
+    // SuperLU 7 (const int* from 7.0), so solve() const passes them as such.
+    mutable std::vector<int> perm_c_, perm_r_;
+    mutable SuperMatrix L_{}, U_{};
     std::size_t factor_nnz_ = 0;
     bool factored_;
     bool valid_;

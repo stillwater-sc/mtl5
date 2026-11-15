@@ -21,6 +21,7 @@ using Catch::Matchers::WithinAbs;
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -66,7 +67,9 @@ double residual_inf(const csr& A, const vec::dense_vector<double>& x,
     for (std::size_t i = 0; i < A.num_rows(); ++i) {
         double ax = 0.0;
         for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) ax += v[k] * x(ci[k]);
-        r = std::max(r, std::abs(ax - b(i)));
+        const double ri = std::abs(ax - b(i));
+        if (!std::isfinite(ri)) return std::numeric_limits<double>::infinity();
+        r = std::max(r, ri);
     }
     return r;
 }
