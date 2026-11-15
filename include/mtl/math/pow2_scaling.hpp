@@ -25,6 +25,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <initializer_list>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -273,12 +274,37 @@ givens_parameters<T> givens_rotation(const T& a, const T& b) {
     if constexpr (!std::is_same_v<magnitude_t<T>, T>) {
         using R = magnitude_t<T>;
         using std::conj;
-        const R fa = abs(a), fb = abs(b);
+        using std::real;
+        using std::imag;
+        // Everything is formed from a and b scaled by 2^-e, where 2^e bounds
+        // their largest component, and only r's components are scaled back:
+        // for a = b = (1e308, 1e308), |(a, b)| = 2e308 overflows, though r =
+        // (a/|a|) |(a, b)| has finite components near 1.414e308 (as zlartg
+        // keeps them).
+        R m = R(0);
+        for (const R x : {R(real(a)), R(imag(a)), R(real(b)), R(imag(b))}) {
+            const R ax = abs(x);
+            if (ax > m) m = ax;
+        }
+        if (m == R(0)) return {one, zero, zero};
+        if (!(m - m == R(0))) {   // inf or NaN: the plain formulas, NaN out
+            const R fa = abs(a), fb = abs(b), d = sqrt(fa * fa + fb * fb);
+            return {T(fa / d), T((a / fa) * (conj(b) / d)), T((a / fa) * d)};
+        }
+        const int e = pow2_scaling<R>::exponent(m);
+        auto down = [e](const T& z) {
+            return T(pow2_scaling<R>::scale(R(real(z)), -e), pow2_scaling<R>::scale(R(imag(z)), -e));
+        };
+        auto up = [e](const T& z) {
+            return T(pow2_scaling<R>::scale(R(real(z)), e), pow2_scaling<R>::scale(R(imag(z)), e));
+        };
+        const T as = down(a), bs = down(b);
+        const R fa = abs(as), fb = abs(bs);
         if (fb == R(0)) return {one, zero, a};
-        if (fa == R(0)) return {zero, T(conj(b) / fb), T(fb)};
-        const R d = givens_rotation<R>(fa, fb).r;   // the real case's scaled hypot
-        const T phase = a / fa;
-        return {T(fa / d), T(phase * (conj(b) / d)), T(phase * d)};
+        if (fa == R(0)) return {zero, T(conj(bs) / fb), up(T(fb))};
+        const R d = sqrt(fa * fa + fb * fb);   // fa, fb <= sqrt(2): no overflow
+        const T phase = as / fa;
+        return {T(fa / d), T(phase * (conj(bs) / d)), up(T(phase * d))};
     } else {
         auto unscaled = [&] {
             const T r = sqrt(a * a + b * b);

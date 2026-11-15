@@ -97,3 +97,18 @@ TEST_CASE("apply_givens_rotation and apply_stored_rotation, complex", "[givens][
     // The right-hand side: g = G (2, 0), so |g(0)|^2 + |g(1)|^2 = 4.
     CHECK(std::abs(std::norm(g(0)) + std::norm(g(1)) - 4.0) <= tol * 8);
 }
+
+TEST_CASE("complex givens_rotation near overflow keeps r finite", "[givens][853]") {
+    // |(a, b)| = 2e308 overflows, but r = (a/|a|) |(a, b)| has finite
+    // components near 1.414e308: formed from the scaled operands, it is kept.
+    const C a(1e308, 1e308), b(1e308, 1e308);
+    const auto g = math::givens_rotation(a, b);
+    CHECK(std::isfinite(g.r.real()));
+    CHECK(std::isfinite(g.r.imag()));
+    CHECK(std::abs(g.r.real() - 1e308 * std::sqrt(2.0)) <= 1e-14 * 1e308 * std::sqrt(2.0));
+    CHECK(std::abs(g.r.imag() - 1e308 * std::sqrt(2.0)) <= 1e-14 * 1e308 * std::sqrt(2.0));
+    CHECK(std::abs(g.c - C(std::sqrt(0.5))) <= tol);
+    CHECK(std::abs(std::norm(g.c) + std::norm(g.s) - 1.0) <= tol);
+    // Below the underflow threshold too.
+    check_rotation(C(3e-310, 0), C(0, 4e-310));
+}

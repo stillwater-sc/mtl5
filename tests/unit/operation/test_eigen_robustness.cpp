@@ -64,6 +64,8 @@ double relative_residual(const mat::dense2D<double>& A, const vec::dense_vector<
         for (std::size_t i = 0; i < n; ++i) {
             cplx r = -(e(k) / scale) * V(i, k);
             for (std::size_t j = 0; j < n; ++j) r += (A(i, j) / scale) * V(j, k);
+            // A NaN would lose std::max and leave worst unchanged.
+            if (!std::isfinite(std::abs(r))) return std::numeric_limits<double>::infinity();
             worst = std::max(worst, std::abs(r));
         }
     return worst / amax;
@@ -120,18 +122,22 @@ TEST_CASE("in-house eigen: residual, independence and pairing", "[operation][eig
     D(0, 0) = 2; D(1, 1) = 2; D(2, 2) = 2; D(3, 3) = 5;
     const auto [e, V] = eigen<double>(D);
     CHECK(relative_residual(D, e, V, 1.0) <= 1e-14);
-    // Gram matrix of the three vectors for 2 is nonsingular.
+    // The three unit vectors for 2 are independent: their Gram matrix G is
+    // nonsingular. Pairwise separation would not show it (e1, e2 and
+    // (e1 + e2)/sqrt(2) are pairwise apart but dependent); det G does.
     std::vector<std::size_t> twos;
     for (std::size_t k = 0; k < 4; ++k) if (std::abs(e(k) - cplx(2)) < 1e-12) twos.push_back(k);
     REQUIRE(twos.size() == 3);
-    double minpiv = 1;
+    cplx G[3][3];
     for (std::size_t a = 0; a < 3; ++a)
-        for (std::size_t b = a + 1; b < 3; ++b) {
-            cplx ip(0);
-            for (std::size_t i = 0; i < 4; ++i) ip += std::conj(V(i, twos[a])) * V(i, twos[b]);
-            minpiv = std::min(minpiv, 1.0 - std::abs(ip));
+        for (std::size_t b = 0; b < 3; ++b) {
+            G[a][b] = cplx(0);
+            for (std::size_t i = 0; i < 4; ++i) G[a][b] += std::conj(V(i, twos[a])) * V(i, twos[b]);
         }
-    CHECK(minpiv > 0.1);
+    const cplx detG = G[0][0] * (G[1][1] * G[2][2] - G[1][2] * G[2][1])
+                    - G[0][1] * (G[1][0] * G[2][2] - G[1][2] * G[2][0])
+                    + G[0][2] * (G[1][0] * G[2][1] - G[1][1] * G[2][0]);
+    CHECK(std::abs(detG) > 1e-3);
     // A complex pair: conjugate vectors for conjugate eigenvalues.
     mat::dense2D<double> R{{0, -2}, {2, 0}};
     const auto [er, Vr] = eigen<double>(R);
@@ -186,4 +192,54 @@ TEST_CASE("a non-square matrix is an error", "[operation][eigen][853]") {
     CHECK_THROWS_AS(hessenberg(R), std::invalid_argument);
     vec::dense_vector<double> tau;
     CHECK_THROWS_AS(hessenberg_factor(R, tau), std::invalid_argument);
+}
+
+TEST_CASE("relative_residual sees a NaN", "[operation][eigen][853]") {
+    mat::dense2D<double> A{{2, 0}, {0, 3}};
+    vec::dense_vector<cplx> e(2);
+    e(0) = cplx(2); e(1) = cplx(3);
+    mat::dense2D<cplx> V(2, 2);
+    V(0, 0) = cplx(1); V(1, 0) = cplx(0); V(0, 1) = cplx(0); V(1, 1) = cplx(std::nan(""));
+    CHECK(relative_residual(A, e, V, 1.0) == std::numeric_limits<double>::infinity());
+}
+
+TEST_CASE("eigenvalue and eigen at the ends of the range", "[operation][eigen][853]") {
+    // The scaling factor 2^1024 for [max()], and 2^1075 for [denorm_min()],
+    // overflowed; the exponent does not.
+    for (double x : {std::numeric_limits<double>::max(), std::numeric_limits<double>::denorm_min(),
+                     -std::numeric_limits<double>::max()}) {
+        INFO("x = " << x);
+        mat::dense2D<double> A{{x}};
+        CHECK(eigenvalue<double>(A)(0) == cplx(x));
+        CHECK(eigenvalue(A)(0) == cplx(x));
+        CHECK(eigen<double>(A).eigenvalues(0) == cplx(x));
+    }
+    // A 2x2 near overflow: both eigenvalues finite.
+    const double big = std::numeric_limits<double>::max() / 4;
+    mat::dense2D<double> B{{big, 0}, {0, -big}};
+    const auto eb = sorted(eigenvalue<double>(B));
+    CHECK((eb[0] == cplx(-big) && eb[1] == cplx(big)));
+}
+
+TEST_CASE("one last sweep that converges is not reported as non-convergence", "[operation][eigen][853]") {
+    // One Jacobi rotation diagonalizes a 2x2; one QR sweep deflates [[0,1],[1,0]].
+    mat::dense2D<double> J{{2, 1}, {1, 2}};
+    const auto rj = eigen_symmetric_jacobi(J, std::numeric_limits<double>::epsilon(), 1);
+    CHECK((std::abs(rj.eigenvalues(0) - 1.0) < 1e-15 && std::abs(rj.eigenvalues(1) - 3.0) < 1e-15));
+    mat::dense2D<double> F{{0, 1}, {1, 0}};
+    const auto ef = eigenvalue_symmetric<double>(F, 1e-15, 1);
+    CHECK((std::abs(ef(0) + 1.0) < 1e-15 && std::abs(ef(1) - 1.0) < 1e-15));
+    const auto rf = eigen_symmetric<double>(F, 1e-15, 1);
+    CHECK((std::abs(rf.eigenvalues(0) + 1.0) < 1e-15 && std::abs(rf.eigenvalues(1) - 1.0) < 1e-15));
+}
+
+TEST_CASE("eigen: a small 2x2 block is not floored as if singular", "[operation][eigen][853]") {
+    // A quasi-triangular A whose 2x2 block [0 d; -d 0] has entries of 1e-9
+    // relative to its 1 elsewhere. Comparing the block's determinant (1e-18
+    // scale) with eps * max|a| (linear) floored it, and the third eigenvector
+    // came back with a residual near 1.6e-7.
+    const double d = 1e-9;
+    mat::dense2D<double> R{{0, d, 0}, {-d, 0, 1}, {0, 0, d}};
+    const auto [e, V] = eigen<double>(R, 1e-15);
+    CHECK(relative_residual(R, e, V, 1.0) <= 1e-14);
 }

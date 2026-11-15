@@ -207,9 +207,9 @@ vector without calling LAPACK. If `syev` or `heev` returns a non-zero `info`,
 `eigenvalue_symmetric` throws `std::runtime_error` (#849), as the in-house
 iteration does when it runs out of iterations (#853). A NaN or Inf in the
 matrix throws `std::invalid_argument` before any work, on every path and for
-every size (#853), as do a non-square matrix and the same input to
-`eigenvalue`, `eigen`, `eigen_symmetric`, `eigen_symmetric_jacobi`, `schur`
-and `svd`. Before #853 a NaN or Inf usually made `syev` report
+every size (#853), as it does for `eigenvalue`, `eigen`, `eigen_symmetric`,
+`eigen_symmetric_jacobi`, `schur` and `svd`. The eigenvalue routines also
+reject a non-square matrix the same way; `svd` takes rectangular ones. Before #853 a NaN or Inf usually made `syev` report
 non-convergence, but a 1x1 `[Inf]` came back as `{Inf}`.
 
 ```cpp

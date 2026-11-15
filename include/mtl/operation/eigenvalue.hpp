@@ -5,6 +5,7 @@
 #include <complex>
 #include <algorithm>
 #include <cassert>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -127,7 +128,8 @@ void lapack_geev(const M& A,
 /// (T - lambda I) y = 0, with y zero below lambda's block. Back-substitution
 /// over T's diagonal blocks in complex arithmetic, the recurrence of LAPACK's
 /// dtrevc. A diagonal block whose shifted value or determinant is below smin
-/// -- the same eigenvalue again -- is perturbed to smin, and y is rescaled
+/// (the determinant: below smin times the block's largest entry) -- the same
+/// eigenvalue again -- is perturbed to that floor, and y is rescaled
 /// when an entry passes `limit`. O(n^2) per eigenvector.
 template <typename T>
 std::vector<std::complex<T>> quasi_triangular_eigenvector(const mat::dense2D<T>& R, std::size_t k,
@@ -166,8 +168,15 @@ std::vector<std::complex<T>> quasi_triangular_eigenvector(const mat::dense2D<T>&
         } else {
             const C a11 = C(R(b0, b0)) - lambda, a12 = C(R(b0, b1));
             const C a21 = C(R(b1, b0)),          a22 = C(R(b1, b1)) - lambda;
+            // det is quadratic in the block's entries and smin linear, so the
+            // test is on det / bmax, in the entries' units (#853 review): a
+            // nonsingular block with entries below sqrt(eps) of the matrix
+            // scale was floored, and its eigenvector came back wrong.
+            T bmax = abs(a11);
+            for (const C& z : {a12, a21, a22}) if (abs(z) > bmax) bmax = abs(z);
             C det = a11 * a22 - a12 * a21;
-            if (abs(det) < smin) det = C(smin);
+            if (bmax == zero)                 det = C(smin * smin);   // a zero block
+            else if (abs(det) < smin * bmax)  det = C(smin * bmax);
             y[b0] = (r0 * a22 - a12 * r1) / det;
             y[b1] = (a11 * r1 - a21 * r0) / det;
         }
@@ -236,11 +245,12 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     mat::dense2D<value_type> W(n, n);
     for (size_type i = 0; i < n; ++i)
         for (size_type j = 0; j < n; ++j) W(i, j) = A(i, j);
-    const value_type unscale = detail::scale_to_unit_binade(W);
+    const int unscale = detail::scale_to_unit_binade(W);
+    auto up = [unscale](const value_type& x) { return math::pow2_scaling<value_type>::scale(x, unscale); };
 
     // Reduce to upper Hessenberg form.
     mat::dense2D<value_type> H = hessenberg<Accumulator>(W);
-    if (n == 1) { eigs(0) = complex_type(H(0, 0) * unscale); return eigs; }
+    if (n == 1) { eigs(0) = complex_type(up(H(0, 0))); return eigs; }
 
     // Francis implicit double-shift QR on the real Hessenberg form (EISPACK
     // hqr, in detail/francis_qr.hpp, shared with schur()). Converges to real
@@ -258,7 +268,7 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     detail::francis_qr<detail::francis_output::eigenvalues>(H, static_cast<mat::dense2D<value_type>*>(nullptr), wr, wi, opt);
 
     for (size_type i = 0; i < n; ++i)
-        eigs(i) = complex_type(wr[i] * unscale, wi[i] * unscale);
+        eigs(i) = complex_type(up(wr[i]), up(wi[i]));
     return eigs;
 }
 
@@ -329,7 +339,7 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     mat::dense2D<value_type> W(n, n);
     for (size_type i = 0; i < n; ++i)
         for (size_type j = 0; j < n; ++j) W(i, j) = A(i, j);
-    const value_type unscale = detail::scale_to_unit_binade(W);
+    const int unscale = detail::scale_to_unit_binade(W);
     vec::dense_vector<value_type> tau;
     hessenberg_factor<Accumulator>(W, tau);
     mat::dense2D<value_type> Q = hessenberg_extract_Q<Accumulator>(W, tau);
@@ -364,7 +374,9 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
             value_type dbest = value_type(-1);
             for (size_type j = 0; j < n; ++j) {
                 if (used[static_cast<std::size_t>(j)]) continue;
-                const value_type d = abs(eigs(k) / unscale - complex_type(wr[j], wi[j]));
+                const complex_type scaled_k(math::pow2_scaling<value_type>::scale(eigs(k).real(), -unscale),
+                                            math::pow2_scaling<value_type>::scale(eigs(k).imag(), -unscale));
+                const value_type d = abs(scaled_k - complex_type(wr[j], wi[j]));
                 if (dbest < value_type(0) || d < dbest) { dbest = d; best = j; }
             }
             used[static_cast<std::size_t>(best)] = true;

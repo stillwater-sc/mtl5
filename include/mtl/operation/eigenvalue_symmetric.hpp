@@ -201,7 +201,13 @@ auto eigenvalue_symmetric_generic(const M& A,
 
     // max_iter sweeps without deflating the whole tridiagonal: say so, as
     // eigenvalue(), schur() and the LAPACK path do, instead of returning the
-    // unconverged diagonal (#853).
+    // unconverged diagonal (#853). The last sweep may have finished the job
+    // ([[0,1],[1,0]] deflates in one), so test once more first.
+    if (!converged) {
+        converged = true;
+        for (size_type i = 0; i + 1 < n; ++i)
+            if (!detail::tridiagonal_negligible(e(i), d(i), d(i + 1), tol)) { converged = false; break; }
+    }
     if (!converged)
         throw std::runtime_error("mtl::eigenvalue_symmetric: the QR iteration did not converge in "
                                  + std::to_string(max_iter) + " iterations");
@@ -526,7 +532,13 @@ auto eigen_symmetric(const M& A,
 
     // max_iter sweeps without deflating the whole tridiagonal: say so, as
     // eigenvalue(), schur() and the LAPACK path do, instead of returning the
-    // unconverged diagonal (#853).
+    // unconverged diagonal (#853). The last sweep may have finished the job
+    // ([[0,1],[1,0]] deflates in one), so test once more first.
+    if (!converged) {
+        converged = true;
+        for (size_type i = 0; i + 1 < n; ++i)
+            if (!detail::tridiagonal_negligible(e(i), d(i), d(i + 1), tol)) { converged = false; break; }
+    }
     if (!converged)
         throw std::runtime_error("mtl::eigen_symmetric: the QR iteration did not converge in "
                                  + std::to_string(max_iter) + " iterations");

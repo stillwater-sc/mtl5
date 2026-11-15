@@ -139,7 +139,7 @@ auto schur(const M& A) {
         for (size_type j = 0; j < n; ++j) W(i, j) = A(i, j);
 
     // Scale by a power of two to max |a_ij| in [1/2, 1].
-    const value_type unscale = detail::scale_to_unit_binade(W);
+    const int unscale = detail::scale_to_unit_binade(W);
 
     vec::dense_vector<value_type> tau;
     hessenberg_factor<Accumulator>(W, tau);
@@ -165,9 +165,10 @@ auto schur(const M& A) {
     for (size_type i = 2; i < n; ++i)
         for (size_type j = 0; j + 1 < i; ++j) r.T(i, j) = value_type(0);
 
-    if (!(unscale == value_type(1)))
+    if (unscale != 0)
         for (size_type i = 0; i < n; ++i)
-            for (size_type j = 0; j < n; ++j) r.T(i, j) = r.T(i, j) * unscale;
+            for (size_type j = 0; j < n; ++j)
+                r.T(i, j) = math::pow2_scaling<value_type>::scale(r.T(i, j), unscale);
     return r;
 }
 

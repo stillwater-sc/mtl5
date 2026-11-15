@@ -131,8 +131,19 @@ auto eigen_symmetric_jacobi(const M& A,
         }
         if (!rotated) { converged = true; break; }
     }
-    // max_sweeps sweeps that all still rotated: not converged. Say so rather
-    // than return the partly diagonalized matrix (#853).
+    // max_sweeps sweeps that all rotated. The last may have finished the job
+    // (one sweep diagonalizes a 2x2), so test the pairs once more; any still
+    // needing a rotation means not converged. Say so rather than return the
+    // partly diagonalized matrix (#853).
+    if (!converged) {
+        converged = true;
+        for (size_type p = 0; p + 1 < n && converged; ++p)
+            for (size_type q = p + 1; q < n; ++q) {
+                const value_type mag = abs(S(p, q));
+                if (mag == zero) continue;
+                if (!(mag <= tol * sqrt(abs(S(p, p))) * sqrt(abs(S(q, q))))) { converged = false; break; }
+            }
+    }
     if (!converged)
         throw std::runtime_error("mtl::eigen_symmetric_jacobi: did not converge in "
                                  + std::to_string(max_sweeps) + " sweeps");
