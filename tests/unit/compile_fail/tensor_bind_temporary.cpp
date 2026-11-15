@@ -2,9 +2,10 @@
 //
 // bind() holds a reference to its tensor, so bind(make_tensor(), i, j)
 // dangled once the full-expression ended (#857). Binding a temporary is
-// deleted.
+// deleted. "deleted function" is in GCC's, Clang's and MSVC's message alike
+// ("use of", "call to", "attempting to reference a deleted function").
 //
-// EXPECT-ERROR: (use of deleted function|call to deleted function)
+// EXPECT-ERROR: deleted function
 #include <mtl/tensor/index.hpp>
 #include <mtl/tensor/tensor.hpp>
 
