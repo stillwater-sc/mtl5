@@ -95,6 +95,14 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **CHOLMOD and SPQR bindings: lifetime, concurrent `const` solves, and SPQR's first tests** (#839, from the QA sweeps #816 and #774).
+  - **Concurrent solves:** `cholmod_solver::solve()` and `spqr_solver::solve()` are `const` but wrote the solver's shared `cholmod_common`, so two threads solving on one solver raced. Each solve now runs on a `cholmod_common` of its own, which copies the solver's error and thread settings and only reads the factor (CHOLMOD) or the stored matrix (SPQR). Both classes document that a `const` solve is safe to call concurrently. The cost is one `cholmod_start` and `cholmod_finish` per solve.
+  - **SPQR lifetime:** the move constructor copied the `cholmod_common` struct, so both objects finished the same workspace, a double free once a solve had filled it. The workspace is now a `unique_ptr` with a `cholmod_finish` deleter (`interface/cholmod_workspace.hpp`, shared with CHOLMOD). `spqr_solver` gains a move assignment, frees its matrix if the copy throws, rejects `m`, `n` or `nnz` above `INT_MAX` with `std::length_error`, and throws `std::logic_error` from a moved-from `solve()`.
+  - **CHOLMOD:** a failed `cholmod_start` throws instead of being ignored. A moved-from solver reports sizes 0. The comment on `factorize(A)` now says what happens: a different pattern is refused with the old factor intact, while a failed numeric factorization leaves the solver unfactored until a `factorize()` succeeds.
+  - **Orientation:** the CRS-to-CCS copies are correct as written, because `compressed2D` is row-major only (a `static_assert`). The comments now say so.
+  - **Build:** `MTL5_WITH_SUITESPARSE_SPQR` links CHOLMOD too, since `spqr.hpp` calls `cholmod_*` itself. The Linux LAPACK CI jobs turn SPQR on, so `iface_test_spqr` runs against the real library and sparse `qr_solve_dispatch` goes through SPQR.
+  - **Tests:** new `test_spqr.cpp` covers a non-symmetric square solve, least squares (checked through the normal equations), argument and size checks, move construction and assignment, and concurrent solves. `test_cholmod.cpp` adds a refactorize with the same column counts but different rows, an indefinite refactorize followed by a good one, a non-square `analyze()`, moved-from sizes, and concurrent solves. The leak and double-free cases fail only under AddressSanitizer, and their comments say so. The concurrency tests check answers only: the old race was inside the uninstrumented SuiteSparse, where ThreadSanitizer cannot see it.
+
 - **Foundations fixes from the QA sweep #816** (#838).
   - `functor::scalar::abs` and `signum` compile for unsigned types; `signum(NaN)` is NaN, not 0.
   - The `max` and `min` identities are `-inf` and `+inf` for types with infinities. They were `lowest()` and `max()`, so a max over `-inf` values gave `lowest()`.

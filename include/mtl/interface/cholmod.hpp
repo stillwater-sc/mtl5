@@ -20,6 +20,7 @@
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/interface/cholmod_workspace.hpp>
 #include <mtl/interface/vendor_threads.hpp>
 
 #include <cholmod.h>
@@ -44,12 +45,17 @@ namespace mtl::interface {
 /// factorize(), on the simplicial path as well as the supernodal one: the
 /// factorization is always L L^T (Common->final_ll), because CHOLMOD's
 /// simplicial default, L D L^T, factors an indefinite matrix without a word.
+///
+/// Threads: solve() is const and may be called from several threads at once on
+/// one solver. Each call runs on a workspace of its own (#839); it only reads
+/// the factor. analyze(), factorize() and common() modify the solver and must
+/// not run alongside anything else on it.
 class cholmod_solver {
 public:
     /// A started CHOLMOD workspace, with nothing analyzed yet. Settings in
     /// common() (ordering, supernodal choice, ...) apply to the next analyze().
-    cholmod_solver() : common_(new cholmod_common) {
-        cholmod_start(common_.get());
+    /// Throws std::runtime_error if cholmod_start fails.
+    cholmod_solver() : common_(detail::make_cholmod_workspace()) {
         common_->final_ll = 1;
     }
 
@@ -70,17 +76,19 @@ public:
 
     /// The workspace lives on the heap and moves as a pointer. Copying the
     /// cholmod_common struct itself would leave two owners of its buffers,
-    /// and both destructors would free them (#774).
+    /// and both destructors would free them (#774). A moved-from solver is
+    /// empty: sizes 0, nothing analyzed, and every phase throws.
     cholmod_solver(cholmod_solver&& o) noexcept
-        : n_(o.n_), nnz_(o.nnz_), common_(std::move(o.common_)),
+        : n_(std::exchange(o.n_, 0)), nnz_(std::exchange(o.nnz_, 0)),
+          common_(std::move(o.common_)),
           A_(std::exchange(o.A_, nullptr)), L_(std::exchange(o.L_, nullptr)),
           factored_(std::exchange(o.factored_, false)) {}
 
     cholmod_solver& operator=(cholmod_solver&& o) noexcept {
         if (this != &o) {
             release();
-            n_ = o.n_;
-            nnz_ = o.nnz_;
+            n_ = std::exchange(o.n_, 0);
+            nnz_ = std::exchange(o.nnz_, 0);
             common_ = std::move(o.common_);
             A_ = std::exchange(o.A_, nullptr);
             L_ = std::exchange(o.L_, nullptr);
@@ -127,15 +135,23 @@ public:
     }
 
     /// Numeric factorization of A, which must have the pattern analyze() saw.
+    ///
+    /// A pattern that differs throws std::invalid_argument before anything is
+    /// replaced, so the old factor stays usable. Once the pattern matches, A's
+    /// values replace the stored ones; if the factorization then fails (A is
+    /// not positive definite), the solver is left unfactored -- solve() throws
+    /// until a factorize() succeeds -- and the analysis is kept.
     template <typename Parameters>
     void factorize(const mat::compressed2D<double, Parameters>& A) {
         require_analyzed("factorize");
         if (A.num_rows() != n_ || A.num_cols() != n_ || A.nnz() != nnz_)
             throw std::invalid_argument("cholmod_solver::factorize: pattern differs from analyze()");
-        copy_ccs(A, /*refill=*/true);   // a mismatch throws with the old factor intact
+        copy_ccs(A, /*refill=*/true);
         factorize();
     }
 
+    /// x = A^{-1} b. Safe to call concurrently on one solver: the call starts
+    /// a workspace of its own and only reads the factor (#839).
     template <typename ParamsX, typename ParamsB>
     void solve(vec::dense_vector<double, ParamsX>& x,
                const vec::dense_vector<double, ParamsB>& b) const
@@ -145,23 +161,24 @@ public:
         if (x.size() != n_ || b.size() != n_)
             throw std::invalid_argument("cholmod_solver::solve: vector size mismatch");
 
-        cholmod_dense* b_chol = cholmod_allocate_dense(n_, 1, n_, CHOLMOD_REAL, common_.get());
-        if (!b_chol) throw_status("failed to allocate a dense vector");
+        auto ws = detail::make_solve_workspace(*common_);
+        cholmod_dense* b_chol = cholmod_allocate_dense(n_, 1, n_, CHOLMOD_REAL, ws.get());
+        if (!b_chol) throw_status("failed to allocate a dense vector", *ws);
         auto* b_data = static_cast<double*>(b_chol->x);
         for (std::size_t i = 0; i < n_; ++i) b_data[i] = b(i);
 
         // One thread inside an MTL5 region (#640)
         cholmod_dense* x_chol = nullptr;
         {
-            detail::nested_suitesparse_cap<cholmod_common> cap(*common_);
-            x_chol = cholmod_solve(CHOLMOD_A, L_, b_chol, common_.get());
+            detail::nested_suitesparse_cap<cholmod_common> cap(*ws);
+            x_chol = cholmod_solve(CHOLMOD_A, L_, b_chol, ws.get());
         }
-        cholmod_free_dense(&b_chol, common_.get());
-        if (!x_chol) throw_status("solve failed");
+        cholmod_free_dense(&b_chol, ws.get());
+        if (!x_chol) throw_status("solve failed", *ws);
 
         auto* x_data = static_cast<double*>(x_chol->x);
         for (std::size_t i = 0; i < n_; ++i) x(i) = x_data[i];
-        cholmod_free_dense(&x_chol, common_.get());
+        cholmod_free_dense(&x_chol, ws.get());
     }
 
     std::size_t num_rows() const { return n_; }
@@ -182,7 +199,7 @@ public:
 private:
     std::size_t n_ = 0;
     std::size_t nnz_ = 0;
-    std::unique_ptr<cholmod_common> common_;
+    detail::cholmod_workspace common_;
     cholmod_sparse* A_ = nullptr;
     cholmod_factor* L_ = nullptr;
     bool factored_ = false;
@@ -196,8 +213,7 @@ private:
     void release() noexcept {
         if (!common_) return;   // moved from
         free_factor_and_matrix();
-        cholmod_finish(common_.get());
-        common_.reset();
+        common_.reset();   // cholmod_finish, then the struct
     }
 
     void require_workspace(const char* what) const {
@@ -211,12 +227,15 @@ private:
             throw std::logic_error(std::string("cholmod_solver::") + what + ": analyze() first");
     }
 
-    [[noreturn]] void throw_status(const char* what) const {
+    [[noreturn]] void throw_status(const char* what) const { throw_status(what, *common_); }
+
+    [[noreturn]] static void throw_status(const char* what, const cholmod_common& c) {
         throw std::runtime_error(std::string("CHOLMOD: ") + what + " (status " +
-                                 std::to_string(common_->status) + ")");
+                                 std::to_string(c.status) + ")");
     }
 
-    /// CRS to CCS. Row r's entries scatter into column c in increasing r, so
+    /// CRS to CCS (compressed2D is row-major only, a static_assert in
+    /// compressed2D.hpp, so ref_major() is the row pointers). Row r's entries scatter into column c in increasing r, so
     /// every column comes out sorted, as the allocation promised CHOLMOD.
     /// With refill, A_ already holds the analyzed pattern: A's pattern is
     /// checked against it in full before any value is replaced, so a

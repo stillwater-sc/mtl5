@@ -506,14 +506,18 @@ if(MTL5_WITH_SUITESPARSE_SPQR)
     find_path(SPQR_INCLUDE_DIR SuiteSparseQR_C.h
         PATH_SUFFIXES suitesparse SuiteSparse)
     find_library(SPQR_LIBRARY NAMES spqr)
-    if(SPQR_INCLUDE_DIR AND SPQR_LIBRARY)
+    # interface/spqr.hpp calls cholmod_* itself (the matrix, the dense
+    # vectors, the workspace), so CHOLMOD is linked directly, not only as
+    # SPQR's dependency (#839).
+    find_library(CHOLMOD_LIBRARY NAMES cholmod)
+    if(SPQR_INCLUDE_DIR AND SPQR_LIBRARY AND CHOLMOD_LIBRARY)
         target_compile_definitions(mtl5 INTERFACE MTL5_HAS_SPQR)
         target_include_directories(mtl5 INTERFACE ${SPQR_INCLUDE_DIR})
-        target_link_libraries(mtl5 INTERFACE ${SPQR_LIBRARY})
+        target_link_libraries(mtl5 INTERFACE ${SPQR_LIBRARY} ${CHOLMOD_LIBRARY})
         message(STATUS "SPQR found: ${SPQR_LIBRARY}")
     else()
         message(FATAL_ERROR "SPQR requested but not found. "
-            "Install libsuitesparse-dev or set SPQR_INCLUDE_DIR and SPQR_LIBRARY.")
+            "Install libsuitesparse-dev or set SPQR_INCLUDE_DIR, SPQR_LIBRARY and CHOLMOD_LIBRARY.")
     endif()
 endif()
 
