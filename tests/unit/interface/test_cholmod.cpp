@@ -172,10 +172,12 @@ TEST_CASE("cholmod: a same-size pattern with other rows is refused", "[interface
     // column pointers agree and only the row-index check can tell them apart.
     auto pattern = [](std::size_t a, std::size_t b, std::size_t c, std::size_t d) {
         csr M(4, 4);
-        mat::inserter<csr> ins(M);
-        for (std::size_t r = 0; r < 4; ++r) ins[r][r] << 4.0;
-        ins[a][b] << -1.0; ins[b][a] << -1.0;
-        ins[c][d] << -1.0; ins[d][c] << -1.0;
+        {   // the inserter writes M when it closes, which must be before the return
+            mat::inserter<csr> ins(M);
+            for (std::size_t r = 0; r < 4; ++r) ins[r][r] << 4.0;
+            ins[a][b] << -1.0; ins[b][a] << -1.0;
+            ins[c][d] << -1.0; ins[d][c] << -1.0;
+        }
         return M;
     };
     const csr A = pattern(0, 1, 2, 3);

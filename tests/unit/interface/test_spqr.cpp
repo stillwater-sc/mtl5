@@ -36,12 +36,14 @@ using csr = mat::compressed2D<double>;
 /// m > n, extra rows below.
 csr tall(std::size_t m, std::size_t n) {
     csr A(m, n);
-    mat::inserter<csr> ins(A);
-    for (std::size_t r = 0; r < m; ++r) {
-        if (r < n) ins[r][r] << 5.0 + double(r % 3);
-        if (r + 1 < n) ins[r][r + 1] << 2.0;          // superdiagonal
-        if (r > 0 && r - 1 < n) ins[r][r - 1] << -1.0; // subdiagonal
-        if (r >= n) ins[r][r % n] << 1.0 + double(r % 5);
+    {   // the inserter writes A when it closes, which must be before the return
+        mat::inserter<csr> ins(A);
+        for (std::size_t r = 0; r < m; ++r) {
+            if (r < n) ins[r][r] << 5.0 + double(r % 3);
+            if (r + 1 < n) ins[r][r + 1] << 2.0;          // superdiagonal
+            if (r > 0 && r - 1 < n) ins[r][r - 1] << -1.0; // subdiagonal
+            if (r >= n) ins[r][r % n] << 1.0 + double(r % 5);
+        }
     }
     return A;
 }
@@ -127,6 +129,29 @@ TEST_CASE("spqr: argument checks", "[interface][spqr]") {
     REQUIRE_THROWS_AS(s.solve(x, b), std::invalid_argument);
     vec::dense_vector<double> x5(5, 0.0), b10(10, 1.0);
     REQUIRE_THROWS_AS(s.solve(x5, b10), std::invalid_argument);
+}
+
+TEST_CASE("spqr: 1x1, 2x1 and empty systems", "[interface][spqr]") {
+    csr one(1, 1);
+    { mat::inserter<csr> ins(one); ins[0][0] << 4.0; }
+    vec::dense_vector<double> x(1, 0.0), b(1, 2.0);
+    interface::spqr_solve(one, x, b);
+    REQUIRE(std::abs(x(0) - 0.5) < tol);
+
+    // min ||[1; 1] x - [1; 3]|| is x = 2.
+    csr col(2, 1);
+    { mat::inserter<csr> ins(col); ins[0][0] << 1.0; ins[1][0] << 1.0; }
+    vec::dense_vector<double> b2 = {1.0, 3.0};
+    interface::spqr_solve(col, x, b2);
+    REQUIRE(std::abs(x(0) - 2.0) < tol);
+
+    // 0x0: nothing to solve, and no allocation or free goes wrong.
+    csr empty(0, 0);
+    vec::dense_vector<double> x0(0), b0(0);
+    spqr_solver s(empty);
+    REQUIRE(s.num_rows() == 0);
+    REQUIRE(s.num_cols() == 0);
+    s.solve(x0, b0);
 }
 
 TEST_CASE("spqr: move construction and move assignment", "[interface][spqr]") {
