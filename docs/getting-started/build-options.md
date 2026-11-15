@@ -65,7 +65,35 @@ a single triplet buffer sized from the header `nnz` and sorts it in place,
 avoiding the extra full-size copy that the generic `coordinate2D::compress()`
 makes. This roughly halves transient peak memory on very large matrices while
 producing identical output (same `(row, col)` order, same duplicate
-accumulation).
+accumulation). The buffer is sized from the header `nnz`, capped at what the
+file's size can hold (an entry line takes at least 6 bytes), or at 2^22 entries
+when the size is unknown (gzip, a pipe), so a header that overstates `nnz`
+doesn't reserve memory that the data can't fill. In the same way, `mm_read_dense`
+checks that an array file is long enough for its declared values before it
+allocates the dense result. Entries are
+parsed with `std::from_chars` rather than string streams, which roughly halves
+the load time: 0.52 s to 0.22 s for `bbmat` (1.77M nnz), and 1.76 s to 0.77 s
+for `rajat30` (6.18M nnz), on an x86-64 desktop with GCC 15 at `-O2`.
+
+**What is read, and what is rejected.** Both readers take coordinate and array
+files with a `real`, `integer` or `complex` field (`complex` needs a
+`std::complex` value type), and `general`, `symmetric`, `skew-symmetric` or
+`hermitian` symmetry. A mirrored file is expanded to the full matrix: an array
+file stores the lower triangle by columns, without the diagonal when
+skew-symmetric. `pattern` files are not supported. The readers throw
+`std::runtime_error` on:
+- a banner without all five tokens, or with an unknown token;
+- a negative, non-integer or overflowing size;
+- a header `nnz` larger than the matrix can hold;
+- a malformed or out-of-range entry;
+- a skew-symmetric diagonal entry;
+- too few or too many entries;
+- a truncated or corrupt gzip stream.
+
+Blank lines are skipped, `\r\n` endings are accepted, and the `nan` and `inf`
+that the writers emit read back. `mm_write` and `mm_write_sparse` choose the
+banner's field from the value type, `complex`, `integer` or `real`, and write
+enough digits for each value to read back exactly.
 
 **circuit5M (`Freescale/circuit5M`, ~5.56M × 5.56M, ~59.5M nnz).** The loader is
 built to handle this scale, but it is an opt-in large run (multi-GB file and RAM):

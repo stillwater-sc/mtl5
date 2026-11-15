@@ -264,6 +264,8 @@ jobs:
   # conflict with MTL5's there (#725). They link CHOLMOD as well, so
   # iface_test_cholmod runs against the real library and the sparse SPD
   # dispatch goes through it (#774), and SPQR, so iface_test_spqr does (#839).
+  # They link zlib too, so the [gzip] Matrix Market tests run (#843): no other
+  # job builds with MTL5_WITH_ZLIB.
   lapack:
     name: Linux x64 LAPACK (${{ matrix.cxx }}${{ matrix.vendor && format(', {0}', matrix.vendor) || '' }})
     runs-on: ${{ matrix.os || 'ubuntu-24.04' }}
@@ -273,12 +275,12 @@ jobs:
         include:
           - cc: gcc-13
             cxx: g++-13
-            packages: liblapack-dev libopenblas-dev libsuperlu-dev libsuitesparse-dev
-            cmake_extra: -DMTL5_WITH_LAPACK=ON -DMTL5_WITH_SUPERLU=ON -DMTL5_WITH_SUITESPARSE_CHOLMOD=ON -DMTL5_WITH_SUITESPARSE_SPQR=ON
+            packages: liblapack-dev libopenblas-dev libsuperlu-dev libsuitesparse-dev zlib1g-dev
+            cmake_extra: -DMTL5_WITH_LAPACK=ON -DMTL5_WITH_SUPERLU=ON -DMTL5_WITH_SUITESPARSE_CHOLMOD=ON -DMTL5_WITH_SUITESPARSE_SPQR=ON -DMTL5_WITH_ZLIB=ON
           - cc: clang-18
             cxx: clang++-18
-            packages: liblapack-dev libopenblas-dev libsuperlu-dev libsuitesparse-dev
-            cmake_extra: -DMTL5_WITH_LAPACK=ON -DMTL5_WITH_SUPERLU=ON -DMTL5_WITH_SUITESPARSE_CHOLMOD=ON -DMTL5_WITH_SUITESPARSE_SPQR=ON
+            packages: liblapack-dev libopenblas-dev libsuperlu-dev libsuitesparse-dev zlib1g-dev
+            cmake_extra: -DMTL5_WITH_LAPACK=ON -DMTL5_WITH_SUPERLU=ON -DMTL5_WITH_SUITESPARSE_CHOLMOD=ON -DMTL5_WITH_SUITESPARSE_SPQR=ON -DMTL5_WITH_ZLIB=ON
           - cc: gcc
             cxx: g++
             os: ubuntu-26.04

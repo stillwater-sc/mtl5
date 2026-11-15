@@ -3,6 +3,7 @@
 // ELL / dense, then confirm each spy variant emits a valid PNG.
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <vector>
@@ -140,4 +141,102 @@ TEST_CASE("spy skips explicitly-stored zeros", "[io][spy]") {
 TEST_CASE("spy rejects a zero-dimension matrix", "[io][spy]") {
     mat::coordinate2D<double> Z(0, 0);
     REQUIRE_THROWS(io::spy(Z, tmp("mtl5_spy_bad.png")));
+}
+
+// ---------------------------------------------------------------------------
+// #843: the coloring scales, option edge cases, shapes and value types.
+
+namespace {
+
+/// The RGB the colormap gives t.
+std::vector<std::uint8_t> color(double t) {
+    std::uint8_t r, g, b;
+    io::detail::colormap(t, r, g, b);
+    return {r, g, b};
+}
+
+std::vector<std::uint8_t> pixel(const mtl_test::DecodedPng& d, std::size_t x, std::size_t y) {
+    const std::size_t o = (y * d.w + x) * 3;
+    return {d.pixels[o], d.pixels[o + 1], d.pixels[o + 2]};
+}
+
+} // namespace
+
+TEST_CASE("spy_magnitude: linear and log10 coloring", "[io][spy]") {
+    // 1x3 with |values| 1, 10, 100: linear t = 0.01, 0.1, 1; log t = 0, 0.5, 1.
+    mat::dense2D<double> A(1, 3);
+    A(0, 0) = 1.0; A(0, 1) = -10.0; A(0, 2) = 100.0;
+    const auto p = tmp("mtl5_spy_mag_scale.png");
+
+    io::spy_magnitude(A, p);
+    auto lin = decode_png(read_file(p));
+    REQUIRE((lin.w == 3 && lin.h == 1));
+    REQUIRE(pixel(lin, 0, 0) == color(0.01));
+    REQUIRE(pixel(lin, 1, 0) == color(0.1));
+    REQUIRE(pixel(lin, 2, 0) == color(1.0));
+
+    io::spy_magnitude(A, p, {1024, /*log_scale=*/true});
+    auto lg = decode_png(read_file(p));
+    REQUIRE(pixel(lg, 0, 0) == color(0.0));
+    REQUIRE(pixel(lg, 1, 0) == color(0.5));
+    REQUIRE(pixel(lg, 2, 0) == color(1.0));
+    std::filesystem::remove(p);
+}
+
+TEST_CASE("spy_density: linear and log10 coloring of binned counts", "[io][spy]") {
+    // 4x4 binned into 2x2 cells: counts 4 (full block), 1, 0, 2.
+    mat::coordinate2D<double> A(4, 4);
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 2; ++j) A.insert(i, j, 1.0);   // cell (0,0): 4
+    A.insert(0, 3, 1.0);                                           // cell (1,0): 1
+    A.insert(3, 3, 1.0); A.insert(2, 2, 1.0);                      // cell (1,1): 2
+    const auto p = tmp("mtl5_spy_den_scale.png");
+
+    io::spy_density(A, p, {2, false});
+    auto lin = decode_png(read_file(p));
+    REQUIRE((lin.w == 2 && lin.h == 2));
+    REQUIRE(pixel(lin, 0, 0) == color(1.0));
+    REQUIRE(pixel(lin, 1, 0) == color(0.25));
+    REQUIRE(pixel(lin, 0, 1) == std::vector<std::uint8_t>{255, 255, 255});   // empty cell
+    REQUIRE(pixel(lin, 1, 1) == color(0.5));
+
+    io::spy_density(A, p, {2, true});
+    auto lg = decode_png(read_file(p));
+    REQUIRE(pixel(lg, 0, 0) == color(1.0));
+    REQUIRE(pixel(lg, 1, 0) == color(std::log10(2.0) / std::log10(5.0)));
+    REQUIRE(pixel(lg, 1, 1) == color(std::log10(3.0) / std::log10(5.0)));
+    std::filesystem::remove(p);
+}
+
+TEST_CASE("spy: max_pixels == 0, 1x1, non-square and float values", "[io][spy]") {
+    auto A = tridiag_coo(4);
+    REQUIRE_THROWS(io::spy(A, tmp("mtl5_spy_zero_px.png"), {0, false}));
+
+    const auto p = tmp("mtl5_spy_shapes.png");
+    mat::dense2D<float> one(1, 1);
+    one(0, 0) = 3.5f;
+    io::spy(one, p);
+    auto d1 = decode_png(read_file(p));
+    REQUIRE((d1.w == 1 && d1.h == 1 && d1.pixels[0] == 0));
+
+    // 2x5, so the image is 5 wide and 2 high; float values through spy_magnitude.
+    mat::dense2D<float> R(2, 5);
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 5; ++j) R(i, j) = (j == 4 && i == 1) ? 2.0f : 0.0f;
+    io::spy_magnitude(R, p);
+    auto d2 = decode_png(read_file(p));
+    REQUIRE((d2.w == 5 && d2.h == 2));
+    REQUIRE(pixel(d2, 4, 1) == color(1.0));
+    REQUIRE(pixel(d2, 0, 0) == std::vector<std::uint8_t>{255, 255, 255});
+    std::filesystem::remove(p);
+}
+
+TEST_CASE("scale_index: no overflow for huge logical dimensions", "[io][spy]") {
+    // idx * span overflows 64 bits here; the result must still be exact.
+    const std::size_t dim = std::size_t(1) << 62;
+    REQUIRE(io::detail::scale_index(dim / 2, 1000, dim) == 500);
+    REQUIRE(io::detail::scale_index(dim - 1, 1000, dim) == 999);
+    REQUIRE(io::detail::scale_index(0, 1000, dim) == 0);
+    // Clamped to span - 1.
+    REQUIRE(io::detail::scale_index(9, 3, 9) == 2);
 }

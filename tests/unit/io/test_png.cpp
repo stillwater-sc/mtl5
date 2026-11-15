@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <stdexcept>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -106,4 +107,19 @@ TEST_CASE("invalid dimensions throw", "[io][png]") {
     std::uint8_t dummy = 0;
     REQUIRE_THROWS(write_png_gray(tmp("mtl5_png_bad.png"), &dummy, 0, 1));
     REQUIRE_THROWS(write_png_gray(tmp("mtl5_png_bad.png"), &dummy, 1, 0));
+}
+
+TEST_CASE("an unwritable path, bad channels and oversized dimensions throw (#843)", "[io][png]") {
+    std::uint8_t px[3] = {0, 0, 0};
+    const auto missing_dir = tmp("mtl5_no_such_dir_843") / "sub" / "x.png";
+    REQUIRE_THROWS_AS(write_png_gray(missing_dir, px, 1, 1), std::runtime_error);
+    REQUIRE_THROWS_AS(detail::write_png(tmp("mtl5_png_ch.png"), px, 1, 1, 2), std::runtime_error);
+    REQUIRE_THROWS_AS(detail::write_png(tmp("mtl5_png_ch.png"), px, 1, 1, 4), std::runtime_error);
+    // The header holds 31 bits per dimension; a larger one used to be cast to
+    // uint32_t into a wrong header. The check comes before any pixel is read.
+    const std::size_t big = std::size_t(1) << 31;
+    REQUIRE_THROWS_AS(write_png_gray(tmp("mtl5_png_big.png"), px, big, 1), std::runtime_error);
+    REQUIRE_THROWS_AS(write_png_rgb(tmp("mtl5_png_big.png"), px, 1, big), std::runtime_error);
+    std::filesystem::remove(tmp("mtl5_png_ch.png"));
+    std::filesystem::remove(tmp("mtl5_png_big.png"));
 }

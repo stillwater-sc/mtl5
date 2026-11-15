@@ -95,6 +95,40 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Matrix Market and element-list I/O: header and entry validation, symmetric array files, complex values, the nan/inf round trip, gzip errors, PNG sizes** (#843, from the QA sweep #789).
+  - **Sizes:**
+    - A negative dimension (`-1 2 0`) parsed into `size_t` as 2^64-1. `mm_read` then wrapped `nrows + 1` to 0 and wrote out of bounds, and `mm_read_dense` threw `bad_alloc`. Sizes are now parsed strictly: non-negative integers, the whole token, exactly two or three per line.
+    - A header `nnz` larger than the matrix can hold (`2 2 99999999999999`) used to reserve that many entries. It now throws.
+    - `nrows * ncols` is checked for overflow.
+    - The triplet buffer is still sized from `nnz`, but capped at what the file's size can hold, or at 2^22 entries for gzip input.
+    - `mm_read_dense` checks that an array file is long enough for its declared values before allocating the result.
+    - With a narrow `size_type`, a coordinate file is limited by its nnz, not by `nrows * ncols`.
+  - **Banner:** all five tokens are required and checked: tag, object, format, field and symmetry. `foo matrix coordinate real general` used to be accepted, and a missing field or symmetry token defaulted to real/general.
+  - **Symmetric storage:**
+    - A valid `array real symmetric` file (the lower triangle by columns) used to throw "unexpected EOF". An n*n-value file under that banner was read as general. Array files with `symmetric`, `skew-symmetric` and `hermitian` symmetry are now read as the format defines them and mirrored.
+    - `skew-symmetric` coordinate files are read too (they were rejected), with a stored diagonal entry rejected.
+    - `hermitian` files are read and mirrored conjugated.
+  - **Complex values:** `complex` files read into a `std::complex` value type. `mm_write` and `mm_write_sparse` used to write `real` whatever the value type, and streamed a complex value as `(re,im)`. They now take the banner's field from the value type (`complex`, `integer` or `real`) and write `max_digits10` digits. Char-sized integers are written as numbers. A failed write throws, also when the data was still buffered at the end.
+  - **Entries:**
+    - Entries beyond the header's count used to be ignored; now they throw.
+    - A whitespace-only line used to throw "malformed"; now it is skipped.
+    - An entry line with extra tokens, or a value with trailing characters, throws.
+    - `nan` and `inf`, which the writers emit, used to be rejected on reading; they now read back.
+  - **gzip:** a corrupt or truncated `.gz` stream used to read as a shorter file, because `gzgets` returning `nullptr` was taken as end of file. The reader now asks `gzerror` and throws.
+  - **`read_dense` and `read_sparse`:**
+    - A bad token used to stop the read and return a partial matrix; now it throws.
+    - `read_dense` throws on an empty field (`1,,2`) or a row of a different length. A ragged row used to be zero-padded or truncated to row 0's width.
+    - `read_sparse` throws `std::out_of_range` for an index outside the given dimensions, with the line number.
+  - **`write_png`** throws for a width or height above 2^31 − 1, PNG's limit. Such a dimension used to be truncated into a wrong header.
+  - **Parsing:** values are parsed with `std::from_chars` where the standard library supports it for floating point, which ignores the locale, and with `strtod` otherwise. Loading `bbmat` (1.77M nnz) takes 0.22 s instead of 0.52 s, and `rajat30` (6.18M nnz) 0.77 s instead of 1.76 s. All 35 bundled `.mtx` files read identically to before.
+  - **CI:** the Linux LAPACK jobs link zlib, so the `[gzip]` tests run in CI. No job built with `MTL5_WITH_ZLIB` before.
+  - **Tests:**
+    - Every fix above has a test that fails on the previous code.
+    - Coverage was added for CRLF, no trailing newline, 0x0/1x1/non-square/empty-row files, the array branch of `mm_read`, `mm_write` of a sparse matrix, and `mm_write_sparse` with a comment.
+    - The gzip tests cover a 70 KB line, a stream missing its last 4 bytes, and `.gz` through `mm_read_dense`.
+    - The `spy` tests cover `log_scale` in `spy_magnitude` and `spy_density`, `max_pixels == 0`, 1x1, non-square, float values, and `scale_index` near 2^62.
+    - The PNG tests cover an unwritable path and bad channel counts.
+
 - **CHOLMOD and SPQR bindings: lifetime, concurrent `const` solves, and SPQR's first tests** (#839, from the QA sweeps #816 and #774).
   - **Concurrent solves:** `cholmod_solver::solve()` and `spqr_solver::solve()` are `const` but wrote the solver's shared `cholmod_common`, so two threads solving on one solver raced. Each solve now runs on a `cholmod_common` of its own, which copies the solver's error and thread settings and only reads the factor (CHOLMOD) or the stored matrix (SPQR). Both classes document that a `const` solve is safe to call concurrently. The cost is one `cholmod_start` and `cholmod_finish` per solve.
   - **SPQR lifetime:** the move constructor copied the `cholmod_common` struct, so both objects finished the same workspace, a double free once a solve had filled it. The workspace is now a `unique_ptr` with a `cholmod_finish` deleter (`interface/cholmod_workspace.hpp`, shared with CHOLMOD). `spqr_solver` gains a move assignment, frees its matrix if the copy throws, rejects `m`, `n` or `nnz` above `INT_MAX` with `std::length_error`, and throws `std::logic_error` from a moved-from `solve()`.
