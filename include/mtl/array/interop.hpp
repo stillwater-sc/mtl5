@@ -13,13 +13,26 @@
 #include <cstddef>
 #include <functional>
 #include <stdexcept>
+#include <type_traits>
 
 #include <mtl/array/ndarray.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/array/shape.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 
 namespace mtl::array {
+
+namespace detail_interop {
+
+/// A precondition of the zero-copy views, checked in every build: a strided
+/// array aliased as a dense vector or matrix reads the wrong elements (#856:
+/// it was an assert).
+inline void require(bool ok, const char* what) {
+    if (!ok) ::mtl::detail::throw_or_abort(std::invalid_argument(what));
+}
+
+} // namespace detail_interop
 
 // -- Vector -> ndarray view ------------------------------------------
 
@@ -71,18 +84,19 @@ auto as_ndarray(const mat::dense2D<Value, Params>& m) {
 // -- ndarray -> vector view ------------------------------------------
 
 /// Create a dense_vector view over a 1D ndarray (zero-copy).
-/// Requires contiguous storage. The either-order predicate is correct here:
+/// Requires contiguous storage, and throws std::invalid_argument otherwise
+/// (#856). The either-order predicate is correct here:
 /// for N == 1 the C and F strides are both {1}, so the distinction that broke
 /// as_matrix and reshape (#359) does not exist at rank 1.
 template <typename Value, typename Order>
 vec::dense_vector<Value> as_vector(ndarray<Value, 1, Order>& a) {
-    assert(a.is_contiguous() && "as_vector requires contiguous ndarray");
+    detail_interop::require(a.is_contiguous(), "as_vector requires a contiguous ndarray");
     return vec::dense_vector<Value>(a.size(), a.data());
 }
 
 template <typename Value, typename Order>
 vec::dense_vector<const Value> as_vector(const ndarray<Value, 1, Order>& a) {
-    assert(a.is_contiguous() && "as_vector requires contiguous ndarray");
+    detail_interop::require(a.is_contiguous(), "as_vector requires a contiguous ndarray");
     return vec::dense_vector<const Value>(a.size(), const_cast<const Value*>(a.data()));
 }
 
@@ -99,14 +113,14 @@ vec::dense_vector<const Value> as_vector(const ndarray<Value, 1, Order>& a) {
 template <typename Value, typename Order>
     requires std::is_same_v<Order, c_order>
 mat::dense2D<Value> as_matrix(ndarray<Value, 2, Order>& a) {
-    assert(a.is_c_contiguous() && "as_matrix requires C-contiguous ndarray (#359)");
+    detail_interop::require(a.is_c_contiguous(), "as_matrix requires a C-contiguous ndarray (#359)");
     return mat::dense2D<Value>(a.extent(0), a.extent(1), a.data());
 }
 
 template <typename Value, typename Order>
     requires std::is_same_v<Order, c_order>
 mat::dense2D<const Value> as_matrix(const ndarray<Value, 2, Order>& a) {
-    assert(a.is_c_contiguous() && "as_matrix requires C-contiguous ndarray (#359)");
+    detail_interop::require(a.is_c_contiguous(), "as_matrix requires a C-contiguous ndarray (#359)");
     return mat::dense2D<const Value>(
         a.extent(0), a.extent(1), const_cast<const Value*>(a.data()));
 }
@@ -116,11 +130,13 @@ mat::dense2D<const Value> as_matrix(const ndarray<Value, 2, Order>& a) {
 /// Element-wise transform: apply f to every element of a, writing to out.
 /// Works on any NdArray (ndarray, or adapted vector/matrix views).
 template <typename V, std::size_t N, typename O, typename F>
-ndarray<V, N, O> transform(const ndarray<V, N, O>& a, F&& f) {
-    ndarray<V, N, O> result(a.get_shape());
-    a.iterate_indices([&](const std::array<std::size_t, N>& idx) {
-        result[idx] = f(a[idx]);
-    });
+ndarray<std::remove_cv_t<V>, N, O> transform(const ndarray<V, N, O>& a, F&& f) {
+    ndarray<std::remove_cv_t<V>, N, O> result(a.get_shape());
+    auto* dst = result.data();
+    const auto* src = a.data();
+    detail_nd::walk_offsets<O>(a.get_shape(),
+                               std::array<std::array<std::size_t, N>, 2>{result.get_strides(), a.get_strides()},
+                               [&](const auto& o) { dst[o[0]] = f(src[o[1]]); });
     return result;
 }
 
@@ -137,10 +153,12 @@ T reduce(const ndarray<V, N, O>& a, T init, BinOp op) {
     return init;
 }
 
-/// Flatten any ndarray to a contiguous 1D ndarray (always copies for safety).
+/// Flatten any ndarray to a contiguous 1D ndarray (always copies for safety),
+/// in the array's own order: the same elements, in the same order, as
+/// a.reshape({a.size()}) views when a is contiguous in that order.
 template <typename V, std::size_t N, typename O>
-ndarray<V, 1, c_order> flatten(const ndarray<V, N, O>& a) {
-    ndarray<V, 1, c_order> result(shape<1>{a.size()});
+ndarray<std::remove_cv_t<V>, 1, c_order> flatten(const ndarray<V, N, O>& a) {
+    ndarray<std::remove_cv_t<V>, 1, c_order> result(shape<1>{a.size()});
     std::size_t idx = 0;
     a.for_each_element([&](const V& v) {
         result(idx++) = v;

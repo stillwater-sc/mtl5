@@ -592,3 +592,26 @@ TEST_CASE("dense2D: a moved-from fixed-size matrix keeps its layout", "[mat][den
     check(mtl::tag::on_stack{});
     check(mtl::tag::on_heap{});
 }
+
+TEST_CASE("dense2D: an owning matrix move-assigned an external one stays owning",
+          "[mat][dense2D][856]") {
+    double buf[6] = {1, 2, 3, 4, 5, 6};
+    mat::dense2D<double> A(4, 4);
+    A = mat::dense2D<double>(2, 3, buf);
+    REQUIRE(A.owns_memory());
+    REQUIRE(A.num_rows() == 2);
+    REQUIRE(A.num_cols() == 3);
+    REQUIRE(A.data() != buf);
+    REQUIRE(A(1, 2) == 6.0);
+    A(0, 0) = -1.0;
+    REQUIRE(buf[0] == 1.0);
+
+    mat::dense2D<double> E(2, 3, buf);
+    mat::dense2D<double> B(1, 1);
+    B = std::move(E);
+    REQUIRE(B.owns_memory());
+    REQUIRE(B(1, 0) == 4.0);
+    REQUIRE(E.num_rows() == 2);      // the source keeps its buffer and shape
+    REQUIRE(E.num_cols() == 3);
+    REQUIRE(E.data() == buf);
+}

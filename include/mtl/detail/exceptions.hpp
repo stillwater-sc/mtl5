@@ -13,9 +13,12 @@
 //   * detail::throw_or_abort(e) throws `e` when exceptions are enabled. When
 //     they are not, it calls std::abort(), which is what an uncaught exception
 //     would have done.
+//   * detail::contract_abort(msg) prints msg and aborts in every build, for a
+//     broken contract where throwing is not possible (a noexcept move).
 //
 // With exceptions enabled, behaviour is unchanged.
 
+#include <cstdio>
 #include <cstdlib>
 #include <utility>
 
@@ -38,6 +41,17 @@ template <typename E>
     (void)e;
     std::abort();
 #endif
+}
+
+/// A broken contract on a path that cannot throw (a noexcept move): print the
+/// message and abort, in every build. For the cases that used to be an assert
+/// and, under NDEBUG, carried on doing something wrong (#856).
+[[noreturn]] inline void contract_abort(const char* what) noexcept {
+    std::fputs("mtl5: ", stderr);
+    std::fputs(what, stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+    std::abort();
 }
 
 } // namespace mtl::detail

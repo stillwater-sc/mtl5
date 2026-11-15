@@ -381,3 +381,38 @@ TEST_CASE("Assignment between overlapping non-owning blocks", "[detail][memory][
         REQUIRE(buf[3].v == 3);
     }
 }
+
+TEST_CASE("An owning block move-assigned a non-owning one copies it and stays owning",
+          "[detail][memory][856]") {
+    // It took the source's pointer and category: own = std::move(view) left
+    // `own` a view of the caller's buffer.
+    for (bool is_view : {true, false}) {
+        INFO("is_view = " << is_view);
+        double ext[3] = {7, 8, 9};
+        heap_block own = filled(5, 0.0);               // another size
+        heap_block src(ext, 3, is_view);
+        own = std::move(src);
+        REQUIRE(own.category() == memory_category::own);
+        REQUIRE(own.size() == 3);
+        REQUIRE(own.data() != ext);
+        REQUIRE(own[2] == 9.0);
+        own[0] = -1.0;
+        REQUIRE(ext[0] == 7.0);                         // the buffer is the caller's still
+        REQUIRE(src.data() == ext);                     // and the source still views it
+        REQUIRE(src.size() == 3);
+
+        heap_block same = filled(3, 0.0);               // the same size: copied in place
+        const double* before = same.data();
+        heap_block src2(ext, 3, is_view);
+        same = std::move(src2);
+        REQUIRE(same.data() == before);
+        REQUIRE(same[1] == 8.0);
+    }
+    // A view into the target's own storage, resized: the old storage outlives the copy.
+    heap_block a = filled(4, 1.0);   // 1 2 3 4
+    heap_block tail(a.data() + 1, 2, true);
+    a = std::move(tail);
+    REQUIRE(a.size() == 2);
+    REQUIRE((a[0] == 2.0 && a[1] == 3.0));
+    REQUIRE(a.category() == memory_category::own);
+}

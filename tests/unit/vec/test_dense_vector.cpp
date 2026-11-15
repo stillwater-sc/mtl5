@@ -381,7 +381,11 @@ TEST_CASE("dense_vector: swap of external and owning vectors", "[vec][dense_vect
     REQUIRE(e.owns_memory());
     REQUIRE(o.size() == 2);
     REQUIRE(o.data() == buf);
-    std::swap(e, o);   // through the moves: the external vector is re-pointed back
+    // The ADL swap exchanges the storage back. std::swap would go through the
+    // moves, and moving the 3-element vector into the 2-element external one
+    // aborts (#856: it used to re-point it).
+    using std::swap;
+    swap(e, o);
     REQUIRE(e.data() == buf);
     REQUIRE(e.size() == 2);
     REQUIRE(o.size() == 3);
@@ -440,4 +444,27 @@ TEST_CASE("dense_vector compound assignment with vectors and expressions", "[vec
     REQUIRE(v(1) == 6.0);
     v /= 2.0;
     REQUIRE(v(1) == 3.0);
+}
+
+TEST_CASE("dense_vector: an owning vector move-assigned an external one stays owning",
+          "[vec][dense_vector][856]") {
+    // It took over the source's pointer: v = dense_vector(n, ptr) made v a
+    // vector over the caller's buffer.
+    double buf[3] = {1.0, 2.0, 3.0};
+    vec::dense_vector<double> v(5, 0.0);
+    v = vec::dense_vector<double>(3, buf);
+    REQUIRE(v.owns_memory());
+    REQUIRE(v.size() == 3);
+    REQUIRE(v.data() != buf);
+    REQUIRE(v(2) == 3.0);
+    v(0) = 99.0;
+    REQUIRE(buf[0] == 1.0);
+
+    vec::dense_vector<double> ext(3, buf);
+    vec::dense_vector<double> w(3, 0.0);
+    w = std::move(ext);
+    REQUIRE(w.owns_memory());
+    REQUIRE(w(1) == 2.0);
+    REQUIRE(ext.size() == 3);        // the source keeps its buffer
+    REQUIRE(ext.data() == buf);
 }

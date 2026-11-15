@@ -7,7 +7,9 @@
 #include <initializer_list>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/tag/orientation.hpp>
 
 namespace mtl::array {
@@ -30,8 +32,14 @@ public:
 
     constexpr shape(std::array<std::size_t, N> ext) : extents_(ext) {}
 
+    /// Throws std::invalid_argument unless the list has exactly N extents, in
+    /// every build (#856: an assert, so a longer list was read past N and a
+    /// shorter one read past its end under NDEBUG).
     constexpr shape(std::initializer_list<std::size_t> il) {
-        assert(il.size() == N);
+        if (il.size() != N)
+            ::mtl::detail::throw_or_abort(std::invalid_argument(
+                "shape: an initializer list of " + std::to_string(il.size())
+                + " extents for rank " + std::to_string(N)));
         std::copy_n(il.begin(), N, extents_.begin());
     }
 
@@ -143,16 +151,35 @@ constexpr std::array<std::size_t, N> broadcast_strides(const shape<N>& original,
 
 // -- Contiguity check -----------------------------------------------
 
+namespace detail_shape {
+
+/// Whether `strides` lay the elements out as `dense` does. The stride of a
+/// dimension of extent 1 is never used, so it may be anything (a slice keeps
+/// its parent's), and an array with no elements is contiguous, as in NumPy
+/// (#856: a size-1 dimension with another stride made a dense array take the
+/// strided paths).
+template <std::size_t N>
+constexpr bool same_layout(const shape<N>& sh, const std::array<std::size_t, N>& strides,
+                           const std::array<std::size_t, N>& dense) {
+    for (std::size_t i = 0; i < N; ++i)
+        if (sh[i] == 0) return true;
+    for (std::size_t i = 0; i < N; ++i)
+        if (sh[i] != 1 && strides[i] != dense[i]) return false;
+    return true;
+}
+
+} // namespace detail_shape
+
 /// Check if strides correspond to a contiguous C-order layout.
 template <std::size_t N>
 constexpr bool is_contiguous_c(const shape<N>& sh, const std::array<std::size_t, N>& strides) {
-    return strides == c_order_strides(sh);
+    return detail_shape::same_layout(sh, strides, c_order_strides(sh));
 }
 
 /// Check if strides correspond to a contiguous F-order layout.
 template <std::size_t N>
 constexpr bool is_contiguous_f(const shape<N>& sh, const std::array<std::size_t, N>& strides) {
-    return strides == f_order_strides(sh);
+    return detail_shape::same_layout(sh, strides, f_order_strides(sh));
 }
 
 /// Check if the array is contiguous in any order.

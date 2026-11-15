@@ -27,7 +27,10 @@ enum class memory_category { own, external, view };
 ///     the caller's buffer, and the block stays non-owning;
 ///   - copy assignment from a block of another size throws std::domain_error;
 ///   - move assignment from a block of another size is noexcept, so it
-///     asserts; under NDEBUG it falls back to taking over the source's storage.
+///     aborts, in every build (#856; it was an assert, and under NDEBUG it
+///     took over the source's storage).
+/// An owning block stays owning: move assignment from a non-owning block
+/// copies its elements instead of taking its pointer (#856).
 /// realloc() to another size is an explicit resize, and it still detaches.
 ///
 /// A fixed-size heap block (StaticSize > 0) always holds StaticSize elements:
@@ -192,13 +195,33 @@ public:
         } else {
             if (store_.category_ != memory_category::own) {
                 // Write through to the caller's buffer (#829). The source keeps
-                // its storage and its (moved-from) elements.
-                if (store_.size_ == other.store_.size_) {
+                // its storage and its (moved-from) elements. Another size cannot
+                // be written through and this cannot throw, so it aborts, in
+                // every build (#856): it was an assert, and under NDEBUG it
+                // re-pointed the block at the source's storage.
+                if (store_.size_ != other.store_.size_)
+                    contract_abort("contiguous_memory_block: move-assigning a block of another "
+                                   "size to a non-owning block");
+                if (other.store_.data_ && store_.data_)
+                    transfer(other.store_.data_, store_.size_, store_.data_, /*move=*/true);
+                return *this;
+            }
+            if (other.store_.category_ != memory_category::own) {
+                // An owning block stays owning (#856): a non-owning source's
+                // elements are copied, not its pointer taken, and the caller's
+                // buffer is left as it was. Taking it made own = std::move(view)
+                // a view. In a noexcept function, a failed allocation terminates.
+                if (store_.size_ != other.store_.size_) {
+                    contiguous_memory_block fresh(other.store_.size_);
+                    swap(fresh);   // fresh now holds the old storage, which the
+                                   // source may view: it lives until the copy is done
                     if (other.store_.data_ && store_.data_)
-                        transfer(other.store_.data_, store_.size_, store_.data_, /*move=*/true);
+                        std::copy_n(other.store_.data_, store_.size_, store_.data_);
                     return *this;
                 }
-                assert(false && "contiguous_memory_block: move-assigning a block of another size to a non-owning block");
+                if (other.store_.data_ && store_.data_)
+                    transfer(other.store_.data_, store_.size_, store_.data_, /*move=*/false);
+                return *this;
             }
             if constexpr (fixed_heap) {
                 // Both hold StaticSize elements: swap, so neither is left empty.

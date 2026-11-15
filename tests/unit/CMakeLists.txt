@@ -350,6 +350,22 @@ endforeach()
 # Not on MSVC: its debug CRT can report a failed assertion in a dialog, which
 # would hang a CI runner instead of failing.
 if(NOT MSVC)
+    # A move of another size into a non-owning object aborts in every build
+    # (#856): a dense_vector or dense2D over a caller's buffer, an ndarray view.
+    add_executable(death_test_nonowning_move death/nonowning_move.cpp)
+    target_link_libraries(death_test_nonowning_move PRIVATE MTL5::mtl5)
+    set_target_properties(death_test_nonowning_move PROPERTIES FOLDER "Tests/death")
+    add_test(NAME death_test_nonowning_move_vector COMMAND death_test_nonowning_move vector)
+    add_test(NAME death_test_nonowning_move_matrix COMMAND death_test_nonowning_move matrix)
+    add_test(NAME death_test_nonowning_move_ndarray COMMAND death_test_nonowning_move ndarray)
+    set_tests_properties(death_test_nonowning_move_vector death_test_nonowning_move_matrix
+                         PROPERTIES PASS_REGULAR_EXPRESSION
+                         "mtl5: contiguous_memory_block: move-assigning a block of another size"
+                         LABELS "death")
+    set_tests_properties(death_test_nonowning_move_ndarray PROPERTIES
+        PASS_REGULAR_EXPRESSION "mtl5: ndarray: move-assigning an array of another shape to a view"
+        LABELS "death")
+
     # The shape assertions of the matrix expressions (#824).
     add_executable(death_test_mat_expr_shape death/mat_expr_shape.cpp)
     target_link_libraries(death_test_mat_expr_shape PRIVATE MTL5::mtl5)

@@ -2,7 +2,15 @@
 #include <catch2/catch_approx.hpp>
 
 #include <mtl/array/ndarray.hpp>
+#include <array>
+#include <complex>
+#include <iterator>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
+#include <vector>
+#include <mtl/array/interop.hpp>
+#include <mtl/config.hpp>
 #include <mtl/array/shape.hpp>
 #include <mtl/array/slice.hpp>
 #include <mtl/array/broadcast.hpp>
@@ -587,4 +595,280 @@ TEST_CASE("a moved-from ndarray is empty", "[array][829]") {
     REQUIRE(a.size() == 0);
     const ndarray<int, 2> c(a);   // read a null pointer through the old shape
     REQUIRE(c.size() == 0);
+}
+
+// ---------------------------------------------------------------------------
+// #856: the order of iteration, checked preconditions, reductions, broadcast
+// lifetimes, and move-assignment of views.
+
+namespace {
+
+template <typename A>
+std::vector<double> elements_in_order(const A& a) {
+    std::vector<double> v;
+    a.for_each_element([&](const auto& x) { v.push_back(double(x)); });
+    return v;
+}
+
+ndarray<double, 2, f_order> f_matrix(std::size_t r, std::size_t c) {
+    ndarray<double, 2, f_order> a(shape<2>{r, c});
+    for (std::size_t i = 0; i < r; ++i)
+        for (std::size_t j = 0; j < c; ++j) a(i, j) = double(10 * i + j);
+    return a;
+}
+
+struct ordered_t {   // totally ordered, no numeric_limits specialization
+    int v;
+    auto operator<=>(const ordered_t&) const = default;
+};
+
+} // namespace
+
+TEST_CASE("an f_order array iterates in its own order, contiguous or not", "[array][856]") {
+    auto f = f_matrix(2, 3);
+    // Contiguous: first index fastest, as before.
+    REQUIRE(elements_in_order(f) == std::vector<double>{0, 10, 1, 11, 2, 12});
+    // A strided view of it iterates the same way. It took C order (0 2 10 12),
+    // so flatten and reduce depended on whether the array was contiguous.
+    auto v = slice(f, all, range(0, 3, 2));
+    REQUIRE_FALSE(v.is_contiguous_in_own_order());
+    REQUIRE(elements_in_order(v) == std::vector<double>{0, 10, 2, 12});
+    const auto fl = flatten(v);
+    REQUIRE((fl(0) == 0 && fl(1) == 10 && fl(2) == 2 && fl(3) == 12));
+    // A non-commutative reduce agrees with the copy's.
+    auto digits = [](double acc, double x) { return acc * 100 + x; };
+    const ndarray<double, 2, f_order> copy(v);
+    REQUIRE(copy.is_contiguous_in_own_order());
+    REQUIRE(reduce(v, 0.0, digits) == reduce(copy, 0.0, digits));
+    // flatten agrees with reshape, which reads in the array's own order (#359).
+    const auto r = f.reshape(shape<1>{6});
+    const auto ff = flatten(f);
+    for (std::size_t i = 0; i < 6; ++i) REQUIRE(ff(i) == r(i));
+    // iterate_indices visits the first index fastest too.
+    std::vector<std::array<std::size_t, 2>> seen;
+    f.iterate_indices([&](const std::array<std::size_t, 2>& idx) { seen.push_back(idx); });
+    REQUIRE((seen[0] == std::array<std::size_t, 2>{0, 0} && seen[1] == std::array<std::size_t, 2>{1, 0}));
+    // c_order arrays, and their transposes, are unchanged: last index fastest.
+    ndarray<double, 2> c(shape<2>{2, 3});
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) c(i, j) = double(10 * i + j);
+    REQUIRE(elements_in_order(c) == std::vector<double>{0, 1, 2, 10, 11, 12});
+    REQUIRE(elements_in_order(c.transpose()) == std::vector<double>{0, 10, 1, 11, 2, 12});
+}
+
+TEST_CASE("f_order content through sum_axis, transform, slice and broadcasting", "[array][856]") {
+    const auto f = f_matrix(2, 3);
+    const auto s0 = sum_axis(f, 0);
+    REQUIRE((s0(0) == 10 && s0(1) == 12 && s0(2) == 14));
+    const auto s1 = sum_axis(f, 1);
+    REQUIRE((s1(0) == 3 && s1(1) == 33));
+    const auto t = transform(f, [](double x) { return x + 1; });
+    REQUIRE((t(1, 2) == 13 && t(0, 1) == 2));
+    const auto row = slice(f, 1, all);
+    REQUIRE((row(0) == 10 && row(2) == 12));
+    const ndarray<double, 2> g = f + f;
+    REQUIRE((g(1, 2) == 24 && g(0, 1) == 2));
+    REQUIRE_THROWS_AS(sum_axis(f, 2), std::out_of_range);
+}
+
+TEST_CASE("reshape and shape lists check their sizes in every build", "[array][856]") {
+    ndarray<double, 1> a(shape<1>{3});
+    // An assert: under NDEBUG a size-100 view of a 3-element buffer.
+    REQUIRE_THROWS_AS(a.reshape(shape<1>{100}), std::invalid_argument);
+    REQUIRE_THROWS_AS(a.reshape(shape<2>{2, 2}), std::invalid_argument);
+    REQUIRE(a.reshape(shape<2>{1, 3}).size() == 3);
+    REQUIRE_THROWS_AS((shape<2>{1, 2, 3}), std::invalid_argument);
+    REQUIRE_THROWS_AS((shape<3>{4, 5}), std::invalid_argument);
+    REQUIRE_THROWS_AS((ndarray<double, 2>{2, 3, 4}), std::invalid_argument);
+}
+
+TEST_CASE("slice clamps ranges and checks steps and indices", "[array][856]") {
+    ndarray<double, 2> a(shape<2>{3, 4});
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 4; ++j) a(i, j) = double(10 * i + j);
+    // range(2, 10) of 3 rows is row 2 (it had extent 8, past the buffer).
+    auto s = slice(a, range(2, 10), all);
+    REQUIRE(s.extent(0) == 1);
+    REQUIRE(s(0, 3) == 23);
+    REQUIRE(slice(a, range(5, 9), all).extent(0) == 0);   // starts past the end: empty
+    REQUIRE(slice(a, range(3, 3), all).empty());
+    auto st = slice(a, all, range(0, 4, 3));               // a step > 1
+    REQUIRE((st.extent(1) == 2 && st(1, 1) == 13));
+    REQUIRE_THROWS_AS(slice(a, range(0, 3, 0), all), std::invalid_argument);   // divided by zero
+    REQUIRE_THROWS_AS(slice(a, 3, all), std::out_of_range);
+    REQUIRE_THROWS_AS(slice(a, all, 4), std::out_of_range);
+    REQUIRE_THROWS_AS(slice(a, -1, all), std::out_of_range);
+    const auto& ca = a;
+    REQUIRE_THROWS_AS(slice(ca, all, 4), std::out_of_range);
+    REQUIRE(slice(ca, range(1, 99), 2).extent(0) == 2);
+
+    // Rank 0: slice() takes no arguments (it did not compile).
+    ndarray<double, 0> z(shape<0>{});
+    z() = 7.0;
+    auto zv = slice(z);
+    REQUIRE((zv.size() == 1 && zv() == 7.0));
+    std::size_t visits = 0;
+    z.iterate_indices([&](const std::array<std::size_t, 0>&) { ++visits; });
+    REQUIRE(visits == 1);
+    REQUIRE(sum(z) == 7.0);
+}
+
+TEST_CASE("reductions: empty arrays, identities, custom types, const views", "[array][856]") {
+    const ndarray<double, 1> e(shape<1>{0});
+    REQUIRE(sum(e) == 0.0);
+    REQUIRE(prod(e) == 1.0);
+    // min and max returned DBL_MAX and -DBL_MAX; mean was 0/0.
+    REQUIRE_THROWS_AS(min(e), std::invalid_argument);
+    REQUIRE_THROWS_AS(max(e), std::invalid_argument);
+    REQUIRE_THROWS_AS(mean(e), std::invalid_argument);
+    const ndarray<int, 2> ez(shape<2>{3, 0});
+    REQUIRE_THROWS_AS(mean_axis(ez, 1), std::invalid_argument);   // an integer division by zero
+    const auto zs = sum_axis(ez, 1);
+    REQUIRE((zs.size() == 3 && zs(1) == 0));
+
+    // A type without numeric_limits: min was seeded with ordered_t{} = 0.
+    ndarray<ordered_t, 1> o(shape<1>{3});
+    o(0) = {5}; o(1) = {3}; o(2) = {9};
+    REQUIRE(min(o).v == 3);
+    REQUIRE(max(o).v == 9);
+    ndarray<double, 1> neg(shape<1>{2}, -4.0);
+    REQUIRE(max(neg) == -4.0);
+
+    // A size-1 axis.
+    ndarray<double, 2> col(shape<2>{3, 1});
+    for (std::size_t i = 0; i < 3; ++i) col(i, 0) = double(i + 1);
+    const auto s = sum_axis(col, 1);
+    REQUIRE((s(0) == 1 && s(2) == 3));
+    REQUIRE(mean_axis(col, 0)(0) == 2.0);
+
+    // A read-only array: these did not compile (the accumulator was const).
+    double buf[4] = {4, 1, 3, 2};
+    const ndarray<const double, 1> c(static_cast<const double*>(buf), shape<1>{4});
+    REQUIRE(sum(c) == 10.0);
+    REQUIRE(prod(c) == 24.0);
+    REQUIRE(min(c) == 1.0);
+    REQUIRE(max(c) == 4.0);
+    REQUIRE(mean(c) == 2.5);
+    STATIC_REQUIRE(std::is_same_v<decltype(sum(c)), double>);
+}
+
+TEST_CASE("reshape and transpose of a const array are read-only views", "[array][856]") {
+    ndarray<double, 2> a(shape<2>{2, 3}, 1.0);
+    const auto& ca = a;
+    STATIC_REQUIRE(std::is_same_v<decltype(ca.transpose()), ndarray<const double, 2>>);
+    STATIC_REQUIRE(std::is_same_v<decltype(ca.reshape(shape<1>{6})), ndarray<const double, 1>>);
+    STATIC_REQUIRE(std::is_same_v<decltype(a.transpose()), ndarray<double, 2>>);
+    const auto t = ca.transpose();
+    REQUIRE((t.data() == a.data() && t(2, 1) == 1.0));
+    a.transpose()(2, 1) = 5.0;   // a mutable array still gives a mutable view
+    REQUIRE(a(1, 2) == 5.0);
+}
+
+TEST_CASE("broadcast operands that are temporaries are kept alive", "[array][856]") {
+    auto make = [] { return ndarray<double, 2>(shape<2>{2, 2}, 3.0); };
+    ndarray<double, 2> b(shape<2>{2, 2}, 1.0);
+    // Both held a const reference to a dead temporary (ASan: use after scope).
+    auto e1 = make() + b;
+    const ndarray<double, 2> r1 = e1;
+    REQUIRE((r1(0, 0) == 4.0 && r1(1, 1) == 4.0));
+    ndarray<double, 2> a(shape<2>{2, 3});
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) a(i, j) = double(i * 3 + j);
+    ndarray<double, 2> row(shape<2>{1, 2}, 10.0);
+    auto e2 = a.transpose() - row;   // a 3x2 view minus a broadcast row
+    const ndarray<double, 2> r2 = e2;
+    REQUIRE((r2(2, 1) == 5.0 - 10.0 && r2(0, 0) == -10.0));
+    const ndarray<double, 2> q = a / ndarray<double, 2>(shape<2>{1, 1}, 2.0);
+    REQUIRE(q(1, 2) == 2.5);
+    REQUIRE_THROWS_AS((a + ndarray<double, 2>(shape<2>{3, 2})), std::invalid_argument);
+    if constexpr (mtl::bounds_checking) {
+        REQUIRE_THROWS_AS((e1[{2, 0}]), std::out_of_range);
+    }
+}
+
+TEST_CASE("an owning array move-assigned a view copies it and stays owning", "[array][856]") {
+    double buf[4] = {1, 2, 3, 4};
+    ndarray<double, 2> own(shape<2>{3, 3}, 0.0);
+    ndarray<double, 2> view(buf, shape<2>{2, 2});
+    own = std::move(view);   // was a hand-over: own became a view of buf
+    REQUIRE_FALSE(own.is_view());
+    REQUIRE((own.extent(0) == 2 && own(1, 1) == 4.0));
+    own(0, 0) = 99.0;
+    REQUIRE(buf[0] == 1.0);
+    REQUIRE(view.is_view());   // the source is a view still, of buf
+    REQUIRE(view(0, 1) == 2.0);
+
+    ndarray<double, 2> a(shape<2>{2, 3});
+    for (std::size_t i = 0; i < 6; ++i) a.data()[i] = double(i);
+    ndarray<double, 2> b(shape<2>{1, 1});
+    b = a.transpose();       // a prvalue view of another array
+    REQUIRE_FALSE(b.is_view());
+    REQUIRE((b.extent(0) == 3 && b(2, 1) == 5.0));
+    b(0, 0) = -1.0;
+    REQUIRE(a(0, 0) == 0.0);
+}
+
+TEST_CASE("copying and assigning transpose, reshape and nested views", "[array][856]") {
+    ndarray<double, 2> a(shape<2>{3, 4});
+    for (std::size_t i = 0; i < 3; ++i)
+        for (std::size_t j = 0; j < 4; ++j) a(i, j) = double(10 * i + j);
+    const auto tv = a.transpose();
+    const ndarray<double, 2> t(tv);        // a copy of the view, not the view itself
+    REQUIRE((!t.is_view() && t(3, 2) == 23.0));
+    const auto rv = a.reshape(shape<1>{12});
+    const ndarray<double, 1> r(rv);
+    REQUIRE((!r.is_view() && r(5) == 11.0));
+    auto outer = slice(a, range(1, 3), all);
+    auto inner = slice(outer, all, range(1, 4, 2));   // a view of a view
+    const ndarray<double, 2> ic = inner;
+    REQUIRE((ic.extent(0) == 2 && ic.extent(1) == 2 && ic(1, 1) == 23.0 && ic(0, 0) == 11.0));
+
+    // Column assignment, interleaved and overlapping, lands the right values.
+    auto c0 = slice(a, all, 0);
+    c0 = slice(a, all, 1);
+    REQUIRE((a(0, 0) == 1.0 && a(2, 0) == 21.0 && a(2, 1) == 21.0));
+    auto left = slice(a, all, range(0, 3));
+    left = slice(a, all, range(1, 4));    // shifted by one column: overlapping
+    REQUIRE((a(0, 0) == 1.0 && a(0, 1) == 2.0 && a(0, 2) == 3.0 && a(2, 2) == 23.0));
+}
+
+TEST_CASE("untested array API: views, flat access, fill, contiguity", "[array][856]") {
+    ndarray<double, 2> a(shape<2>{2, 3}, 2.0);
+    auto v = a.view();
+    v += 1.0; v -= 0.5; v /= 2.5;
+    REQUIRE(a(1, 2) == 1.0);
+    REQUIRE(!a.empty());
+    REQUIRE(ndarray<double, 2>(shape<2>{0, 3}).empty());
+    a.flat(4) = 7.0;
+    REQUIRE(a(1, 1) == 7.0);
+    REQUIRE(std::distance(a.begin(), a.end()) == 6);
+    // fill through a strided view takes the walk, not the flat path.
+    auto col = slice(a, all, 2);
+    REQUIRE_FALSE(col.is_contiguous());
+    col.fill(-3.0);
+    REQUIRE((a(0, 2) == -3.0 && a(1, 2) == -3.0 && a(0, 1) == 1.0));
+    // A size-1 dimension's stride does not matter: a 1 x 3 row of a 3 x 4 array
+    // is contiguous in both orders, as in NumPy.
+    ndarray<double, 2> b(shape<2>{3, 4});
+    const auto onerow = slice(b, range(1, 2), range(0, 3));
+    REQUIRE(onerow.is_c_contiguous());
+    REQUIRE(onerow.is_f_contiguous());
+    REQUIRE(is_contiguous_f(shape<2>{1, 3}, std::array<std::size_t, 2>{99, 1}));
+    REQUIRE_FALSE(is_contiguous_f(shape<2>{2, 3}, std::array<std::size_t, 2>{3, 1}));
+    // Broadcast strides: an extent-1 axis that stays extent 1 keeps its stride.
+    REQUIRE((broadcast_strides(shape<2>{1, 3}, std::array<std::size_t, 2>{3, 1}, shape<2>{1, 3})
+             == std::array<std::size_t, 2>{3, 1}));
+    REQUIRE((broadcast_strides(shape<2>{1, 3}, std::array<std::size_t, 2>{3, 1}, shape<2>{4, 3})
+             == std::array<std::size_t, 2>{0, 1}));
+}
+
+TEST_CASE("ndarray of std::complex", "[array][856]") {
+    using cd = std::complex<double>;
+    ndarray<cd, 1> z(shape<1>{3});
+    z(0) = {1, 1}; z(1) = {2, -1}; z(2) = {0, 3};
+    REQUIRE(sum(z) == cd(3, 3));
+    REQUIRE(prod(z) == cd(1, 1) * cd(2, -1) * cd(0, 3));
+    REQUIRE(mean(z) == cd(1, 1));
+    const auto w = transform(z, [](cd x) { return std::conj(x); });
+    REQUIRE(w(2) == cd(0, -3));
 }
