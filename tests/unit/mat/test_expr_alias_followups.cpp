@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <mtl/config.hpp>
@@ -118,4 +119,54 @@ TEST_CASE("swap_rows and map_view check their indices", "[mat][857]") {
         CHECK_THROWS_AS(V(2, 0), std::out_of_range);
         CHECK_THROWS_AS(V(0, 1), std::out_of_range);
     }
+}
+
+namespace {
+
+template <typename M>
+mtl::detail::alias_target target_of(const M& A) {
+    const auto* lo = reinterpret_cast<const unsigned char*>(A.data());
+    return {&A, lo, lo + A.num_rows() * A.num_cols() * sizeof(typename M::value_type)};
+}
+
+mat::compressed2D<double> diagonal_sparse(std::size_t m, std::size_t n) {
+    mat::compressed2D<double> S(m, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(S);
+        for (std::size_t i = 0; i < m && i < n; ++i) ins[i][i] << double(i + 1);
+    }
+    return S;
+}
+
+} // namespace
+
+TEST_CASE("the alias decision for sparse operands", "[mat][alias][857]") {
+    // Disjoint sparse storage is read in place; it used to take a temporary
+    // on every assignment. Checked on the decision itself, so a regression to
+    // "always a temporary" fails here, not only in a benchmark.
+    for (auto [m, n] : {std::pair<std::size_t, std::size_t>{0, 0}, {1, 1}, {3, 3}, {2, 5}, {5, 2}}) {
+        INFO(m << " x " << n);
+        const auto S1 = diagonal_sparse(m, n), S2 = diagonal_sparse(m, n);
+        mat::dense2D<double> A(m, n);
+        const auto t = target_of(A);
+        CHECK_FALSE(mtl::detail::alias_reads_target_elsewhere(S1 + S2, t));
+        CHECK_FALSE(mtl::detail::alias_reads_target_elsewhere(2.0 * S1, t));
+        // The same expression assigned: the values are right.
+        A = S1 + S2;
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < n; ++j) CHECK(A(i, j) == (i == j ? 2.0 * double(i + 1) : 0.0));
+    }
+    // A target over a sparse operand's values: overlapping, so a temporary.
+    mat::compressed2D<double> F(2, 2);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(F);
+        ins[0][0] << 1.0; ins[0][1] << 2.0; ins[1][0] << 3.0; ins[1][1] << 4.0;
+    }
+    mat::dense2D<double, mat::parameters<tag::col_major>> T(2, 2, F.ref_data().data());
+    CHECK(mtl::detail::alias_reads_target_elsewhere(F + F, target_of(T)));
+    // A dense operand that is not the target never needs one; one over the
+    // target's buffer does, through a view.
+    mat::dense2D<double> B(2, 2), C(2, 2);
+    CHECK_FALSE(mtl::detail::alias_reads_target_elsewhere(B + C, target_of(B)));
+    CHECK(mtl::detail::alias_reads_target_elsewhere(B + trans(B), target_of(B)));
 }

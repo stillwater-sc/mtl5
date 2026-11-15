@@ -217,7 +217,7 @@ private:
     static void check_bounds(const std::array<size_type, Rank>& idx) {
         for (size_type i = 0; i < Rank; ++i)
             if (idx[i] >= Dim)
-                throw std::out_of_range("tensor: index out of bounds");
+                ::mtl::detail::throw_or_abort(std::out_of_range("tensor: index out of bounds"));
     }
 };
 
@@ -254,7 +254,11 @@ magnitude_t<V> frobenius_norm(const tensor<V, R, D>& t) {
     using M = magnitude_t<V>;
     M result = math::zero<M>();
     for (std::size_t i = 0; i < tensor<V, R, D>::num_components; ++i) {
-        const M a = abs(t.data()[i]);
+        // An unsigned component is its own magnitude, and std::abs of one is
+        // not guaranteed to exist.
+        M a;
+        if constexpr (std::is_unsigned_v<V>) a = t.data()[i];
+        else                                 a = abs(t.data()[i]);
         result += a * a;
     }
     return sqrt(result);

@@ -14,6 +14,7 @@
 #include <stdexcept>
 
 #include <mtl/config.hpp>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/tensor/tensor.hpp>
 
@@ -131,7 +132,8 @@ public:
 
 private:
     static void check_bounds(size_type i, size_type j) {
-        if (i >= Dim || j >= Dim) throw std::out_of_range("symmetric_tensor: index out of bounds");
+        if (i >= Dim || j >= Dim)
+            ::mtl::detail::throw_or_abort(std::out_of_range("symmetric_tensor: index out of bounds"));
     }
 };
 
@@ -162,7 +164,8 @@ private:
     std::array<Value, num_stored> data_{};
 
     static void check_bounds(size_type i, size_type j) {
-        if (i >= Dim || j >= Dim) throw std::out_of_range("antisymmetric_tensor: index out of bounds");
+        if (i >= Dim || j >= Dim)
+            ::mtl::detail::throw_or_abort(std::out_of_range("antisymmetric_tensor: index out of bounds"));
     }
 
 public:

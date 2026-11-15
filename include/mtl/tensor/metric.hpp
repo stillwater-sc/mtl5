@@ -9,6 +9,7 @@
 // Provides common metrics: Euclidean (identity) and Minkowski.
 
 #include <cstddef>
+#include <type_traits>
 #include <mtl/math/identity.hpp>
 #include <mtl/tensor/tensor.hpp>
 
@@ -26,6 +27,9 @@ tensor<V, 2, D> euclidean_metric() {
 /// Convention: (-,+,+,+) "mostly plus" / particle physics convention.
 template <typename V>
 tensor<V, 2, 4> minkowski_metric() {
+    // -1 has no unsigned value: -one<unsigned>() is UINT_MAX, not the metric.
+    static_assert(!std::is_unsigned_v<V>,
+                  "minkowski_metric: the time component is -1, which an unsigned type cannot hold");
     tensor<V, 2, 4> g;
     g(0, 0) = -math::one<V>();
     g(1, 1) = math::one<V>();
