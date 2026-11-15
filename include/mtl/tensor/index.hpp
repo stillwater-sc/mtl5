@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <type_traits>
 
+#include <mtl/math/identity.hpp>
 #include <mtl/tensor/tensor.hpp>
 
 namespace mtl::tensor {
@@ -35,7 +36,9 @@ struct Index {
 // -- Index expression (tensor bound to named indices) ---------------
 
 /// A tensor expression with named indices attached.
-/// Created by: A(i, j) where i, j are Index objects.
+/// Created by: bind(A, i, j) where i, j are Index objects. It holds a reference
+/// to A, so bind() of a temporary is rejected at compile time (#857: it
+/// dangled once the full-expression ended).
 template <typename TensorType, char... Names>
 struct indexed_tensor {
     const TensorType& ref;
@@ -57,6 +60,12 @@ auto bind(const tensor<V, 1, D>& t, Index<I>) {
     return indexed_tensor<tensor<V, 1, D>, I>{t};
 }
 
+/// A bound temporary would dangle at the end of the full-expression.
+template <typename V, std::size_t D, char I, char J>
+void bind(const tensor<V, 2, D>&&, Index<I>, Index<J>) = delete;
+template <typename V, std::size_t D, char I>
+void bind(const tensor<V, 1, D>&&, Index<I>) = delete;
+
 // -- Contraction (Einstein summation) -------------------------------
 
 namespace detail_index {
@@ -70,6 +79,17 @@ constexpr char find_repeated(const std::array<char, NA>& a,
         for (std::size_t j = 0; j < NB; ++j)
             if (a[i] == b[j]) return a[i];
     return '\0';
+}
+
+/// How many indices of a also appear in b.
+template <std::size_t NA, std::size_t NB>
+constexpr std::size_t count_shared(const std::array<char, NA>& a,
+                                   const std::array<char, NB>& b) {
+    std::size_t c = 0;
+    for (std::size_t i = 0; i < NA; ++i)
+        for (std::size_t j = 0; j < NB; ++j)
+            if (a[i] == b[j]) { ++c; break; }
+    return c;
 }
 
 /// Find the position of a character in an array.
@@ -96,6 +116,15 @@ auto contract(const indexed_tensor<tensor<V, 2, D>, AI, AJ>& a,
     constexpr std::array<char, 2> b_names{BI, BJ};
     constexpr char summed = detail_index::find_repeated(a_names, b_names);
     static_assert(summed != '\0', "contract: no repeated index found between the two tensors");
+    // Exactly one index summed, and none repeated within one tensor (#857):
+    // with two shared, find_repeated took the first and silently returned a
+    // matrix -- contract(A(i,j), B(i,j)) with A = {1,2,3,4}, B = I gave
+    // [1 3; 2 4] -- and A(i,i) was not detected at all.
+    static_assert(detail_index::count_shared(a_names, b_names) == 1,
+                  "contract: the tensors share more than one index; a full contraction "
+                  "A(i,j) B(i,j) is not a rank-2 result and is not supported");
+    static_assert(AI != AJ && BI != BJ,
+                  "contract: an index repeated within one tensor (a trace, A(i,i)) is not supported");
 
     // Identify which position in each tensor is summed
     constexpr std::size_t a_sum_pos = detail_index::find_pos(a_names, summed);
@@ -105,7 +134,7 @@ auto contract(const indexed_tensor<tensor<V, 2, D>, AI, AJ>& a,
     tensor<V, 2, D> result;
     for (std::size_t i = 0; i < D; ++i) {
         for (std::size_t k = 0; k < D; ++k) {
-            V sum = V{0};
+            V sum = math::zero<V>();
             for (std::size_t j = 0; j < D; ++j) {
                 // Build indices for A and B based on which position is summed
                 std::array<std::size_t, 2> a_idx, b_idx;
@@ -130,12 +159,14 @@ auto contract(const indexed_tensor<tensor<V, 2, D>, AI, AJ>& a,
     constexpr std::array<char, 1> v_names{VI};
     constexpr char summed = detail_index::find_repeated(a_names, v_names);
     static_assert(summed != '\0', "contract: no repeated index found");
+    static_assert(AI != AJ,
+                  "contract: an index repeated within one tensor (a trace, A(i,i)) is not supported");
 
     constexpr std::size_t a_sum_pos = detail_index::find_pos(a_names, summed);
 
     tensor<V, 1, D> result;
     for (std::size_t i = 0; i < D; ++i) {
-        V sum = V{0};
+        V sum = math::zero<V>();
         for (std::size_t j = 0; j < D; ++j) {
             std::array<std::size_t, 2> a_idx;
             if constexpr (a_sum_pos == 0) { a_idx = {j, i}; }

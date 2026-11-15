@@ -19,10 +19,14 @@
 //   - A view (it has base(): trans, hermitian, upper, banded, ...) or a lazy
 //     product reads elements other than (r, c), so it is unsafe as soon as it
 //     reaches the target's storage at all.
-//   - Any other matrix is assumed to reach the target: a block_diagonal2D can
-//     hold the target as one of its blocks (block(k) is a dense2D&), and its
-//     elements are not at the target's (r, c). Sparse, block and generated
-//     operands therefore take the temporary.
+//   - A leaf whose storage detail::for_each_storage_range can see -- a
+//     compressed2D's or ell_matrix's arrays, a coordinate2D's triplets, every
+//     block of a block_diagonal2D, a block_matrix_view's bytes -- reaches the
+//     target only if that storage overlaps the target's (#857). It used to be
+//     assumed to, so A = S or A += S1 + S2 built a dense rows*cols temporary
+//     and evaluated every element twice for sparse operands.
+//   - Any other matrix is assumed to reach the target: a generated or
+//     user-defined matrix may hold a reference to it that nothing here sees.
 // The answer is conservative: a strict-lower view of the target, say, reads
 // only (r, c) and would have been safe, but takes the temporary.
 
@@ -33,6 +37,7 @@
 #include <mtl/mat/expr/mat_mat_times_expr.hpp>
 #include <mtl/mat/expr/mat_negate_expr.hpp>
 #include <mtl/mat/expr/mat_scal_op_expr.hpp>
+#include <mtl/detail/same_object.hpp>
 
 namespace mtl::detail {
 
@@ -69,7 +74,28 @@ concept alias_contiguous_leaf = requires(const T& t) {
     t.num_cols();
 };
 
-/// Whether the leaf's contiguous storage overlaps the target's.
+/// A leaf whose element storage for_each_storage_range can list.
+template <typename T>
+concept alias_known_storage = value_array_storage<T> || entry_array_storage<T> ||
+                              block_list_storage<T> || encoded_byte_storage<T>;
+
+/// Whether a known-storage leaf is the target or any of its storage overlaps
+/// the target's elements.
+template <typename T>
+bool alias_storage_overlaps(const T& m, const alias_target& t) {
+    if (static_cast<const void*>(&m) == t.self) return true;
+    bool hit = false;
+    for_each_storage_range(m, [&](const unsigned char* lo, const unsigned char* hi) {
+        if (lo < t.hi && t.lo < hi) hit = true;
+    });
+    return hit;
+}
+
+/// Whether the leaf's contiguous storage overlaps the target's. Its span is
+/// rows * cols elements from data(): the only leaf with data() and a leading
+/// dimension is dense2D, whose leading dimension is always its column count
+/// (row-major) or row count (column-major), with no padding, so there is no
+/// tail beyond rows * cols for an overlap to hide in (#857).
 template <typename T>
 bool alias_overlaps(const T& m, const alias_target& t) {
     using elem = std::remove_cvref_t<decltype(*m.data())>;
@@ -90,6 +116,8 @@ bool alias_reaches_target(const E& e, const alias_target& t) {
         return alias_reaches_target(e.base(), t);
     } else if constexpr (alias_contiguous_leaf<E>) {
         return static_cast<const void*>(&e) == t.self || alias_overlaps(e, t);
+    } else if constexpr (alias_known_storage<E>) {
+        return alias_storage_overlaps(e, t);
     } else {
         static_cast<void>(e);
         static_cast<void>(t);
@@ -109,6 +137,9 @@ bool alias_reads_target_elsewhere(const E& e, const alias_target& t) {
         return alias_reaches_target(e, t);
     } else if constexpr (alias_contiguous_leaf<E>) {
         return static_cast<const void*>(&e) != t.self && alias_overlaps(e, t);
+    } else if constexpr (alias_known_storage<E>) {
+        // Not the target itself (it is dense), so any overlap reads it elsewhere.
+        return alias_storage_overlaps(e, t);
     } else {
         static_cast<void>(e);
         static_cast<void>(t);

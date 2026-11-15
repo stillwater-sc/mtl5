@@ -11,7 +11,10 @@
 #include <cstddef>
 #include <type_traits>
 
+#include <stdexcept>
+
 #include <mtl/config.hpp>
+#include <mtl/math/identity.hpp>
 #include <mtl/tensor/tensor.hpp>
 
 namespace mtl::tensor {
@@ -66,12 +69,15 @@ public:
 
     explicit symmetric_tensor(const Value& val) { data_.fill(val); }
 
-    /// Access: automatically symmetrizes indices.
+    /// Access: automatically symmetrizes indices. Checked against Dim under
+    /// bounds_checking, as tensor's access is (#857: no check at all).
     reference operator()(size_type i, size_type j) {
+        if constexpr (bounds_checking) check_bounds(i, j);
         return data_[detail_sym::sym2_index(i, j, Dim)];
     }
 
     const_reference operator()(size_type i, size_type j) const {
+        if constexpr (bounds_checking) check_bounds(i, j);
         return data_[detail_sym::sym2_index(i, j, Dim)];
     }
 
@@ -87,7 +93,9 @@ public:
         return result;
     }
 
-    /// Construct from a full tensor (symmetrizes by averaging).
+    /// Construct from a full tensor (symmetrizes by averaging). For an integer
+    /// Value the average is an integer division, so it truncates: from_full
+    /// of an integer tensor is exact only when it is already symmetric.
     static symmetric_tensor from_full(const tensor<Value, 2, Dim>& t) {
         symmetric_tensor result;
         for (size_type i = 0; i < Dim; ++i)
@@ -120,12 +128,17 @@ public:
 
     bool operator==(const symmetric_tensor& other) const { return data_ == other.data_; }
     bool operator!=(const symmetric_tensor& other) const { return data_ != other.data_; }
+
+private:
+    static void check_bounds(size_type i, size_type j) {
+        if (i >= Dim || j >= Dim) throw std::out_of_range("symmetric_tensor: index out of bounds");
+    }
 };
 
 /// Trace of a symmetric tensor.
 template <typename V, std::size_t D>
 V trace(const symmetric_tensor<V, D>& t) {
-    V result = V{0};
+    V result = math::zero<V>();
     for (std::size_t i = 0; i < D; ++i) result += t(i, i);
     return result;
 }
@@ -147,7 +160,10 @@ public:
 
 private:
     std::array<Value, num_stored> data_{};
-    static inline const Value zero_val_ = Value{0};
+
+    static void check_bounds(size_type i, size_type j) {
+        if (i >= Dim || j >= Dim) throw std::out_of_range("antisymmetric_tensor: index out of bounds");
+    }
 
 public:
     antisymmetric_tensor() = default;
@@ -156,6 +172,7 @@ public:
     /// Setting a diagonal element (i == j) is a no-op: the diagonal of an
     /// antisymmetric tensor is structurally zero and has no storage slot.
     void set(size_type i, size_type j, const Value& val) {
+        if constexpr (bounds_checking) check_bounds(i, j);
         assert(i < Dim && j < Dim && "Index out of bounds");
         // Guard the diagonal explicitly: asym2_index(i, i, Dim) returns the
         // num_stored sentinel, so writing there would be out of bounds. The
@@ -170,7 +187,8 @@ public:
 
     /// Access: returns -component for (j,i), zero for diagonal.
     Value operator()(size_type i, size_type j) const {
-        if (i == j) return Value{0};
+        if constexpr (bounds_checking) check_bounds(i, j);   // #857: unchecked
+        if (i == j) return math::zero<Value>();
         if (i < j) return data_[detail_sym::asym2_index(i, j, Dim)];
         return -data_[detail_sym::asym2_index(j, i, Dim)];
     }
