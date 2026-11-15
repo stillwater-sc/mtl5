@@ -453,9 +453,10 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
             // Then store L(i,k) = A(i,k) / D(k,k).
             // Must update A(i,j) using original A(j,k) BEFORE overwriting
             // column k with L values. Every A(i,j) gets one and the same
-            // update in either loop order, so the order is chosen for the
-            // storage (#854): by columns, the row-major dense2D was walked at
-            // stride n, 3.1x slower than ldlt_factor at n = 1200.
+            // update in either loop order (up to how the compiler contracts it
+            // into an fma), so the order is chosen for the storage (#854): by
+            // columns, the row-major dense2D was walked at stride n, 3.1x
+            // slower than ldlt_factor at n = 1200.
             if constexpr (detail::row_major_contiguous_v<M>) {
                 std::vector<value_type> w(n);
                 for (std::size_t j = k + 1; j < n; ++j) w[j] = A(j, k) / dkk;

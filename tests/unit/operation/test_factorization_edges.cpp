@@ -3,6 +3,7 @@
 // alpha = 0, and the Bunch-Kaufman update's loop order.
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -232,7 +233,10 @@ TEST_CASE("trsm with alpha = 0 gives zero, NaN or Inf in B included", "[operatio
 
 TEST_CASE("ldlt_bk_factor: row- and column-major give the same factor", "[operation][ldlt_bk][854]") {
     // The trailing update runs by rows on row-major storage and by columns
-    // otherwise (#854); each entry gets the same update either way.
+    // otherwise (#854); each entry gets the same update either way, so the
+    // pivots agree and the factors agree to rounding. Not bit for bit: where
+    // the compiler contracts a - b*c into an fma (GCC's default on AArch64),
+    // the two loop shapes can contract differently.
     const std::size_t n = 40;
     auto A = random_matrix(n, n, 31);
     for (std::size_t i = 0; i < n; ++i)
@@ -244,8 +248,9 @@ TEST_CASE("ldlt_bk_factor: row- and column-major give the same factor", "[operat
     REQUIRE(ldlt_bk_factor(A, pr) == 0);
     REQUIRE(ldlt_bk_factor(Ac, pc) == 0);
     CHECK(pr.ipiv == pc.ipiv);
-    bool same = true;
+    double worst = 0;
     for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j <= i; ++j) same = same && A(i, j) == Ac(i, j);
-    CHECK(same);
+        for (std::size_t j = 0; j <= i; ++j)
+            worst = std::max(worst, std::abs(A(i, j) - Ac(i, j)) / (1.0 + std::abs(A(i, j))));
+    CHECK(worst <= 1e-12);
 }
