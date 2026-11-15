@@ -23,6 +23,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/detail/same_object.hpp>
+#include <mtl/vec/dense_vector.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -78,6 +79,19 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
     assert(A.num_cols() == n && x.size() == n && y.size() == n);
     const bool alpha_zero = (alpha == math::zero<S>());
     const bool beta_zero  = (beta == math::zero<S>());
+    // Every path writes y(i) while later rows still read x (and A), so a y
+    // that shares storage with x or A is computed into a copy of y (beta*y
+    // reads it; with beta == 0 y is not read, as on every other path) and
+    // copied back, in every build (#855). It was a debug-only assert, on one
+    // path, that saw only the same object.
+    if (detail::storage_overlaps(y, x) || detail::storage_overlaps(y, A)) {
+        vec::dense_vector<std::remove_cvref_t<value_type>> t(y.size());
+        if (!beta_zero)
+            for (size_type i = 0; i < n; ++i) t(i) = y(i);
+        symv<Accumulator>(alpha, A, x, beta, t);
+        for (size_type i = 0; i < n; ++i) y(i) = t(i);
+        return;
+    }
     // The lower triangle, read as a symmetric matrix.
     auto a = [&A](size_type i, size_type j) -> decltype(auto) { return j <= i ? A(i, j) : A(j, i); };
 
@@ -124,7 +138,6 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
         // term is the same product and acc[] holds what the row loop's `acc`
         // held, so the result is bit-identical
         // (contraction aside: see detail::trsm_rows).
-        assert(!detail::same_object(x, y) && "symv: y must not alias x");
         if (n == 0) return;
         if (alpha_zero) {
             for (size_type i = 0; i < n; ++i)

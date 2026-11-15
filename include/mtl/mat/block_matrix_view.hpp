@@ -108,6 +108,12 @@ public:
     size_type size()     const noexcept { return rows_ * cols_; }
     size_type blocks_per_row() const noexcept { return blocks_per_row_; }
 
+    /// The encoded bytes of the whole matrix, row after row. What the
+    /// aliasing guards compare a y against (detail::storage_overlaps, #855).
+    std::span<const std::byte> bytes() const noexcept {
+        return {data_, rows_ * blocks_per_row_ * block_bytes};
+    }
+
     /// Element (r, c), decoded. One element if the scheme can do that, the
     /// enclosing block otherwise.
     float operator()(size_type r, size_type c) const {
@@ -324,7 +330,23 @@ void mult(const mat::block_matrix_view<S>& A, const VIn& x, VOut& y,
           std::span<std::byte> scratch) {
     assert(A.num_cols() == static_cast<std::size_t>(x.size()));
     assert(A.num_rows() == static_cast<std::size_t>(y.size()));
-    assert(!detail::same_object(y, x) && "mult: y must not alias x");
+    // Each row writes y(r) while later rows still read x, so a y that shares
+    // storage with x or with the encoded bytes is computed through a
+    // temporary, in every build (#855). It was a debug-only assert that saw
+    // only the same object.
+    if (detail::storage_overlaps(y, x) || detail::storage_overlaps(y, A)) {
+        using Y = std::remove_cvref_t<typename VOut::value_type>;
+        vec::dense_vector<Y> t(y.size());
+        // The path y itself would take: a dense float t qualifies for the
+        // fused kernel where a strided y does not, and the scratch was sized
+        // for y's path.
+        if constexpr (detail::block_fused_gemv_v<Accumulator, S, VIn, VOut>)
+            mult<Accumulator>(A, x, t, scratch);
+        else
+            detail::block_mult_decode<Accumulator>(A, x, t);
+        for (std::size_t i = 0; i < static_cast<std::size_t>(y.size()); ++i) y(i) = t(i);
+        return;
+    }
     if constexpr (detail::block_fused_gemv_v<Accumulator, S, VIn, VOut>) {
         const std::size_t need = block_gemv_scratch_bytes<S>(A.num_cols());
         constexpr std::size_t align = block_gemv_scratch_alignment<S>;

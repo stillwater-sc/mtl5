@@ -82,17 +82,18 @@ class compressed2D_inserter {
 
 public:
     /// Construct inserter for matrix `m` with `slot_size` slots per row.
+    ///
+    /// The slots are set up, and the matrix's entries loaded into them, on the
+    /// first `ins[r]`, not here: an inserter that inserts nothing costs O(1)
+    /// and leaves the matrix as it was (#855). Before, every inserter paid
+    /// O(nrows * slot_size + nnz) to build and finalize, so many small
+    /// inserters on a large matrix were quadratic.
     explicit compressed2D_inserter(matrix_type& m, size_type slot_size = 5)
         : mat_(m), nrows_(m.num_rows()), ncols_(m.num_cols()), slot_size_(slot_size),
-          slots_(nrows_ * slot_size),
-          col_idx_(nrows_ * slot_size, size_type(-1)),
-          count_(nrows_, size_type(0)),
           updater_{}
-    {
-        load_existing();
-    }
+    {}
 
-    ~compressed2D_inserter() { finalize(); }
+    ~compressed2D_inserter() { if (loaded_) finalize(); }
 
     // Non-copyable, non-movable
     compressed2D_inserter(const compressed2D_inserter&) = delete;
@@ -102,6 +103,7 @@ public:
         if (!in_range(row, nrows_))
             ::mtl::detail::throw_or_abort(
                 std::out_of_range("compressed2D_inserter: row index out of range"));
+        if (!loaded_) load();
         return row_proxy{*this, row};
     }
 
@@ -109,6 +111,19 @@ private:
     /// 0 <= i < n: a signed Parameters::size_type can carry a negative index.
     static constexpr bool in_range(size_type i, size_type n) noexcept {
         return std::cmp_greater_equal(i, 0) && std::cmp_less(i, n);
+    }
+
+    /// Set up the slots and load the matrix's entries into them. loaded_ is
+    /// set only once that has succeeded: if an allocation throws part way, the
+    /// destructor must not finalize the partial state, which would replace the
+    /// matrix with the entries loaded so far. A later ins[r] starts over.
+    void load() {
+        overflow_.clear();
+        slots_.assign(nrows_ * slot_size_, Value());
+        col_idx_.assign(nrows_ * slot_size_, size_type(-1));
+        count_.assign(nrows_, size_type(0));
+        load_existing();
+        loaded_ = true;
     }
 
     /// Put the matrix's current entries into the slots, the ones past a row's
@@ -222,6 +237,7 @@ private:
     std::vector<size_type> count_;     // entries per row in slots, <= slot_size
     std::map<std::pair<size_type, size_type>, Value> overflow_;
     Updater updater_;
+    bool loaded_ = false;   // slots set up and the matrix's entries loaded
 };
 
 /// Convenience alias: inserter<MatrixType, Updater>

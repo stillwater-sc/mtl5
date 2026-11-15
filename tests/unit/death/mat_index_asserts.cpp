@@ -1,7 +1,7 @@
 // The element-access assertions of the block and MX types (#826): an index
 // past the end must stop at the assertion in a debug build. One call, chosen
 // by argv[1]; ctest passes it only when the output names the assertion.
-// NDEBUG is undefined first, as in mult_alias.cpp, and SIGABRT exits normally.
+// NDEBUG is undefined first, and SIGABRT exits normally.
 #undef NDEBUG
 #include <cassert>
 #include <csignal>

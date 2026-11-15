@@ -41,11 +41,58 @@ std::pair<const unsigned char*, const unsigned char*> storage_bytes(const T& t) 
     return {lo, lo + span * sizeof(elem)};
 }
 
-/// A sparse matrix whose values are one array (compressed2D's ref_data()).
+/// The bytes of a std::vector-like array's elements; empty when it is.
+template <typename A>
+std::pair<const unsigned char*, const unsigned char*> array_bytes(const A& v) {
+    using elem = std::remove_cvref_t<decltype(*v.data())>;
+    const auto* lo = reinterpret_cast<const unsigned char*>(v.data());
+    if (lo == nullptr || v.size() == 0) return {nullptr, nullptr};
+    return {lo, lo + static_cast<std::size_t>(v.size()) * sizeof(elem)};
+}
+
+/// A compressed matrix's index arrays (compressed2D's ref_minor() and
+/// ref_major()): a writable output over them would corrupt the indices the
+/// kernel is still reading.
+template <typename T>
+concept minor_array_storage = requires(const T& t) {
+    t.ref_minor().data();
+    t.ref_minor().size();
+};
+template <typename T>
+concept major_array_storage = requires(const T& t) {
+    t.ref_major().data();
+    t.ref_major().size();
+};
+
+/// A sparse matrix whose values are one array (compressed2D's and
+/// ell_matrix's ref_data()).
 template <typename T>
 concept value_array_storage = requires(const T& t) {
     t.ref_data().data();
     t.ref_data().size();
+};
+
+/// A matrix whose entries are one array of (row, col, value) triplets
+/// (coordinate2D's ref_entries()).
+template <typename T>
+concept entry_array_storage = requires(const T& t) {
+    t.ref_entries().data();
+    t.ref_entries().size();
+};
+
+/// A matrix made of separately stored blocks (block_diagonal2D): its storage
+/// is every block's.
+template <typename T>
+concept block_list_storage = requires(const T& t, std::size_t k) {
+    t.num_blocks();
+    t.block(k).data();
+};
+
+/// A matrix over encoded bytes (block_matrix_view's bytes()).
+template <typename T>
+concept encoded_byte_storage = requires(const T& t) {
+    t.bytes().data();
+    t.bytes().size();
 };
 
 /// A view over another collection (transposed_view, the triangular and banded
@@ -53,40 +100,54 @@ concept value_array_storage = requires(const T& t) {
 template <typename T>
 concept view_of_storage = requires(const T& t) { t.base(); };
 
-/// The bytes a collection's elements live in, looking through views: a
-/// contiguous collection's elements, a compressed matrix's value array, a
-/// view's base. Empty when the type has none of these (an expression).
-template <typename T>
-std::pair<const unsigned char*, const unsigned char*> storage_range(const T& t) {
+/// Calls f(lo, hi) for each byte range a collection's elements live in,
+/// looking through views: a contiguous collection's elements; a compressed
+/// or ELL matrix's value array; a coordinate matrix's triplets; each block of
+/// a block-diagonal matrix; a block matrix view's encoded bytes; a view's
+/// base. Nothing for a type with none of these (an expression).
+template <typename T, typename F>
+void for_each_storage_range(const T& t, F&& f) {
+    auto visit = [&f](std::pair<const unsigned char*, const unsigned char*> r) {
+        if (r.first != nullptr) f(r.first, r.second);
+    };
     if constexpr (contiguous_storage<T>) {
-        return storage_bytes(t);
+        visit(storage_bytes(t));
     } else if constexpr (value_array_storage<T>) {
-        const auto& v = t.ref_data();
-        using elem = std::remove_cvref_t<decltype(*v.data())>;
-        const auto* lo = reinterpret_cast<const unsigned char*>(v.data());
-        if (lo == nullptr || v.size() == 0) return {nullptr, nullptr};
-        return {lo, lo + v.size() * sizeof(elem)};
+        visit(array_bytes(t.ref_data()));
+        if constexpr (minor_array_storage<T>) visit(array_bytes(t.ref_minor()));
+        if constexpr (major_array_storage<T>) visit(array_bytes(t.ref_major()));
+    } else if constexpr (entry_array_storage<T>) {
+        visit(array_bytes(t.ref_entries()));
+    } else if constexpr (block_list_storage<T>) {
+        for (std::size_t k = 0; k < static_cast<std::size_t>(t.num_blocks()); ++k)
+            for_each_storage_range(t.block(k), f);
+    } else if constexpr (encoded_byte_storage<T>) {
+        visit(array_bytes(t.bytes()));
     } else if constexpr (view_of_storage<T>) {
-        return storage_range(t.base());
+        for_each_storage_range(t.base(), f);
     } else {
         static_cast<void>(t);
-        return {nullptr, nullptr};
     }
 }
 
-/// Whether a and b may share storage (#840): the same object, or element
+/// Whether a and b may share storage (#840, #855): the same object, or element
 /// storage whose byte ranges overlap -- a vector over part of another's buffer,
-/// as zero-copy views make easy; a vector over a compressed matrix's values;
-/// the matrix behind a transposed view. A type with no visible storage (an
-/// expression) is seen only as the same object.
+/// as zero-copy views make easy; a vector over a sparse matrix's values or
+/// triplets, a block's elements or a block view's bytes; the matrix behind a
+/// transposed view. A type with no visible storage (an expression) is seen
+/// only as the same object.
 template <typename T, typename U>
 bool storage_overlaps(const T& a, const U& b) noexcept {
     if (same_object(a, b)) return true;
-    const auto [a0, a1] = storage_range(a);
-    const auto [b0, b1] = storage_range(b);
-    if (a0 == nullptr || b0 == nullptr) return false;
     const std::less<const unsigned char*> lt;
-    return lt(a0, b1) && lt(b0, a1);
+    bool overlap = false;
+    for_each_storage_range(a, [&](const unsigned char* a0, const unsigned char* a1) {
+        if (overlap) return;
+        for_each_storage_range(b, [&](const unsigned char* b0, const unsigned char* b1) {
+            if (!overlap && lt(a0, b1) && lt(b0, a1)) overlap = true;
+        });
+    });
+    return overlap;
 }
 
 } // namespace mtl::detail

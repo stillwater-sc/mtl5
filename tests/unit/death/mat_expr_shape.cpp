@@ -4,9 +4,8 @@
 // mismatched expression, chosen by argv[1], and must not return normally:
 // ctest passes it only when the output names the shape assertion.
 //
-// NDEBUG is undefined before any header, as in mult_alias.cpp, so the
-// assertions are live in a Release build too; the SIGABRT handler turns the
-// abort into a normal exit.
+// NDEBUG is undefined before any header, so the assertions are live in a
+// Release build too; the SIGABRT handler turns the abort into a normal exit.
 #undef NDEBUG
 #include <cassert>
 #include <csignal>

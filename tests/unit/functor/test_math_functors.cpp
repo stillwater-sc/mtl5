@@ -94,6 +94,10 @@ TEST_CASE("abs and signum for unsigned types", "[functor][scalar][838]") {
     CHECK(fs::signum<std::uint16_t>::apply(std::uint16_t{9}) == 1);
     CHECK(fs::abs<int>::apply(-7) == 7);
     CHECK(fs::signum<int>::apply(-7) == -1);
+    // bool is unsigned too (#855): signum is the value itself.
+    CHECK(fs::signum<bool>::apply(true) == true);
+    CHECK(fs::signum<bool>::apply(false) == false);
+    STATIC_REQUIRE(fs::signum<bool>::apply(true));
 }
 
 TEST_CASE("signum of NaN is NaN", "[functor][scalar][838]") {

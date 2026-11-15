@@ -117,16 +117,21 @@ public:
     ~dense_vector() = default;
 
     /// An owning (or external) vector from a read-only view: copies the
-    /// elements, so the copy can be changed.
+    /// elements, so the copy can be changed. Explicit (#855): implicit, it
+    /// let a view passed to a by-value dense_vector parameter deep-copy
+    /// without a word at the call site. Write dense_vector<double>(view).
     template <typename P2>
         requires (!read_only && !std::same_as<P2, Parameters>
                   && dense_vector<Value, P2>::read_only)
-    dense_vector(const dense_vector<Value, P2>& view)
+    explicit dense_vector(const dense_vector<Value, P2>& view)
         : dense_vector(static_cast<size_type>(view.size())) {
         std::copy(view.begin(), view.end(), mem_.data());
     }
 
-    /// Copying a read-only view gives another view of the same buffer.
+    /// Copying a read-only view gives another view of the same buffer, not a
+    /// copy of its elements: like the view itself, the copy is valid only while
+    /// the caller's buffer is (#855). For an owning copy, construct a
+    /// dense_vector<Value> from it.
     dense_vector(const dense_vector& other) requires read_only
         : mem_(const_cast<Value*>(other.data()), other.size(), true), dim_(other.dim_) {}
     dense_vector& operator=(const dense_vector&) requires read_only = delete;

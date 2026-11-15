@@ -22,6 +22,7 @@
 #include <mtl/tag/orientation.hpp>
 #include <mtl/vec/dense_vector.hpp>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -91,8 +92,8 @@ TEMPLATE_TEST_CASE("gemv: col-major across strip boundaries", "[operation][gemv]
 // The data above are small integers, so every product and sum is exact and a
 // fused and an unfused chain agree: those cases cannot see the rounding. Here
 // the data are not, and the reference is the chain the kernel promises every
-// row -- y[i] = fma(x[j], A(i, j), y[i]) for j ascending from zero, through the
-// batch's own fma (simd::scalar_fma) -- compared bit for bit, the tail rows
+// row -- y[i] = fma(x[j], A(i, j), y[i]) for j ascending from zero, fused when
+// the batch's own fma fuses -- compared bit for bit, the tail rows
 // (i >= m - m % W) included. Before #840 the tail used a separate multiply and
 // add, so on a target whose batch fma fuses, the tail rows differed.
 TEMPLATE_TEST_CASE("gemv: col-major rows round alike, SIMD part and tail", "[operation][gemv][840]",
@@ -111,23 +112,27 @@ TEMPLATE_TEST_CASE("gemv: col-major rows round alike, SIMD part and tail", "[ope
     for (std::size_t j = 0; j < n; ++j) x[j] = T(1) / T(1 + j) - T(0.37);
     mtl::detail::gemv_colmajor<T>(m, n, A.data(), m, x.data(), y.data());
 
+    // The oracle is computed here, not with simd::scalar_fma, the function the
+    // tail itself calls (#855: comparing the tail with its own primitive could
+    // not fail). Whether the batch fma fuses is the one thing asked of it; the
+    // chain is then std::fma or a plain multiply and add.
+    const T a = T(1) + std::numeric_limits<T>::epsilon();
+    const bool batch_fuses = mtl::simd::scalar_fma(a, a, -(a * a)) != T(0);
     bool all = true, chains_differ = false;
     for (std::size_t i = 0; i < m; ++i) {
         T fused = 0, unfused = 0;
         for (std::size_t j = 0; j < n; ++j) {
-            fused = mtl::simd::scalar_fma(x[j], A[j * m + i], fused);
+            fused = std::fma(x[j], A[j * m + i], fused);
             // volatile: the compiler may not contract this into an fma.
             const volatile T p = x[j] * A[j * m + i];
             unfused = unfused + p;
         }
-        all = all && (y[i] == fused);
+        all = all && (y[i] == (batch_fuses ? fused : unfused));
         chains_differ = chains_differ || (fused != unfused);
     }
     CHECK(all);
-    // Whether the batch fma fuses here: if it does, the data must tell the
-    // chains apart, or the comparison above proves nothing.
-    const T a = T(1) + std::numeric_limits<T>::epsilon();
-    const bool batch_fuses = mtl::simd::scalar_fma(a, a, -(a * a)) != T(0);
+    // If the batch fma fuses, the data must tell the chains apart, or the
+    // comparison above proves nothing.
     if (batch_fuses) CHECK(chains_differ);
 }
 

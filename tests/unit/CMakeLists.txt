@@ -340,28 +340,16 @@ foreach(cf_src ${COMPILE_FAIL_SRC})
 endforeach()
 
 # -- Death tests ---------------------------------------------------------------
-# A death test makes one call that must fail an assertion. mult_alias makes an
-# aliased mult call, chosen by its argument (#696). The source undefines NDEBUG,
-# so it runs in every build type, and turns SIGABRT into a normal exit, because
-# ctest counts a signal as a failure even when the output matches. The test
-# passes only when the output names the aliasing assertion.
+# A death test makes one call that must fail an assertion, chosen by its
+# argument. The source undefines NDEBUG, so it runs in every build type, and
+# turns SIGABRT into a normal exit, because ctest counts a signal as a failure
+# even when the output matches. The test passes only when the output names the
+# expected assertion. (The aliased-mult death tests of #696 are gone: since #840
+# and #855, mult computes an aliased output through a temporary instead.)
 #
 # Not on MSVC: its debug CRT can report a failed assertion in a dialog, which
 # would hang a CI runner instead of failing.
 if(NOT MSVC)
-    add_executable(death_test_mult_alias death/mult_alias.cpp)
-    target_link_libraries(death_test_mult_alias PRIVATE MTL5::mtl5)
-    set_target_properties(death_test_mult_alias PROPERTIES FOLDER "Tests/death")
-    # The matrix-vector cases left with #840, which computes an aliased y
-    # through a temporary instead of asserting.
-    foreach(death_case matmat_a matmat_b acc_matmat_a)
-        add_test(NAME death_test_mult_alias_${death_case}
-                 COMMAND death_test_mult_alias ${death_case})
-        set_tests_properties(death_test_mult_alias_${death_case} PROPERTIES
-            PASS_REGULAR_EXPRESSION "must not alias"
-            LABELS "death")
-    endforeach()
-
     # The shape assertions of the matrix expressions (#824).
     add_executable(death_test_mat_expr_shape death/mat_expr_shape.cpp)
     target_link_libraries(death_test_mat_expr_shape PRIVATE MTL5::mtl5)
