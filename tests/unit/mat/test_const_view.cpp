@@ -102,3 +102,50 @@ TEST_CASE("const_view works with the matrix operations", "[mat][const_view]") {
     W(0, 0) = 10;
     REQUIRE(Wv(0, 0) == 10.0);
 }
+
+namespace {
+template <typename M> concept views_a_temporary = requires { mat::const_view(M(2, 2)); };
+} // namespace
+
+TEST_CASE("const_view: an owning copy of a matrix view is explicit (#855)", "[mat][const_view][855]") {
+    STATIC_REQUIRE(std::is_constructible_v<mat::dense2D<double>, const cmat&>);
+    STATIC_REQUIRE(!std::is_convertible_v<const cmat&, mat::dense2D<double>>);
+    using cmat_c = mat::const_matrix_view<double, tag::col_major>;
+    STATIC_REQUIRE(!std::is_convertible_v<const cmat_c&, mat::dense2D<double>>);
+    // const_view of a temporary would dangle: the rvalue overload is deleted.
+    STATIC_REQUIRE(!views_a_temporary<mat::dense2D<double>>);
+}
+
+TEST_CASE("const_view of a column-major, a Fortran-index and a fixed-size matrix (#855)",
+          "[mat][const_view][855]") {
+    {
+        mat::dense2D<double, mat::parameters<tag::col_major>> A(2, 3);
+        for (std::size_t r = 0; r < 2; ++r)
+            for (std::size_t c = 0; c < 3; ++c) A(r, c) = double(10 * r + c);
+        const auto V = mat::const_view(A);
+        STATIC_REQUIRE(std::is_same_v<typename std::remove_const_t<decltype(V)>::orientation, tag::col_major>);
+        REQUIRE(V.data() == A.data());
+        REQUIRE((V(1, 2) == 12.0 && V(0, 1) == 1.0));
+        const mat::dense2D<double> owned(V);   // a row-major copy of a column-major view
+        REQUIRE((owned(1, 2) == 12.0 && owned(1, 0) == 10.0));
+    }
+    {
+        using fparams = mat::parameters<tag::row_major, mtl::detail::f_index>;
+        mat::dense2D<double, fparams> F(2, 3);
+        F(1, 1) = 1.0; F(1, 3) = 3.0; F(2, 1) = 4.0; F(2, 3) = 6.0;
+        const auto V = mat::const_view(F);
+        REQUIRE(V.data() == F.data());
+        REQUIRE((V(1, 1) == 1.0 && V(1, 3) == 3.0 && V(2, 1) == 4.0 && V(2, 3) == 6.0));   // 1-based too
+    }
+    {
+        using xparams = mat::parameters<tag::row_major, mtl::detail::c_index,
+                                        mat::fixed::dimensions<2, 3>, tag::on_stack>;
+        mat::dense2D<double, xparams> X;
+        for (std::size_t r = 0; r < 2; ++r)
+            for (std::size_t c = 0; c < 3; ++c) X(r, c) = double(r + 2 * c);
+        const auto V = mat::const_view(X);
+        REQUIRE((V.num_rows() == 2 && V.num_cols() == 3));
+        REQUIRE(V.data() == X.data());
+        REQUIRE(V(1, 2) == 5.0);
+    }
+}

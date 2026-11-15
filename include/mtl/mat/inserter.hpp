@@ -82,17 +82,18 @@ class compressed2D_inserter {
 
 public:
     /// Construct inserter for matrix `m` with `slot_size` slots per row.
+    ///
+    /// The slots are set up, and the matrix's entries loaded into them, on the
+    /// first `ins[r]`, not here: an inserter that inserts nothing costs O(1)
+    /// and leaves the matrix as it was (#855). Before, every inserter paid
+    /// O(nrows * slot_size + nnz) to build and finalize, so many small
+    /// inserters on a large matrix were quadratic.
     explicit compressed2D_inserter(matrix_type& m, size_type slot_size = 5)
         : mat_(m), nrows_(m.num_rows()), ncols_(m.num_cols()), slot_size_(slot_size),
-          slots_(nrows_ * slot_size),
-          col_idx_(nrows_ * slot_size, size_type(-1)),
-          count_(nrows_, size_type(0)),
           updater_{}
-    {
-        load_existing();
-    }
+    {}
 
-    ~compressed2D_inserter() { finalize(); }
+    ~compressed2D_inserter() { if (loaded_) finalize(); }
 
     // Non-copyable, non-movable
     compressed2D_inserter(const compressed2D_inserter&) = delete;
@@ -102,6 +103,7 @@ public:
         if (!in_range(row, nrows_))
             ::mtl::detail::throw_or_abort(
                 std::out_of_range("compressed2D_inserter: row index out of range"));
+        if (!loaded_) load();
         return row_proxy{*this, row};
     }
 
@@ -115,6 +117,14 @@ private:
     /// `slot_size` into the overflow map. CRS rows are sorted and duplicate-free,
     /// so the map keys arrive in increasing order and each emplace is O(1) at
     /// the end hint.
+    void load() {
+        slots_.resize(nrows_ * slot_size_);
+        col_idx_.assign(nrows_ * slot_size_, size_type(-1));
+        count_.assign(nrows_, size_type(0));
+        loaded_ = true;
+        load_existing();
+    }
+
     void load_existing() {
         const auto& starts  = mat_.ref_major();
         const auto& indices = mat_.ref_minor();
@@ -222,6 +232,7 @@ private:
     std::vector<size_type> count_;     // entries per row in slots, <= slot_size
     std::map<std::pair<size_type, size_type>, Value> overflow_;
     Updater updater_;
+    bool loaded_ = false;   // slots set up and the matrix's entries loaded
 };
 
 /// Convenience alias: inserter<MatrixType, Updater>

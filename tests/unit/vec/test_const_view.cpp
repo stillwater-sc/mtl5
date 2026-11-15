@@ -159,3 +159,45 @@ TEST_CASE("const_view of an empty buffer", "[vec][const_view]") {
     REQUIRE(z.size() == 0);
     REQUIRE(two_norm(z) == 0.0);
 }
+
+namespace {
+template <typename V> concept checked_resizable = requires(V v) { v.checked_change_dim(3); };
+template <typename V> concept divisible        = requires(V v) { v /= 2.0; };
+template <typename V> concept add_assignable   = requires(V v, const V& w) { v += w; };
+template <typename V> concept sub_assignable   = requires(V v, const V& w) { v -= w; };
+template <typename V> concept swappable_member = requires(V v, V& w) { v.swap(w); };
+template <typename V> concept views_a_temporary = requires { vec::const_view(V(2)); };
+} // namespace
+
+TEST_CASE("const_view: the rest of the writing API does not compile (#855)", "[vec][const_view][855]") {
+    STATIC_REQUIRE(!checked_resizable<cview>);
+    STATIC_REQUIRE(!divisible<cview>);
+    STATIC_REQUIRE(!add_assignable<cview>);
+    STATIC_REQUIRE(!sub_assignable<cview>);
+    STATIC_REQUIRE(!swappable_member<cview>);
+    // const_view of a temporary would dangle: the rvalue overload is deleted.
+    STATIC_REQUIRE(!views_a_temporary<vec::dense_vector<double>>);
+    // The mutable vector keeps all of it.
+    STATIC_REQUIRE(checked_resizable<vec::dense_vector<double>>);
+    STATIC_REQUIRE(divisible<vec::dense_vector<double>>);
+    STATIC_REQUIRE(add_assignable<vec::dense_vector<double>>);
+    STATIC_REQUIRE(swappable_member<vec::dense_vector<double>>);
+}
+
+namespace {
+double sum_by_value(vec::dense_vector<double> v) {   // takes an owning vector
+    double s = 0;
+    for (double e : v) s += e;
+    return s;
+}
+} // namespace
+
+TEST_CASE("const_view: an owning copy of a view is explicit (#855)", "[vec][const_view][855]") {
+    // Implicit, passing a view to a by-value parameter deep-copied it with no
+    // sign of it at the call site.
+    STATIC_REQUIRE(std::is_constructible_v<vec::dense_vector<double>, const cview&>);
+    STATIC_REQUIRE(!std::is_convertible_v<const cview&, vec::dense_vector<double>>);
+    const double buf[3] = {1.0, 2.0, 3.0};
+    const auto y = vec::const_view(3, buf);
+    REQUIRE(sum_by_value(vec::dense_vector<double>(y)) == 6.0);   // the copy is spelled out
+}

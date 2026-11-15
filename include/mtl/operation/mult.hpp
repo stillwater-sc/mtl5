@@ -852,6 +852,28 @@ inline constexpr bool gemm_dispatches_blas_v = [] {
 
 } // namespace detail
 
+namespace detail {
+
+/// C = op(A, B) through a temporary of C's own type, then copy-assigned into C,
+/// which writes a non-owning C's buffer in place (#833). For a C that shares
+/// storage with an input: the kernels write C while they still read A and B.
+template <typename MC, typename F>
+void mult_mat_via_temporary(MC& C, F&& compute) {
+    MC t(C.num_rows(), C.num_cols());
+    compute(t);
+    C = t;
+}
+
+/// Whether mult can route an aliased C through mult_mat_via_temporary: C's
+/// type can be made at C's size and copy-assigned. Every matrix mult writes
+/// can (dense2D, compressed2D).
+template <typename MC>
+inline constexpr bool mult_mat_temporary_ok_v =
+    std::is_constructible_v<MC, typename MC::size_type, typename MC::size_type> &&
+    std::is_copy_assignable_v<MC>;
+
+} // namespace detail
+
 /// mat*mat multiply into pre-allocated C: C = A * B.
 ///
 /// Mixed precision: pass an explicit `Accumulator` to sum each C element in a
@@ -865,8 +887,20 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
-    assert(!detail::same_object(C, A) && "mult: C must not alias A");
-    assert(!detail::same_object(C, B) && "mult: C must not alias B");
+    // Every kernel writes C while it still reads A and B, so a C that shares
+    // storage with either -- the same matrix, as in mult(A, B, A), or a matrix
+    // over part of the same buffer -- is computed through a temporary, in every
+    // build (#855), as the matrix-vector mult does (#840). It was a debug-only
+    // assert that saw only the same object.
+    if constexpr (detail::mult_mat_temporary_ok_v<MC>) {
+        if (detail::storage_overlaps(C, A) || detail::storage_overlaps(C, B)) {
+            detail::mult_mat_via_temporary(C, [&](MC& t) { mult<Accumulator>(A, B, t); });
+            return;
+        }
+    } else {
+        assert(!detail::storage_overlaps(C, A) && "mult: C must not alias A");
+        assert(!detail::storage_overlaps(C, B) && "mult: C must not alias B");
+    }
 
     // Sparse (CRS) x row-major dense (#550): walk A's stored entries instead of
     // reading A(r, k) by binary search for every (r, c, k).
@@ -1091,8 +1125,16 @@ void mult_quad(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
-    assert(!detail::same_object(C, A) && "mult_quad: C must not alias A");
-    assert(!detail::same_object(C, B) && "mult_quad: C must not alias B");
+    // As in mult: a C sharing storage with A or B goes through a temporary (#855).
+    if constexpr (detail::mult_mat_temporary_ok_v<MC>) {
+        if (detail::storage_overlaps(C, A) || detail::storage_overlaps(C, B)) {
+            detail::mult_mat_via_temporary(C, [&](MC& t) { mult_quad<Accumulator>(A, B, t); });
+            return;
+        }
+    } else {
+        assert(!detail::storage_overlaps(C, A) && "mult_quad: C must not alias A");
+        assert(!detail::storage_overlaps(C, B) && "mult_quad: C must not alias B");
+    }
 
     using TA = typename MA::value_type;
     using TB = typename MB::value_type;

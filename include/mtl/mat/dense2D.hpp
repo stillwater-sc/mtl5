@@ -161,10 +161,13 @@ public:
 
     /// An owning matrix from a read-only view: copies the elements, so the
     /// copy can be changed. The view may differ in orientation and index base.
+    /// Explicit (#855): implicit, it let a view passed to a by-value dense2D
+    /// parameter deep-copy without a word at the call site. Write
+    /// dense2D<double>(view).
     template <typename P2>
         requires (!read_only && !std::same_as<P2, Parameters>
                   && dense2D<Value, P2>::read_only)
-    dense2D(const dense2D<Value, P2>& view)
+    explicit dense2D(const dense2D<Value, P2>& view)
         : dense2D(static_cast<size_type>(view.num_rows()), static_cast<size_type>(view.num_cols()))
     {
         using view_orientation = typename P2::orientation;
@@ -178,7 +181,10 @@ public:
             }
     }
 
-    /// Copying a read-only view gives another view of the same buffer.
+    /// Copying a read-only view gives another view of the same buffer, not a
+    /// copy of its elements: like the view itself, the copy is valid only while
+    /// the caller's buffer is (#855). For an owning copy, construct a
+    /// dense2D<Value> from it.
     dense2D(const dense2D& other) requires read_only
         : mem_(const_cast<Value*>(other.data()), other.mem_.size(), true),
           dims_(other.dims_), ldim_(other.ldim_) {}

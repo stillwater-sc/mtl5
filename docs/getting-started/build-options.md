@@ -83,15 +83,19 @@ file stores the lower triangle by columns, without the diagonal when
 skew-symmetric. `pattern` files are not supported. The readers throw
 `std::runtime_error` on:
 - a banner without all five tokens, or with an unknown token;
-- a negative, non-integer or overflowing size;
-- a header `nnz` larger than the matrix can hold;
-- a malformed or out-of-range entry;
+- a negative, non-integer or overflowing size (for an array file, or a dense
+  result, that includes `rows * cols`);
+- a malformed or out-of-range entry, including a value with two signs (`+-5`)
+  or a hexadecimal float;
 - a skew-symmetric diagonal entry;
 - too few or too many entries;
 - a truncated or corrupt gzip stream.
 
-Blank lines are skipped, `\r\n` endings are accepted, and the `nan` and `inf`
-that the writers emit read back. `mm_write` and `mm_write_sparse` choose the
+A coordinate file is not bounded by `rows * cols`: duplicate entries are summed,
+so its `nnz` may exceed the matrix's capacity, and `mm_read` takes a sparse
+matrix whose `rows * cols` overflows `size_t` (#855). Blank lines are skipped,
+`\r\n` endings are accepted, and the `nan` and `inf` that the writers emit read
+back. `mm_write` and `mm_write_sparse` choose the
 banner's field from the value type, `complex`, `integer` or `real`, and write
 enough digits for each value to read back exactly.
 

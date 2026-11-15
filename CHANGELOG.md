@@ -17,7 +17,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Writing through a view does not compile:** element writes, `data()`, `begin()`, assignment, compound assignment, `change_dim`, `swap` and `vec::fill` are all constrained away.
   - **It works with the existing operations:** a view is still a `dense_vector<V, P>` or `dense2D<V, P>`, so norms, `dot`, `A * x` (dense and `compressed2D`), `mult`, the expression templates and the Krylov solvers accept it, as the new tests show.
   - **Aliases and overloads:** `vec::const_vector_view<V, Orientation>` and `mat::const_matrix_view<V, Orientation>` name the types. `const_view(v)` gives a read-only view of an existing vector or matrix; the rvalue overload is deleted, since a view of a temporary would dangle.
-  - **Copy semantics:** copying a view gives another view of the same buffer. `dense_vector<double> y(view)` and `dense2D<double> M(view)` make owning copies.
+  - **Copy semantics:** copying a view gives another view of the same buffer. `dense_vector<double> y(view)` and `dense2D<double> M(view)` make owning copies; that conversion is `explicit` (#855), so a view passed to a by-value parameter no longer deep-copies silently.
   - Tests: `tests/unit/vec/test_const_view.cpp` and `tests/unit/mat/test_const_view.cpp`.
 
 - **Run-time selection of the interleave width** (#778). With `MTL5_INTERLEAVE_RUNTIME` (CMake option, off by default), the generic `gemv`, `trmv` and forward substitution compile at W = 2, 4, 6, 8 and 12 for float and double, and on first use take the width a table of the #780 sweeps lists for the compiler and the core (`include/mtl/interface/interleave_runtime.hpp`). The core is read from x86 `cpuid` or the Arm part number in `/proc/cpuinfo`.
@@ -94,6 +94,16 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Pages:** the Jetson Orin, Ventuno Q, i7-12700K and Ryzen 9 8945HS analyses, under a new Roofline section, with the command under Reproducing.
 
 ### Fixed
+
+- **Matrix Market reading, aliased products, and the follow-ups of QA sweep #848** (issue 855).
+  - **Duplicates past `m*n`:** a coordinate file whose `nnz` exceeds the matrix's capacity, with its entries summed (#653), was rejected by #843's header check (`1 1 3` with three entries threw; it reads as 6 again). A coordinate file whose `rows * cols` overflows `size_t` is read by `mm_read` (`mm_read_dense` still rejects it). The reserve stays capped by the file's size.
+  - **Parsing:** `+-5` parsed as -5 and is rejected now, for floating-point and integer fields. The `strto*` path, taken where `std::from_chars` lacks floating point and for out-of-range values, refuses hexadecimal floats, so it accepts what `from_chars` does. A generic value type is value-initialized before it is read.
+  - **gzip:** lines are split from `gzread` chunks instead of with `gzgets`, which cut a line at an embedded NUL byte and dropped the rest. The NUL now reaches the parser, which rejects it.
+  - **Aliased products:** `mult(A, B, C)`, `mult_quad`, `symv` and the `block_matrix_view` mat-vec compute through a temporary, in every build, when the output shares storage with an input, as the mat-vec `mult` does since #840. They were debug-only asserts that saw only the same object: `mult(A, B, A)` on a 3x3 `dense2D<double>` under `NDEBUG` differed in all 9 entries.
+  - **`storage_overlaps`** also sees a `coordinate2D`'s triplets, each block of a `block_diagonal2D`, and a `block_matrix_view`'s encoded bytes (new `bytes()`).
+  - **The owning `dense_vector` and `dense2D` constructors from a read-only view are `explicit`.**
+  - **A `compressed2D_inserter` that inserts nothing costs O(1)** and leaves the matrix as it was. The slots are set up on the first `ins[r]`; before, every inserter paid O(nrows * slot_size + nnz), so many small inserters on a large matrix were quadratic.
+  - **Tests:** the cases above; `parse_float_strto` called directly; `mm_read_dense` on coordinate skew-symmetric and Hermitian files; `mult(A, B, A)` in both orientations and for float, through `trans(A)` and with an Accumulator; a C over part of A; `mult(A, x, x)` with a column-major A, float, and `trans(A)`; read-only views as does-not-compile checks; `mat::const_view` of column-major, Fortran-index and fixed-size matrices; `signum<bool>`. The gemv tail test compares with a `std::fma` chain instead of `simd::scalar_fma`, the function the tail calls.
 
 - **UMFPACK, KLU and SuperLU bindings: a leak, release-build asserts, empty matrices, and float sparse dispatch** (#850, from the QA sweep #774).
   - **UMFPACK leaked its Numeric object on a singular matrix:** `umfpack_di_numeric` reports a singular A as a warning (status 1) with a valid Numeric, and the constructor freed only the Symbolic before throwing (536 bytes under LeakSanitizer for a 3x3). Both are freed now, and the message says the matrix is singular.

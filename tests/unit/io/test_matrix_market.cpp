@@ -17,6 +17,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 using namespace mtl;
 
@@ -376,13 +377,16 @@ TEST_CASE("Matrix Market: malformed sizes throw in both readers (#843)", "[io][m
     require_both_throw("neg_cols", coord + "2 -1 0\n");
     require_both_throw("neg_nnz", coord + "2 2 -1\n");
     require_both_throw("neg_array", array + "-1 2\n");
-    // A header nnz the matrix cannot hold used to reserve it: bad_alloc.
+    // A header nnz the data does not back used to reserve it: bad_alloc. The
+    // reserve is capped by the file's size, so this reaches the EOF error.
     require_both_throw("huge_nnz", coord + "2 2 99999999999999\n1 1 1.0\n");
-    require_both_throw("nnz_over_sym",
-        "%%MatrixMarket matrix coordinate real symmetric\n2 2 4\n1 1 1\n2 1 1\n2 2 1\n2 1 1\n");
-    // nrows * ncols overflows size_t.
+    // nrows * ncols overflows size_t: an array file, and a dense result. A
+    // coordinate file whose m*n overflows is read by mm_read (#855).
     require_both_throw("overflow", array + "4294967296 4294967297\n");
-    require_both_throw("overflow_coord", coord + "4294967296 4294967297 1\n1 1 1.0\n");
+    {
+        temp_mtx f("overflow_coord", coord + "4294967296 4294967297 1\n1 1 1.0\n");
+        REQUIRE_THROWS_AS(io::mm_read_dense(f.path), std::runtime_error);
+    }
     // A size of 2^64-1 with no columns holds no entries, so only the size
     // limit stops nrows + 1 from wrapping to 0.
     require_both_throw("max_rows", coord + "18446744073709551615 0 0\n");
@@ -519,6 +523,8 @@ TEST_CASE("Matrix Market: array symmetric, skew-symmetric and hermitian (#843)",
         temp_mtx c("coord_skew", "%%MatrixMarket matrix coordinate real skew-symmetric\n2 2 1\n2 1 4.0\n");
         auto C = io::mm_read(c.path);
         REQUIRE((C(1, 0) == 4.0 && C(0, 1) == -4.0 && C(0, 0) == 0.0));
+        auto E = io::mm_read_dense(c.path);       // mm_mirror in the dense reader (#855)
+        REQUIRE((E(1, 0) == 4.0 && E(0, 1) == -4.0 && E(0, 0) == 0.0 && E(1, 1) == 0.0));
     }
     SECTION("hermitian: mirrored conjugated") {
         using cd = std::complex<double>;
@@ -528,6 +534,8 @@ TEST_CASE("Matrix Market: array symmetric, skew-symmetric and hermitian (#843)",
         temp_mtx c("coord_herm", "%%MatrixMarket matrix coordinate complex hermitian\n2 2 2\n1 1 1 0\n2 1 2 3\n");
         auto S = io::mm_read<cd>(c.path);
         REQUIRE((S(1, 0) == cd(2, 3) && S(0, 1) == cd(2, -3)));
+        auto E = io::mm_read_dense<cd>(c.path);   // mm_mirror in the dense reader (#855)
+        REQUIRE((E(0, 0) == cd(1, 0) && E(1, 0) == cd(2, 3) && E(0, 1) == cd(2, -3) && E(1, 1) == cd(0, 0)));
     }
 }
 
@@ -687,5 +695,146 @@ TEST_CASE("Matrix Market: a failed write throws, even for a small matrix (#843)"
     mat::compressed2D<double> S(1, 1);
     { mat::inserter<mat::compressed2D<double>> ins(S); ins[0][0] << 1.0; }
     REQUIRE_THROWS_AS(io::mm_write_sparse("/dev/full", S), std::runtime_error);
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// #855: a coordinate file is not bounded by m*n, signs, out-of-range values,
+// the strto* path, and NUL bytes in a gzip line.
+
+TEST_CASE("Matrix Market: a coordinate nnz may exceed m*n, duplicates summed (#855)",
+          "[io][matrix_market][855]") {
+    // Duplicates are summed (#653), so a file may repeat an entry more times
+    // than the matrix has positions. #843's header check rejected this.
+    {
+        temp_mtx f("dup_over_general", coord + "1 1 3\n1 1 1\n1 1 2\n1 1 3\n");
+        REQUIRE(io::mm_read(f.path)(0, 0) == 6.0);
+        REQUIRE(io::mm_read_dense(f.path)(0, 0) == 6.0);
+    }
+    {   // 4 entries, a symmetric 2x2 has 3 positions
+        temp_mtx f("dup_over_sym",
+                   "%%MatrixMarket matrix coordinate real symmetric\n2 2 4\n1 1 1\n2 1 1\n2 2 1\n2 1 1\n");
+        const auto S = io::mm_read(f.path);
+        const auto D = io::mm_read_dense(f.path);
+        REQUIRE(S.nnz() == 4u);
+        for (std::size_t i = 0; i < 2; ++i)
+            for (std::size_t j = 0; j < 2; ++j) {
+                const double want = (i == j) ? 1.0 : 2.0;
+                REQUIRE(S(i, j) == want);
+                REQUIRE(D(i, j) == want);
+            }
+    }
+    {   // 2 entries, a skew-symmetric 2x2 has 1
+        temp_mtx f("dup_over_skew",
+                   "%%MatrixMarket matrix coordinate real skew-symmetric\n2 2 2\n2 1 3\n2 1 -1\n");
+        const auto S = io::mm_read(f.path);
+        const auto D = io::mm_read_dense(f.path);
+        REQUIRE((S(1, 0) == 2.0 && S(0, 1) == -2.0));
+        REQUIRE((D(1, 0) == 2.0 && D(0, 1) == -2.0));
+    }
+}
+
+TEST_CASE("Matrix Market: a coordinate file whose m*n overflows size_t (#855)",
+          "[io][matrix_market][855]") {
+    // m*n is never formed for a sparse result: 4 rows cost 5 row pointers.
+    // mm_read threw "matrix dimensions overflow".
+    const std::size_t big = std::size_t(1) << 62;
+    temp_mtx f("huge_cols", coord + "4 " + std::to_string(big) + " 1\n3 " + std::to_string(big)
+                                + " 4.5\n");
+    const auto A = io::mm_read(f.path);
+    REQUIRE(A.num_rows() == 4u);
+    REQUIRE(A.num_cols() == big);
+    REQUIRE(A.nnz() == 1u);
+    REQUIRE(A(2, big - 1) == 4.5);
+    // A dense result of that size cannot exist.
+    REQUIRE_THROWS_AS(io::mm_read_dense(f.path), std::runtime_error);
+}
+
+TEST_CASE("Matrix Market: an nnz far above the data reaches the EOF error (#855)",
+          "[io][matrix_market][855]") {
+    // nnz may now exceed m*n, so only the reserve cap (the file's size bounds
+    // the entries) keeps an overstated header from reserving 10^15 entries.
+    require_both_throw("overstated_plain", coord + "10 10 1000000000000000\n1 1 1\n");
+}
+
+TEST_CASE("Matrix Market: signs and out-of-range values (#855)", "[io][matrix_market][855]") {
+    require_both_throw("plus_minus", coord + "1 1 1\n1 1 +-5\n");
+    require_both_throw("minus_plus", coord + "1 1 1\n1 1 -+5\n");
+    require_both_throw("plus_plus", coord + "1 1 1\n1 1 ++5\n");
+    require_both_throw("lone_plus", coord + "1 1 1\n1 1 +\n");
+    require_both_throw("int_plus_minus",
+                       "%%MatrixMarket matrix coordinate integer general\n1 1 1\n1 1 +-5\n");
+    {
+        temp_mtx f("plus", coord + "1 2 2\n1 1 +5\n1 2 +2.5e1\n");
+        const auto A = io::mm_read(f.path);
+        REQUIRE((A(0, 0) == 5.0 && A(0, 1) == 25.0));
+        REQUIRE(io::mm_read_dense<int>(
+                    temp_mtx("plus_int", "%%MatrixMarket matrix coordinate integer general\n1 1 1\n"
+                                         "1 1 +7\n").path)(0, 0) == 7);
+    }
+    {   // out of range: the strto* path gives +-inf and a subnormal
+        temp_mtx f("range", coord + "1 3 3\n1 1 1e999\n1 2 -1e999\n1 3 1e-320\n");
+        const auto A = io::mm_read_dense(f.path);
+        REQUIRE(A(0, 0) == std::numeric_limits<double>::infinity());
+        REQUIRE(A(0, 1) == -std::numeric_limits<double>::infinity());
+        REQUIRE(A(0, 2) > 0.0);
+        REQUIRE(A(0, 2) < std::numeric_limits<double>::min());
+    }
+}
+
+TEST_CASE("text_parse: the strto* path has from_chars' grammar (#855)", "[io][text_parse][855]") {
+    // parse_value takes this path when std::from_chars is missing for floating
+    // point, and for out-of-range values. Called directly, so it is tested on
+    // every standard library.
+    auto strto = [](std::string_view tok, double& out) {
+        return io::detail::parse_float_strto(tok.data(), tok.data() + tok.size(), out);
+    };
+    double v = 0;
+    CHECK((strto("1.5", v) && v == 1.5));
+    CHECK((strto("-2e3", v) && v == -2000.0));
+    CHECK((strto("inf", v) && v == std::numeric_limits<double>::infinity()));
+    CHECK((strto("infinity", v) && v == std::numeric_limits<double>::infinity()));
+    CHECK((strto("nan", v) && std::isnan(v)));
+    CHECK(!strto("0x1p3", v));     // a hexadecimal float: strtod reads it, from_chars does not
+    CHECK(!strto("-0X10", v));
+    CHECK(!strto("1.5x", v));
+    CHECK(!strto("", v));
+    CHECK(!strto("-+5", v));
+    float f = 0;
+    CHECK((io::detail::parse_float_strto("2.5", "2.5" + 3, f) && f == 2.5f));
+    long double l = 0;
+    CHECK((io::detail::parse_float_strto("0.25", "0.25" + 4, l) && l == 0.25L));
+
+    // And parse_value: one sign at most, for floating point and integers.
+    CHECK(!io::detail::parse_value("+-5", v));
+    CHECK(!io::detail::parse_value("+", v));
+    CHECK((io::detail::parse_value("+5", v) && v == 5.0));
+    CHECK(!io::detail::parse_value("0x10", v));
+    int i = 0;
+    CHECK(!io::detail::parse_value("+-5", i));
+    CHECK(!io::detail::parse_value("+", i));
+    CHECK((io::detail::parse_value("+5", i) && i == 5));
+    CHECK((io::detail::parse_value("-5", i) && i == -5));
+}
+
+#ifdef MTL5_HAS_ZLIB
+TEST_CASE("Matrix Market: a NUL byte in a gzip line is not a line end (#855)",
+          "[io][matrix_market][gzip][855]") {
+    // gzgets NUL-terminates its buffer, so a line holding a NUL byte was cut
+    // there: "1 1 2\0junk" read as "1 1 2", and "1 1\0 2" as a short line.
+    // The NUL now stays in the line, where the parser rejects it.
+    using namespace std::string_literals;
+    const std::string head = "%%MatrixMarket matrix coordinate real general\n1 1 1\n";
+    const auto a = write_gz("gz_nul_tail", head + "1 1 2\0junk\n"s);
+    REQUIRE_THROWS_AS(io::mm_read(a), std::runtime_error);
+    REQUIRE_THROWS_AS(io::mm_read_dense(a), std::runtime_error);
+    std::remove(a.c_str());
+    // A line split across reads, CRLF, and a last line without a newline.
+    std::string body = "%%MatrixMarket matrix coordinate real general\r\n% "
+                     + std::string(200000, 'c') + "\r\n2 2 2\r\n1 1 1.5\r\n2 2 -3";
+    const auto b = write_gz("gz_chunks", body);
+    const auto B = io::mm_read(b);
+    REQUIRE((B(0, 0) == 1.5 && B(1, 1) == -3.0 && B.nnz() == 2u));
+    std::remove(b.c_str());
 }
 #endif

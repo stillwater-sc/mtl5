@@ -7,9 +7,10 @@
 // overflows, or a value the type cannot read is an error (#843). Floating-point
 // values go through std::from_chars where the standard library has it for
 // floating point (locale-independent), else strtod/strtof/strtold (which follow
-// the C locale's decimal point). Both read the "nan", "inf" and "-inf" that the
-// writers emit; iostreams do not. Other value types are read with operator>>
-// and must consume the whole token.
+// the C locale's decimal point), with the same grammar: one optional sign
+// ("+-5" is an error), no hexadecimal floats. Both read the "nan", "inf",
+// "infinity" and "-inf" that the writers emit; iostreams do not. Other value
+// types are read with operator>> and must consume the whole token.
 #include <charconv>
 #include <cstddef>
 #include <cstdlib>
@@ -70,6 +71,29 @@ inline bool parse_index(std::string_view tok, std::size_t& out,
     return true;
 }
 
+/// The strtof/strtod/strtold reading of [first, last), a token without a
+/// leading '+': parse_value's path where std::from_chars is missing, or where
+/// it reports a value out of range. strto* also reads hexadecimal floats
+/// ("0x1p3"), which from_chars in its general format does not, so they are
+/// refused here: the grammar is the same either way (#855). strto* would also
+/// skip leading whitespace, but a token has none.
+template <typename T>
+bool parse_float_strto(const char* first, const char* last, T& out) {
+    static_assert(std::is_floating_point_v<T>);
+    if (first == last) return false;
+    const char* p = (*first == '-') ? first + 1 : first;
+    if (last - p >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) return false;
+    const std::string s(first, last);  // strto* needs a terminated string
+    char* end = nullptr;
+    T w{};
+    if constexpr (std::is_same_v<T, float>)       w = std::strtof(s.c_str(), &end);
+    else if constexpr (std::is_same_v<T, double>) w = std::strtod(s.c_str(), &end);
+    else                                          w = std::strtold(s.c_str(), &end);
+    if (end != s.c_str() + s.size()) return false;
+    out = w;
+    return true;
+}
+
 /// One value, the whole token.
 template <typename T>
 bool parse_value(std::string_view tok, T& out) {
@@ -77,8 +101,10 @@ bool parse_value(std::string_view tok, T& out) {
     if constexpr (std::is_floating_point_v<T>) {
         const char* first = tok.data();
         const char* last = tok.data() + tok.size();
-        if (*first == '+') ++first;        // from_chars takes '-' but not '+'
-        if (first == last) return false;
+        if (*first == '+') {               // from_chars takes '-' but not '+'
+            ++first;
+            if (first == last || *first == '-' || *first == '+') return false;   // "+-5" (#855)
+        }
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
         // Locale-independent, and reads inf, infinity and nan(...) as well.
         T v{};
@@ -92,19 +118,14 @@ bool parse_value(std::string_view tok, T& out) {
         // Out of range (an overflow or a subnormal underflow): strto* below
         // gives the rounded result, +-inf or a subnormal or 0.
 #endif
-        const std::string s(first, last);  // strto* needs a terminated string
-        char* end = nullptr;
-        T w;
-        if constexpr (std::is_same_v<T, float>)       w = std::strtof(s.c_str(), &end);
-        else if constexpr (std::is_same_v<T, double>) w = std::strtod(s.c_str(), &end);
-        else                                          w = std::strtold(s.c_str(), &end);
-        if (end != s.c_str() + s.size()) return false;
-        out = w;
-        return true;
+        return parse_float_strto(first, last, out);
     } else if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
         const char* first = tok.data();
         const char* last = tok.data() + tok.size();
-        if (*first == '+') ++first;        // from_chars takes '-' but not '+'
+        if (*first == '+') {               // from_chars takes '-' but not '+'
+            ++first;
+            if (first == last || *first == '-' || *first == '+') return false;   // "+-5" (#855)
+        }
         T v{};
         const auto [ptr, ec] = std::from_chars(first, last, v);
         if (ec != std::errc{} || ptr != last) return false;
@@ -112,7 +133,7 @@ bool parse_value(std::string_view tok, T& out) {
         return true;
     } else {
         std::istringstream ss{std::string(tok)};
-        T v;
+        T v{};
         if (!(ss >> v)) return false;
         ss >> std::ws;
         if (!ss.eof()) return false;

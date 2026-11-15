@@ -523,3 +523,31 @@ TEST_CASE("decode_element agrees with decode up to the last element", "[block][m
         REQUIRE(mtl::mx::mxfp4::decode_element(f4.data(), j) == b[j]);
     }
 }
+
+TEST_CASE("block_matrix_view: mult with y aliasing x or the encoded bytes", "[block][mult][855]") {
+    // Each row writes y(r) while later rows still read x, so y == x was wrong
+    // under NDEBUG (a debug-only assert, same object only). It is computed
+    // through a temporary now, on the decode path and the fused path.
+    std::vector<std::byte> bytes(4 * 5);
+    for (std::size_t r = 0; r < 4; ++r) {
+        bytes[r * 5] = std::byte(std::uint8_t(r + 1));                 // scale
+        for (std::size_t j = 0; j < 4; ++j)
+            bytes[r * 5 + 1 + j] = std::byte(std::uint8_t(std::int8_t(int(j) - int(r))));
+    }
+    auto check = [&](const auto& A) {
+        mtl::vec::dense_vector<float> x{1.0f, 2.0f, 3.0f, 4.0f}, want(4);
+        mtl::mult(A, x, want);
+        mtl::mult(A, x, x);
+        for (std::size_t i = 0; i < 4; ++i) CHECK(x(i) == want(i));
+    };
+    check(block_matrix_view<int8x4_scaled>(4, 4, bytes));
+    fused_calls = 0;
+    check(block_matrix_view<int8x4_fused>(4, 4, bytes));
+    CHECK(fused_calls > 0);
+
+    const block_matrix_view<int8x4_scaled> A(4, 4, bytes);
+    CHECK(mtl::detail::storage_overlaps(
+        mtl::vec::const_view(1, reinterpret_cast<const float*>(bytes.data() + 4)), A));
+    CHECK(A.bytes().data() == bytes.data());
+    CHECK(A.bytes().size() == bytes.size());
+}

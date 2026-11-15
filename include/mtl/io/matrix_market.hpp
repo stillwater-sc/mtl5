@@ -103,25 +103,40 @@ public:
     bool next_line(std::string& out) {
 #ifdef MTL5_HAS_ZLIB
         if (use_gz_) {
+            // Lines are split here, from gzread chunks, not with gzgets: gzgets
+            // NUL-terminates its buffer, so a line holding a NUL byte was cut
+            // there and the rest of it silently dropped (#855). A NUL now stays
+            // in the line, where the parsers reject it like any other byte.
             out.clear();
             for (;;) {
-                if (gzgets(gz_, gzbuf_.data(), static_cast<int>(gzbuf_.size())) == nullptr) {
-                    // End of stream, or an error: a corrupt or truncated file
-                    // must not read as a short one (#843).
-                    int err = Z_OK;
-                    const char* msg = gzerror(gz_, &err);
-                    if (err != Z_OK && err != Z_STREAM_END)
-                        throw std::runtime_error(std::string("mm_read: corrupt or truncated "
-                                                             "gzip stream: ") + (msg ? msg : ""));
-                    return !out.empty();              // trailing line without newline
+                if (gzpos_ == gzlen_) {
+                    const int n = gzread(gz_, gzbuf_.data(), static_cast<unsigned>(gzbuf_.size()));
+                    if (n <= 0) {
+                        // End of stream, or an error: a corrupt or truncated
+                        // file must not read as a short one (#843).
+                        int err = Z_OK;
+                        const char* msg = gzerror(gz_, &err);
+                        if (n < 0 || (err != Z_OK && err != Z_STREAM_END))
+                            throw std::runtime_error(std::string("mm_read: corrupt or truncated "
+                                                                 "gzip stream: ") + (msg ? msg : ""));
+                        gzpos_ = gzlen_ = 0;
+                        if (out.empty()) return false;
+                        if (out.back() == '\r') out.pop_back();
+                        return true;                      // trailing line without newline
+                    }
+                    gzpos_ = 0;
+                    gzlen_ = static_cast<std::size_t>(n);
                 }
-                out += gzbuf_.data();
-                if (!out.empty() && out.back() == '\n') {
-                    out.pop_back();
+                const char* first = gzbuf_.data() + gzpos_;
+                const char* last  = gzbuf_.data() + gzlen_;
+                const char* nl = std::find(first, last, '\n');
+                out.append(first, nl);
+                if (nl != last) {
+                    gzpos_ = static_cast<std::size_t>(nl - gzbuf_.data()) + 1;
                     if (!out.empty() && out.back() == '\r') out.pop_back();
                     return true;
                 }
-                // no newline yet -> long line, keep appending
+                gzpos_ = gzlen_;                          // no newline yet: read on
             }
         }
 #endif
@@ -137,6 +152,7 @@ private:
 #ifdef MTL5_HAS_ZLIB
     gzFile gz_ = nullptr;
     std::vector<char> gzbuf_;
+    std::size_t gzpos_ = 0, gzlen_ = 0;   // the unread part of gzbuf_
 #endif
     bool use_gz_ = false;
     std::uintmax_t bytes_ = 0;
@@ -311,22 +327,14 @@ inline mm_sizes read_mm_sizes(mm_reader& in, const mm_header& h, std::size_t max
         throw std::runtime_error(std::string(who) + ": a symmetric, skew-symmetric or "
                                  "hermitian matrix must be square");
 
-    // An array file stores `count` values, which must fit the index type. For
-    // a coordinate file the count only bounds nnz, which was already checked
-    // against max_index: a 100000 x 100000 matrix with 5 entries is fine with a
-    // 32-bit size_type although its m*n is not.
-    const std::size_t count = mm_value_count(
-        h, z.nrows, z.ncols,
-        h.coordinate ? std::numeric_limits<std::size_t>::max() : max_index, who);
-    if (h.coordinate) {
-        if (z.nnz > count)
-            throw std::runtime_error(std::string(who) + ": header nnz " + std::to_string(z.nnz)
-                                     + " exceeds the " + std::to_string(count)
-                                     + " entries a " + std::to_string(z.nrows) + " x "
-                                     + std::to_string(z.ncols) + " matrix can hold");
-    } else {
-        z.nnz = count;
-    }
+    // An array file stores `count` values, which must fit the index type. A
+    // coordinate file is not bounded by m*n at all: it may repeat an entry
+    // (duplicates are summed, #653), so its nnz can exceed the matrix's
+    // capacity, and its m*n need not fit in size_t -- a 2 x 2^63 matrix with
+    // one entry is fine, as is a 100000 x 100000 one with a 32-bit size_type.
+    // nnz was already checked against max_index, and the readers cap what
+    // they reserve by the file's size (#855).
+    if (!h.coordinate) z.nnz = mm_value_count(h, z.nrows, z.ncols, max_index, who);
     return z;
 }
 
@@ -403,9 +411,9 @@ void read_mm_coordinate(mm_reader& in, const mm_header& h, const mm_sizes& z, co
 /// needs a std::complex Value); general, symmetric, skew-symmetric and
 /// hermitian (complex only), mirrored into the full matrix. Not supported:
 /// pattern. Malformed input throws std::runtime_error: a bad banner, a negative
-/// or overflowing size, a header nnz larger than the matrix can hold, a
-/// malformed or out-of-range entry, too few or too many entries (#843).
-/// Duplicate coordinates are summed.
+/// or overflowing size, a malformed or out-of-range entry, too few or too many
+/// entries (#843). Duplicate coordinates are summed, so a coordinate file's
+/// nnz may exceed m*n (#855).
 template <typename Value = double, typename Parameters = mat::parameters<>>
 mat::compressed2D<Value, Parameters> mm_read(const std::string& filename) {
     constexpr const char* who = "mm_read";
@@ -473,6 +481,11 @@ mat::compressed2D<Value, Parameters> mm_read(const std::string& filename) {
             data.push_back(acc);
             starts[r + 1]++;
         }
+        // Duplicates are summed, so at most m*n entries remain, but a mirrored
+        // file's entries are doubled first: check the result fits size_type.
+        if (data.size() > max_index)
+            throw std::runtime_error(std::string(who) + ": " + std::to_string(data.size())
+                                     + " stored entries exceed the index type");
         for (size_type i = 0; i < nrows; ++i) starts[i + 1] += starts[i];
 
         return mat::compressed2D<Value, Parameters>(
