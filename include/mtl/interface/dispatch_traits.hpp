@@ -8,6 +8,7 @@
 #include <complex>
 #include <mtl/tag/orientation.hpp>
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/mtl_fwd.hpp>
 #include <mtl/simd/batch.hpp>
 
 namespace mtl::interface {
@@ -306,6 +307,25 @@ inline constexpr bool is_compressed2D_v<mat::compressed2D<Value, Params>> = true
 template <typename M>
 inline constexpr bool is_suitesparse_eligible_v =
     is_compressed2D_v<M> && is_blas_scalar_v<typename M::value_type>;
+
+/// True for vec::dense_vector<double, P>, the only vector type the SuiteSparse
+/// bindings (umfpack_solve, cholmod_solve, spqr_solve) take.
+template <typename V>
+inline constexpr bool is_dense_vector_double_v = false;
+
+template <typename Params>
+inline constexpr bool is_dense_vector_double_v<vec::dense_vector<double, Params>> = true;
+
+/// True when the sparse solve dispatch can call a SuiteSparse binding:
+/// compressed2D<double> with dense_vector<double> x and b. Every other operand
+/// (float, or another vector type) takes the native sparse solver (#850); the
+/// bindings take only double.
+template <typename M, typename VecX, typename VecB>
+inline constexpr bool suitesparse_solve_dispatches_v =
+    is_compressed2D_v<std::remove_cvref_t<M>>
+    && std::is_same_v<typename std::remove_cvref_t<M>::value_type, double>
+    && is_dense_vector_double_v<std::remove_cvref_t<VecX>>
+    && is_dense_vector_double_v<std::remove_cvref_t<VecB>>;
 
 } // namespace mtl::interface
 

@@ -89,7 +89,8 @@ reusable predicates in
 | `is_row_major_v<M>` | row-major layout? (drives the orientation bridge, Decision 8) |
 | `is_compressed2D_v<M>` | is this the CRS sparse matrix? (route to the sparse kernel) |
 | `accumulator_allows_blas_v<Acc>` | is the accumulator the default `void`? (Decision 6) |
-| `is_suitesparse_eligible_v<M>` | CRS + float/double? (route to an external sparse solver) |
+| `is_suitesparse_eligible_v<M>` | CRS + float/double? |
+| `suitesparse_solve_dispatches_v<M, X, B>` | CRS `double` **and** `dense_vector<double>` x and b? (route to an external sparse solver; the bindings take only `double`, #850) |
 
 Every operation gates on this shared vocabulary rather than open-coding "is it
 float, contiguous, right orientation." Eligibility logic is written once and read

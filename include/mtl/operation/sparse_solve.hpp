@@ -5,11 +5,14 @@
 // best available backend based on matrix type and library availability:
 //
 //   Dense float/double + LAPACK  -> LAPACK (existing in lu.hpp/cholesky.hpp/qr.hpp)
-//   Sparse float/double + UMFPACK -> UMFPACK (for LU)
-//   Sparse float/double + CHOLMOD -> CHOLMOD (for Cholesky)
-//   Sparse float/double + SPQR   -> SPQR (for QR)
-//   Sparse (any type)             -> native sparse solvers
+//   Sparse double + UMFPACK       -> UMFPACK (for LU)
+//   Sparse double + CHOLMOD       -> CHOLMOD (for Cholesky)
+//   Sparse double + SPQR          -> SPQR (for QR)
+//   Sparse (any other type)       -> native sparse solvers
 //   Dense (any type)              -> dense generic solvers
+//
+// The external solvers take compressed2D<double> and dense_vector<double> x
+// and b only; float, and any other vector type, take the native solver (#850).
 //
 // The dispatch is entirely at compile time via if constexpr + traits.
 //
@@ -54,7 +57,7 @@
 namespace mtl {
 
 /// Cholesky-based solve with automatic dispatch.
-/// For sparse float/double with CHOLMOD: uses CHOLMOD.
+/// For sparse double (dense_vector<double> x, b) with CHOLMOD: uses CHOLMOD.
 /// For sparse (any type): uses native sparse Cholesky with AMD ordering.
 /// For dense: uses in-place dense Cholesky.
 template <Matrix M, Vector VecX, Vector VecB>
@@ -63,7 +66,7 @@ void cholesky_solve_dispatch(const M& A, VecX& x, const VecB& b) {
 
     if constexpr (std::is_same_v<category, tag::sparse>) {
 #ifdef MTL5_HAS_CHOLMOD
-        if constexpr (interface::is_suitesparse_eligible_v<M>) {
+        if constexpr (interface::suitesparse_solve_dispatches_v<M, VecX, VecB>) {
             interface::cholmod_solve(A, x, b);
             return;
         }
@@ -85,7 +88,7 @@ void cholesky_solve_dispatch(const M& A, VecX& x, const VecB& b) {
 }
 
 /// LU-based solve with automatic dispatch.
-/// For sparse float/double with UMFPACK: uses UMFPACK.
+/// For sparse double (dense_vector<double> x, b) with UMFPACK: uses UMFPACK.
 /// For sparse (any type): uses native sparse LU.
 /// For dense: uses in-place dense LU with partial pivoting.
 template <Matrix M, Vector VecX, Vector VecB>
@@ -94,7 +97,7 @@ void lu_solve_dispatch(const M& A, VecX& x, const VecB& b) {
 
     if constexpr (std::is_same_v<category, tag::sparse>) {
 #ifdef MTL5_HAS_UMFPACK
-        if constexpr (interface::is_suitesparse_eligible_v<M>) {
+        if constexpr (interface::suitesparse_solve_dispatches_v<M, VecX, VecB>) {
             interface::umfpack_solve(A, x, b);
             return;
         }
@@ -117,7 +120,8 @@ void lu_solve_dispatch(const M& A, VecX& x, const VecB& b) {
 }
 
 /// QR-based solve with automatic dispatch.
-/// For sparse float/double with SPQR: uses SPQR.
+/// For sparse double (dense_vector<double> x, b) with SPQR: uses SPQR.
+/// Both sparse paths throw std::invalid_argument for m < n (underdetermined).
 /// For sparse (any type): uses native sparse QR.
 /// For dense: uses in-place dense QR.
 template <Matrix M, Vector VecX, Vector VecB>
@@ -126,7 +130,7 @@ void qr_solve_dispatch(const M& A, VecX& x, const VecB& b) {
 
     if constexpr (std::is_same_v<category, tag::sparse>) {
 #ifdef MTL5_HAS_SPQR
-        if constexpr (interface::is_suitesparse_eligible_v<M>) {
+        if constexpr (interface::suitesparse_solve_dispatches_v<M, VecX, VecB>) {
             interface::spqr_solve(A, x, b);
             return;
         }
