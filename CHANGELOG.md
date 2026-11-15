@@ -95,6 +95,40 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Test-matrix generators: Kahan conditioning, `forsythe(1)`, `make_sigma(0)`, Wilkinson sizes, the Rosser spectrum, reproducible random generators** (#844, from the QA sweep #789).
+  - **`kahan`** was not ill-conditioned. Its diagonal was s^i · 25 rather than s^i, which gave κ₁ = 2.1 for n = 10. It now follows MATLAB's `gallery('kahan', n, theta, pert)`: K = diag(s^i)·(I − c·triu(ones, 1)) + pert·ε·diag(n, …, 1). The third parameter, formerly `zeta`, is now MATLAB's `pert`, still defaulting to 25. κ₁ is now 92 for n = 10 and 2.9e5 for n = 30.
+  - **`forsythe(1)`** returned alpha, because the corner write landed on the diagonal. It now returns [lambda].
+  - **`randsvd`, `randsym` and `randspd`** with n = 0 and a kappa wrote `sigma[0]` out of bounds under `NDEBUG`. They now return an empty matrix.
+  - **`wilkinson(n)`** follows MATLAB for any n ≥ 1, so an even n gets the half-integer diagonal `abs(-(n-1)/2 : (n-1)/2)`. Under `NDEBUG` an even n used to build a wrong matrix, and n = 0 wrapped. n = 0 now throws `std::invalid_argument`, and so does an even n with an integer value type.
+  - **`rosser`'s** documented eigenvalues listed 1020 twice and lacked 510 − 100√26, so they summed to 5059.9 instead of the trace 4040. The header and the docs now give the true spectrum.
+  - **Reproducible random generators:** `fill_random`, `random_vector`, `random_matrix`, `randorth`, `randsvd`, `randsym` and `randspd` gain a `std::uint64_t` seed overload and a `std::mt19937_64&` overload.
+    - The draws come from the raw engine stream, as in `gen_dot` and `gen_sum`, so a seed gives the same values with libstdc++, libc++ and MSVC.
+    - Calls without a seed stay non-deterministic, seeded from `std::random_device`. Their values are now drawn the same portable way, not through `std::uniform_real_distribution`.
+    - The square `randsvd` with a kappa takes a seed through `randsvd(n, n, kappa, mode, seed)`.
+  - **`randsym` and `randspd`** are now exactly symmetric: they average A(i,j) and A(j,i) after forming Q·Λ·Qᵀ.
+  - **Argument checks** now throw `std::invalid_argument` in every build. They used to be `assert`s. They cover:
+    - kappa < 1 and a mode outside 1–5 (an invalid mode used to fall back to mode 3);
+    - a σ or eigenvalue list of the wrong length, and a non-positive `randspd` eigenvalue;
+    - hi < lo in the random fills;
+    - `gen_dot` and `gen_sum`'s n, c < 1 and c beyond the type's range;
+    - NaN endpoints in `geomspace`.
+  - **Genericity:** `clement` and `kahan` call `sqrt`, `sin` and `cos` through ADL, and `test_shim_genericity` covers them.
+  - **Smaller items:**
+    - `testsuite::by_name` joins its path with `std::filesystem::path`.
+    - The `pascal` header documents where float and double stop being exact (n = 14 and 29) and where the entries overflow (n = 67 and 516).
+    - The `clement` comment now states its formula and spectrum correctly.
+  - **Tests:**
+    - `test_generator_properties.cpp` checks each generator's documented property against an independent computation:
+      - the Clement, Rosser, Frank, Forsythe and companion eigenvalues, and the Wilkinson W21+ pair;
+      - the Pascal determinant, and that Pascal, Moler, Lehmer and minij are SPD;
+      - the Lehmer and minij inverses;
+      - the Hilbert condition numbers, and Kahan's κ₁ against its closed-form inverse.
+    - The same file tests n = 0 and n = 1 for every generator, and `float` for pascal, hilbert, kahan and clement.
+    - `test_random_seed.cpp` checks that a seed reproduces exact values of the mt19937_64 stream, covers the [lo, hi) bounds, and checks the condition number in every `randsvd` mode.
+    - `test_testsuite.cpp` loads all 20 catalog matrices, not 7, and checks each one's 2-norm condition number from the SVD.
+    - Every fix has a test that fails on the previous code.
+  - **Catalog condition numbers:** the check found 6 of the 20 published `testsuite::kappa()` values that are not the 2-norm condition number they are documented as. `faires74x3` is the ∞-norm value. `steam3` and `fs_183_1` are 1-norm values. `fs_183_3` repeats `fs_183_1`'s value, and `west0167` repeats `steam1`'s (2.827e7, against a computed 4.785e10). `rump6x6ill` is an estimate. The values are unchanged; the test records each discrepancy.
+
 - **Matrix Market and element-list I/O: header and entry validation, symmetric array files, complex values, the nan/inf round trip, gzip errors, PNG sizes** (#843, from the QA sweep #789).
   - **Sizes:**
     - A negative dimension (`-1 2 0`) parsed into `size_t` as 2^64-1. `mm_read` then wrapped `nrows + 1` to 0 and wrote out of bounds, and `mm_read_dense` threw `bad_alloc`. Sizes are now parsed strictly: non-negative integers, the whole token, exactly two or three per line.

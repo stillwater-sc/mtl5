@@ -8,6 +8,10 @@ namespace mtl::generators {
 
 /// Pascal matrix: P(i,j) = C(i+j, i) = (i+j)! / (i! * j!).
 /// Symmetric positive definite with determinant 1.
+/// The entries grow like 4^n / sqrt(pi n): they are exact in T only up to the
+/// largest integer T represents exactly (2^24 in float: n <= 14; 2^53 in
+/// double: n <= 29), and the largest, P(n-1,n-1), overflows to inf in float
+/// for n >= 67 and in double for n >= 516.
 template <typename T = double>
 auto pascal(std::size_t n) {
     mat::dense2D<T> P(n, n);

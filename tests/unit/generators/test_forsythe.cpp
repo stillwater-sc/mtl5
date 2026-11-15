@@ -58,3 +58,12 @@ TEST_CASE("forsythe default parameters", "[generators][forsythe]") {
     REQUIRE_THAT(F(0, 1), WithinAbs(1.0, 1e-15));
     REQUIRE_THAT(F(2, 0), WithinAbs(1e-10, 1e-25));
 }
+
+TEST_CASE("forsythe of order 1 is [lambda]", "[generators][forsythe]") {
+    // The corner (n-1, 0) is the diagonal for n = 1; writing alpha there
+    // replaced lambda (#844).
+    auto F = generators::forsythe<double>(1, 1e-10, 2.0);
+    REQUIRE(F.num_rows() == 1);
+    REQUIRE(F(0, 0) == 2.0);
+    REQUIRE(generators::forsythe<double>(2, 1e-10, 2.0)(1, 0) == 1e-10);
+}

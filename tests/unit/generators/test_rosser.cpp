@@ -40,11 +40,9 @@ TEST_CASE("rosser trace equals sum of eigenvalues", "[generators][rosser]") {
     for (std::size_t i = 0; i < 8; ++i)
         trace += R(i, i);
 
-    // Known eigenvalues sum: 0 + 1000 + 1000 + 1020 + 1020
-    //   + (-10*sqrt(10405)) + (10*sqrt(10405)) + (510+100*sqrt(26))
-    //   = 3040 + 510 + 100*sqrt(26) ~= 3040 + 510 + 509.902 ~= 4059.902
-    // But trace should equal sum of eigenvalues exactly.
-    // trace = 611+899+899+611+411+411+99+99 = 4040
+    // The eigenvalues, +-10 sqrt(10405), 0, 510 +- 100 sqrt(26), 1000, 1000
+    // and 1020, sum to 4040; the spectrum itself is checked in
+    // test_generator_properties.cpp.
     double expected_trace = 4040.0;
     REQUIRE_THAT(trace, WithinAbs(expected_trace, 1e-10));
 }

@@ -95,7 +95,8 @@ inline mat::dense2D<double> by_name(const std::string& name,
                                     const std::string& dir = data_dir()) {
     if (kappa_table().find(name) == kappa_table().end())
         throw std::runtime_error("mtl::testsuite::by_name: unknown matrix '" + name + "'");
-    return mtl::io::mm_read_dense<double>(dir + "/" + name + ".mtx");
+    return mtl::io::mm_read_dense<double>(
+        (std::filesystem::path(dir) / (name + ".mtx")).string());
 }
 
 } // namespace mtl::testsuite

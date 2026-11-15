@@ -72,7 +72,7 @@ vec::dense_vector<T> logspace(const T& start, const T& stop, std::size_t steps, 
 
 /// geomspace: `steps` samples in a geometric progression from `start` to `stop`
 /// (NumPy semantics -- start and stop are the actual endpoints). Requires
-/// start and stop to be nonzero and of the same sign.
+/// start and stop to be nonzero, not NaN, and of the same sign.
 ///
 /// Note: unlike the historical Universal implementation (which aliased logspace
 /// and therefore treated the endpoints as exponents), this computes a true
@@ -85,6 +85,9 @@ vec::dense_vector<T> geomspace(const T& start, const T& stop, std::size_t steps,
     // A geometric progression is undefined through zero or across a sign change:
     // ratio = stop/start would divide by zero or, for opposite signs, feed a
     // negative base to pow(ratio, fractional) and yield NaN. Reject up front.
+    // A NaN endpoint fails every comparison, so it would pass the checks below.
+    if (start != start || stop != stop)
+        throw std::invalid_argument("geomspace: endpoints must not be NaN");
     if (start == T(0) || stop == T(0))
         throw std::invalid_argument("geomspace: endpoints must be nonzero");
     if ((start < T(0)) != (stop < T(0)))

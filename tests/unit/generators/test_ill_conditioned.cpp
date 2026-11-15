@@ -28,6 +28,7 @@
 #include <cstring>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -120,4 +121,35 @@ TEMPLATE_TEST_CASE("gen_sum: the exact split of a GenDot product, permuted", "[g
         // dot product's condition number, to about u.
         CHECK(std::fabs(s.cond / (d.cond / 2) - 1.0) < 1e-5);
     }
+}
+
+TEST_CASE("gen_dot and gen_sum check their arguments in every build", "[generators][ill_conditioned]") {
+    // these were asserts, gone under NDEBUG (#844)
+    using generators::gen_dot;
+    using generators::gen_sum;
+    REQUIRE_THROWS_AS(gen_dot<double>(5, 1e10, std::uint64_t(1)), std::invalid_argument);
+    REQUIRE_THROWS_AS(gen_dot<double>(10, 0.5, std::uint64_t(1)), std::invalid_argument);
+    REQUIRE_THROWS_AS(gen_dot<double>(10, std::nan(""), std::uint64_t(1)), std::invalid_argument);
+    REQUIRE_THROWS_AS(gen_dot<float>(10, 1e38, std::uint64_t(1)), std::invalid_argument);
+    REQUIRE_THROWS_AS(gen_dot<double>(10, std::numeric_limits<double>::infinity(), std::uint64_t(1)),
+                      std::invalid_argument);
+    REQUIRE_THROWS_AS(gen_sum<double>(13, 1e10, std::uint64_t(1)), std::invalid_argument);
+    REQUIRE_THROWS_AS(gen_sum<double>(10, 1e10, std::uint64_t(1)), std::invalid_argument);
+}
+
+TEST_CASE("gen_dot stays finite at the largest c the type allows", "[generators][ill_conditioned]") {
+    // c = 2^(max_exponent - 4) is the largest accepted: 2^124 ~ 2e37 in float
+    const double c = std::ldexp(1.0, std::numeric_limits<float>::max_exponent - 4);
+    for (std::uint64_t seed = 0; seed < 40; ++seed)
+        for (std::size_t n : {6u, 50u, 1000u}) {
+            CAPTURE(seed, n);
+            const auto r = generators::gen_dot<float>(n, c, seed);
+            for (std::size_t i = 0; i < n; ++i) {
+                REQUIRE(std::isfinite(r.x(i)));
+                REQUIRE(std::isfinite(r.y(i)));
+            }
+            REQUIRE(std::isfinite(r.d));
+        }
+    REQUIRE_NOTHROW(generators::gen_sum<float>(100, c, std::uint64_t(2)));
+    REQUIRE_THROWS_AS(generators::gen_dot<float>(50, 2 * c, std::uint64_t(2)), std::invalid_argument);
 }

@@ -7,9 +7,10 @@
 
 namespace mtl::generators {
 
-/// Clement (tridiagonal) matrix: C(i,i+1) = sqrt(i*(n-1-i)) on superdiagonal,
-/// C(i+1,i) = sqrt((i+1)*(n-2-i)) on subdiagonal (symmetric form).
-/// For even n, eigenvalues are +/-(n-1), +/-(n-3), ..., +/-1.
+/// Clement (tridiagonal) matrix, symmetric form: zero diagonal and
+/// C(i,i+1) = C(i+1,i) = sqrt((i+1)*(n-1-i)) for i = 0..n-2.
+/// Its eigenvalues are n-1, n-3, ..., -(n-1): +/-(n-1), ..., +/-1 for even n,
+/// and +/-(n-1), ..., +/-2, 0 for odd n.
 template <typename T = double>
 auto clement(std::size_t n) {
     mat::dense2D<T> C(n, n);
@@ -18,10 +19,9 @@ auto clement(std::size_t n) {
         for (std::size_t j = 0; j < n; ++j)
             C(i, j) = T(0);
 
-    // Symmetric Clement: sub- and super-diagonal entries are the same
-    // C(i,i+1) = C(i+1,i) = sqrt((i+1)*(n-1-i))
     for (std::size_t i = 0; i + 1 < n; ++i) {
-        T val = std::sqrt(T((i + 1) * (n - 1 - i)));
+        using std::sqrt;
+        T val = sqrt(T((i + 1) * (n - 1 - i)));
         C(i, i + 1) = val;
         C(i + 1, i) = val;
     }

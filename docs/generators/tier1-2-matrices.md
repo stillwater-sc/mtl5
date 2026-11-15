@@ -26,7 +26,7 @@ MTL5 needs a test matrix generation facility analogous to MATLAB's `gallery()` �
 
 | Generator | Formula | Key Properties |
 |-----------|---------|----------------|
-| `kahan<T>(n, θ, ζ)` | Upper triangular, K(i,i)=s^i·ζ, K(i,j)=-c·s^i | Ill-conditioned, tests QR |
+| `kahan<T>(n, θ, pert)` | Upper triangular, K(i,i)=s^i+pert·ε·(n-i), K(i,j)=-c·s^i | Ill-conditioned, tests QR |
 | `frank<T>(n)` | F(i,j) = n+1-max(i+1,j+1) for j≥i-1 | Upper Hessenberg, known eigenvalues |
 | `moler<T>(n, α)` | M = L·L^T, L unit lower tri with off-diag α | SPD, eigenvalues cluster near 0 |
 | `pascal<T>(n)` | P(i,j) = C(i+j, i), recurrence P(i,j)=P(i-1,j)+P(i,j-1) | SPD, det=1, binomial structure |
@@ -201,11 +201,16 @@ Two constructors: square and rectangular. Rank-1 matrix.
 #### `minij<T>(n)` — M(i,j) = min(i+1, j+1)
 SPD. For 3×3: [[1,1,1],[1,2,2],[1,2,3]].
 
-#### `kahan<T>(n, θ=1.2, ζ=25)` — Upper triangular
-- s = sin(θ), c = cos(θ)
-- K(i,i) = s^i · ζ
+#### `kahan<T>(n, θ=1.2, pert=25)` — Upper triangular
+As MATLAB's `gallery('kahan', n, theta, pert)`:
+K = diag(1, s, …, s^(n-1)) · (I − c·triu(ones(n), 1)) + pert·ε·diag(n, n-1, …, 1).
+- s = sin(θ), c = cos(θ), ε = `std::numeric_limits<T>::epsilon()`
+- K(i,i) = s^i + pert·ε·(n-i)
 - K(i,j) = -c · s^i for j > i
 - K(i,j) = 0 for j < i
+- The condition number grows exponentially in n: κ₁ ≈ 92 for n = 10 and 2.9e5 for n = 30 (θ = 1.2).
+- The small perturbation keeps column-pivoted QR from swapping columns that tie only through rounding. With `pert = 0` you get the unperturbed matrix.
+- Before #844 the diagonal was s^i · 25. That scaling made the matrix well conditioned (κ₁ = 2.1 for n = 10).
 
 #### `frank<T>(n)` — Upper Hessenberg
 - F(i,j) = n+1-max(i+1,j+1) for j ≥ i-1, else 0
@@ -221,12 +226,12 @@ SPD. For 3×3: [[1,1,1],[1,2,2],[1,2,3]].
 #### `pascal<T>(n)` — Binomial coefficients
 - P(i,0) = P(0,j) = 1
 - P(i,j) = P(i-1,j) + P(i,j-1)
-- Entries are C(i+j, i)
+- Entries are C(i+j, i), which grow like 4^n. They are exact in `float` up to n = 14 and in `double` up to n = 29. The largest entry overflows to inf in `float` for n ≥ 67, and in `double` for n ≥ 516.
 
 #### `clement<T>(n)` — Tridiagonal, known eigenvalues
 - Diagonal = 0
 - C(i,i±1) = √((i+1)(n-1-i))
-- For even n, eigenvalues: ±(n-1), ±(n-3), ..., ±1
+- Eigenvalues: n-1, n-3, …, -(n-1). That is ±(n-1), …, ±1 for even n, and ±(n-1), …, ±2, 0 for odd n.
 
 #### `companion<T>(coeffs)` — Polynomial eigenvalue matrix
 - Input: coefficients [c₀, c₁, ..., c_{n-1}] of p(x) = x^n + c_{n-1}x^{n-1} + ... + c₀
@@ -239,7 +244,9 @@ SPD. For 3×3: [[1,1,1],[1,2,2],[1,2,3]].
 
 #### `forsythe<T>(n, α=1e-10, λ=0)` — Perturbed Jordan block
 - Diagonal = λ, superdiagonal = 1, F(n-1,0) = α
+- Eigenvalues for n ≥ 2: λ + α^(1/n) times the n-th roots of unity
 - When α=0: pure Jordan block
+- For n = 1 the corner is the diagonal, so the result is [λ]. MATLAB gives [α].
 - Tests eigensolvers near defective matrices
 
 #### `laplacian_1d<T>(n)` — 1D discrete Laplacian
@@ -261,7 +268,7 @@ All tests use Catch2 with `WithinAbs` floating-point matchers.
 | `test_lotkin` | Concept check, first row=1, rows 1+ match Hilbert, asymmetry |
 | `test_ones` | Concept check, square/rectangular, all entries=1, integer type |
 | `test_minij` | Concept check, M(i,j)=min(i+1,j+1), symmetry, known 3×3 |
-| `test_kahan` | Dimensions, upper triangular, diagonal=s^i·ζ, superdiag=-c·s^i |
+| `test_kahan` | Dimensions, upper triangular, diagonal=s^i, superdiag=-c·s^i; κ₁ against the closed-form inverse in `test_generator_properties` |
 | `test_frank` | Dimensions, Hessenberg, known 4×4, subdiag=n-i |
 | `test_moler` | Dimensions, symmetry, known 3×3, L·L^T reconstruction, custom α |
 | `test_pascal` | Dimensions, symmetry, known values, first row/col=1, recurrence |

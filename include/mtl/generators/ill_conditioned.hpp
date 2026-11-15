@@ -32,13 +32,15 @@
 //
 // Range: the entries reach 2^(b/2 + 1) and the products 2^(b + 2), b = log2 c,
 // so c must stay below about 2^(max_exponent - 4): 2e37 in float, 1e307 in double.
+// A larger c, a c below 1 or NaN, and an n below the minimum throw
+// std::invalid_argument in every build (#844).
 
-#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <random>
+#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
@@ -105,10 +107,14 @@ template <typename T = double>
     requires math::exact_accumulable<T>
 ill_conditioned_dot<T> gen_dot(std::size_t n, double c, std::mt19937_64& gen) {
     using namespace ill_conditioned_detail;
-    assert(n >= 6);
-    assert(c >= 1.0);
+    if (n < 6)
+        throw std::invalid_argument("gen_dot: n must be >= 6");
+    if (!(c >= 1.0))
+        throw std::invalid_argument("gen_dot: c must be >= 1");
     const double b = std::log2(c);
-    assert(b + 4 <= std::numeric_limits<T>::max_exponent);
+    if (!(b + 4 <= std::numeric_limits<T>::max_exponent))
+        throw std::invalid_argument("gen_dot: c is too large for the value type "
+                                    "(log2 c must be <= max_exponent - 4)");
     auto sym = [&] { return 2.0 * rand01(gen) - 1.0; };   // 2*rand - 1
 
     const std::size_t n2 = static_cast<std::size_t>(mround(static_cast<double>(n) / 2));
@@ -166,7 +172,8 @@ ill_conditioned_dot<T> gen_dot(std::size_t n, double c, std::uint64_t seed) {
 template <typename T = double>
     requires math::exact_accumulable<T>
 ill_conditioned_sum<T> gen_sum(std::size_t n, double c, std::mt19937_64& gen) {
-    assert(n >= 12 && n % 2 == 0);
+    if (n < 12 || n % 2 != 0)
+        throw std::invalid_argument("gen_sum: n must be even and >= 12");
     const auto dot = gen_dot<T>(n / 2, c, gen);
     ill_conditioned_sum<T> r{vec::dense_vector<T>(n), T(0), 0.0};
     vec::dense_vector<T> other(n, T(0));   // a partner for the shared permutation
