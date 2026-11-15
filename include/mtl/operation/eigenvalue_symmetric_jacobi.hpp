@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cassert>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
@@ -14,6 +16,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/detail/matrix_checks.hpp>
 
 namespace mtl {
 
@@ -34,7 +37,8 @@ namespace mtl {
 /// computed so that theta^2 cannot overflow. A pair is skipped when
 ///   |a_pq| <= tol * sqrt(|a_pp|) * sqrt(|a_qq|),
 /// the relative test of Demmel & Veselic, and iteration stops after a sweep that
-/// rotates no pair (or after max_sweeps sweeps, default 60). This, rather than a
+/// rotates no pair; max_sweeps sweeps (default 60) that all rotate throw
+/// std::runtime_error. This, rather than a
 /// stop on off-diagonal mass <= tol^2 * ||A||_F^2, is what keeps small eigenvalues
 /// relatively accurate: a Frobenius-norm stop can leave an entry far below
 /// eps*||A|| that still couples two small eigenvalues and moves them both. An
@@ -57,7 +61,7 @@ auto eigen_symmetric_jacobi(const M& A,
     using std::sqrt;
 
     const size_type n = A.num_rows();
-    assert(n == A.num_cols());
+    detail::require_square_finite(A, "mtl::eigen_symmetric_jacobi");   // in every build (#853)
 
     struct EigenResult {
         vec::dense_vector<value_type> eigenvalues;
@@ -77,6 +81,7 @@ auto eigen_symmetric_jacobi(const M& A,
             V(i, j) = (i == j) ? one : zero;
         }
 
+    bool converged = false;
     for (size_type sweep = 0; sweep < max_sweeps; ++sweep) {
         bool rotated = false;
         for (size_type p = 0; p + 1 < n; ++p) {
@@ -124,8 +129,13 @@ auto eigen_symmetric_jacobi(const M& A,
                 rotated = true;
             }
         }
-        if (!rotated) break;
+        if (!rotated) { converged = true; break; }
     }
+    // max_sweeps sweeps that all still rotated: not converged. Say so rather
+    // than return the partly diagonalized matrix (#853).
+    if (!converged)
+        throw std::runtime_error("mtl::eigen_symmetric_jacobi: did not converge in "
+                                 + std::to_string(max_sweeps) + " sweeps");
 
     // Sort ascending and reorder the eigenvector columns to match.
     std::vector<std::pair<value_type, size_type>> eig_idx(n);

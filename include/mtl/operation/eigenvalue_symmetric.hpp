@@ -20,6 +20,7 @@
 #include <mtl/functor/scalar/real.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/identity.hpp>
+#include <mtl/detail/matrix_checks.hpp>
 #include <mtl/detail/unit_roundoff.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
@@ -52,8 +53,8 @@ bool tridiagonal_negligible(const Real& e, const Real& d0, const Real& d1, const
 /// eigenvalue type. A custom scalar without a std::numeric_limits specialization
 /// gets epsilon() == Real{}, i.e. zero, and a zero tolerance only deflates
 /// subdiagonal entries that are exactly zero -- the iteration can then run out
-/// of max_iter and return unconverged eigenvalues without saying so. For such a
-/// type machine_epsilon measures the epsilon instead (detail/unit_roundoff.hpp).
+/// of max_iter (which throws, #853). For such a type machine_epsilon measures
+/// the epsilon instead (detail/unit_roundoff.hpp).
 template <typename Real>
 Real default_eigen_tolerance() {
     return machine_epsilon<Real>();
@@ -92,7 +93,7 @@ auto eigenvalue_symmetric_generic(const M& A,
     using std::abs;
     using std::sqrt;
     const size_type n = A.num_rows();
-    assert(n == A.num_cols());
+    detail::require_square_finite(A, "mtl::eigenvalue_symmetric");
 
     // No eigenvalues for a 0x0 matrix. Return before the e(n-1) sentinel write
     // below, which would otherwise underflow the unsigned index to n == 0.
@@ -129,6 +130,7 @@ auto eigenvalue_symmetric_generic(const M& A,
     e(n - 1) = math::zero<real_t>();
 
     // Implicit QR iteration (symmetric tridiagonal QR with Wilkinson shift)
+    bool converged = false;
     for (size_type iter = 0; iter < max_iter; ++iter) {
         // Find the largest unreduced subdiagonal element
         size_type p = 0; // start of active block
@@ -140,7 +142,7 @@ auto eigenvalue_symmetric_generic(const M& A,
             e(i - 2) = math::zero<real_t>();
             q++;
         }
-        if (q >= n - 1) break; // all converged
+        if (q >= n - 1) { converged = true; break; } // all converged
 
         size_type end = n - q; // active block is d[p..end-1]
 
@@ -197,6 +199,13 @@ auto eigenvalue_symmetric_generic(const M& A,
         }
     }
 
+    // max_iter sweeps without deflating the whole tridiagonal: say so, as
+    // eigenvalue(), schur() and the LAPACK path do, instead of returning the
+    // unconverged diagonal (#853).
+    if (!converged)
+        throw std::runtime_error("mtl::eigenvalue_symmetric: the QR iteration did not converge in "
+                                 + std::to_string(max_iter) + " iterations");
+
     // Sort eigenvalues
     std::vector<real_t> eigs(n);
     for (size_type i = 0; i < n; ++i)
@@ -225,6 +234,9 @@ auto eigenvalue_symmetric(const M& A,
                           magnitude_t<typename M::value_type> tol =
                               detail::default_eigen_tolerance<magnitude_t<typename M::value_type>>(),
                           typename M::size_type max_iter = 0) {
+    // On every path (#853): a non-square A was only asserted, and a NaN made
+    // LAPACK report non-convergence and the in-house loop return NaN.
+    detail::require_square_finite(A, "mtl::eigenvalue_symmetric");
 #ifdef MTL5_HAS_LAPACK
     // No orientation guard: the branch builds an explicit column-major copy
     // through the (i,j) accessor below, so it is correct for a row-major OR a
@@ -235,7 +247,6 @@ auto eigenvalue_symmetric(const M& A,
         using value_type = typename M::value_type;
         using size_type  = typename M::size_type;
         const size_type n = A.num_rows();
-        assert(n == A.num_cols());
         // syev rejects lda = 0 (reference LAPACK prints "parameter number 5
         // had an illegal value" and exits), so an empty A never reaches it.
         if (n == 0) return vec::dense_vector<value_type>(0);
@@ -279,7 +290,6 @@ auto eigenvalue_symmetric(const M& A,
         using size_type  = typename M::size_type;
         using real_t     = magnitude_t<value_type>;
         const size_type n = A.num_rows();
-        assert(n == A.num_cols());
         if (n == 0) return vec::dense_vector<real_t>(0);
         // LAPACK zheev/cheev: eigenvalues only ('N'), lower triangle ('L').
         // Work on a column-major copy; a Hermitian A is its own conjugate
@@ -354,7 +364,7 @@ auto eigen_symmetric(const M& A,
     using std::abs;
     using std::sqrt;
     const size_type n = A.num_rows();
-    assert(n == A.num_cols());
+    detail::require_square_finite(A, "mtl::eigen_symmetric");
 
     struct EigenResult {
         vec::dense_vector<real_t> eigenvalues;
@@ -439,6 +449,7 @@ auto eigen_symmetric(const M& A,
     e(n - 1) = math::zero<real_t>();
 
     // === Phase 2: Implicit QR iteration, accumulating Givens rotations into Q ===
+    bool converged = false;
     for (size_type iter = 0; iter < max_iter; ++iter) {
         size_type p = 0;
         size_type q = 0;
@@ -449,7 +460,7 @@ auto eigen_symmetric(const M& A,
             e(i - 2) = math::zero<real_t>();
             q++;
         }
-        if (q >= n - 1) break;
+        if (q >= n - 1) { converged = true; break; }
 
         size_type end = n - q;
 
@@ -512,6 +523,13 @@ auto eigen_symmetric(const M& A,
             }
         }
     }
+
+    // max_iter sweeps without deflating the whole tridiagonal: say so, as
+    // eigenvalue(), schur() and the LAPACK path do, instead of returning the
+    // unconverged diagonal (#853).
+    if (!converged)
+        throw std::runtime_error("mtl::eigen_symmetric: the QR iteration did not converge in "
+                                 + std::to_string(max_iter) + " iterations");
 
     // === Phase 3: Sort eigenvalues and reorder eigenvectors to match ===
     std::vector<std::pair<real_t, size_type>> eig_idx(n);

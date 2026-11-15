@@ -13,6 +13,7 @@
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/hessenberg.hpp>
 #include <mtl/detail/francis_qr.hpp>
+#include <mtl/detail/unit_roundoff.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_LAPACK
@@ -121,57 +122,63 @@ void lapack_geev(const M& A,
 }
 #endif // MTL5_HAS_LAPACK
 
-/// In-place LU factorization of an n x n complex matrix (row-major, `M[i*n+j]`)
-/// with partial pivoting. Tiny pivots are floored to `pivot_floor` so that a
-/// (near-)singular system stays solvable -- exactly the regime that inverse
-/// iteration relies on, since A - lambda*I is singular at a true eigenvalue.
-/// `piv[i]` holds the original row now living in row i after pivoting.
-template <typename Complex, typename Real>
-void eig_lu_factor(std::vector<Complex>& M, std::vector<std::size_t>& piv,
-                   std::size_t n, Real pivot_floor) {
+/// A right eigenvector y of the real quasi-upper-triangular T (a real Schur
+/// form, 2x2 blocks in standard form) for its eigenvalue lambda at index k:
+/// (T - lambda I) y = 0, with y zero below lambda's block. Back-substitution
+/// over T's diagonal blocks in complex arithmetic, the recurrence of LAPACK's
+/// dtrevc. A diagonal block whose shifted value or determinant is below smin
+/// -- the same eigenvalue again -- is perturbed to smin, and y is rescaled
+/// when an entry passes `limit`. O(n^2) per eigenvector.
+template <typename T>
+std::vector<std::complex<T>> quasi_triangular_eigenvector(const mat::dense2D<T>& R, std::size_t k,
+                                                          std::complex<T> lambda, T smin, T limit) {
+    using C = std::complex<T>;
     using std::abs;
-    for (std::size_t i = 0; i < n; ++i) piv[i] = i;
-    for (std::size_t k = 0; k < n; ++k) {
-        // Partial pivot: largest-magnitude entry in column k at or below k.
-        std::size_t p = k;
-        Real best = abs(M[k * n + k]);
-        for (std::size_t i = k + 1; i < n; ++i) {
-            Real v = abs(M[i * n + k]);
-            if (v > best) { best = v; p = i; }
-        }
-        if (p != k) {
-            for (std::size_t j = 0; j < n; ++j)
-                std::swap(M[k * n + j], M[p * n + j]);
-            std::swap(piv[k], piv[p]);
-        }
-        Complex akk = M[k * n + k];
-        if (abs(akk) < pivot_floor) { akk = Complex(pivot_floor); M[k * n + k] = akk; }
-        for (std::size_t i = k + 1; i < n; ++i) {
-            Complex f = M[i * n + k] / akk;
-            M[i * n + k] = f;
-            for (std::size_t j = k + 1; j < n; ++j)
-                M[i * n + j] -= f * M[k * n + j];
-        }
-    }
-}
+    const std::size_t n = R.num_rows();
+    const T zero(0);
+    std::vector<C> y(n, C(zero));
 
-/// Solve M x = b in place given the LU factors from eig_lu_factor.
-template <typename Complex>
-void eig_lu_solve(const std::vector<Complex>& M, const std::vector<std::size_t>& piv,
-                  std::size_t n, std::vector<Complex>& b) {
-    std::vector<Complex> x(n);
-    for (std::size_t i = 0; i < n; ++i) x[i] = b[piv[i]];
-    // Forward substitution (unit lower triangle).
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < i; ++j)
-            x[i] -= M[i * n + j] * x[j];
-    // Back substitution (upper triangle).
-    for (std::size_t i = n; i-- > 0; ) {
-        for (std::size_t j = i + 1; j < n; ++j)
-            x[i] -= M[i * n + j] * x[j];
-        x[i] /= M[i * n + i];
+    // lambda's own block, rows top..bot.
+    std::size_t top = k, bot = k;
+    if (k + 1 < n && !(R(k + 1, k) == zero)) bot = k + 1;
+    else if (k > 0 && !(R(k, k - 1) == zero)) top = k - 1;
+    if (top == bot) {
+        y[k] = C(T(1));
+    } else {
+        // (B - lambda I) [u; v] = 0 for the block B: from its first row,
+        // u = t12, v = lambda - t11 (t12 != 0 in standard form).
+        if (!(R(top, bot) == zero)) { y[top] = C(R(top, bot)); y[bot] = lambda - C(R(top, top)); }
+        else                        { y[top] = lambda - C(R(bot, bot)); y[bot] = C(R(bot, top)); }
     }
-    b = std::move(x);
+
+    for (std::size_t i = top; i > 0; ) {
+        const std::size_t b1 = i - 1;
+        const std::size_t b0 = (b1 > 0 && !(R(b1, b1 - 1) == zero)) ? b1 - 1 : b1;
+        C r0(zero), r1(zero);
+        for (std::size_t m = b1 + 1; m <= bot; ++m) {
+            r1 -= C(R(b1, m)) * y[m];
+            if (b0 < b1) r0 -= C(R(b0, m)) * y[m];
+        }
+        if (b0 == b1) {
+            C d = C(R(b1, b1)) - lambda;
+            if (abs(d) < smin) d = C(smin);
+            y[b1] = r1 / d;
+        } else {
+            const C a11 = C(R(b0, b0)) - lambda, a12 = C(R(b0, b1));
+            const C a21 = C(R(b1, b0)),          a22 = C(R(b1, b1)) - lambda;
+            C det = a11 * a22 - a12 * a21;
+            if (abs(det) < smin) det = C(smin);
+            y[b0] = (r0 * a22 - a12 * r1) / det;
+            y[b1] = (a11 * r1 - a21 * r0) / det;
+        }
+        T mx = zero;
+        for (std::size_t j = b0; j <= b1; ++j)
+            if (abs(y[j]) > mx) mx = abs(y[j]);
+        if (mx > limit)
+            for (std::size_t j = b0; j <= bot; ++j) y[j] /= mx;
+        i = b0;
+    }
+    return y;
 }
 
 } // namespace detail
@@ -180,7 +187,9 @@ void eig_lu_solve(const std::vector<Complex>& M, const std::vector<std::size_t>&
 /// Francis implicit double-shift QR algorithm on the upper Hessenberg form.
 /// Returns eigenvalues as a dense_vector of complex values (real and
 /// complex-conjugate pairs read from the 1x1/2x2 blocks of the real Schur form).
-/// Throws std::runtime_error if the QR iteration fails to converge.
+/// Throws std::invalid_argument for a non-square A or a NaN or infinite entry,
+/// and std::runtime_error if the QR iteration fails to converge. The in-house
+/// path scales A by a power of two first, as schur() does (#853).
 ///
 /// Dispatches to LAPACK geev when MTL5_HAS_LAPACK is defined and the type
 /// qualifies (dense2D<float/double>, either orientation); otherwise uses the
@@ -200,7 +209,9 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     using std::abs;
     using std::sqrt;
     const size_type n = A.num_rows();
-    assert(n == A.num_cols());
+    // Square and finite, on every path (#853): a non-square A was only
+    // asserted, and a NaN reached the iteration.
+    detail::require_square_finite(A, "mtl::eigenvalue");
 
     vec::dense_vector<complex_type> eigs(n);
     if (n == 0) return eigs;
@@ -218,9 +229,18 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     }
 #endif
 
+    // Scale by a power of two to max |a_ij| in [1/2, 1], as schur() does, and
+    // scale the eigenvalues back at the end (#853). Unscaled, a matrix with
+    // entries near 1e-170 or 1e-200 gave silently wrong eigenvalues and one
+    // near 1e+-250 failed to converge, where the LAPACK path was right.
+    mat::dense2D<value_type> W(n, n);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j) W(i, j) = A(i, j);
+    const value_type unscale = detail::scale_to_unit_binade(W);
+
     // Reduce to upper Hessenberg form.
-    mat::dense2D<value_type> H = hessenberg<Accumulator>(A);
-    if (n == 1) { eigs(0) = complex_type(H(0, 0)); return eigs; }
+    mat::dense2D<value_type> H = hessenberg<Accumulator>(W);
+    if (n == 1) { eigs(0) = complex_type(H(0, 0) * unscale); return eigs; }
 
     // Francis implicit double-shift QR on the real Hessenberg form (EISPACK
     // hqr, in detail/francis_qr.hpp, shared with schur()). Converges to real
@@ -238,7 +258,7 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
     detail::francis_qr<detail::francis_output::eigenvalues>(H, static_cast<mat::dense2D<value_type>*>(nullptr), wr, wi, opt);
 
     for (size_type i = 0; i < n; ++i)
-        eigs(i) = complex_type(wr[i], wi[i]);
+        eigs(i) = complex_type(wr[i] * unscale, wi[i] * unscale);
     return eigs;
 }
 
@@ -248,25 +268,29 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 ///   eigenvectors: dense2D<complex> of size n x n, column k is the right
 ///                 eigenvector for eigenvalues(k), i.e. A * v_k = lambda_k * v_k
 ///
-/// Eigenvalues come from the tested general QR path (`eigenvalue`); each
-/// eigenvector is then recovered by inverse iteration on A - lambda_k*I. This
-/// handles real and complex-conjugate eigenpairs uniformly in complex
-/// arithmetic. Eigenvectors are unit 2-norm with a canonical phase (largest
-/// entry made real-positive). Eigenvalue/eigenvector pairing matches by column.
+/// In-house path: the real Schur form A = Q T Q^T (Hessenberg reduction, then
+/// the Francis double-shift QR accumulating Q, as schur() runs it, on A scaled
+/// by a power of two), then each eigenvector of T by back-substitution on its
+/// quasi-triangular form, v_k = Q y_k (LAPACK dtrevc's method). That is
+/// O(n^3) in all. It used to factor a fresh complex n x n matrix A - lambda I
+/// for every eigenvalue, O(n^4): 0.38 s at n = 160 (#853). Eigenvectors are
+/// unit 2-norm with a canonical phase (largest entry made real-positive), and
+/// pair with the eigenvalues by column. The eigenvalues are eigenvalue()'s, in
+/// its order; each vector is the one of T's matching eigenvalue, which agrees
+/// with it to rounding at the given tol. A repeated eigenvalue of a diagonalizable A gives independent
+/// vectors; for a defective A they are as ill-conditioned as the problem.
 ///
-/// Accuracy is bounded by the eigenvalues from `eigenvalue`: inverse iteration
-/// recovers the eigenvector of the true eigenvalue nearest each computed
-/// lambda_k. Since `eigenvalue` now uses a Francis double-shift QR, complex
-/// spectra of strongly non-normal matrices are resolved accurately here too.
+/// Throws std::invalid_argument for a non-square A or a NaN or infinite
+/// entry, and std::runtime_error when the iteration does not converge within
+/// max_iter sweeps per eigenvalue (default 100).
 ///
 /// Dispatches to LAPACK geev (eigenvalues + right eigenvectors) when
 /// MTL5_HAS_LAPACK is defined and the type qualifies (dense2D<float/double>,
 /// either orientation); otherwise uses the in-house path above.
 ///
-/// `Accumulator` (leading, default void) is forwarded to eigenvalue(), i.e. to
-/// the Hessenberg reduction (#536), and a non-void accumulator skips geev. The
-/// eigenvectors' inverse iteration (eig_lu_factor / eig_lu_solve) keeps plain
-/// complex arithmetic.
+/// `Accumulator` (leading, default void) is forwarded to the Hessenberg
+/// reduction and its Q (#536), and a non-void accumulator skips geev. The QR
+/// iteration and the back-substitution keep plain arithmetic.
 template <typename Accumulator = void, FieldMatrix M>
 auto eigen(const M& A, typename M::value_type tol = 1e-10,
            typename M::size_type max_iter = 0) {
@@ -276,7 +300,7 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     using std::abs;
     using std::sqrt;
     const size_type n = A.num_rows();
-    assert(n == A.num_cols());
+    detail::require_square_finite(A, "mtl::eigen");
 
     struct EigenResult {
         vec::dense_vector<complex_type> eigenvalues;
@@ -301,7 +325,30 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     }
 #endif
 
-    // Eigenvalues via the general QR iteration.
+    // The real Schur form of A scaled to max |a_ij| in [1/2, 1].
+    mat::dense2D<value_type> W(n, n);
+    for (size_type i = 0; i < n; ++i)
+        for (size_type j = 0; j < n; ++j) W(i, j) = A(i, j);
+    const value_type unscale = detail::scale_to_unit_binade(W);
+    vec::dense_vector<value_type> tau;
+    hessenberg_factor<Accumulator>(W, tau);
+    mat::dense2D<value_type> Q = hessenberg_extract_Q<Accumulator>(W, tau);
+    mat::dense2D<value_type> T = hessenberg_extract_H(W);
+
+    const value_type eps = detail::machine_epsilon<value_type>();
+    detail::francis_options<value_type> opt;
+    opt.who = "mtl::eigen";
+    opt.tol = tol;
+    opt.max_its = (max_iter > 0) ? static_cast<int>(max_iter) : 100;
+    opt.lanv2 = detail::make_lanv2_constants<value_type>();
+    vec::dense_vector<value_type> wr, wi;
+    detail::francis_qr<detail::francis_output::schur_form>(T, &Q, wr, wi, opt);
+    for (size_type i = 2; i < n; ++i)
+        for (size_type j = 0; j + 1 < i; ++j) T(i, j) = value_type(0);
+
+    // The eigenvalues returned are eigenvalue()'s, in its order, as they have
+    // always been: the Schur-form iteration may place them differently. Each
+    // is paired with the nearest unused eigenvalue of T, whose vector it gets.
     vec::dense_vector<complex_type> eigs = eigenvalue<Accumulator>(A, tol, max_iter);
 
     mat::dense2D<complex_type> V(n, n);
@@ -309,111 +356,66 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
         V(0, 0) = complex_type(value_type(1));
         return EigenResult{eigs, V};
     }
+    std::vector<size_type> at(static_cast<std::size_t>(n));   // eigs(k) is T's eigenvalue at(k)
+    {
+        std::vector<bool> used(static_cast<std::size_t>(n), false);
+        for (size_type k = 0; k < n; ++k) {
+            size_type best = 0;
+            value_type dbest = value_type(-1);
+            for (size_type j = 0; j < n; ++j) {
+                if (used[static_cast<std::size_t>(j)]) continue;
+                const value_type d = abs(eigs(k) / unscale - complex_type(wr[j], wi[j]));
+                if (dbest < value_type(0) || d < dbest) { dbest = d; best = j; }
+            }
+            used[static_cast<std::size_t>(best)] = true;
+            at[static_cast<std::size_t>(k)] = best;
+        }
+    }
 
-    // Frobenius norm of A -- sets the scale for the pivot floor.
-    value_type anorm = value_type(0);
+    // T's scale is about 1, so eps * max|t_ij| is the perturbation floor for a
+    // repeated eigenvalue, and 1 / eps a safe bound on the growth of y.
+    value_type tmax = value_type(0);
     for (size_type i = 0; i < n; ++i)
         for (size_type j = 0; j < n; ++j)
-            anorm += A(i, j) * A(i, j);
-    anorm = sqrt(anorm);
-    if (anorm == value_type(0)) anorm = value_type(1);
-    const value_type eps = std::numeric_limits<value_type>::epsilon();
-    const value_type pivot_floor = eps * anorm;
+            if (abs(T(i, j)) > tmax) tmax = abs(T(i, j));
+    value_type smin = eps * tmax;
+    if (!(smin > value_type(0))) smin = eps;
+    const value_type limit = value_type(1) / eps;
 
     const std::size_t nn = static_cast<std::size_t>(n);
-    const int max_inv_iter = 5;
-
-    // Two eigenvalues are treated as one cluster (a repeated eigenvalue) when
-    // they agree to within this scale. Kept tiny so genuinely distinct
-    // eigenvalues -- including complex-conjugate partners -- are never merged.
-    const value_type cluster_scale = sqrt(eps);
-
+    std::vector<complex_type> x(nn);
     for (size_type k = 0; k < n; ++k) {
-        const complex_type lambda = eigs(k);
-        const value_type cluster_tol = cluster_scale * (anorm + std::abs(lambda));
-
-        // Build M = A - lambda*I (row-major complex) and factor once.
-        std::vector<complex_type> Mc(nn * nn);
-        for (size_type i = 0; i < n; ++i)
-            for (size_type j = 0; j < n; ++j)
-                Mc[static_cast<std::size_t>(i) * nn + static_cast<std::size_t>(j)] =
-                    complex_type(A(i, j)) - (i == j ? lambda : complex_type(0));
-
-        std::vector<std::size_t> piv(nn);
-        detail::eig_lu_factor(Mc, piv, nn, pivot_floor);
-
-        // Modified Gram-Schmidt deflation of v against previously computed
-        // eigenvectors that share this eigenvalue. For a repeated eigenvalue the
-        // whole eigenspace is (near-)null for M, so plain inverse iteration would
-        // return the same vector each time; deflating keeps successive iterates
-        // in the orthogonal complement of what is already found, yielding an
-        // independent basis of the eigenspace. (Orthonormal combinations within
-        // one eigenspace are still eigenvectors.)
-        auto deflate = [&](std::vector<complex_type>& v) {
-            for (size_type m = 0; m < k; ++m) {
-                if (std::abs(eigs(m) - lambda) > cluster_tol) continue;
-                complex_type proj(0);
-                for (size_type i = 0; i < n; ++i)
-                    proj += std::conj(V(i, m)) * v[static_cast<std::size_t>(i)];
-                for (size_type i = 0; i < n; ++i)
-                    v[static_cast<std::size_t>(i)] -= proj * V(i, m);
-            }
-        };
-        auto norm2 = [&](const std::vector<complex_type>& v) {
-            value_type s = value_type(0);
-            for (std::size_t i = 0; i < nn; ++i) s += std::norm(v[i]);
-            return sqrt(s);
-        };
-
-        // Seed: index-varied base plus a k-dependent emphasis, so repeated
-        // eigenvalues start from non-parallel vectors. Reseed if a seed happens
-        // to lie in the span of the already-found cluster vectors.
-        std::vector<complex_type> x(nn);
-        for (int attempt = 0; attempt <= static_cast<int>(nn); ++attempt) {
-            for (size_type i = 0; i < n; ++i)
-                x[static_cast<std::size_t>(i)] =
-                    complex_type(value_type(1) + value_type(i) / value_type(n));
-            x[(static_cast<std::size_t>(k) + static_cast<std::size_t>(attempt)) % nn]
-                += complex_type(value_type(1));
-            deflate(x);
-            value_type s = norm2(x);
-            if (s > pivot_floor) {
-                for (std::size_t i = 0; i < nn; ++i) x[i] /= s;
-                break;
-            }
+        const size_type j = at[static_cast<std::size_t>(k)];
+        const std::vector<complex_type> y = detail::quasi_triangular_eigenvector(
+            T, static_cast<std::size_t>(j), complex_type(wr[j], wi[j]), smin, limit);
+        // y is zero below lambda's block: x = Q(:, 0..bot) y(0..bot).
+        std::size_t bot = nn;
+        while (bot > 0 && y[bot - 1] == complex_type(value_type(0))) --bot;
+        for (std::size_t i = 0; i < nn; ++i) {
+            complex_type xi(value_type(0));
+            for (std::size_t j = 0; j < bot; ++j)
+                xi += complex_type(Q(static_cast<size_type>(i), static_cast<size_type>(j))) * y[j];
+            x[i] = xi;
         }
 
-        for (int it = 0; it < max_inv_iter; ++it) {
-            detail::eig_lu_solve(Mc, piv, nn, x);
-            deflate(x);
-            value_type nrm = norm2(x);
-            if (nrm == value_type(0)) break;
-            for (std::size_t i = 0; i < nn; ++i) x[i] /= nrm;
-
-            // Residual ||A x - lambda x|| against the (unperturbed) eigenvalue.
-            value_type res = value_type(0);
-            for (size_type i = 0; i < n; ++i) {
-                complex_type axi(0);
-                for (size_type j = 0; j < n; ++j)
-                    axi += complex_type(A(i, j)) * x[static_cast<std::size_t>(j)];
-                axi -= lambda * x[static_cast<std::size_t>(i)];
-                res += std::norm(axi);
-            }
-            if (sqrt(res) <= tol * anorm) break;
-        }
-
-        // Canonical phase: rotate so the largest-magnitude entry is real-positive.
+        // Unit 2-norm, formed from the entries scaled by the largest, and the
+        // canonical phase: the largest-magnitude entry real-positive.
         std::size_t imax = 0;
         value_type mmax = value_type(0);
         for (std::size_t i = 0; i < nn; ++i) {
-            value_type m = abs(x[i]);
+            const value_type m = abs(x[i]);
             if (m > mmax) { mmax = m; imax = i; }
         }
         if (mmax > value_type(0)) {
-            complex_type phase = x[imax] / abs(x[imax]);
-            for (std::size_t i = 0; i < nn; ++i) x[i] /= phase;
+            value_type s2 = value_type(0);
+            for (std::size_t i = 0; i < nn; ++i) {
+                x[i] /= mmax;
+                s2 += std::norm(x[i]);
+            }
+            const value_type nrm = sqrt(s2);
+            const complex_type phase = x[imax] / abs(x[imax]);
+            for (std::size_t i = 0; i < nn; ++i) x[i] /= (nrm * phase);
         }
-
         for (size_type i = 0; i < n; ++i)
             V(i, k) = x[static_cast<std::size_t>(i)];
     }

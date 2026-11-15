@@ -12,6 +12,7 @@
 #include <string_view>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/detail/matrix_checks.hpp>
 #include <mtl/detail/unit_roundoff.hpp>
 
 namespace mtl::detail {
@@ -482,6 +483,39 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
             }
         } while (l < nn - 1);
     }
+}
+
+/// Scales W by a power of two so max |w_ij| lies in [1/2, 1], and returns the
+/// power of two that undoes it (1 if W is zero). The Francis iteration forms
+/// products of two entries, which overflow or underflow for an IEEE matrix
+/// with entries near 1e200 or 1e-200; scaled, they cannot, and in a binary
+/// floating-point type the scaling is exact. For a posit, whose precision is
+/// greatest near 1, it also keeps the deflation test reachable. schur() has
+/// scaled this way since #650; eigenvalue() and eigen() do too since #853.
+template <typename T>
+T scale_to_unit_binade(mat::dense2D<T>& W) {
+    using std::abs;
+    using size_type = typename mat::dense2D<T>::size_type;
+    T unscale = T(1);
+    T amax = T(0);
+    for (size_type i = 0; i < W.num_rows(); ++i)
+        for (size_type j = 0; j < W.num_cols(); ++j)
+            if (amax < abs(W(i, j))) amax = abs(W(i, j));
+    if (amax > T(0)) {
+        T scale = T(1);
+        const T two(2), half(0.5);
+        // Bounded: each step moves amax * scale one binade.
+        for (int k = 0; k < 100000 && amax * scale > T(1); ++k) {
+            scale = scale * half; unscale = unscale * two;
+        }
+        for (int k = 0; k < 100000 && amax * scale < half; ++k) {
+            scale = scale * two; unscale = unscale * half;
+        }
+        if (!(scale == T(1)))
+            for (size_type i = 0; i < W.num_rows(); ++i)
+                for (size_type j = 0; j < W.num_cols(); ++j) W(i, j) = W(i, j) * scale;
+    }
+    return unscale;
 }
 
 } // namespace mtl::detail

@@ -13,6 +13,9 @@
 #include <mtl/itl/iteration/basic_iteration.hpp>
 #include <mtl/itl/krylov/gmres.hpp>
 
+#include <cmath>
+#include <complex>
+
 using namespace mtl;
 
 TEST_CASE("GMRES on 3x3 non-symmetric system", "[itl][gmres]") {
@@ -120,4 +123,30 @@ TEST_CASE("GMRES lucky breakdown converges (does not hang)", "[itl][gmres][break
     auto r = A * x;
     for (std::size_t i = 0; i < 4; ++i)
         REQUIRE_THAT(r(i), Catch::Matchers::WithinAbs(b(i), 1e-8));
+}
+
+TEST_CASE("GMRES on a complex non-Hermitian system", "[itl][gmres][853]") {
+    // The Givens rotations were not unitary for complex entries, so the
+    // least-squares problem GMRES solved was the wrong one.
+    using C = std::complex<double>;
+    const std::size_t n = 6;
+    mat::dense2D<C> A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            A(i, j) = (i == j) ? C(4.0 + double(i), 1.0)
+                               : C(double((i + 2 * j) % 3) - 1.0, double((2 * i + j) % 5) / 4.0 - 0.5);
+    vec::dense_vector<C> b(n), x(n, C(0));
+    for (std::size_t i = 0; i < n; ++i) b(i) = C(1.0 + double(i), -double(i % 2));
+    itl::pc::identity<mat::dense2D<C>> pc(A);
+    itl::basic_iteration<double> iter(b, 200, 1e-12);
+    const int err = itl::gmres(A, x, b, pc, iter, int(n));
+    CHECK(err == 0);
+    double r2 = 0, b2 = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        C ax(0);
+        for (std::size_t j = 0; j < n; ++j) ax += A(i, j) * x(j);
+        r2 += std::norm(b(i) - ax);
+        b2 += std::norm(b(i));
+    }
+    CHECK(std::sqrt(r2 / b2) < 1e-10);
 }

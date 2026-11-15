@@ -37,7 +37,8 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
         r0(i) = b(i) - Ax(i);
     M.solve(r, r0);
 
-    value_type beta = mtl::two_norm(r);
+    // Real for a complex system (#853): the iteration takes a magnitude.
+    const auto beta = mtl::two_norm(r);
     if (iter.finished(beta))
         return iter.error_code();
 

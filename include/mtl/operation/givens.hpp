@@ -1,19 +1,23 @@
 #pragma once
 // MTL5 -- Givens rotation utilities for GMRES Hessenberg QR factorization
 #include <cmath>
+#include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/pow2_scaling.hpp>
 
 namespace mtl {
 
 /// Apply a previously stored Givens rotation to column k of Hessenberg H
-/// at rows i, i+1.
-/// Transforms H(i,k) and H(i+1,k) in-place.
+/// at rows i, i+1: [H(i,k); H(i+1,k)] <- [c s; -conj(s) c] [H(i,k); H(i+1,k)].
+/// For a real element type conj is the identity, so this is [c s; -s c]
+/// (#853: the conjugate was missing, so a complex rotation was not unitary).
 template <typename Matrix, typename Vector>
 void apply_stored_rotation(Matrix& H, const Vector& c, const Vector& s,
                            typename Matrix::size_type i,
                            typename Matrix::size_type k) {
+    using value_type = typename Matrix::value_type;
+    const auto sc = functor::scalar::conj<value_type>::apply(s(i));
     auto tmp      = c(i) * H(i, k) + s(i) * H(i + 1, k);
-    H(i + 1, k)   = -s(i) * H(i, k) + c(i) * H(i + 1, k);
+    H(i + 1, k)   = -sc * H(i, k) + c(i) * H(i + 1, k);
     H(i, k)       = tmp;
 }
 
@@ -33,9 +37,10 @@ void apply_givens_rotation(Matrix& H, VecG& g, VecC& c, VecS& s,
     H(k, k)     = rot.r;
     H(k + 1, k) = value_type(0);
 
-    // Apply to RHS vector g
+    // Apply to RHS vector g, with the same unitary [c s; -conj(s) c].
+    const auto sc = functor::scalar::conj<value_type>::apply(s(k));
     auto tmp   = c(k) * g(k) + s(k) * g(k + 1);
-    g(k + 1)   = -s(k) * g(k) + c(k) * g(k + 1);
+    g(k + 1)   = -sc * g(k) + c(k) * g(k + 1);
     g(k)       = tmp;
 }
 

@@ -236,19 +236,30 @@ inline const plain_givens_bounds<T> plain_givens_interval = [] {
 
 } // namespace detail
 
-/// A plane rotation [c s; -s c] with c a + s b = r and -s a + c b = 0.
+/// A plane rotation G = [c s; -conj(s) c] with c a + s b = r and
+/// -conj(s) a + c b = 0. For a real T, conj is the identity: [c s; -s c].
+/// For a complex T, c is real (held as a T with zero imaginary part).
 template <typename T>
 struct givens_parameters {
     T c, s, r;
 };
 
-/// The rotation that maps (a, b) to (r, 0), with r = sqrt(a^2 + b^2) >= 0
+/// The rotation that maps (a, b) to (r, 0), with |r| = sqrt(|a|^2 + |b|^2)
 /// formed without avoidable overflow or underflow (see the top of this file).
 /// a = b = 0 gives the identity, c = 1, s = 0, r = 0.
 ///
-/// A complex T (one whose magnitude type is not T itself), and an a or b that
-/// is not finite, keep the unscaled formula r = sqrt(a*a + b*b), c = a/r,
-/// s = b/r, so their results are what they were before the scaling existed.
+/// A complex T (one whose magnitude type is not T itself) follows LAPACK's
+/// zlartg: c = |a| / d and s = (a / |a|) conj(b) / d with d = sqrt(|a|^2 +
+/// |b|^2), scaled as the real case is, and r = (a / |a|) d, so r keeps a's
+/// phase. b = 0 gives c = 1, s = 0, r = a; a = 0 gives c = 0, s = conj(b) /
+/// |b|, r = |b|. G is unitary. It used to take the real formula over complex
+/// numbers, r = sqrt(a*a + b*b), a complex square: (1, i) gave r = 0 and the
+/// identity, (1+i, 1-i) gave r = 0 for |r| = 2, and the rotations applied s
+/// unconjugated, so complex GMRES solved the wrong least-squares problem
+/// (#853).
+///
+/// A real a or b that is not finite keeps the unscaled formula
+/// r = sqrt(a*a + b*b), c = a/r, s = b/r.
 ///
 /// A binary IEEE T (detail::binary_ieee_limits) whose larger magnitude lies
 /// in detail::plain_givens_interval also takes the unscaled formula, which
@@ -259,14 +270,21 @@ givens_parameters<T> givens_rotation(const T& a, const T& b) {
     using std::abs;
     using std::sqrt;
     const T zero(0), one(1);
-    auto unscaled = [&] {
-        const T r = sqrt(a * a + b * b);
-        if (r == zero) return givens_parameters<T>{one, zero, zero};
-        return givens_parameters<T>{a / r, b / r, r};
-    };
     if constexpr (!std::is_same_v<magnitude_t<T>, T>) {
-        return unscaled();
+        using R = magnitude_t<T>;
+        using std::conj;
+        const R fa = abs(a), fb = abs(b);
+        if (fb == R(0)) return {one, zero, a};
+        if (fa == R(0)) return {zero, T(conj(b) / fb), T(fb)};
+        const R d = givens_rotation<R>(fa, fb).r;   // the real case's scaled hypot
+        const T phase = a / fa;
+        return {T(fa / d), T(phase * (conj(b) / d)), T(phase * d)};
     } else {
+        auto unscaled = [&] {
+            const T r = sqrt(a * a + b * b);
+            if (r == zero) return givens_parameters<T>{one, zero, zero};
+            return givens_parameters<T>{a / r, b / r, r};
+        };
         const T aa = abs(a), ab = abs(b);
         const T m = aa < ab ? ab : aa;
         if constexpr (detail::binary_ieee_limits<T>) {

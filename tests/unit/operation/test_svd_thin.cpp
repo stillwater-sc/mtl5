@@ -212,14 +212,15 @@ TEST_CASE("thin svd: rank-deficient, zero and empty inputs", "[operation][svd]")
 TEST_CASE("svd: a gesdd failure throws instead of returning garbage", "[operation][svd]") {
     // gesdd rejects a NaN in A with info = -4 (LAPACK 3.10+). Both the full
     // ('A') and the thin ('S') svd must report it rather than copy out
-    // whatever the output buffers hold.
+    // whatever the output buffers hold. Since #853 a NaN is rejected before
+    // gesdd runs, with std::invalid_argument, a std::logic_error.
     mat::dense2D<double> A(4, 3);
     for (std::size_t i = 0; i < 4; ++i)
         for (std::size_t j = 0; j < 3; ++j) A(i, j) = double(i + j);
     A(2, 1) = std::numeric_limits<double>::quiet_NaN();
     mat::dense2D<double> U, S, V;
     vec::dense_vector<double> s;
-    REQUIRE_THROWS_AS(svd(A, U, S, V), std::runtime_error);
-    REQUIRE_THROWS_AS(svd(A, U, s, V), std::runtime_error);
+    REQUIRE_THROWS_AS(svd(A, U, S, V), std::invalid_argument);
+    REQUIRE_THROWS_AS(svd(A, U, s, V), std::invalid_argument);
 }
 #endif
