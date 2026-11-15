@@ -95,6 +95,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **LAPACK `eigenvalue_symmetric` and full `svd` on empty input, and `syev`/`heev` failures** (#849, from the QA sweep #774).
+  - **0x0 `eigenvalue_symmetric`:** the real (`syev`) branch called LAPACK with `lda = 0`. LAPACK rejects that argument, and its error handler prints the bad parameter and ends the process. The branch now returns an empty vector, as the complex (`heev`) branch already did.
+  - **Empty full `svd(A, U, S, V)`:** a 0x0 or an m x 0 A ended the process the same way, in `gesdd`. An empty A now skips LAPACK and gets what the generic path returns: identity U and V, and an m x n S.
+  - **`syev` and `heev` info codes:** both were ignored, so a NaN or Inf in A came back as NaN eigenvalues. LAPACK returns info = 2 for it on this 3x3 (reference LAPACK and OpenBLAS), and `eigenvalue_symmetric` now throws `std::runtime_error` with the code on any non-zero info, as `svd` and `eigenvalue` do.
+  - **Untested wrappers:** `lapack::getrs`, `potrs`, `orgqr` and `trtrs`, and `blas::copy`, had no caller in the library or the tests. `blas::asum` and `blas::iamax` are new wrappers over the `?asum` and `i?amax` externs, which had none. `tests/unit/interface/test_lapack_wrappers.cpp` checks each one in float and double.
+  - **Tests:** `test_lapack_dispatch.cpp` gains the empty `eigenvalue_symmetric` and `svd` cases, which ended the test binary before the fix with LAPACK on, and the NaN and Inf cases, which returned NaN. `test_trmv_trsv_interleaved.cpp` runs its bit-identity checks on `native_shim`, on a `transposed_view` and on `lower_trisolve(L, x, x)`. `test_mult_generic_mt.cpp` adds a threaded double GEMV whose bands start inside an interleave block.
+
 - **Test-matrix generators: Kahan conditioning, `forsythe(1)`, `make_sigma(0)`, Wilkinson sizes, the Rosser spectrum, reproducible random generators** (#844, from the QA sweep #789).
   - **`kahan`** was not ill-conditioned. Its diagonal was s^i · 25 rather than s^i, which gave κ₁ = 2.1 for n = 10. It now follows MATLAB's `gallery('kahan', n, theta, pert)`: K = diag(s^i)·(I − c·triu(ones, 1)) + pert·ε·diag(n, …, 1). The third parameter, formerly `zeta`, is now MATLAB's `pert`, still defaulting to 25. κ₁ is now 92 for n = 10 and 2.9e5 for n = 30.
   - **`forsythe(1)`** returned alpha, because the corner write landed on the diagonal. It now returns [lambda].
@@ -392,6 +399,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **What changes:** a view of a temporary no longer compiles, including one used within a single expression, such as `mult(trans(A * B), x, y)`, and an inline view of a view, such as `trans(upper(A))`. Name the matrix or the inner view first. Views of named matrices are unchanged.
 
 ### Performance
+
+- **`mult` mat*mat reaches `?gemm` for every orientation mix, and `ger` for a row-major A** (#849, from the QA sweep #774). Both were gated on one orientation, so they fell to the generic kernels: `mult` unless A, B and C shared one, `ger` unless A was column-major, which left out the default row-major `dense2D`. A row-major buffer is the column-major transpose, so `mult` now passes `?gemm` the `'T'` flag for each operand whose orientation differs from C's. `ger` on a row-major A updates A^T with x and y swapped. Measured on an i7-12700K, OpenBLAS, one thread, best of 5 or 10:
+  - **`mult`, 400x400 double:** row/column/row 21.8 ms → 1.8 ms, column/row/column 40.2 ms → 1.8 ms. The all-row-major and all-column-major cases are unchanged at 1.8 ms.
+  - **`ger`, 2000x2000 row-major double:** 1.45 ms → 1.07 ms, the column-major time.
+  - `detail::gemm_dispatches_blas_v` and `detail::ger_dispatches_blas_v` say which calls reach BLAS. `test_blas_layout_dispatch.cpp` checks them, and the `trmv`/`trsv` traits, at compile time, and checks the result for every orientation mix against a long-double reference.
 
 - **GCC's float `trmv` and forward substitution on AArch64: no `keep_scalar` barrier, and W = 4** (#795). The barrier of #776 was on for GCC on AArch64 without a measurement there, and it made these two kernels 5.6–7.2× slower at W = 4 than at W = 2; #798 had held them at 2. An A/B on both ARM boards (`bench_interleave_rows`, n = 4096, one core, median of 3):
   - **Jetson Orin, GCC 11:** f32 `trmv` at W = 4 takes 6.31 ms without the barrier against 50.04 ms with it; the forward substitution 5.58 against 39.45.

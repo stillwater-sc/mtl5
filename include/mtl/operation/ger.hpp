@@ -1,7 +1,7 @@
 #pragma once
 // MTL5 -- ger: A <- alpha*x*y^T + A  (BLAS level-2 general rank-1 update)
-// Generic path for any Matrix/Vector; BLAS dispatch for column-major dense
-// float/double when available.
+// Generic path for any Matrix/Vector; BLAS dispatch for dense float/double
+// when available, in either orientation (#849).
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
@@ -18,6 +18,27 @@
 #endif
 
 namespace mtl {
+
+namespace detail {
+
+/// Whether ger<Accumulator>(alpha, x, y, A) calls ?ger (for sizes that fit an
+/// int). Either orientation of A qualifies: a row-major A is the column-major
+/// A^T, updated by ?ger with x and y swapped (#849).
+template <typename Accumulator, typename M, typename VX, typename VY>
+inline constexpr bool ger_dispatches_blas_v = [] {
+#ifdef MTL5_HAS_BLAS
+    if constexpr (interface::accumulator_allows_blas_v<Accumulator> && interface::BlasDenseMatrix<M> &&
+                  interface::BlasDenseVector<VX> && interface::BlasDenseVector<VY>)
+        return std::is_same_v<typename M::value_type, typename VX::value_type> &&
+               std::is_same_v<typename M::value_type, typename VY::value_type>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
+
+} // namespace detail
 
 /// Rank-1 update: A(i,j) += alpha * x(i) * y(j).
 ///
@@ -57,19 +78,22 @@ void ger(const S& alpha, const VX& x, const VY& y, M& A) {
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (interface::BlasDenseMatrix<M> && interface::BlasDenseVector<VX> &&
-                  interface::BlasDenseVector<VY> && !interface::is_row_major_v<M> &&
-                  std::is_same_v<typename M::value_type, typename VX::value_type> &&
-                  std::is_same_v<typename M::value_type, typename VY::value_type>) {
+    if constexpr (detail::ger_dispatches_blas_v<Accumulator, M, VX, VY>) {
         using T = typename M::value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m == 0 || n == 0) return;   // nothing to update; skip BLAS (#693)
         if (m <= imax && n <= imax) {
-            // Column-major storage: the leading dimension is the row count,
-            // and BLAS requires it to be at least 1 even for an empty A (#693).
-            interface::blas::ger(static_cast<int>(m), static_cast<int>(n),
-                                 static_cast<T>(alpha), x.data(), 1, y.data(), 1,
-                                 A.data(), std::max(1, static_cast<int>(m)));
+            const int mi = static_cast<int>(m), ni = static_cast<int>(n);
+            if constexpr (interface::is_row_major_v<M>) {
+                // A row-major m x n buffer is the column-major n x m A^T, and
+                // A^T += alpha y x^T: ?ger with x and y swapped, lda = n.
+                interface::blas::ger(ni, mi, static_cast<T>(alpha), y.data(), 1, x.data(), 1,
+                                     A.data(), ni);
+            } else {
+                // Column-major storage: the leading dimension is the row count.
+                interface::blas::ger(mi, ni, static_cast<T>(alpha), x.data(), 1, y.data(), 1,
+                                     A.data(), mi);
+            }
             return;
         }
     }

@@ -200,8 +200,11 @@ in issue #650.
 
 For symmetric matrices, prefer the symmetric routines — they exploit real
 spectra and orthogonal eigenvectors, and `eigenvalue_symmetric` transparently
-dispatches to LAPACK `syev` when built with `-DMTL5_WITH_LAPACK=ON` and the
-matrix is a column-major `dense2D<float/double>`.
+dispatches to LAPACK `syev` (`heev` for complex) when built with
+`-DMTL5_WITH_LAPACK=ON` and the matrix is a `dense2D` of `float`, `double` or
+their complex types, in either orientation. A 0x0 matrix returns an empty
+vector without calling LAPACK. If `syev` or `heev` fails, which includes a NaN
+or Inf in the matrix, `eigenvalue_symmetric` throws `std::runtime_error` (#849).
 
 ```cpp
 #include <mtl/operation/eigenvalue_symmetric.hpp>

@@ -115,6 +115,11 @@ void trmv_blocked(const M& A, VX& x, bool upper, bool unit_diag) {
 /// W independent chains. A block reads x before it writes any of its entries,
 /// and the rows below it are not overwritten yet. The rows left over go to
 /// W / 2, down to W = 1, which is the one-row loop.
+///
+/// "Bit-identical" assumes the compiler contracts a product and its add the
+/// same way in both forms, as -ffp-contract=off guarantees (the tests build
+/// with it). With contraction on, a compiler may fuse in one form and not the
+/// other, and x can differ from the one-row loop in the last bit (#849).
 template <std::size_t W, typename M, typename VX>
 void trmv_upper_rows(const M& A, VX& x, typename M::size_type i, bool unit_diag) {
     static_assert(W >= 1);

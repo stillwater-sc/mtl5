@@ -43,6 +43,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/interface/interleave_rows.hpp>
 #include <mtl5_test/limits_of.hpp>
 
 using namespace mtl;
@@ -227,4 +228,43 @@ TEST_CASE("threaded generic GEMV distributes its rows over the pool",
     std::lock_guard<std::mutex> lk(g_tid_mtx);
     INFO("threads observed: " << g_tids.size() << " (pool size " << pool << ")");
     REQUIRE(g_tids.size() > 1);
+}
+
+TEST_CASE("threaded generic GEMV on double: bands that start inside an interleave block (#849)",
+          "[operation][mult][threading][mt][849]") {
+    // The interleaved row kernel (#749, #772) takes W rows at a time from the
+    // first row of its band. With n = 37 a double band is 65536 / 37 = 1771
+    // rows, which no width in use divides, so the second band starts inside
+    // a block of the first and every band ends on a remainder. The kernel is
+    // called directly: in a BLAS build mult() would send double to dgemv.
+    const auto pool = detail::thread_pool::instance().size();
+    if (pool < 2)
+        WARN("pool < 2 workers: the row partition is not exercised (set MTL5_NUM_THREADS)");
+
+    const std::size_t n = 37;
+    const std::size_t grain = interface::row_grain<double>(n);
+    REQUIRE(grain == 1771);
+    const std::size_t w = interface::selected_interleave_rows<double, interface::kernel::gemv>();
+    INFO("interleave width " << w);
+    if (w > 1) REQUIRE(grain % w != 0);
+    const std::size_t m = 2 * grain + 5;     // three bands, the last a short one
+    REQUIRE(chunks(m, grain) >= 2);
+
+    for (const bool col : {false, true}) {
+        INFO((col ? "column-major" : "row-major"));
+        const auto run = [&](auto A) {
+            vec::dense_vector<double> x(n), y(m), yref(m);
+            for (std::size_t r = 0; r < m; ++r)
+                for (std::size_t c = 0; c < n; ++c) A(r, c) = vv(r * n + c);
+            for (std::size_t c = 0; c < n; ++c) x(c) = ww(c);
+            detail::mult_generic(A, x, yref);
+            detail::mult_generic_par(A, x, y);
+            for (std::size_t r = 0; r < m; ++r) {
+                INFO("row " << r);
+                REQUIRE(y(r) == yref(r));    // exact: same terms, same order
+            }
+        };
+        if (col) run(mat::dense2D<double, colmaj>(m, n));
+        else     run(mat::dense2D<double>(m, n));
+    }
 }
