@@ -176,7 +176,7 @@ void old_mult_generic(const M& A, const VIn& x, VOut& y) {
 // -- inputs and comparison --------------------------------------------------------
 
 double val(std::size_t seed, std::size_t i, std::size_t j) {
-    std::size_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
+    std::uint64_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
     h ^= h >> 29; h *= 0xD6E8FEB86659FD93ull; h ^= h >> 32;
     return static_cast<double>(h % 1000003) / 500001.5 - 1.0;   // many distinct mantissas
 }

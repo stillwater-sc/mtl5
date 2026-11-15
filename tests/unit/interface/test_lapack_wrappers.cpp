@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -32,7 +33,7 @@ namespace {
 
 /// Deterministic values in [-1, 1], distinct per (seed, i, j).
 long double val(std::size_t seed, std::size_t i, std::size_t j) {
-    std::size_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
+    std::uint64_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
     h ^= h >> 31;
     h *= 0xD6E8FEB86659FD93ull;
     h ^= h >> 32;

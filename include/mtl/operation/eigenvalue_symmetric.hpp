@@ -260,9 +260,10 @@ auto eigenvalue_symmetric(const M& A,
         const int info = interface::lapack::syev('N', 'L', static_cast<int>(n),
             A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork);
         // info < 0: a bad argument; info > 0: the QL/QR iteration did not
-        // converge, which is also what a NaN or Inf in A gives (info = 2 for a
-        // 3x3, with reference LAPACK and OpenBLAS). Either way W holds no
-        // eigenvalues.
+        // converge, which is what a NaN or Inf in A usually gives (info = 2
+        // for a 3x3, with reference LAPACK and OpenBLAS). Either way W holds
+        // no eigenvalues. Not every non-finite A fails: syev copies a 1x1 A
+        // to W without iterating, so [Inf] returns {Inf} with info = 0.
         if (info != 0)
             throw std::runtime_error("mtl::eigenvalue_symmetric: LAPACK syev failed (info = "
                                      + std::to_string(info) + ")");
@@ -304,7 +305,8 @@ auto eigenvalue_symmetric(const M& A,
         std::vector<value_type> work(static_cast<size_type>(lwork));
         const int info = interface::lapack::heev('N', 'L', static_cast<int>(n),
             A_copy.data(), static_cast<int>(n), W.data(), work.data(), lwork, rwork.data());
-        // As for syev: a bad argument, or no convergence (a NaN or Inf in A).
+        // As for syev: a bad argument, or no convergence (usually what a NaN
+        // or Inf in A gives; a 1x1 A is copied without iterating).
         if (info != 0)
             throw std::runtime_error("mtl::eigenvalue_symmetric: LAPACK heev failed (info = "
                                      + std::to_string(info) + ")");

@@ -27,6 +27,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <tuple>
 
@@ -102,14 +103,21 @@ static_assert(!detail::gemm_dispatches_blas_v<void, rm<float>, rm<double>, rm<do
 static_assert(!detail::gemm_dispatches_blas_v<double, rm<double>, rm<double>, rm<double>>);
 static_assert(!detail::gemm_dispatches_blas_v<void, rm<long double>, rm<long double>, rm<long double>>);
 
-// ger: either orientation of A (#849).
-static_assert(detail::ger_dispatches_blas_v<void, rm<double>, vec::dense_vector<double>,
+// ger: either orientation of A (#849). The scalar must not be wider than A's
+// element type: ?ger would round a double alpha to float.
+static_assert(detail::ger_dispatches_blas_v<void, double, rm<double>, vec::dense_vector<double>,
                                             vec::dense_vector<double>> == blas);
-static_assert(detail::ger_dispatches_blas_v<void, cm<float>, vec::dense_vector<float>,
+static_assert(detail::ger_dispatches_blas_v<void, float, cm<float>, vec::dense_vector<float>,
                                             vec::dense_vector<float>> == blas);
-static_assert(!detail::ger_dispatches_blas_v<void, rm<double>, vec::dense_vector<float>,
+static_assert(detail::ger_dispatches_blas_v<void, int, rm<float>, vec::dense_vector<float>,
+                                            vec::dense_vector<float>> == blas);
+static_assert(detail::ger_dispatches_blas_v<void, float, rm<double>, vec::dense_vector<double>,
+                                            vec::dense_vector<double>> == blas);
+static_assert(!detail::ger_dispatches_blas_v<void, double, rm<float>, vec::dense_vector<float>,
+                                             vec::dense_vector<float>>);
+static_assert(!detail::ger_dispatches_blas_v<void, double, rm<double>, vec::dense_vector<float>,
                                              vec::dense_vector<double>>);
-static_assert(!detail::ger_dispatches_blas_v<double, rm<double>, vec::dense_vector<double>,
+static_assert(!detail::ger_dispatches_blas_v<double, double, rm<double>, vec::dense_vector<double>,
                                              vec::dense_vector<double>>);
 
 // trmv and trsv: either orientation of A; not under an accumulator, not for
@@ -127,7 +135,7 @@ static_assert(!detail::trsv_dispatches_blas_v<void, rm<long double>, vec::dense_
 
 /// Deterministic values in [-1, 1], distinct per (seed, i, j).
 long double val(std::size_t seed, std::size_t i, std::size_t j) {
-    std::size_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
+    std::uint64_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
     h ^= h >> 31;
     h *= 0xD6E8FEB86659FD93ull;
     h ^= h >> 32;
@@ -361,4 +369,18 @@ TEMPLATE_TEST_CASE("ger: either orientation of A (#849)", "[operation][blas][849
     require_close<T>(A, m, n, [&](std::size_t i, std::size_t j) {
         return at(A0, i, j) - 1.5L * static_cast<long double>(x(i)) * static_cast<long double>(y(j));
     });
+}
+
+TEMPLATE_TEST_CASE("ger: a double alpha with a float A is not rounded to float first (#849)",
+                   "[operation][blas][849]", rm<float>, cm<float>) {
+    // alpha = 2^-150 is below float's smallest subnormal and rounds to 0, and
+    // ?ger returns without an update for a zero alpha. The generic path forms
+    // alpha x y = 2^-150 * 2^100 * 2^50 = 1 in double.
+    TestType A(1, 1);
+    A(0, 0) = 0.0f;
+    vec::dense_vector<float> x(1), y(1);
+    x(0) = 0x1p100f;
+    y(0) = 0x1p50f;
+    ger(0x1p-150, x, y, A);
+    REQUIRE(A(0, 0) == 1.0f);
 }

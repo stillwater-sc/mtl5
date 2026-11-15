@@ -203,8 +203,12 @@ spectra and orthogonal eigenvectors, and `eigenvalue_symmetric` transparently
 dispatches to LAPACK `syev` (`heev` for complex) when built with
 `-DMTL5_WITH_LAPACK=ON` and the matrix is a `dense2D` of `float`, `double` or
 their complex types, in either orientation. A 0x0 matrix returns an empty
-vector without calling LAPACK. If `syev` or `heev` fails, which includes a NaN
-or Inf in the matrix, `eigenvalue_symmetric` throws `std::runtime_error` (#849).
+vector without calling LAPACK. If `syev` or `heev` returns a non-zero `info`,
+`eigenvalue_symmetric` throws `std::runtime_error` (#849). A NaN or Inf in the
+matrix usually stops the iteration from converging and so throws (info = 2 for
+a 3x3), but that is not guaranteed: a 1x1 matrix is copied to the result
+without iterating, so `[Inf]` returns `{Inf}` and `[NaN]` returns `{NaN}`.
+Check the input with `isfinite` if it may not be finite.
 
 ```cpp
 #include <mtl/operation/eigenvalue_symmetric.hpp>

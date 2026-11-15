@@ -439,4 +439,16 @@ TEST_CASE("eigenvalue_symmetric throws when syev or heev fails (#849)", "[interf
         REQUIRE_THROWS_AS(eigenvalue_symmetric(Ac), std::runtime_error);
     }
 }
+
+// Not every non-finite input fails: syev copies a 1x1 A to W without
+// iterating and returns info = 0, so [Inf] comes back as {Inf}. This pins
+// what docs/algorithms/eigenvalues.md says about it.
+TEST_CASE("eigenvalue_symmetric of a 1x1 [Inf] returns {Inf} (#849)", "[interface][lapack][849]") {
+    mat::dense2D<double> A(1, 1);
+    A(0, 0) = HUGE_VAL;
+    vec::dense_vector<double> w(0);
+    REQUIRE_NOTHROW(w = eigenvalue_symmetric(A));
+    REQUIRE(w.size() == 1);
+    REQUIRE(std::isinf(w(0)));
+}
 #endif

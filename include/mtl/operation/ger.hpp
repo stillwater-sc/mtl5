@@ -24,13 +24,21 @@ namespace detail {
 /// Whether ger<Accumulator>(alpha, x, y, A) calls ?ger (for sizes that fit an
 /// int). Either orientation of A qualifies: a row-major A is the column-major
 /// A^T, updated by ?ger with x and y swapped (#849).
-template <typename Accumulator, typename M, typename VX, typename VY>
+///
+/// ?ger takes alpha in A's element type T, so the scalar S must not be wider
+/// than T: common_type_t<S, T> is T. An int or a float alpha with double A
+/// converts as the generic expression would convert it; a double alpha with
+/// float A would be rounded to float first (2^-150 becomes 0, and ?ger then
+/// returns without an update), so it takes the generic path, which forms
+/// alpha x(i) y(j) in double.
+template <typename Accumulator, typename S, typename M, typename VX, typename VY>
 inline constexpr bool ger_dispatches_blas_v = [] {
 #ifdef MTL5_HAS_BLAS
     if constexpr (interface::accumulator_allows_blas_v<Accumulator> && interface::BlasDenseMatrix<M> &&
                   interface::BlasDenseVector<VX> && interface::BlasDenseVector<VY>)
         return std::is_same_v<typename M::value_type, typename VX::value_type> &&
-               std::is_same_v<typename M::value_type, typename VY::value_type>;
+               std::is_same_v<typename M::value_type, typename VY::value_type> &&
+               std::is_same_v<std::common_type_t<S, typename M::value_type>, typename M::value_type>;
     else
         return false;
 #else
@@ -78,7 +86,7 @@ void ger(const S& alpha, const VX& x, const VY& y, M& A) {
     }
 
 #ifdef MTL5_HAS_BLAS
-    if constexpr (detail::ger_dispatches_blas_v<Accumulator, M, VX, VY>) {
+    if constexpr (detail::ger_dispatches_blas_v<Accumulator, S, M, VX, VY>) {
         using T = typename M::value_type;
         const auto imax = static_cast<size_type>(std::numeric_limits<int>::max());
         if (m == 0 || n == 0) return;   // nothing to update; skip BLAS (#693)
