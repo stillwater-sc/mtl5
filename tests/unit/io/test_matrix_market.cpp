@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -242,6 +243,17 @@ TEST_CASE("Matrix Market: gzip long lines, no trailing newline, mm_read_dense (#
     REQUIRE((A.nnz() == 2 && A(0, 0) == 4.0 && A(1, 1) == 5.0));
     auto D = io::mm_read_dense(gz);
     REQUIRE((D(0, 0) == 4.0 && D(1, 1) == 5.0 && D(0, 1) == 0.0));
+    std::remove(gz.c_str());
+}
+
+TEST_CASE("Matrix Market: an overstated nnz in a gzip file reaches the EOF error (#843)",
+          "[io][matrix_market][gzip]") {
+    // A gzip file's size bounds nothing, so the header nnz alone used to size
+    // the reserve: about 240 GB here, bad_alloc or the OOM killer instead of
+    // the runtime_error for the missing data.
+    auto gz = write_gz("gz_overstated",
+        "%%MatrixMarket matrix coordinate real general\n100000 100000 9999999999\n1 1 1.0\n");
+    REQUIRE_THROWS_AS(io::mm_read(gz), std::runtime_error);
     std::remove(gz.c_str());
 }
 
@@ -620,3 +632,60 @@ TEST_CASE("Matrix Market: mm_write_sparse with a comment, mm_write of a sparse m
         for (std::size_t j = 0; j < 3; ++j) REQUIRE(D(i, j) == A(i, j));
     std::remove(dname.c_str());
 }
+
+TEST_CASE("Matrix Market: a narrow size_type, a short array file, char-sized integers (#843)",
+          "[io][matrix_market]") {
+    SECTION("a 32-bit size_type reads a coordinate file whose m*n exceeds it") {
+        using P32 = mat::parameters<tag::row_major, mtl::detail::c_index, mat::non_fixed::dimensions,
+                                    tag::on_heap, unsigned>;
+        temp_mtx f("narrow", coord + "100000 100000 2\n1 1 1.5\n100000 99999 -2\n");
+        auto A = io::mm_read<double, P32>(f.path);
+        REQUIRE((A.num_rows() == 100000u && A.nnz() == 2u));
+        REQUIRE(A(99999u, 99998u) == -2.0);
+        // An array file stores m*n values, which must fit the index type.
+        temp_mtx g("narrow_array", array + "100000 100000\n1\n");
+        REQUIRE_THROWS_AS((io::mm_read<double, P32>(g.path)), std::runtime_error);
+    }
+    SECTION("an array header the file cannot back throws before allocating") {
+        // mm_read_dense used to allocate and zero 80 GB before noticing.
+        require_both_throw("short_array", array + "100000 100000\n");
+    }
+    SECTION("int8_t and uint8_t are written as numbers") {
+        mat::dense2D<std::int8_t> A(1, 3);
+        A(0, 0) = 5; A(0, 1) = -7; A(0, 2) = 100;
+        auto fname = temp_file("int8");
+        io::mm_write(fname, A);
+        {
+            std::ifstream in(fname);
+            std::string l;
+            std::getline(in, l); std::getline(in, l); std::getline(in, l);
+            REQUIRE(l == "5");                 // operator<< used to write the character 0x05
+        }
+        auto B = io::mm_read_dense<std::int8_t>(fname);
+        REQUIRE((B(0, 0) == 5 && B(0, 1) == -7 && B(0, 2) == 100));
+        std::remove(fname.c_str());
+
+        mat::compressed2D<std::uint8_t> S(2, 2);
+        { mat::inserter<mat::compressed2D<std::uint8_t>> ins(S); ins[1][0] << std::uint8_t(200); }
+        auto sname = temp_file("uint8");
+        io::mm_write_sparse(sname, S);
+        auto T = io::mm_read<std::uint8_t>(sname);
+        REQUIRE((T.nnz() == 1u && T(1, 0) == 200));
+        std::remove(sname.c_str());
+    }
+}
+
+#ifdef __linux__
+TEST_CASE("Matrix Market: a failed write throws, even for a small matrix (#843)", "[io][matrix_market]") {
+    // /dev/full accepts the open and fails every write. A small matrix sits in
+    // the stream buffer until the flush, so checking the stream before closing
+    // it saw no error.
+    if (!std::filesystem::exists("/dev/full")) SKIP("no /dev/full");
+    mat::dense2D<double> A(1, 1);
+    A(0, 0) = 1.0;
+    REQUIRE_THROWS_AS(io::mm_write("/dev/full", A), std::runtime_error);
+    mat::compressed2D<double> S(1, 1);
+    { mat::inserter<mat::compressed2D<double>> ins(S); ins[0][0] << 1.0; }
+    REQUIRE_THROWS_AS(io::mm_write_sparse("/dev/full", S), std::runtime_error);
+}
+#endif

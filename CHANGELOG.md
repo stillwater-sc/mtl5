@@ -100,13 +100,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - A negative dimension (`-1 2 0`) parsed into `size_t` as 2^64-1. `mm_read` then wrapped `nrows + 1` to 0 and wrote out of bounds, and `mm_read_dense` threw `bad_alloc`. Sizes are now parsed strictly: non-negative integers, the whole token, exactly two or three per line.
     - A header `nnz` larger than the matrix can hold (`2 2 99999999999999`) used to reserve that many entries. It now throws.
     - `nrows * ncols` is checked for overflow.
-    - The triplet buffer is still sized from `nnz`, but capped at what the file's size can hold.
+    - The triplet buffer is still sized from `nnz`, but capped at what the file's size can hold, or at 2^22 entries for gzip input.
+    - `mm_read_dense` checks that an array file is long enough for its declared values before allocating the result.
+    - With a narrow `size_type`, a coordinate file is limited by its nnz, not by `nrows * ncols`.
   - **Banner:** all five tokens are required and checked: tag, object, format, field and symmetry. `foo matrix coordinate real general` used to be accepted, and a missing field or symmetry token defaulted to real/general.
   - **Symmetric storage:**
     - A valid `array real symmetric` file (the lower triangle by columns) used to throw "unexpected EOF". An n*n-value file under that banner was read as general. Array files with `symmetric`, `skew-symmetric` and `hermitian` symmetry are now read as the format defines them and mirrored.
     - `skew-symmetric` coordinate files are read too (they were rejected), with a stored diagonal entry rejected.
     - `hermitian` files are read and mirrored conjugated.
-  - **Complex values:** `complex` files read into a `std::complex` value type. `mm_write` and `mm_write_sparse` used to write `real` whatever the value type, and streamed a complex value as `(re,im)`. They now take the banner's field from the value type (`complex`, `integer` or `real`) and write `max_digits10` digits.
+  - **Complex values:** `complex` files read into a `std::complex` value type. `mm_write` and `mm_write_sparse` used to write `real` whatever the value type, and streamed a complex value as `(re,im)`. They now take the banner's field from the value type (`complex`, `integer` or `real`) and write `max_digits10` digits. Char-sized integers are written as numbers. A failed write throws, also when the data was still buffered at the end.
   - **Entries:**
     - Entries beyond the header's count used to be ignored; now they throw.
     - A whitespace-only line used to throw "malformed"; now it is skipped.

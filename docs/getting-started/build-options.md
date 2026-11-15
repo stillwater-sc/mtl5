@@ -66,8 +66,11 @@ avoiding the extra full-size copy that the generic `coordinate2D::compress()`
 makes. This roughly halves transient peak memory on very large matrices while
 producing identical output (same `(row, col)` order, same duplicate
 accumulation). The buffer is sized from the header `nnz`, capped at what the
-file's size can hold (an entry line takes at least 6 bytes), so a header that
-overstates `nnz` doesn't reserve memory that the data can't fill. Entries are
+file's size can hold (an entry line takes at least 6 bytes), or at 2^22 entries
+when the size is unknown (gzip, a pipe), so a header that overstates `nnz`
+doesn't reserve memory that the data can't fill. In the same way, `mm_read_dense`
+checks that an array file is long enough for its declared values before it
+allocates the dense result. Entries are
 parsed with `std::from_chars` rather than string streams, which roughly halves
 the load time: 0.52 s to 0.22 s for `bbmat` (1.77M nnz), and 1.76 s to 0.77 s
 for `rajat30` (6.18M nnz), on an x86-64 desktop with GCC 15 at `-O2`.

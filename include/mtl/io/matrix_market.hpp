@@ -75,11 +75,22 @@ public:
         if (!ec) bytes_ = static_cast<std::uintmax_t>(bytes);
     }
 
-    /// The most entry lines the file can hold: one takes at least 6 bytes
-    /// ("1 1 1\n"). Unknown, so unbounded, for a gzip file.
+    /// Whether the input's size is known: a plain file whose size the
+    /// filesystem reports (not gzip, not a pipe).
+    bool size_known() const noexcept { return !use_gz_ && bytes_ != 0; }
+
+    /// The most coordinate entry lines the file can hold: one takes at least
+    /// 6 bytes ("1 1 1\n"). Unbounded when the size is unknown.
     std::size_t max_entries() const noexcept {
-        if (use_gz_ || bytes_ == 0) return std::numeric_limits<std::size_t>::max();
+        if (!size_known()) return std::numeric_limits<std::size_t>::max();
         return static_cast<std::size_t>(bytes_ / 6 + 1);
+    }
+
+    /// The most array values the file can hold: one takes at least 2 bytes
+    /// ("1\n"), the last 1. Unbounded when the size is unknown.
+    std::size_t max_values() const noexcept {
+        if (!size_known()) return std::numeric_limits<std::size_t>::max();
+        return static_cast<std::size_t>(bytes_ / 2 + 1);
     }
 
 #ifdef MTL5_HAS_ZLIB
@@ -300,7 +311,13 @@ inline mm_sizes read_mm_sizes(mm_reader& in, const mm_header& h, std::size_t max
         throw std::runtime_error(std::string(who) + ": a symmetric, skew-symmetric or "
                                  "hermitian matrix must be square");
 
-    const std::size_t count = mm_value_count(h, z.nrows, z.ncols, max_index, who);
+    // An array file stores `count` values, which must fit the index type. For
+    // a coordinate file the count only bounds nnz, which was already checked
+    // against max_index: a 100000 x 100000 matrix with 5 entries is fine with a
+    // 32-bit size_type although its m*n is not.
+    const std::size_t count = mm_value_count(
+        h, z.nrows, z.ncols,
+        h.coordinate ? std::numeric_limits<std::size_t>::max() : max_index, who);
     if (h.coordinate) {
         if (z.nnz > count)
             throw std::runtime_error(std::string(who) + ": header nnz " + std::to_string(z.nnz)
@@ -415,7 +432,13 @@ mat::compressed2D<Value, Parameters> mm_read(const std::string& filename) {
         // that overstates nnz does not reserve memory the data cannot fill.
         using triplet = std::tuple<size_type, size_type, Value>;
         std::vector<triplet> ents;
-        const std::size_t stored = std::min(z.nnz, in.max_entries());
+        // With the size unknown (gzip, a pipe), reserve at most 2^22 entries
+        // and let the vector grow past that: a header nnz the data does not
+        // back must reach the EOF error, not a huge reserve.
+        constexpr std::size_t unknown_size_reserve = std::size_t(1) << 22;
+        const std::size_t stored = in.size_known()
+            ? std::min(z.nnz, in.max_entries())
+            : std::min(z.nnz, unknown_size_reserve);
         ents.reserve(h.mirrored() && stored <= ents.max_size() / 2 ? 2 * stored : stored);
 
         detail::read_mm_coordinate<Value>(in, h, z, who,
@@ -488,6 +511,13 @@ mat::dense2D<Value> mm_read_dense(const std::string& filename) {
     std::size_t cells = 0;
     if (!detail::checked_mul(z.nrows, z.ncols, cells))
         throw std::runtime_error("mm_read_dense: matrix dimensions overflow");
+    // An array file's values must fit in the file before the dense result is
+    // allocated: "100000 100000" with no data would otherwise allocate 80 GB
+    // before the missing data is noticed. A coordinate file may legitimately
+    // ask for a large dense result, so it is not bounded this way.
+    if (!h.coordinate && z.nnz > in.max_values())
+        throw std::runtime_error("mm_read_dense: the file is too short for the "
+                                 + std::to_string(z.nnz) + " values its header declares");
 
     mat::dense2D<Value> A(z.nrows, z.ncols);
     for (std::size_t i = 0; i < z.nrows; ++i)
@@ -529,11 +559,24 @@ void set_mm_precision(std::ostream& out) {
     if constexpr (digits > 0) out.precision(digits);
 }
 
+/// One number; an integral one is promoted, so a char-sized type prints as a
+/// number rather than a character.
+template <typename T>
+void write_mm_number(std::ostream& out, const T& v) {
+    if constexpr (std::is_integral_v<T>) out << +v;
+    else out << v;
+}
+
 /// One value: a complex one as "re im".
 template <typename Value>
 void write_mm_value(std::ostream& out, const Value& v) {
-    if constexpr (is_complex_v<Value>) out << v.real() << ' ' << v.imag();
-    else out << v;
+    if constexpr (is_complex_v<Value>) {
+        write_mm_number(out, v.real());
+        out << ' ';
+        write_mm_number(out, v.imag());
+    } else {
+        write_mm_number(out, v);
+    }
 }
 
 } // namespace detail
@@ -559,7 +602,8 @@ void mm_write(const std::string& filename, const Matrix& A,
             detail::write_mm_value(out, static_cast<Value>(A(i, j)));
             out << "\n";
         }
-    if (!out)
+    out.close();   // flush first: a full disk shows only when the buffer is written
+    if (out.fail())
         throw std::runtime_error("mm_write: write failed: " + filename);
 }
 
@@ -590,7 +634,8 @@ void mm_write_sparse(const std::string& filename,
             detail::write_mm_value(out, data[k]);
             out << "\n";
         }
-    if (!out)
+    out.close();   // flush first: a full disk shows only when the buffer is written
+    if (out.fail())
         throw std::runtime_error("mm_write_sparse: write failed: " + filename);
 }
 
