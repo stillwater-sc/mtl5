@@ -143,7 +143,9 @@ public:
     }
 
     /// A vector over an external buffer of the same size keeps its buffer and
-    /// receives the elements; the source keeps its size (#829).
+    /// receives the elements; the source keeps its size (#829). An owning
+    /// vector stays owning: a source over an external buffer is copied, not
+    /// taken over, and keeps its buffer (#856).
     dense_vector& operator=(dense_vector&&) requires read_only = delete;
     dense_vector& operator=(dense_vector&& other) noexcept requires (!read_only) {
         if (this != &other) {
@@ -319,6 +321,12 @@ public:
             other.dim_.set_size(tmp);
         }
     }
+
+    /// Found by ADL (`using std::swap; swap(v, w);`): exchanges the storage,
+    /// so a vector over an external buffer and an owning one trade places.
+    /// std::swap goes through the moves instead, and a move into an external
+    /// vector of another size aborts (#856).
+    friend void swap(dense_vector& a, dense_vector& b) noexcept requires (!read_only) { a.swap(b); }
 
 private:
     memory_type mem_;

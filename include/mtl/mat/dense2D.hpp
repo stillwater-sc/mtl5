@@ -203,7 +203,8 @@ public:
 
     /// A matrix over an external buffer with as many elements keeps its
     /// buffer and receives the elements, in the source's shape; the source
-    /// keeps its own (#829).
+    /// keeps its own (#829). An owning matrix stays owning: a source over an
+    /// external buffer is copied, not taken over (#856).
     dense2D& operator=(dense2D&&) requires read_only = delete;
     dense2D& operator=(dense2D&& other) noexcept requires (!read_only) {
         if (this != &other) {
@@ -211,7 +212,9 @@ public:
             mem_ = std::move(other.mem_);
             dims_ = other.dims_;
             ldim_ = other.ldim_;
-            if (!in_place) {
+            // An owning source's storage was taken, so it is empty now. A
+            // non-owning one was copied (#856) and keeps its buffer and shape.
+            if (!in_place && other.mem_.size() == 0) {
                 if constexpr (!is_fixed) {
                     other.dims_.set_dimensions(0, 0);
                     other.ldim_ = 0;
@@ -439,6 +442,12 @@ public:
         using std::swap;
         swap(ldim_, other.ldim_);
     }
+
+    /// Found by ADL (`using std::swap; swap(a, b);`): exchanges the storage,
+    /// so a matrix over an external buffer and an owning one trade places.
+    /// std::swap goes through the moves instead, and a move into an external
+    /// matrix of another size aborts (#856).
+    friend void swap(dense2D& a, dense2D& b) noexcept requires (!read_only) { a.swap(b); }
 
 private:
     memory_type mem_;

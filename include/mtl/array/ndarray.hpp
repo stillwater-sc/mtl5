@@ -19,6 +19,7 @@
 #include <initializer_list>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -33,7 +34,57 @@
 
 namespace mtl::array {
 
+namespace detail_nd {
+
+/// Calls f(off) for every element of an array of shape `sh`, in Order's index
+/// order -- c_order: the last index fastest; f_order: the first -- where off[k]
+/// is the element's offset under the strides st[k]. One walk serves several
+/// arrays of one shape (a copy, a broadcast, an axis reduction). The innermost
+/// dimension is a plain loop; the outer ones advance an odometer, so there is
+/// no index array to build or check per element (#856).
+template <typename Order, std::size_t N, std::size_t K, typename F>
+void walk_offsets(const shape<N>& sh, const std::array<std::array<std::size_t, N>, K>& st,
+                  F&& f) {
+    std::array<std::size_t, K> off{};
+    if constexpr (N == 0) {
+        f(off);   // rank 0: one element, at offset 0
+    } else {
+        if (sh.total_size() == 0) return;
+        constexpr bool c = !std::is_same_v<Order, f_order>;
+        constexpr auto dim = [](std::size_t level) { return c ? level : N - 1 - level; };
+        constexpr std::size_t in = dim(N - 1);   // the fastest-varying dimension
+        const std::size_t n_in = sh[in];
+        std::array<std::size_t, N> idx{};
+        for (;;) {
+            std::array<std::size_t, K> o = off;
+            for (std::size_t i = 0; i < n_in; ++i) {
+                f(std::as_const(o));
+                for (std::size_t q = 0; q < K; ++q) o[q] += st[q][in];
+            }
+            std::size_t level = N - 1;   // advance the outer dimensions
+            for (;;) {
+                if (level == 0) return;
+                --level;
+                const std::size_t d = dim(level);
+                if (++idx[d] < sh[d]) {
+                    for (std::size_t q = 0; q < K; ++q) off[q] += st[q][d];
+                    break;
+                }
+                for (std::size_t q = 0; q < K; ++q) off[q] -= (sh[d] - 1) * st[q][d];
+                idx[d] = 0;
+            }
+        }
+    }
+}
+
+} // namespace detail_nd
+
 /// N-dimensional array with static rank and runtime shape.
+///
+/// Its logical order -- the order of iterate_indices, for_each_element, reduce
+/// and flatten -- is its own Order: c_order arrays walk the last index fastest,
+/// f_order arrays the first, whatever the strides of a view say. reshape reads
+/// in the same order (#359), so flatten(a) and a.reshape({a.size()}) agree.
 ///
 /// @tparam Value  element type (must be default-constructible)
 /// @tparam N      number of dimensions (compile-time rank)
@@ -110,8 +161,13 @@ public:
     // Assignment to a view writes the viewed elements and keeps the view's
     // memory, shape and strides (#829). The source must have the same shape:
     // copy assignment throws std::domain_error otherwise; move assignment is
-    // noexcept, so it asserts, and under NDEBUG takes over the source's storage.
-    // Assignment to an owning array replaces its contents, as before.
+    // noexcept, so it aborts, in every build (#856) -- it used to assert, and
+    // under NDEBUG take over the source's storage, detaching the view.
+    //
+    // Assignment to an owning array replaces its contents. A view source is
+    // copied, so the array stays owning: own = a.transpose() or
+    // own = std::move(view) used to hand over the view, leaving own aliasing
+    // another array's buffer (#856). Only an owning source's storage is taken.
 
     ndarray(const ndarray& other) : shape_(other.shape_), mem_(other.size()) {
         init_strides();
@@ -142,21 +198,21 @@ public:
     ndarray& operator=(ndarray&& other) noexcept {
         if (this == &other) return *this;
         if (is_view()) {
-            if (shape_ == other.shape_) {
-                assign_to_view(other);
-                return *this;
-            }
-            assert(false && "ndarray: move-assigning an array of another shape to a view");
+            if (shape_ != other.shape_)
+                ::mtl::detail::contract_abort(
+                    "ndarray: move-assigning an array of another shape to a view");
+            assign_to_view(other);
+            return *this;
         }
-        // A view into our own storage (a = a.transpose()) would dangle once
-        // that storage is released: copy it out first. In a noexcept function,
-        // a copy that fails to allocate terminates.
-        if (other.is_view() && shares_memory_with(other)) {
+        if (other.is_view()) {
+            // An owning array stays owning: copy the view's elements. This also
+            // covers a view into our own storage (a = a.transpose()), which
+            // would dangle once that storage is released. In a noexcept
+            // function, a copy that fails to allocate terminates.
             ndarray owned(other);
             return *this = std::move(owned);
         }
-        // Take over other's storage, shape and strides. The block itself would
-        // write in place into a non-owning block, so release ours first.
+        // Take over other's storage, shape and strides.
         memory_type released;
         mem_.swap(released);
         mem_.swap(other.mem_);
@@ -280,9 +336,9 @@ public:
         if (is_contiguous()) {
             std::fill_n(mem_.data(), size(), val);
         } else {
-            iterate_indices([&](const std::array<size_type, N>& idx) {
-                (*this)[idx] = val;
-            });
+            Value* p = mem_.data();
+            detail_nd::walk_offsets<Order>(shape_, std::array<strides_type, 1>{strides_},
+                                           [&](const auto& o) { p[o[0]] = val; });
         }
     }
 
@@ -293,32 +349,33 @@ public:
         return ndarray(mem_.data(), shape_, strides_);
     }
 
-    /// Reshape: returns a view if contiguous, otherwise throws.
+    /// Reshape: a view over the same elements, read in this array's Order.
+    /// Throws std::invalid_argument if the size differs (#856: it was an
+    /// assert, so under NDEBUG a 3-element array reshaped to 100 elements gave
+    /// a view past its buffer), and std::runtime_error if the array is not
+    /// contiguous in its own order.
     template <std::size_t M>
-    ndarray<Value, M, Order> reshape(::mtl::array::shape<M> new_shape) const {
-        assert(new_shape.total_size() == size() && "Reshape must preserve total size");
-        // Must be contiguous in THIS array's own order, not merely in one of
-        // the two. The result is built with `Order` strides over the same
-        // memory, so an F-contiguous c_order array (any transpose of a C-order
-        // array) would be re-read in the wrong order and silently return
-        // elements in memory order rather than logical order (#359).
-        if (!is_contiguous_in_own_order()) {
-            throw std::runtime_error("Cannot reshape non-contiguous array without copy");
-        }
-        return ndarray<Value, M, Order>(
-            const_cast<Value*>(mem_.data()), new_shape);
+    ndarray<Value, M, Order> reshape(::mtl::array::shape<M> new_shape) {
+        check_reshape(new_shape.total_size());
+        return ndarray<Value, M, Order>(mem_.data(), new_shape);
     }
 
-    /// Transpose: returns a view with reversed shape and strides.
-    ndarray<Value, N, Order> transpose() const {
-        shape_type   new_shape;
-        strides_type new_strides;
-        for (size_type i = 0; i < N; ++i) {
-            new_shape[i]   = shape_[N - 1 - i];
-            new_strides[i] = strides_[N - 1 - i];
-        }
-        return ndarray<Value, N, Order>(
-            const_cast<Value*>(mem_.data()), new_shape, new_strides);
+    /// Reshape of a const array: a read-only view (#856: it used to return a
+    /// mutable view through a const_cast).
+    template <std::size_t M>
+    ndarray<const Value, M, Order> reshape(::mtl::array::shape<M> new_shape) const {
+        check_reshape(new_shape.total_size());
+        return ndarray<const Value, M, Order>(mem_.data(), new_shape);
+    }
+
+    /// Transpose: a view with reversed shape and strides.
+    ndarray<Value, N, Order> transpose() {
+        return ndarray<Value, N, Order>(mem_.data(), reversed(shape_), reversed(strides_));
+    }
+
+    /// Transpose of a const array: a read-only view (#856).
+    ndarray<const Value, N, Order> transpose() const {
+        return ndarray<const Value, N, Order>(mem_.data(), reversed(shape_), reversed(strides_));
     }
 
     // -- Scalar compound assignment ------------------------------------------
@@ -345,47 +402,38 @@ public:
 
     // -- Utility -------------------------------------------------------------
 
-    /// Iterate over all valid multi-indices, calling f(idx) for each.
+    /// Iterate over all valid multi-indices, calling f(idx) for each, in this
+    /// array's Order (the last index fastest for c_order, the first for f_order).
     template <typename F>
     void iterate_indices(F&& f) const {
         std::array<size_type, N> idx{};
         iterate_impl(f, idx, 0);
     }
 
-    /// Apply f to every element (respects strides for non-contiguous arrays).
+    /// Apply f to every element, in this array's Order. Memory that is
+    /// contiguous in that order is walked directly; anything else -- a slice,
+    /// a transposed view -- by strides, the innermost dimension a plain loop.
     template <typename F>
     void for_each_element(F&& f) {
-        // The flat path walks raw memory, so it is only equivalent to logical
-        // iteration when memory order IS this array's order. Order-independent
-        // callers (the compound assignments, a commutative reduction) would be
-        // fine either way; order-dependent ones -- flatten, most obviously --
-        // are not (#359).
         if (is_contiguous_in_own_order()) {
-            for (size_type i = 0; i < size(); ++i) {
-                f(mem_[i]);
-            }
+            Value* p = mem_.data();
+            for (size_type i = 0; i < size(); ++i) f(p[i]);
         } else {
-            iterate_indices([&](const std::array<size_type, N>& idx) {
-                f((*this)[idx]);
-            });
+            Value* p = mem_.data();
+            detail_nd::walk_offsets<Order>(shape_, std::array<strides_type, 1>{strides_},
+                                           [&](const auto& o) { f(p[o[0]]); });
         }
     }
 
     template <typename F>
     void for_each_element(F&& f) const {
-        // The flat path walks raw memory, so it is only equivalent to logical
-        // iteration when memory order IS this array's order. Order-independent
-        // callers (the compound assignments, a commutative reduction) would be
-        // fine either way; order-dependent ones -- flatten, most obviously --
-        // are not (#359).
         if (is_contiguous_in_own_order()) {
-            for (size_type i = 0; i < size(); ++i) {
-                f(mem_[i]);
-            }
+            const Value* p = mem_.data();
+            for (size_type i = 0; i < size(); ++i) f(p[i]);
         } else {
-            iterate_indices([&](const std::array<size_type, N>& idx) {
-                f((*this)[idx]);
-            });
+            const Value* p = mem_.data();
+            detail_nd::walk_offsets<Order>(shape_, std::array<strides_type, 1>{strides_},
+                                           [&](const auto& o) { f(p[o[0]]); });
         }
     }
 
@@ -400,14 +448,43 @@ private:
         return {lo, lo + (last + 1) * sizeof(Value)};
     }
 
-    /// Whether the two arrays' memory spans overlap. Conservative: two
-    /// interleaved strided views with disjoint elements count as overlapping.
+    /// Whether the two arrays may share an element. Their memory spans are
+    /// compared first. When the spans overlap and the two have one shape and
+    /// one set of strides -- two columns of a matrix, a(all, 0) and a(all, 1)
+    /// -- the answer is exact (#856: two interleaved columns used to count as
+    /// overlapping, so assigning one to the other always copied through a
+    /// temporary). Otherwise it is conservative: an overlap of spans counts.
     bool shares_memory_with(const ndarray& other) const {
         const auto [a0, a1] = byte_span();
         const auto [b0, b1] = other.byte_span();
         if (a0 == nullptr || b0 == nullptr) return false;
         const std::less<const unsigned char*> lt;
-        return lt(a0, b1) && lt(b0, a1);
+        if (!(lt(a0, b1) && lt(b0, a1))) return false;
+        if (shape_ != other.shape_ || strides_ != other.strides_) return true;
+        // One layout, displaced by d elements: they share an element iff
+        // d = sum k_i * stride_i with |k_i| < extent_i. When each stride is at
+        // least the span of the smaller ones (true of every view of a
+        // contiguous array), taking the largest stride first decides it.
+        const auto bytes = (a0 < b0) ? b0 - a0 : a0 - b0;
+        if (bytes % sizeof(Value) != 0) return true;
+        std::size_t d = static_cast<std::size_t>(bytes) / sizeof(Value);
+        std::array<size_type, N> dims{};
+        for (size_type i = 0; i < N; ++i) dims[i] = i;
+        std::sort(dims.begin(), dims.end(),
+                  [&](size_type x, size_type y) { return strides_[x] > strides_[y]; });
+        size_type below = 1;   // the span of the dimensions with smaller strides, plus one
+        for (size_type k = N; k-- > 0;) {
+            const size_type i = dims[k];
+            if (shape_[i] > 1 && strides_[i] < below) return true;   // self-overlapping layout
+            below += (shape_[i] - 1) * strides_[i];
+        }
+        for (size_type k = 0; k < N; ++k) {
+            const size_type i = dims[k];
+            if (strides_[i] == 0) continue;
+            const size_type step = std::min<size_type>(d / strides_[i], shape_[i] - 1);
+            d -= step * strides_[i];
+        }
+        return d == 0;
     }
 
     /// Write other's elements into this view, of the same shape. A source
@@ -428,10 +505,34 @@ private:
         if (is_contiguous_in_own_order() && other.is_contiguous_in_own_order()) {
             std::copy_n(other.mem_.data(), size(), mem_.data());
         } else {
-            iterate_indices([&](const std::array<size_type, N>& idx) {
-                (*this)[idx] = other[idx];
-            });
+            Value* dst = mem_.data();
+            const Value* src = other.mem_.data();
+            detail_nd::walk_offsets<Order>(shape_,
+                                           std::array<strides_type, 2>{strides_, other.strides_},
+                                           [&](const auto& o) { dst[o[0]] = src[o[1]]; });
         }
+    }
+
+    template <typename A>
+    static A reversed(const A& a) {
+        A r{};
+        for (size_type i = 0; i < N; ++i) r[i] = a[N - 1 - i];
+        return r;
+    }
+
+    void check_reshape(size_type new_size) const {
+        if (new_size != size())
+            ::mtl::detail::throw_or_abort(std::invalid_argument(
+                "ndarray::reshape: the new shape holds " + std::to_string(new_size)
+                + " elements, the array " + std::to_string(size())));
+        // Must be contiguous in THIS array's own order, not merely in one of
+        // the two. The result is built with `Order` strides over the same
+        // memory, so an F-contiguous c_order array (any transpose of a C-order
+        // array) would be re-read in the wrong order and silently return
+        // elements in memory order rather than logical order (#359).
+        if (!is_contiguous_in_own_order())
+            ::mtl::detail::throw_or_abort(
+                std::runtime_error("Cannot reshape non-contiguous array without copy"));
     }
 
     void check_bounds(const std::array<size_type, N>& idx) const {
@@ -442,15 +543,18 @@ private:
         }
     }
 
+    /// Level `level` of the walk: dimension `level` for c_order, N-1-level for
+    /// f_order, so the last level -- the fastest -- is the Order's fastest index.
     template <typename F>
-    void iterate_impl(F& f, std::array<size_type, N>& idx, size_type dim) const {
-        if (dim == N) {
-            f(idx);
+    void iterate_impl(F& f, std::array<size_type, N>& idx, size_type level) const {
+        if (level == N) {
+            f(std::as_const(idx));
             return;
         }
+        const size_type dim = std::is_same_v<Order, f_order> ? N - 1 - level : level;
         for (size_type i = 0; i < shape_[dim]; ++i) {
             idx[dim] = i;
-            iterate_impl(f, idx, dim + 1);
+            iterate_impl(f, idx, level + 1);
         }
     }
 };

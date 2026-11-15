@@ -150,8 +150,11 @@ Two properties of this block matter to the rest of the library:
   expression assignment to an `external` or `view` block write the caller's
   buffer when the source has as many elements, and the block stays
   non-owning. With another element count, copy and expression assignment
-  throw `std::domain_error`; move assignment is `noexcept`, so it asserts,
-  and under `NDEBUG` takes over the source's storage. Before #829 copy and
+  throw `std::domain_error`; move assignment is `noexcept`, so it aborts with
+  a message, in every build (#856; it asserted, and under `NDEBUG` took over
+  the source's storage). The other way round, an owning matrix move-assigned
+  one over an external buffer copies the elements and stays owning (#856).
+  Before #829 copy and
   move assignment detached the block into a private copy even at equal size,
   so `v = w` on a vector over a C buffer left the buffer unchanged. Only an
   explicit resize, `change_dim` or `realloc` to another size, detaches. A
