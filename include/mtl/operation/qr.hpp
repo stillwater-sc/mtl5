@@ -5,6 +5,8 @@
 // Optional LAPACK dispatch when MTL5_HAS_LAPACK is defined and types qualify.
 #include <algorithm>
 #include <cassert>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <vector>
 #include <mtl/concepts/matrix.hpp>
@@ -205,7 +207,13 @@ auto qr_extract_Q(const M& A, const vec::dense_vector<typename M::value_type>& t
         // conj(tau)*v*v^H, NOT H. Passing tau here instead of conj(tau) would
         // silently return the wrong Q for complex input while remaining exactly
         // right for real input, where conj is the identity (#353).
-        apply_householder_left<Accumulator>(Q, v, functor::scalar::conj<value_type>::apply(tau(j)), j, 0);
+        //
+        // Columns j onward only: built backward from the identity, Q is still
+        // the identity in its leading j x j block and zero in rows j..m-1 of
+        // columns 0..j-1, which H_j^H, acting on rows j..m-1, leaves as they
+        // are. Starting at column 0 did that work for nothing: 296 ms against
+        // qr_factor's 220 ms at 600 x 600 (#854). The result is bit-identical.
+        apply_householder_left<Accumulator>(Q, v, functor::scalar::conj<value_type>::apply(tau(j)), j, j);
     }
     return Q;
 }
@@ -253,6 +261,7 @@ void qr_normalize_signs(MQ& Q, MR& R) {
 
 /// Solve A*x = b via QR factorization (least-squares for m > n).
 /// A must already be factored via qr_factor. x has size n, b has size m.
+/// Throws std::invalid_argument for m < n or vectors of the wrong size.
 /// `Accumulator` (leading, default void) rounds the two sums this solve forms
 /// itself: each reflector's v^H*y when forming Q^H*b, and each row's
 /// sum of R(i,j)*x(j) in the back substitution (#536). The subtraction from
@@ -265,7 +274,16 @@ void qr_solve(const M& QR, const vec::dense_vector<typename M::value_type>& tau,
     const size_type m = QR.num_rows();
     const size_type n = QR.num_cols();
     const size_type k = std::min(m, n);
-    assert(x.size() == n && b.size() == m);
+    // Checked in every build (#854): with m < n the back substitution read
+    // y(i) and QR(i, i) for i >= m -- an out_of_range from dense_vector, UB
+    // without bounds checks. An underdetermined system has no unique solution
+    // to give; use lq_factor for its minimum-norm one.
+    if (m < n)
+        throw std::invalid_argument("mtl::qr_solve: A has fewer rows than columns (m = "
+                                    + std::to_string(m) + " < n = " + std::to_string(n)
+                                    + "); qr_solve needs m >= n");
+    if (static_cast<size_type>(x.size()) != n || static_cast<size_type>(b.size()) != m)
+        throw std::invalid_argument("mtl::qr_solve: x must have n and b m entries");
 
     // y = Q^T * b: apply Householder reflections to b
     vec::dense_vector<value_type> y(m);

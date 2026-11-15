@@ -51,6 +51,7 @@
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <mtl/detail/pivot_test.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/magnitude.hpp>
@@ -121,7 +122,7 @@ int ldlt_factor_acc(M& A) {
         value_type dj = reduce(j, j);
         if constexpr (Conj)
             dj = value_type(functor::scalar::real<value_type>::apply(dj));
-        if (dj == math::zero<value_type>())
+        if (detail::pivot_unusable(dj))
             return static_cast<int>(j + 1);
         A(j, j) = dj;
         for (std::size_t i = j + 1; i < n; ++i)
@@ -239,7 +240,7 @@ int ldlt_factor(M& A) {
         auto dj = A(j, j);
         for (std::size_t k = 0; k < j; ++k)
             dj -= A(j, k) * v[k];
-        if (dj == math::zero<value_type>())
+        if (detail::pivot_unusable(dj))
             return static_cast<int>(j + 1);
         A(j, j) = dj;  // Store D(j) on diagonal
 
@@ -256,6 +257,10 @@ int ldlt_factor(M& A) {
 
 /// Solve A*x = b using precomputed LDL^T factors stored in A.
 /// Lower triangle of A contains L (unit diagonal implicit), diagonal contains D.
+/// The factor must come from ldlt_factor, which is right for a real symmetric
+/// and a complex SYMMETRIC (A == A^T) matrix (#352). A factor from
+/// ldlt_h_factor, of a Hermitian matrix, needs ldlt_h_solve: this applies L^T,
+/// not L^H, and nothing in the stored factor tells the two apart (#854).
 /// Three phases: L*y = b (forward), D*z = y (diagonal), L^T*x = z (backward).
 /// `Accumulator` forms each row's sum of products.
 template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
@@ -363,7 +368,7 @@ int ldlt_h_factor(M& A) {
         for (std::size_t k = 0; k < j; ++k)
             djv -= A(j, k) * v[k];
         const mag_t dj_real = functor::scalar::real<value_type>::apply(djv);
-        if (dj_real == mag_t(0))
+        if (detail::pivot_unusable(dj_real))
             return static_cast<int>(j + 1);
         const value_type dj = value_type(dj_real);
         A(j, j) = dj;

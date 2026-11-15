@@ -26,6 +26,7 @@
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/math/identity.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -171,6 +172,7 @@ void trsm_blocked(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag
 } // namespace detail
 
 /// Triangular solve with multiple RHS: solve A * X = alpha * B, B := X.
+/// alpha == 0 gives X = 0 without reading A or B, as BLAS does.
 template <typename Accumulator = void, Scalar S, Matrix MA, Matrix MB>
 void trsm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false) {
     using value_type = typename MB::value_type;
@@ -178,6 +180,15 @@ void trsm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
     const size_type m = A.num_rows();
     const size_type n = B.num_cols();
     assert(A.num_cols() == m && B.num_rows() == m);
+
+    // alpha == 0: X = 0, without reading A or B, as BLAS ?trsm defines it. The
+    // generic paths formed 0 * B and so turned a NaN or Inf in B into NaN,
+    // where the BLAS path gave 0 (#854). Every path now gives 0.
+    if (alpha == math::zero<S>()) {
+        for (size_type i = 0; i < m; ++i)
+            for (size_type c = 0; c < n; ++c) B(i, c) = math::zero<value_type>();
+        return;
+    }
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
         using Value = std::common_type_t<value_type, typename MA::value_type>;

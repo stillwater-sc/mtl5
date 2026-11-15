@@ -112,8 +112,9 @@ std::size_t qr_factor_products(std::size_t m, std::size_t n) {
 
 /// qr_extract_Q: every reflector applied to all m columns of Q.
 std::size_t qr_extract_Q_products(std::size_t m, std::size_t n) {
+    // Reflector j touches rows and columns j..m-1 of Q (#854: all m columns).
     std::size_t c = 0;
-    for (std::size_t j = 0; j < n; ++j) c += m * (m - j);
+    for (std::size_t j = 0; j < n; ++j) c += (m - j) * (m - j);
     return c;
 }
 

@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
+#include <mtl/detail/pivot_test.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -94,7 +95,7 @@ int lu_factor_acc(M& A, std::vector<typename M::size_type>& pivot) {
                 A(max_row, j) = tmp;
             }
         }
-        if (A(k, k) == math::zero<value_type>())
+        if (detail::pivot_unusable(A(k, k)))
             return static_cast<int>(k + 1);
 
         // Row k of U, columns j > k: A(k,j) - sum_{p<k} L(k,p) U(p,j).
@@ -171,7 +172,13 @@ int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
             // Convert 1-based Fortran pivots to 0-based size_type pivots
             for (size_type i = 0; i < n; ++i)
                 pivot[i] = static_cast<size_type>(ipiv[i] - 1);
-            return (info > 0) ? info : 0;
+            if (info > 0) return info;
+            // getrf reports only an exact zero pivot; a NaN one passes, and
+            // every later solve is NaN. The first unusable pivot is reported
+            // as the in-house path reports it (#854).
+            for (size_type k = 0; k < n; ++k)
+                if (detail::pivot_unusable(A(k, k))) return static_cast<int>(k + 1);
+            return 0;
         }
     }
 #endif
@@ -200,7 +207,7 @@ int lu_factor(M& A, std::vector<typename M::size_type>& pivot) {
         }
 
         // Check for singularity
-        if (A(k, k) == math::zero<value_type>())
+        if (detail::pivot_unusable(A(k, k)))
             return static_cast<int>(k + 1);
 
         // Eliminate below diagonal -- parallelize the trailing-submatrix update
