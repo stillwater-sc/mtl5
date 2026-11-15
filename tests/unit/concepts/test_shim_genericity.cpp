@@ -333,6 +333,19 @@ TEMPLATE_TEST_CASE("genericity: SVD and the symmetric eigensolver", "[generic][s
     }
 }
 
+TEMPLATE_TEST_CASE("genericity: generators and seeded random fills", "[generic][generators]", MTL5_SHIMS) {
+    // clement and kahan called std::sqrt, std::sin and std::cos by name (#844);
+    // the seeded fills draw from the raw engine stream and so give the shim
+    // and the native type the same values.
+    using S = TestType;
+    using N = typename S::native_type;
+    agree(generators::clement<S>(7), generators::clement<N>(7), true);
+    agree(generators::kahan<S>(6, S(N(0.9)), S(N(25))), generators::kahan<N>(6, N(0.9), N(25)), true);
+    agree(random_matrix<S>(4, 3, S(N(-1)), S(N(2)), std::uint64_t(5)),
+          random_matrix<N>(4, 3, N(-1), N(2), std::uint64_t(5)), true);
+    agree(generators::wilkinson<S>(6), generators::wilkinson<N>(6), true);
+}
+
 TEMPLATE_TEST_CASE("genericity: Krylov solvers with identity, diagonal and ILU(0) preconditioners",
                    "[generic][itl]", MTL5_SHIMS) {
     using S = TestType;

@@ -131,3 +131,52 @@ TEST_CASE("geomspace rejects invalid domains", "[generators][ranges][geomspace]"
     REQUIRE_THROWS_AS(geomspace<double>(-1.0, 1000.0, 4), std::invalid_argument);
     REQUIRE_THROWS_AS(geomspace<double>(1.0, -1000.0, 4), std::invalid_argument);
 }
+
+// -- #844 gaps -------------------------------------------------------------
+
+TEST_CASE("logspace with endpoint=false and another base", "[generators][ranges][logspace]") {
+    auto v = generators::logspace<double>(0.0, 4.0, 4, false, 2.0);   // exponents 0, 1, 2, 3
+    REQUIRE(v.size() == 4);
+    REQUIRE_THAT(v[0], WithinAbs(1.0, 1e-15));
+    REQUIRE_THAT(v[1], WithinAbs(2.0, 1e-15));
+    REQUIRE_THAT(v[2], WithinAbs(4.0, 1e-14));
+    REQUIRE_THAT(v[3], WithinAbs(8.0, 1e-14));
+    auto w = generators::logspace<double>(1.0, 3.0, 3, true, 3.0);    // 3, 9, 27
+    REQUIRE_THAT(w[2], WithinAbs(27.0, 1e-12));
+}
+
+TEST_CASE("geomspace with endpoint=false and with one step", "[generators][ranges][geomspace]") {
+    auto v = generators::geomspace<double>(1.0, 16.0, 4, false);      // 1, 2, 4, 8
+    REQUIRE(v.size() == 4);
+    REQUIRE_THAT(v[0], WithinAbs(1.0, 1e-15));
+    REQUIRE_THAT(v[1], WithinAbs(2.0, 1e-14));
+    REQUIRE_THAT(v[3], WithinAbs(8.0, 1e-13));
+    for (bool endpoint : {true, false}) {
+        auto one = generators::geomspace<double>(3.0, 300.0, 1, endpoint);
+        REQUIRE(one.size() == 1);
+        REQUIRE(one[0] == 3.0);
+    }
+}
+
+TEST_CASE("geomspace rejects NaN endpoints", "[generators][ranges][geomspace]") {
+    // NaN fails both the == 0 and the sign comparisons, so it used to pass
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    REQUIRE_THROWS_AS(generators::geomspace<double>(nan, 10.0, 4), std::invalid_argument);
+    REQUIRE_THROWS_AS(generators::geomspace<double>(1.0, nan, 4), std::invalid_argument);
+}
+
+TEST_CASE("arange with a negative step near the int64 limits", "[generators][ranges][arange]") {
+    constexpr std::int64_t hi = std::numeric_limits<std::int64_t>::max();
+    constexpr std::int64_t lo = std::numeric_limits<std::int64_t>::min();
+    auto a = generators::arange<std::int64_t>(hi, hi - 10, -3);       // hi, hi-3, hi-6, hi-9
+    REQUIRE(a.size() == 4);
+    REQUIRE(a[0] == hi);
+    REQUIRE(a[3] == hi - 9);
+    auto b = generators::arange<std::int64_t>(lo + 5, lo, -2);        // lo+5, lo+3, lo+1
+    REQUIRE(b.size() == 3);
+    REQUIRE(b[2] == lo + 1);
+    auto c = generators::arange<std::int64_t>(hi, lo, lo);            // one step of INT64_MIN
+    REQUIRE(c.size() == 2);
+    REQUIRE(c[0] == hi);
+    REQUIRE(c[1] == -1);
+}

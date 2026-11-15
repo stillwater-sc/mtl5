@@ -20,16 +20,16 @@ TEST_CASE("kahan is upper triangular", "[generators][kahan]") {
 }
 
 TEST_CASE("kahan diagonal values", "[generators][kahan]") {
+    // K(i,i) = s^i + pert*eps*(n-i), as MATLAB's gallery('kahan'). This test
+    // used to pin s^i * 25, which made K well conditioned (#844); the
+    // conditioning is checked in test_generator_properties.cpp.
     double theta = 1.2;
-    double zeta = 25.0;
-    auto K = generators::kahan<double>(4, theta, zeta);
-
     double s = std::sin(theta);
-    // K(i,i) = s^i * zeta
-    REQUIRE_THAT(K(0, 0), WithinAbs(zeta, 1e-12));
-    REQUIRE_THAT(K(1, 1), WithinAbs(s * zeta, 1e-12));
-    REQUIRE_THAT(K(2, 2), WithinAbs(s * s * zeta, 1e-12));
-    REQUIRE_THAT(K(3, 3), WithinAbs(s * s * s * zeta, 1e-12));
+    auto K = generators::kahan<double>(4, theta, 0.0);
+    REQUIRE_THAT(K(0, 0), WithinAbs(1.0, 1e-15));
+    REQUIRE_THAT(K(1, 1), WithinAbs(s, 1e-15));
+    REQUIRE_THAT(K(2, 2), WithinAbs(s * s, 1e-15));
+    REQUIRE_THAT(K(3, 3), WithinAbs(s * s * s, 1e-15));
 }
 
 TEST_CASE("kahan superdiagonal values", "[generators][kahan]") {

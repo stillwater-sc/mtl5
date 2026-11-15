@@ -52,11 +52,14 @@ Building block for all `rand*` generators. QR factorization of a random matrix:
 
 ```cpp
 template <typename T = double>
-auto randorth(std::size_t n) -> mat::dense2D<T> {
-    auto A = random_matrix<T>(n, n);
+auto randorth(std::size_t n, std::mt19937_64& gen) -> mat::dense2D<T> {
+    auto A = random_matrix<T>(n, n, T(-1), T(1), gen);   // also: a seed, or none
     vec::dense_vector<T> tau;
     qr_factor(A, tau);
-    return qr_extract_Q(A, tau);
+    auto Q = qr_extract_Q(A, tau);
+    auto R = qr_extract_R(A);
+    qr_normalize_signs(Q, R);   // R's diagonal non-negative, so Q is unique
+    return Q;
 }
 ```
 
@@ -111,17 +114,38 @@ A = Q * Λ * Q^T. Same mode system for eigenvalue distribution. Result is symmet
 
 ### `randspd<T>(...)` — `include/mtl/generators/randspd.hpp`
 
-Same as `randsym` but asserts/enforces all eigenvalues > 0. Mode-based overload guarantees positivity since λ_i ∈ [1/κ, 1].
+Same as `randsym`, but it throws `std::invalid_argument` unless all eigenvalues are > 0. The mode-based overload guarantees positivity, since λ_i ∈ [1/κ, 1].
+
+`randsym` and `randspd` average A(i,j) and A(j,i) after forming Q·Λ·Qᵀ. The product alone is not bitwise symmetric, and the average makes the result exactly symmetric.
+
+### Reproducible draws (#844)
+
+Every random generator has three forms: `randorth`, `randsvd`, `randsym` and `randspd`, plus `fill_random`, `random_vector` and `random_matrix` in `operation/random.hpp`.
+
+| Form | Example | Draws |
+|---|---|---|
+| no seed | `randspd<double>(n, kappa, mode)` | A `std::mt19937_64` seeded from `std::random_device`. Different on every call. |
+| seed | `randspd<double>(n, kappa, mode, std::uint64_t(42))` | `std::mt19937_64(42)`. The same values on every call. |
+| engine | `randspd<double>(n, kappa, mode, gen)` | The caller's `std::mt19937_64&`, so several calls share one stream |
+
+The draws come from the raw `std::mt19937_64` stream, not from `std::uniform_real_distribution`. The standard specifies the engine bit for bit, but each standard library chooses its own distribution algorithm. So a seed gives the same random matrix with libstdc++, libc++ and MSVC, as in [`gen_dot` and `gen_sum`](ill-conditioned.md).
+
+One uniform value on [lo, hi) is computed as follows. Draw u = (gen() >> 11) · 2⁻⁵³ on [0, 1), and take `fma(hi, u, lo·(1−u))` in the value type. A value that rounds up to hi is drawn again. The explicit `fma` keeps the rounding the same whether or not the compiler contracts floating-point expressions. The bounds must be finite. Matrices are filled row by row, whatever their orientation. The orthogonal factors are then the same up to the rounding of the QR factorization.
+
+The square `randsvd` with a kappa takes its seed through the rectangular form, `randsvd<double>(n, n, kappa, mode, seed)`. A `randsvd(n, kappa, mode, seed)` overload would be ambiguous with `randsvd(m, n, kappa, mode)`.
+
+The argument checks throw `std::invalid_argument` in every build. They cover kappa < 1, a mode outside 1–5, a σ or eigenvalue list of the wrong length, a non-positive `randspd` eigenvalue, and hi < lo. Before #844 they were `assert`s.
 
 ### `rosser<T>()` — `include/mtl/generators/rosser.hpp`
 
-Hardcoded 8×8 matrix (Rosser, 1951). Known eigenvalues: {0, 1020, 1020, 1000, 1000, 10√10405, -10√10405, 510+100√26}. Tests repeated, near-equal, and zero eigenvalues.
+Hardcoded 8×8 matrix (Rosser, 1951). Its eigenvalues are -10√10405, 0, 510-100√26 (≈ 0.098), 1000, 1000, 510+100√26 (≈ 1019.90), 1020 and 10√10405 (≈ 1020.05). They sum to the trace, 4040. The matrix tests a double eigenvalue, three nearly equal ones, a zero and a tiny one. (The list before #844 had 1020 twice and lacked 510-100√26, so it summed to 5059.9.)
 
 ### `wilkinson<T>(n)` — `include/mtl/generators/wilkinson.hpp`
 
-n must be odd (2m+1). Tridiagonal:
-- Diagonal: [m, m-1, ..., 1, 0, 1, ..., m-1, m]
+As MATLAB's `wilkinson(n)`, for any n ≥ 1. Tridiagonal:
+- Diagonal: |i − (n−1)/2|, i = 0…n−1. For odd n = 2m+1 that is [m, m-1, ..., 1, 0, 1, ..., m-1, m]. For even n it is half-integers, e.g. [1.5, 0.5, 0.5, 1.5] for n = 4.
 - Sub/super-diagonal: all 1s
+- n = 0 throws `std::invalid_argument`. So does an even n with an integer value type, which cannot hold the half-integers.
 
 Tests eigenvalue sensitivity — has nearly-equal eigenvalue pairs.
 
@@ -133,7 +157,7 @@ Tests eigenvalue sensitivity — has nearly-equal eigenvalue pairs.
 | `test_randsvd` | SVD of result recovers prescribed σ; test all 5 modes; cond = κ exactly |
 | `test_randsym` | A = A^T; eigenvalues match prescribed λ (sorted) |
 | `test_randspd` | A = A^T; eigenvalues positive and match; Cholesky succeeds |
-| `test_rosser` | Known 8 eigenvalues; symmetry; dimension = 8 |
+| `test_rosser` | Symmetry; dimension = 8; trace. The 8 eigenvalues are checked in `test_generator_properties` |
 | `test_wilkinson` | Tridiagonal structure; symmetry; known dimension; diagonal values |
 
 ## Implementation Order

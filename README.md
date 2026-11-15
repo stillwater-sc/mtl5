@@ -132,7 +132,7 @@ Auto-dispatching bindings that engage when the type qualifies (dense column-majo
 
 - **Parametric matrices** — classic and random test matrices at arbitrary size with controllable conditioning: `hilbert`, `frank`, `wilkinson`, `clement`, `companion`, `forsythe`, `kahan`, `lehmer`, `lotkin`, `minij`, `moler`, `pascal`, `rosser`, `vandermonde`, `laplacian`, `poisson`, `ones`, `magic`, and randomized `randorth`, `randspd`, `randsym`, `randsvd`
 - **Range / spacing vectors** — NumPy-style `arange`, `linspace`, `logspace`, `geomspace` returning `dense_vector<T>`
-- **Named test-matrix catalog** (`mtl::testsuite`) — well-known reference matrices (SuiteSparse / textbook problems) with published condition numbers, so studies run on the same named problems: `testsuite::by_name("bcsstk01")`, `testsuite::kappa(name)`, `testsuite::names()`
+- **Named test-matrix catalog** (`mtl::testsuite`) — well-known reference matrices (SuiteSparse / textbook problems) with their 2-norm condition numbers, so studies run on the same named problems: `testsuite::by_name("bcsstk01")`, `testsuite::kappa(name)`, `testsuite::names()`
 
 ## Build Options
 

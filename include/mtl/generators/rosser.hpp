@@ -1,18 +1,20 @@
 #pragma once
 // MTL5 -- Rosser matrix generator (factory, returns dense2D)
 // Classic 8x8 eigenvalue test matrix (Rosser, 1951).
-// Known eigenvalues: {0, 1020, 1020, 1000, 1000, 10*sqrt(10405),
-//                     -10*sqrt(10405), 510+100*sqrt(26)}
-// Tests repeated, near-equal, and zero eigenvalues.
+// Eigenvalues: {-10*sqrt(10405), 0, 510-100*sqrt(26), 1000, 1000,
+//               510+100*sqrt(26), 1020, 10*sqrt(10405)}
+// Tests a double eigenvalue, three nearly equal ones, a zero and a tiny one.
 #include <cstddef>
 #include <mtl/mat/dense2D.hpp>
 
 namespace mtl::generators {
 
-/// Rosser matrix: 8x8 symmetric matrix with known eigenvalues.
-/// Eigenvalues: {0, 1020, 1020, 1000, 1000, 10*sqrt(10405),
-///               -10*sqrt(10405), 510+100*sqrt(26)} ~=
-///              {-1020.0490, 0, 1000, 1000, 1020, 1020, 1020.0490, 1020.0490}
+/// Rosser matrix: 8x8 symmetric integer matrix with known eigenvalues,
+/// in ascending order:
+///   -10*sqrt(10405), 0, 510-100*sqrt(26), 1000, 1000, 510+100*sqrt(26), 1020,
+///   10*sqrt(10405)
+/// ~= -1020.0490, 0, 0.0980, 1000, 1000, 1019.9020, 1020, 1020.0490.
+/// They sum to the trace, 4040.
 template <typename T = double>
 auto rosser() {
     mat::dense2D<T> R(8, 8);

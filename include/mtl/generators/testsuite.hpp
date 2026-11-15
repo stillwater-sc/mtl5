@@ -34,21 +34,25 @@
 
 namespace mtl::testsuite {
 
-/// Published 2-norm condition numbers for the catalog (from the SuiteSparse /
-/// Universal originals). rump6x6ill and wilk21 come from their header comments
-/// (cond(est) ~ 1e16, and ~42 respectively); the rest from Universal's kappa().
+/// 2-norm condition numbers sigma_max / sigma_min for the catalog. Most are
+/// the SuiteSparse / Universal published values. Six are computed from the
+/// singular values in 60-digit arithmetic (mpmath), because the published
+/// value was not a 2-norm condition number (#844): faires74x3 (published 15999,
+/// the infinity-norm value), steam3 and fs_183_1 (1-norm values), fs_183_3 and
+/// west0167 (copies of fs_183_1's and steam1's), and rump6x6ill (an estimate,
+/// 1e16; the true value 7.8e24 is beyond 1/eps, so a double SVD cannot see it).
 inline const std::unordered_map<std::string, double>& kappa_table() {
     static const std::unordered_map<std::string, double> k = {
-        {"lambers_well", 1.0e1},               {"lambers_ill", 1.869050824603144e8},
-        {"rump6x6ill",   1.0e16},              {"faires74x3",  1.5999e4},
-        {"wilk21",       4.2e1},               {"Trefethen_20", 6.308860e1},
-        {"pores_1",      1.812616e6},          {"gre_343",     1.119763e2},
-        {"bcsstk01",     8.8234e5},            {"bcsstk03",    6.791333e6},
-        {"bcsstk04",     2.292466e6},          {"bcsstk05",    1.428114e4},
-        {"bcsstk22",     1.107165e5},          {"steam1",      2.827501e7},
-        {"steam3",       5.51e10},             {"fs_183_1",    1.5129e13},
-        {"fs_183_3",     1.5129e13},           {"west0132",    4.2e11},
-        {"west0167",     2.827e7},             {"saylr1",      7.780581e8},
+        {"lambers_well", 1.0e1},                {"lambers_ill", 1.869050824603144e8},
+        {"rump6x6ill",  7.842439e24},          {"faires74x3",  1.424091e4},
+        {"wilk21",      4.2e1},                {"Trefethen_20", 6.308860e1},
+        {"pores_1",     1.812616e6},           {"gre_343",     1.119763e2},
+        {"bcsstk01",    8.8234e5},             {"bcsstk03",    6.791333e6},
+        {"bcsstk04",    2.292466e6},           {"bcsstk05",    1.428114e4},
+        {"bcsstk22",    1.107165e5},           {"steam1",      2.827501e7},
+        {"steam3",      4.993684e10},          {"fs_183_1",    2.193356e13},
+        {"fs_183_3",    3.265749e13},          {"west0132",    4.2e11},
+        {"west0167",    4.785217e10},          {"saylr1",      7.780581e8},
     };
     return k;
 }
@@ -95,7 +99,8 @@ inline mat::dense2D<double> by_name(const std::string& name,
                                     const std::string& dir = data_dir()) {
     if (kappa_table().find(name) == kappa_table().end())
         throw std::runtime_error("mtl::testsuite::by_name: unknown matrix '" + name + "'");
-    return mtl::io::mm_read_dense<double>(dir + "/" + name + ".mtx");
+    return mtl::io::mm_read_dense<double>(
+        (std::filesystem::path(dir) / (name + ".mtx")).string());
 }
 
 } // namespace mtl::testsuite
