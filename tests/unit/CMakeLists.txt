@@ -308,6 +308,12 @@ target_include_directories(util_test_provenance_escaping PRIVATE ${CMAKE_CURRENT
 # make it pass green while proving nothing. Matching the expected diagnostic
 # instead means the test only passes when compilation fails for the RIGHT reason.
 # Each source declares that diagnostic in an "// EXPECT-ERROR: <regex>" line.
+#
+# Every test runs `cmake --build` on this one build tree, and two builds of one
+# tree at once collide (ninja and make lock or rewrite shared state), so under
+# `ctest -j` a test can fail with the collision's message instead of its
+# diagnostic. RESOURCE_LOCK runs them one at a time; other tests still run
+# alongside.
 if(CMAKE_CONFIGURATION_TYPES)
     set(_cf_config --config $<CONFIG>)
 else()
@@ -336,7 +342,8 @@ foreach(cf_src ${COMPILE_FAIL_SRC})
                      --target ${cf_target} ${_cf_config})
     set_tests_properties(${cf_target} PROPERTIES
         PASS_REGULAR_EXPRESSION "${cf_expect}"
-        LABELS "compile_fail")
+        LABELS "compile_fail"
+        RESOURCE_LOCK mtl5_build_tree)
 endforeach()
 
 # -- Death tests ---------------------------------------------------------------
