@@ -12,6 +12,8 @@
 #include <string_view>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/detail/matrix_checks.hpp>
+#include <mtl/math/pow2_scaling.hpp>
 #include <mtl/detail/unit_roundoff.hpp>
 
 namespace mtl::detail {
@@ -482,6 +484,40 @@ void francis_qr(mat::dense2D<T>& H, mat::dense2D<T>* Z,
             }
         } while (l < nn - 1);
     }
+}
+
+/// Scales W by a power of two so max |w_ij| lies in [1/2, 1], and returns the
+/// exponent k that undoes it: W_in = W_out * 2^k (0 if W is zero or already in
+/// range). The Francis iteration forms products of two entries, which overflow
+/// or underflow for an IEEE matrix with entries near 1e200 or 1e-200; scaled,
+/// they cannot, and in a binary floating-point type the scaling is exact. For a
+/// posit, whose precision is greatest near 1, it also keeps the deflation test
+/// reachable. schur() has scaled this way since #650; eigenvalue() and eigen()
+/// do too since #853.
+///
+/// The exponent, not the factor 2^k, is returned, and the entries are scaled by
+/// math::pow2_scaling: for a 1x1 [max()] the factor 2^1024 overflows, and for
+/// [denorm_min()] the factor 2^1075 does (#853 review). k is the power of two
+/// the earlier halve-or-double loop reached, so results are unchanged.
+template <typename T>
+int scale_to_unit_binade(mat::dense2D<T>& W) {
+    using std::abs;
+    using size_type = typename mat::dense2D<T>::size_type;
+    T amax = T(0);
+    for (size_type i = 0; i < W.num_rows(); ++i)
+        for (size_type j = 0; j < W.num_cols(); ++j)
+            if (amax < abs(W(i, j))) amax = abs(W(i, j));
+    if (!(amax > T(0))) return 0;
+    const T half(0.5), one(1);
+    if (!(amax < half) && !(amax > one)) return 0;
+    const int e = math::pow2_scaling<T>::exponent(amax);   // 2^e <= amax < 2^(e+1)
+    // Above 1: the smallest k with amax 2^-k <= 1. Below 1/2: the k with
+    // amax 2^-k in [1/2, 1).
+    const int k = (amax > one && math::pow2_scaling<T>::scale(amax, -e) == one) ? e : e + 1;
+    for (size_type i = 0; i < W.num_rows(); ++i)
+        for (size_type j = 0; j < W.num_cols(); ++j)
+            W(i, j) = math::pow2_scaling<T>::scale(W(i, j), -k);
+    return k;
 }
 
 } // namespace mtl::detail

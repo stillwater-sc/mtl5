@@ -413,11 +413,11 @@ TEST_CASE("full svd of an empty matrix: identity U and V, empty S (#849)", "[int
 }
 
 #ifdef MTL5_HAS_LAPACK
-// syev and heev return info > 0 for a NaN or Inf in A (the QL/QR iteration
+// A NaN or Inf in A. syev and heev return info > 0 for it (the QL/QR iteration
 // does not converge; info = 2 for this 3x3 with reference LAPACK and
-// OpenBLAS). Before #849 the info code was dropped and NaN eigenvalues came
-// back as a result. The generic path has no such check yet, so this case is
-// LAPACK only.
+// OpenBLAS), and before #849 that info code was dropped and NaN eigenvalues
+// came back as a result. Since #853 the input is rejected before LAPACK runs,
+// with std::invalid_argument, on every path.
 TEST_CASE("eigenvalue_symmetric throws when syev or heev fails (#849)", "[interface][lapack][849]") {
     for (const double bad : {std::nan(""), HUGE_VAL}) {
         INFO("bad entry " << bad);
@@ -426,29 +426,26 @@ TEST_CASE("eigenvalue_symmetric throws when syev or heev fails (#849)", "[interf
             for (std::size_t j = 0; j < 3; ++j) A(i, j) = 0.0;
         A(0, 0) = 2; A(1, 1) = bad; A(2, 2) = 2;
         A(0, 1) = A(1, 0) = 1; A(1, 2) = A(2, 1) = 1;
-        REQUIRE_THROWS_AS(eigenvalue_symmetric(A), std::runtime_error);
+        REQUIRE_THROWS_AS(eigenvalue_symmetric(A), std::invalid_argument);
 
         mat::dense2D<float> Af(3, 3);
         for (std::size_t i = 0; i < 3; ++i)
             for (std::size_t j = 0; j < 3; ++j) Af(i, j) = static_cast<float>(A(i, j));
-        REQUIRE_THROWS_AS(eigenvalue_symmetric(Af), std::runtime_error);
+        REQUIRE_THROWS_AS(eigenvalue_symmetric(Af), std::invalid_argument);
 
         mat::dense2D<cplxd> Ac(3, 3);
         for (std::size_t i = 0; i < 3; ++i)
             for (std::size_t j = 0; j < 3; ++j) Ac(i, j) = cplxd(A(i, j), 0.0);
-        REQUIRE_THROWS_AS(eigenvalue_symmetric(Ac), std::runtime_error);
+        REQUIRE_THROWS_AS(eigenvalue_symmetric(Ac), std::invalid_argument);
     }
 }
 
-// Not every non-finite input fails: syev copies a 1x1 A to W without
-// iterating and returns info = 0, so [Inf] comes back as {Inf}. This pins
-// what docs/algorithms/eigenvalues.md says about it.
-TEST_CASE("eigenvalue_symmetric of a 1x1 [Inf] returns {Inf} (#849)", "[interface][lapack][849]") {
+// syev copies a 1x1 A to W without iterating and returns info = 0, so [Inf]
+// came back as {Inf}. Since #853 every size is rejected alike, as
+// docs/algorithms/eigenvalues.md says.
+TEST_CASE("eigenvalue_symmetric of a 1x1 [Inf] throws (#849, #853)", "[interface][lapack][849]") {
     mat::dense2D<double> A(1, 1);
     A(0, 0) = HUGE_VAL;
-    vec::dense_vector<double> w(0);
-    REQUIRE_NOTHROW(w = eigenvalue_symmetric(A));
-    REQUIRE(w.size() == 1);
-    REQUIRE(std::isinf(w(0)));
+    REQUIRE_THROWS_AS(eigenvalue_symmetric(A), std::invalid_argument);
 }
 #endif

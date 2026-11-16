@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <mtl/concepts/matrix.hpp>
+#include <mtl/detail/matrix_checks.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/qr.hpp>
@@ -143,6 +144,7 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
     const value_type lo = sqrt(std::numeric_limits<value_type>::min()) / eps;
     const value_type hi = sqrt(std::numeric_limits<value_type>::max()) / value_type(2);
 
+    bool converged = false;
     for (size_type sweep = 0; sweep < max_sweeps; ++sweep) {
         bool rotated = false;
         for (size_type p = 0; p + 1 < n; ++p) {
@@ -201,7 +203,40 @@ void one_sided_jacobi(mat::dense2D<value_type>& B, mat::dense2D<value_type>& V,
                 rotated = true;
             }
         }
-        if (!rotated) break;   // all pairs orthogonal: converged
+        if (!rotated) { converged = true; break; }   // all pairs orthogonal
+    }
+    // 60 sweeps that all still rotated. A wide or rank-deficient B ends that
+    // way routinely: its surplus columns shrink to rounding noise, and two
+    // noise-level columns never pass the pairwise relative test. That is
+    // converged for the decomposition, so the last word is a test against the
+    // whole matrix: a pair still off orthogonal by more than thresh times the
+    // largest squared column norm is not converged, and is reported, as on the
+    // LAPACK path, instead of returned (#853). The entries are divided by the
+    // largest first, so the sums stay finite.
+    if (!converged) {
+        value_type bmax = math::zero<value_type>();
+        for (const value_type& x : b) if (abs(x) > bmax) bmax = abs(x);
+        if (bmax > math::zero<value_type>()) {
+            value_type colmax = math::zero<value_type>();
+            std::vector<value_type> nrm2(n, math::zero<value_type>());
+            for (size_type j = 0; j < n; ++j) {
+                for (size_type i = 0; i < m; ++i) {
+                    const value_type x = b[j * m + i] / bmax;
+                    nrm2[j] += x * x;
+                }
+                if (nrm2[j] > colmax) colmax = nrm2[j];
+            }
+            for (size_type p = 0; p + 1 < n && !converged; ++p)
+                for (size_type q = p + 1; q < n; ++q) {
+                    value_type g = math::zero<value_type>();
+                    for (size_type i = 0; i < m; ++i)
+                        g += (b[p * m + i] / bmax) * (b[q * m + i] / bmax);
+                    if (abs(g) > value_type(m) * thresh * colmax)
+                        throw std::runtime_error(
+                            "mtl::svd: the one-sided Jacobi iteration did not converge in "
+                            + std::to_string(max_sweeps) + " sweeps");
+                }
+        }
     }
 
     // Singular values are the column norms of B; U's columns are B normalized.
@@ -345,6 +380,7 @@ void svd(const M& A,
 
     const size_type m = A.num_rows();
     const size_type n = A.num_cols();
+    detail::require_finite(A, "mtl::svd");   // a NaN or inf: an error, not a NaN result (#853)
     const size_type mn = std::min(m, n);
 
 #ifdef MTL5_HAS_LAPACK
@@ -504,6 +540,7 @@ void svd(const M& A,
 
     const size_type m = A.num_rows();
     const size_type n = A.num_cols();
+    detail::require_finite(A, "mtl::svd");   // a NaN or inf: an error, not a NaN result (#853)
     const size_type mn = std::min(m, n);
 
     V.change_dim(n, n);
@@ -564,6 +601,7 @@ void svd(const M& A,
 
     const size_type m = A.num_rows();
     const size_type n = A.num_cols();
+    detail::require_finite(A, "mtl::svd");   // a NaN or inf: an error, not a NaN result (#853)
     const size_type k = std::min(m, n);
 
     U.change_dim(m, k);

@@ -25,6 +25,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <initializer_list>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -236,19 +237,30 @@ inline const plain_givens_bounds<T> plain_givens_interval = [] {
 
 } // namespace detail
 
-/// A plane rotation [c s; -s c] with c a + s b = r and -s a + c b = 0.
+/// A plane rotation G = [c s; -conj(s) c] with c a + s b = r and
+/// -conj(s) a + c b = 0. For a real T, conj is the identity: [c s; -s c].
+/// For a complex T, c is real (held as a T with zero imaginary part).
 template <typename T>
 struct givens_parameters {
     T c, s, r;
 };
 
-/// The rotation that maps (a, b) to (r, 0), with r = sqrt(a^2 + b^2) >= 0
+/// The rotation that maps (a, b) to (r, 0), with |r| = sqrt(|a|^2 + |b|^2)
 /// formed without avoidable overflow or underflow (see the top of this file).
 /// a = b = 0 gives the identity, c = 1, s = 0, r = 0.
 ///
-/// A complex T (one whose magnitude type is not T itself), and an a or b that
-/// is not finite, keep the unscaled formula r = sqrt(a*a + b*b), c = a/r,
-/// s = b/r, so their results are what they were before the scaling existed.
+/// A complex T (one whose magnitude type is not T itself) follows LAPACK's
+/// zlartg: c = |a| / d and s = (a / |a|) conj(b) / d with d = sqrt(|a|^2 +
+/// |b|^2), scaled as the real case is, and r = (a / |a|) d, so r keeps a's
+/// phase. b = 0 gives c = 1, s = 0, r = a; a = 0 gives c = 0, s = conj(b) /
+/// |b|, r = |b|. G is unitary. It used to take the real formula over complex
+/// numbers, r = sqrt(a*a + b*b), a complex square: (1, i) gave r = 0 and the
+/// identity, (1+i, 1-i) gave r = 0 for |r| = 2, and the rotations applied s
+/// unconjugated, so complex GMRES solved the wrong least-squares problem
+/// (#853).
+///
+/// A real a or b that is not finite keeps the unscaled formula
+/// r = sqrt(a*a + b*b), c = a/r, s = b/r.
 ///
 /// A binary IEEE T (detail::binary_ieee_limits) whose larger magnitude lies
 /// in detail::plain_givens_interval also takes the unscaled formula, which
@@ -259,14 +271,46 @@ givens_parameters<T> givens_rotation(const T& a, const T& b) {
     using std::abs;
     using std::sqrt;
     const T zero(0), one(1);
-    auto unscaled = [&] {
-        const T r = sqrt(a * a + b * b);
-        if (r == zero) return givens_parameters<T>{one, zero, zero};
-        return givens_parameters<T>{a / r, b / r, r};
-    };
     if constexpr (!std::is_same_v<magnitude_t<T>, T>) {
-        return unscaled();
+        using R = magnitude_t<T>;
+        using std::conj;
+        using std::real;
+        using std::imag;
+        // Everything is formed from a and b scaled by 2^-e, where 2^e bounds
+        // their largest component, and only r's components are scaled back:
+        // for a = b = (1e308, 1e308), |(a, b)| = 2e308 overflows, though r =
+        // (a/|a|) |(a, b)| has finite components near 1.414e308 (as zlartg
+        // keeps them).
+        R m = R(0);
+        for (const R x : {R(real(a)), R(imag(a)), R(real(b)), R(imag(b))}) {
+            const R ax = abs(x);
+            if (ax > m) m = ax;
+        }
+        if (m == R(0)) return {one, zero, zero};
+        if (!(m - m == R(0))) {   // inf or NaN: the plain formulas, NaN out
+            const R fa = abs(a), fb = abs(b), d = sqrt(fa * fa + fb * fb);
+            return {T(fa / d), T((a / fa) * (conj(b) / d)), T((a / fa) * d)};
+        }
+        const int e = pow2_scaling<R>::exponent(m);
+        auto down = [e](const T& z) {
+            return T(pow2_scaling<R>::scale(R(real(z)), -e), pow2_scaling<R>::scale(R(imag(z)), -e));
+        };
+        auto up = [e](const T& z) {
+            return T(pow2_scaling<R>::scale(R(real(z)), e), pow2_scaling<R>::scale(R(imag(z)), e));
+        };
+        const T as = down(a), bs = down(b);
+        const R fa = abs(as), fb = abs(bs);
+        if (fb == R(0)) return {one, zero, a};
+        if (fa == R(0)) return {zero, T(conj(bs) / fb), up(T(fb))};
+        const R d = sqrt(fa * fa + fb * fb);   // fa, fb <= sqrt(2): no overflow
+        const T phase = as / fa;
+        return {T(fa / d), T(phase * (conj(bs) / d)), up(T(phase * d))};
     } else {
+        auto unscaled = [&] {
+            const T r = sqrt(a * a + b * b);
+            if (r == zero) return givens_parameters<T>{one, zero, zero};
+            return givens_parameters<T>{a / r, b / r, r};
+        };
         const T aa = abs(a), ab = abs(b);
         const T m = aa < ab ? ab : aa;
         if constexpr (detail::binary_ieee_limits<T>) {

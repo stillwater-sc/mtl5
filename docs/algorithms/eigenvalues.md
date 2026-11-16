@@ -204,11 +204,13 @@ dispatches to LAPACK `syev` (`heev` for complex) when built with
 `-DMTL5_WITH_LAPACK=ON` and the matrix is a `dense2D` of `float`, `double` or
 their complex types, in either orientation. A 0x0 matrix returns an empty
 vector without calling LAPACK. If `syev` or `heev` returns a non-zero `info`,
-`eigenvalue_symmetric` throws `std::runtime_error` (#849). A NaN or Inf in the
-matrix usually stops the iteration from converging and so throws (info = 2 for
-a 3x3), but that is not guaranteed: a 1x1 matrix is copied to the result
-without iterating, so `[Inf]` returns `{Inf}` and `[NaN]` returns `{NaN}`.
-Check the input with `isfinite` if it may not be finite.
+`eigenvalue_symmetric` throws `std::runtime_error` (#849), as the in-house
+iteration does when it runs out of iterations (#853). A NaN or Inf in the
+matrix throws `std::invalid_argument` before any work, on every path and for
+every size (#853), as it does for `eigenvalue`, `eigen`, `eigen_symmetric`,
+`eigen_symmetric_jacobi`, `schur` and `svd`. The eigenvalue routines also
+reject a non-square matrix the same way; `svd` takes rectangular ones. Before #853 a NaN or Inf usually made `syev` report
+non-convergence, but a 1x1 `[Inf]` came back as `{Inf}`.
 
 ```cpp
 #include <mtl/operation/eigenvalue_symmetric.hpp>

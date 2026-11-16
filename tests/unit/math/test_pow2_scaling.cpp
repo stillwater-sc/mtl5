@@ -198,12 +198,16 @@ TEST_CASE("givens_rotation: a user-defined type uses the fallback", "[pow2_scali
     }
 }
 
-TEST_CASE("givens_rotation: complex keeps the unscaled formula", "[pow2_scaling][givens]") {
+TEST_CASE("givens_rotation: complex is zlartg's rotation", "[pow2_scaling][givens]") {
+    // #853: the complex branch was the real formula over complex numbers. On
+    // real-valued complex numbers both give the real rotation; see
+    // tests/unit/operation/test_givens.cpp for the complex cases.
     using C = std::complex<double>;
     const C a(3, 0), b(4, 0);
     const auto g = math::givens_rotation(a, b);
-    CHECK(g.r == std::sqrt(a * a + b * b));
-    CHECK(g.c == a / g.r);
+    CHECK(g.r == C(5));
+    CHECK(g.c == C(0.6));
+    CHECK(g.s == C(0.8));
 }
 
 TEST_CASE("apply_givens_rotation: a Hessenberg column beyond sqrt(max)", "[pow2_scaling][givens]") {

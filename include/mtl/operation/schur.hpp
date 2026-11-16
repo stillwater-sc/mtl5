@@ -122,15 +122,7 @@ auto schur(const M& A) {
                   "mtl::schur: the complex Schur form of a complex matrix is not "
                   "available yet (#650); schur() takes a real element type");
     const size_type n = A.num_rows();
-    if (A.num_cols() != n)
-        throw std::invalid_argument("mtl::schur: matrix must be square");
-
-    for (size_type i = 0; i < n; ++i)
-        for (size_type j = 0; j < n; ++j) {
-            const value_type a = A(i, j);
-            if (!(a - a == value_type(0)))
-                throw std::invalid_argument("mtl::schur: matrix has a NaN or infinite entry");
-        }
+    detail::require_square_finite(A, "mtl::schur");
 
     if (n == 0)
         return schur_result<value_type>{mat::dense2D<value_type>(0, 0), mat::dense2D<value_type>(0, 0)};
@@ -147,27 +139,7 @@ auto schur(const M& A) {
         for (size_type j = 0; j < n; ++j) W(i, j) = A(i, j);
 
     // Scale by a power of two to max |a_ij| in [1/2, 1].
-    value_type unscale = value_type(1);
-    {
-        value_type amax = value_type(0);
-        for (size_type i = 0; i < n; ++i)
-            for (size_type j = 0; j < n; ++j)
-                if (amax < abs(W(i, j))) amax = abs(W(i, j));
-        if (amax > value_type(0)) {
-            value_type scale = value_type(1);
-            const value_type two(2), half(0.5);
-            // Bounded: each step moves amax * scale one binade.
-            for (int k = 0; k < 100000 && amax * scale > value_type(1); ++k) {
-                scale = scale * half; unscale = unscale * two;
-            }
-            for (int k = 0; k < 100000 && amax * scale < half; ++k) {
-                scale = scale * two; unscale = unscale * half;
-            }
-            if (!(scale == value_type(1)))
-                for (size_type i = 0; i < n; ++i)
-                    for (size_type j = 0; j < n; ++j) W(i, j) = W(i, j) * scale;
-        }
-    }
+    const int unscale = detail::scale_to_unit_binade(W);
 
     vec::dense_vector<value_type> tau;
     hessenberg_factor<Accumulator>(W, tau);
@@ -193,9 +165,10 @@ auto schur(const M& A) {
     for (size_type i = 2; i < n; ++i)
         for (size_type j = 0; j + 1 < i; ++j) r.T(i, j) = value_type(0);
 
-    if (!(unscale == value_type(1)))
+    if (unscale != 0)
         for (size_type i = 0; i < n; ++i)
-            for (size_type j = 0; j < n; ++j) r.T(i, j) = r.T(i, j) * unscale;
+            for (size_type j = 0; j < n; ++j)
+                r.T(i, j) = math::pow2_scaling<value_type>::scale(r.T(i, j), unscale);
     return r;
 }
 

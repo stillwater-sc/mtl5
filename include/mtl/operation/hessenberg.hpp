@@ -3,6 +3,7 @@
 // Reduces A to upper Hessenberg form H = Q^H * A * Q via a unitary similarity.
 #include <algorithm>
 #include <mtl/concepts/matrix.hpp>
+#include <mtl/detail/matrix_checks.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/householder.hpp>
@@ -22,6 +23,9 @@ void hessenberg_factor(M& A, vec::dense_vector<typename M::value_type>& tau) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
     const size_type n = A.num_rows();
+    // In every build (#853): a non-square A had its leading n x n block
+    // reduced and the rest left as it was, or was read past its last column.
+    detail::require_square(A, "mtl::hessenberg_factor");
     if (n < 3) { tau.change_dim(0); return; }
     // A similarity transform needs A -> H*A*H^-1. A Householder reflector H is
     // UNITARY, so H^-1 == H^H and A -> H*A*H^H is a genuine similarity for any
@@ -114,6 +118,7 @@ auto hessenberg(const M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
     const size_type n = A.num_rows();
+    detail::require_square(A, "mtl::hessenberg");   // it copied A's leading n x n block (#853)
 
     mat::dense2D<value_type> H(n, n);
     for (size_type i = 0; i < n; ++i)
