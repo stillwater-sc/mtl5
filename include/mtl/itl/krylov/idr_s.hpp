@@ -74,14 +74,20 @@ template <typename Accumulator, typename Value>
 void idrs_orthonormalize(std::vector<vec::dense_vector<Value>>& P) {
     const std::size_t s = P.size();
     for (std::size_t j = 0; j < s; ++j) {
+        // Rank is judged relative to the column's own norm: a dependent
+        // column leaves a rounding residual (1e-32 for two equal (1, 1)),
+        // which a test against zero accepted and normalized into a second
+        // copy of the first direction.
+        const auto n0 = mtl::two_norm(P[j]);
         for (int pass = 0; pass < 2; ++pass)
             for (std::size_t i = 0; i < j; ++i) {
                 const Value h = mtl::dot<Accumulator, Value>(P[i], P[j]);
                 for (std::size_t k = 0; k < P[j].size(); ++k)
                     P[j](k) -= h * P[i](k);
             }
+        using mag = decltype(n0);
         const auto nrm = mtl::two_norm(P[j]);
-        if (!(nrm > decltype(nrm)(0)))
+        if (!(nrm > mag(16) * std::numeric_limits<mag>::epsilon() * n0) || !(nrm > mag(0)))
             ::mtl::detail::throw_or_abort(std::invalid_argument("idr_s: the shadow space P does not have full rank"));
         for (std::size_t k = 0; k < P[j].size(); ++k)
             P[j](k) /= Value(nrm);
@@ -146,7 +152,7 @@ std::vector<vec::dense_vector<Value>> idrs_random_shadow(std::size_t n, std::siz
 /// from opt.seed + 1, + 2, + 3 (also when P was supplied), and the solve
 /// fails only when that does not help. Return codes: 0 converged, 1
 /// iteration limit, 2 breakdown in P^H G after the redraws, 3 breakdown in
-/// omega (t = 0 or omega = 0).
+/// omega (t = 0, or t orthogonal to r to rounding, |cos(r, t)| <= eps).
 ///
 /// Accumulator (optional): accumulation type for the dot products and the
 /// matrix-vector products. A is a Matrix or any LinearOperator (A * x).
@@ -194,14 +200,21 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
 
     // Minimal-residual smoothing (Alg. 913): rs <- rs - gamma (rs - r),
     // xs <- xs - gamma (xs - x), gamma minimizing ||rs - gamma (rs - r)||.
+    // The difference u is scaled by its largest entry c first: dot(u, u)
+    // underflowed for a small u (entries near 2^-80 in float), and the
+    // update was skipped though u was not zero. With u = c uh,
+    // gamma u = gh uh and gamma = gh / c, gh = (uh^H rs) / (uh^H uh).
     auto smooth = [&]() {
         for (size_type i = 0; i < n; ++i)
             u(i) = rs(i) - r(i);
-        const value_type uu = mtl::dot<Accumulator, value_type>(u, u);
-        if (uu == zero) return;
-        const value_type gamma = mtl::dot<Accumulator, value_type>(u, rs) / uu;
+        const auto c = mtl::infinity_norm(u);
+        if (!(c > decltype(c)(0))) return;
+        for (size_type i = 0; i < n; ++i)
+            u(i) /= value_type(c);
+        const value_type gh = mtl::dot<Accumulator, value_type>(u, rs) / mtl::dot<Accumulator, value_type>(u, u);
+        const value_type gamma = gh / value_type(c);
         for (size_type i = 0; i < n; ++i) {
-            rs(i) -= gamma * u(i);
+            rs(i) -= gh * u(i);
             xs(i) -= gamma * (xs(i) - x(i));
         }
     };
@@ -353,17 +366,25 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
                 iter.fail(3, "idr_s breakdown: t = A M^{-1} r is zero");
                 return iter;
             }
+            // With th = t / ||t||: omega = th^H r / ||t|| and
+            // cos(r, t) = |th^H r| / ||r||. t^H r itself underflowed for a
+            // small residual (2^-160 in float for b = 2^-80 ones), which
+            // made omega 0.
             const mag_type nr = mtl::two_norm(r);
-            const value_type tr = mtl::dot<Accumulator, value_type>(t, r);
-            omega = (tr / value_type(nt)) / value_type(nt);
-            const mag_type rho = (mag_type(abs(tr)) / nt) / nr;
-            if (rho < kappa && rho > mag_type(0))
-                omega *= value_type(kappa / rho);
-            if (omega == zero) {
+            for (size_type i = 0; i < n; ++i)
+                u(i) = t(i) / value_type(nt);
+            const value_type tr = mtl::dot<Accumulator, value_type>(u, r);
+            omega = tr / value_type(nt);
+            const mag_type rho = mag_type(abs(tr)) / nr;
+            // t orthogonal to r to rounding (|cos(r, t)| <= eps, which
+            // includes omega == 0) makes no progress: a breakdown.
+            if (!(rho > eps)) {
                 settle_x();
                 iter.fail(3, "idr_s breakdown: omega == 0");
                 return iter;
             }
+            if (rho < kappa)
+                omega *= value_type(kappa / rho);
             for (size_type i = 0; i < n; ++i) {
                 r(i) -= omega * t(i);
                 x(i) += omega * v(i);

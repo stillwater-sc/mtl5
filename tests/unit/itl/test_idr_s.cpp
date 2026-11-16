@@ -400,6 +400,14 @@ TEST_CASE("IDR(s): options, the shadow space and reproducibility (issue 874)", "
         CHECK_THROWS_AS(itl::idr_s(A, x, b, M, iter, itl::idrs_options{}, P), std::invalid_argument);
         std::vector<vec_t> Q(1, vec_t(n - 1, 1.0));
         CHECK_THROWS_AS(itl::idr_s(A, x, b, M, iter, itl::idrs_options{}, Q), std::invalid_argument);
+        // Dependent up to rounding: the second is 0.1 times the first, so its
+        // projection leaves a rounding residual, not an exact zero.
+        std::vector<vec_t> D(2, vec_t(n));
+        for (std::size_t i = 0; i < n; ++i) {
+            D[0](i) = 1.0 + double(i % 7);
+            D[1](i) = 0.1 * D[0](i);
+        }
+        CHECK_THROWS_AS(itl::idr_s(A, x, b, M, iter, itl::idrs_options{}, D), std::invalid_argument);
     }
     SECTION("smoothing gives a monotone residual and the same accuracy") {
         itl::idrs_options opt;
@@ -473,4 +481,41 @@ TEST_CASE("IDR(s): a complex nonsymmetric system, with a complex shadow space (i
         }
         CHECK(std::sqrt(r / nb) <= 1.5e-10);
     }
+}
+
+TEST_CASE("IDR(s): smoothing with a tiny float residual (issue 874)", "[itl][krylov][idr_s][874]") {
+    // b = 2^-80 ones in float: the difference rs - r has entries near 2^-80,
+    // whose dot product with itself underflows to 0. Smoothing skipped every
+    // update then, and the smoothed residual it tests stayed at r0.
+    using fcsr = mat::compressed2D<float>;
+    using fvec = vec::dense_vector<float>;
+    const std::size_t g = 12, n = g * g;
+    fcsr A(n, n);
+    {
+        mat::inserter<fcsr> ins(A);
+        for (std::size_t r = 0; r < g; ++r)
+            for (std::size_t c = 0; c < g; ++c) {
+                const std::size_t i = r * g + c;
+                ins[i][i] << 4.0f;
+                if (c > 0)     ins[i][i - 1] << -1.4f;
+                if (c + 1 < g) ins[i][i + 1] << -0.6f;
+                if (r > 0)     ins[i][i - g] << -1.4f;
+                if (r + 1 < g) ins[i][i + g] << -0.6f;
+            }
+    }
+    const float tiny = std::ldexp(1.0f, -80);
+    const fvec b(n, tiny);
+    fvec x(n, 0.0f);
+    itl::pc::identity<fcsr> M(A);
+    itl::basic_iteration<float> iter(b, 500, 1e-4f);
+    itl::idrs_options opt;
+    opt.smoothing = true;
+    REQUIRE(itl::idr_s(A, x, b, M, iter, opt) == 0);
+    fvec Ax = A * x;
+    double r = 0, nb = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        r  += double(b(i) - Ax(i)) * double(b(i) - Ax(i));
+        nb += double(b(i)) * double(b(i));
+    }
+    CHECK(std::sqrt(r / nb) <= 2e-4);
 }
