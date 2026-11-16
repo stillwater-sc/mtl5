@@ -13,10 +13,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#include <vector>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -64,7 +66,53 @@ struct no_inf {
     friend no_inf abs(no_inf a) { return std::abs(a.v); }
 };
 
+/// A posit-like real of range +-64: every conversion saturates to +-64, so
+/// sat64(127) is 64, and 64 is the largest value.
+struct sat64 {
+    double v = 0.0;
+    sat64() = default;
+    constexpr sat64(double d) : v(d != d ? d : (d > 64 ? 64 : (d < -64 ? -64 : d))) {}
+    template <typename I>
+        requires std::is_integral_v<I>
+    constexpr sat64(I i) : sat64(static_cast<double>(i)) {}
+    explicit constexpr operator long double() const { return v; }
+    template <typename I>
+        requires std::is_integral_v<I>
+    explicit constexpr operator I() const { return static_cast<I>(v); }
+    friend constexpr bool operator==(sat64 a, sat64 b) { return a.v == b.v; }
+    friend constexpr auto operator<=>(sat64 a, sat64 b) { return a.v <=> b.v; }
+};
+
+/// A collection whose iterator returns a proxy that reads the element
+/// through a pointer (the Collection concept allows it).
+struct proxy_collection {
+    using value_type = double;
+    using size_type = std::size_t;
+    std::vector<double> data;
+    struct proxy {
+        const double* p;
+        operator double() const { return *p; }
+    };
+    struct iterator {
+        const double* p;
+        proxy operator*() const { return {p}; }
+        iterator& operator++() { ++p; return *this; }
+        bool operator!=(const iterator& o) const { return p != o.p; }
+        bool operator==(const iterator& o) const { return p == o.p; }
+    };
+    size_type size() const { return data.size(); }
+    iterator begin() const { return {data.data()}; }
+    iterator end() const { return {data.data() + data.size()}; }
+};
+
 } // namespace
+
+template <> class std::numeric_limits<sat64> : public mtl5_test::limits_of<sat64, double> {
+public:
+    static constexpr bool has_infinity = false;
+    static constexpr sat64 max() noexcept { return sat64(64.0); }
+    static constexpr sat64 lowest() noexcept { return sat64(-64.0); }
+};
 
 template <> class std::numeric_limits<no_inf> : public mtl5_test::limits_of<no_inf, double> {
 public:
@@ -199,4 +247,25 @@ TEST_CASE("normwise_backward_error rejects mismatched shapes", "[operation][back
     CHECK_THROWS_AS(normwise_backward_error(R, x3, b), std::invalid_argument);   // not square
     CHECK_THROWS_AS(normwise_backward_error(A, x3, b), std::invalid_argument);   // x too long
     CHECK_THROWS_AS(normwise_backward_error(A, x, x3), std::invalid_argument);   // b too long
+}
+
+TEST_CASE("min and max return a value, not a proxy into the collection", "[operation][minmax][887]") {
+    // With the accumulator typed as *it, result was a proxy: the returned
+    // maximum changed when the element changed.
+    proxy_collection c{{1.0, 2.0}};
+    const auto mx = mtl::max(c);   // auto: what max returns, not a conversion of it
+    const auto mn = mtl::min(c);
+    STATIC_REQUIRE(std::is_same_v<std::remove_cv_t<decltype(mx)>, double>);
+    c.data[1] = 100.0;
+    c.data[0] = -100.0;
+    CHECK(static_cast<double>(mx) == 2.0);
+    CHECK(static_cast<double>(mn) == 1.0);
+}
+
+TEST_CASE("saturating_cast from a saturating source does not clamp its own range limit", "[operation][projection][887]") {
+    // sat64(127) is 64, so the bound was 64 and sat64(64) came back as 127.
+    CHECK(detail::saturating_cast<std::int8_t>(sat64(64.0)) == 64);
+    CHECK(detail::saturating_cast<std::int8_t>(sat64(-64.0)) == -64);
+    CHECK(detail::saturating_cast<std::int8_t>(sat64(12.0)) == 12);
+    CHECK(detail::saturating_cast<std::int32_t>(sat64(64.0)) == 64);
 }

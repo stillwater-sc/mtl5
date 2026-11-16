@@ -22,10 +22,12 @@ auto min(const C& c) {
     const auto end = c.end();
     if (it == end)
         ::mtl::detail::throw_or_abort(std::invalid_argument("mtl::min: empty collection"));
-    using T = std::remove_cvref_t<decltype(*it)>;
+    // The accumulator is a value_type, not whatever *it is: a proxy iterator
+    // would make result a proxy into the collection.
+    using T = typename C::value_type;
     T result = *it;
     for (++it; it != end; ++it) {
-        const T& a = *it;
+        const T a = *it;
         if constexpr (requires { { a != a } -> std::convertible_to<bool>; }) {
             if (result != result) break;             // already NaN: it stays
             if (a != a || a < result) result = a;

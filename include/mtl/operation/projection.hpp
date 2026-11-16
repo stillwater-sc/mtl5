@@ -115,11 +115,29 @@ Target saturating_cast(Value v) {
         using limit = sat_traits<Target>;
         if constexpr (std::is_floating_point_v<Value>) {
             if (std::isnan(v)) return Target{0};
+            if (v >= static_cast<Value>(limit::max())) return limit::max();
+            if (v <= static_cast<Value>(limit::min())) return limit::min();
         } else {
             if (v != v) return Target{0};
+            // A type that saturates its own conversions (a posit) turns a
+            // target limit beyond its range into its maxpos: Value(127) is 64
+            // for a posit of that range, and v = 64 then clamped to 127. So
+            // each side is clamped only when Value's range reaches past the
+            // target's, judged in long double; otherwise no Value overflows
+            // that side, and the cast below is exact.
+            using VL = std::numeric_limits<Value>;
+            if constexpr (requires { static_cast<long double>(VL::max()); }) {
+                if (static_cast<long double>(VL::max()) >= static_cast<long double>(limit::max()) &&
+                    v >= static_cast<Value>(limit::max()))
+                    return limit::max();
+                if (static_cast<long double>(VL::lowest()) <= static_cast<long double>(limit::min()) &&
+                    v <= static_cast<Value>(limit::min()))
+                    return limit::min();
+            } else {
+                if (v >= static_cast<Value>(limit::max())) return limit::max();
+                if (v <= static_cast<Value>(limit::min())) return limit::min();
+            }
         }
-        if (v >= static_cast<Value>(limit::max())) return limit::max();
-        if (v <= static_cast<Value>(limit::min())) return limit::min();
     } else if constexpr (is_sat_int_v<Target> && is_sat_int_v<Value>) {
         // Compare by value, not in Value's type (#691): casting Target's limits
         // to Value wraps when the signedness differs, so uint32 -> int32 saw
