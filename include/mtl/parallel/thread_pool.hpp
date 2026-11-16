@@ -140,15 +140,32 @@ inline unsigned clamp_pool_threads(unsigned long v) {
     return static_cast<unsigned>(v < hw ? v : hw);
 }
 
-/// Resolve the pool size from MTL5_NUM_THREADS (clamped to hardware
-/// concurrency); 1 when unset/invalid.
-inline unsigned resolve_pool_threads() {
-    if (const char* e = std::getenv("MTL5_NUM_THREADS")) {
-        char* end = nullptr;
-        const unsigned long v = std::strtoul(e, &end, 10);
-        if (end != e && v >= 1)
-            return clamp_pool_threads(v);
+/// Read environment variable `name` as a whole unsigned decimal: digits
+/// only, no sign, space or trailing characters, at most 0xFFFFFFFF. False
+/// when it is unset or not such a number. strtoul, which both pool variables
+/// used, accepts a leading '-' and wraps: MTL5_POOL_SPIN=-1 became the
+/// largest spin, 4294967295 iterations (issue 876).
+inline bool env_unsigned(const char* name, unsigned& out) {
+    const char* e = std::getenv(name);
+    if (e == nullptr || *e == '\0') return false;
+    constexpr unsigned long max = 0xFFFFFFFFul;
+    unsigned long v = 0;
+    for (const char* p = e; *p != '\0'; ++p) {
+        if (*p < '0' || *p > '9') return false;
+        const unsigned long d = static_cast<unsigned long>(*p - '0');
+        if (v > (max - d) / 10) return false;   // out of range: invalid
+        v = v * 10 + d;
     }
+    out = static_cast<unsigned>(v);
+    return true;
+}
+
+/// Resolve the pool size from MTL5_NUM_THREADS (clamped to hardware
+/// concurrency); 1 when unset/invalid (see env_unsigned).
+inline unsigned resolve_pool_threads() {
+    unsigned v = 0;
+    if (env_unsigned("MTL5_NUM_THREADS", v) && v >= 1)
+        return clamp_pool_threads(v);
     return 1u;
 }
 
@@ -309,16 +326,25 @@ Acc chunked_accumulate(Pool& pool, std::size_t n, std::size_t grain, unsigned ma
         return acc;
     }
     const std::size_t chunk = (n + team - 1) / team;
-    std::vector<Acc> partials;
+    // Each partial on its own cache line: map() updates its partial for the
+    // whole chunk, and contiguous partials shared lines between threads --
+    // 1.1-1.4x slower at 4 threads in a memory-bound loop (issue 876). 128
+    // bytes covers the 128-byte lines of Apple silicon and x86's adjacent-line
+    // prefetch. alignas(Acc) keeps a stricter alignment of Acc's own: a
+    // wrapper less aligned than its member is ill-formed.
+    struct alignas(128) alignas(Acc) padded {
+        Acc v;
+    };
+    std::vector<padded> partials;
     partials.reserve(team);
-    for (unsigned t = 0; t < team; ++t) partials.push_back(init());
+    for (unsigned t = 0; t < team; ++t) partials.push_back(padded{init()});
     pool.run(team, [&](unsigned tid) {
         const std::size_t b = static_cast<std::size_t>(tid) * chunk;
         if (b >= n) return;
-        map(partials[tid], b, (n < b + chunk) ? n : b + chunk);
+        map(partials[tid].v, b, (n < b + chunk) ? n : b + chunk);
     });
-    for (unsigned t = 1; t < team; ++t) combine(partials[0], partials[t]);
-    return std::move(partials[0]);
+    for (unsigned t = 1; t < team; ++t) combine(partials[0].v, partials[t].v);
+    return std::move(partials[0].v);
 }
 
 /// One spin-wait iteration: a pause hint to the core, nothing else.
@@ -348,10 +374,27 @@ class thread_pool {
 public:
     /// Construct a pool with `n` total logical workers (n-1 background threads +
     /// the caller). n < 1 is treated as 1 (serial).
+    ///
+    /// If a worker can't be created, the constructor stops and joins the
+    /// workers it started and rethrows the std::system_error. It used to
+    /// unwind with them still waiting on wake_, which was destroyed before
+    /// workers_: pthread_cond_destroy blocked, and the process hung
+    /// (thread_pool(2000) under ulimit -v 400000, issue 876). n is not capped:
+    /// a pool may deliberately hold more threads than cores.
     explicit thread_pool(unsigned n) : n_(n < 1 ? 1 : n) {
         workers_.reserve(n_ > 0 ? n_ - 1 : 0);
-        for (unsigned i = 1; i < n_; ++i)
+#if MTL5_HAS_EXCEPTIONS
+        try {
+            for (unsigned i = 1; i < n_; ++i)
+                workers_.emplace_back([this, i] { worker_loop(i); });
+        } catch (...) {
+            shutdown();   // a joinable std::thread left behind would terminate
+            throw;
+        }
+#else
+        for (unsigned i = 1; i < n_; ++i)            // a failed spawn aborts (#652)
             workers_.emplace_back([this, i] { worker_loop(i); });
+#endif
     }
 
     /// Process-wide pool, sized on first use (see configure()).
@@ -471,7 +514,11 @@ public:
     thread_pool(const thread_pool&) = delete;
     thread_pool& operator=(const thread_pool&) = delete;
 
-    ~thread_pool() {
+    ~thread_pool() { shutdown(); }
+
+private:
+    /// Stop and join the workers started so far.
+    void shutdown() noexcept {
         {
             std::lock_guard<std::mutex> lk(mtx_);
             stop_ = true;
@@ -481,7 +528,6 @@ public:
         for (auto& w : workers_) if (w.joinable()) w.join();
     }
 
-private:
     /// Spin until done() or spin_us have passed; true if done() became true.
     /// The clock is read only every 64th iteration, the one that yields.
     template <typename Pred>

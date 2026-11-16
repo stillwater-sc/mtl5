@@ -92,15 +92,12 @@ namespace detail {
 MTL5_SHARED_POOL_API spin_pool& shared_spin_pool_v1();
 #endif
 
-/// Spin iterations from MTL5_POOL_SPIN; `fallback` when unset or invalid.
+/// Spin iterations from MTL5_POOL_SPIN; `fallback` when unset or invalid:
+/// signed, out of range, empty or not all digits (env_unsigned, issue 876).
+/// "-1" and values past 2^32 used to give the largest spin.
 inline unsigned resolve_pool_spin(unsigned fallback) {
-    if (const char* e = std::getenv("MTL5_POOL_SPIN")) {
-        char* end = nullptr;
-        const unsigned long v = std::strtoul(e, &end, 10);
-        if (end != e && *end == '\0')
-            return v > 0xFFFFFFFFul ? 0xFFFFFFFFu : static_cast<unsigned>(v);
-    }
-    return fallback;
+    unsigned v = 0;
+    return env_unsigned("MTL5_POOL_SPIN", v) ? v : fallback;
 }
 
 } // namespace detail
