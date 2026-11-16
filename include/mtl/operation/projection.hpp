@@ -52,30 +52,58 @@ concept EmbeddableInto =
 
 namespace detail {
 
+/// The integer types saturating_cast clamps: the integral types, and
+/// __int128 / unsigned __int128 where the compiler has them. Under strict
+/// -std=c++20 (MTL5's own build) std::is_integral is false for those, so a
+/// cast from __int128 skipped the clamp and truncated (issue 865);
+/// std::numeric_limits is specialized for them in both modes.
+template <typename T> struct is_sat_int : std::is_integral<T> {};
+template <typename T> struct sat_unsigned { using type = std::make_unsigned_t<T>; };
+#if defined(__SIZEOF_INT128__)
+__extension__ template <> struct is_sat_int<__int128> : std::true_type {};
+__extension__ template <> struct is_sat_int<unsigned __int128> : std::true_type {};
+__extension__ template <> struct sat_unsigned<__int128> { __extension__ typedef unsigned __int128 type; };
+#endif
+template <typename T> inline constexpr bool is_sat_int_v = is_sat_int<T>::value;
+template <typename T> inline constexpr bool sat_signed_v = std::numeric_limits<T>::is_signed;
+
+/// a < b by value, for integral types of any signedness and width. With the
+/// same signedness the usual conversions widen both to the wider type, which
+/// preserves values; otherwise the signed side is tested for a negative value
+/// first and compared, as unsigned, only when it is not.
+template <typename A, typename B>
+constexpr bool int_less(A a, B b) noexcept {
+    if constexpr (sat_signed_v<A> == sat_signed_v<B>) {
+        return a < b;
+    } else if constexpr (sat_signed_v<A>) {
+        return a < A(0) || static_cast<typename sat_unsigned<A>::type>(a) < b;
+    } else {
+        return b >= B(0) && a < static_cast<typename sat_unsigned<B>::type>(b);
+    }
+}
+
 /// Convert a value to Target, clamping to [min, max] for integer types
 /// to prevent undefined behavior from signed integer overflow.
 /// Floating-point targets pass through without clamping.
 template <typename Target, typename Value>
 Target saturating_cast(Value v) {
-    if constexpr (std::is_integral_v<Target> && std::is_floating_point_v<Value>) {
+    if constexpr (is_sat_int_v<Target> && std::is_floating_point_v<Value>) {
         using limit = std::numeric_limits<Target>;
         if (std::isnan(v)) return Target{0};
         if (v >= static_cast<Value>(limit::max())) return limit::max();
         if (v <= static_cast<Value>(limit::min())) return limit::min();
-    } else if constexpr (std::is_integral_v<Target> && std::is_integral_v<Value>) {
+    } else if constexpr (is_sat_int_v<Target> && is_sat_int_v<Value>) {
         // Compare by value, not in Value's type (#691): casting Target's limits
         // to Value wraps when the signedness differs, so uint32 -> int32 saw
         // INT32_MAX as a negative bound and int -> uint32 saw UINT32_MAX as -1.
-        // std::cmp_less/cmp_greater compare mixed signedness correctly; they do
-        // not accept bool or the character types, so both sides are widened,
-        // value-preserving, to (unsigned) long long first.
+        // int_less compares mixed signedness by value for every integral type.
+        // It replaces std::cmp_less over a widening to (unsigned) long long,
+        // which truncated __int128 (an integral type under gnu++20) before the
+        // comparison (issue 865); std::cmp_less itself rejects bool, the
+        // character types and __int128.
         using limit = std::numeric_limits<Target>;
-        auto wide = [](auto x) {
-            if constexpr (std::is_signed_v<decltype(x)>) return static_cast<long long>(x);
-            else return static_cast<unsigned long long>(x);
-        };
-        if (std::cmp_greater(wide(v), wide(limit::max()))) return limit::max();
-        if (std::cmp_less(wide(v), wide(limit::min()))) return limit::min();
+        if (int_less(limit::max(), v)) return limit::max();
+        if (int_less(v, limit::min())) return limit::min();
     }
     return static_cast<Target>(v);
 }

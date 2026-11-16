@@ -18,6 +18,8 @@
 //            Algorithm", SIAM J. Matrix Anal. Appl., 17(4), 1996.
 //            Davis, "Direct Methods for Sparse Linear Systems", SIAM, Ch. 7.
 
+#include <string>
+#include <stdexcept>
 #include <cassert>
 #include <cstddef>
 #include <vector>
@@ -41,7 +43,11 @@ struct amd {
     std::vector<std::size_t> operator()(
         const mat::compressed2D<Value, Parameters>& A) const
     {
-        assert(A.num_rows() == A.num_cols());
+        // A + A^T needs a square A: a 3x5 overflowed the heap in
+        // build_aplusat_pattern under NDEBUG (issue 865).
+        if (A.num_rows() != A.num_cols())
+            throw std::invalid_argument("amd: matrix must be square (got "
+                + std::to_string(A.num_rows()) + "x" + std::to_string(A.num_cols()) + ")");
         return detail::minimum_degree(/*order=*/1, A);
     }
 };

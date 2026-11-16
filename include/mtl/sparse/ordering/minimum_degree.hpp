@@ -386,7 +386,11 @@ void build_ata_pattern(const mat::compressed2D<Value, Parameters>& A,
     const auto& starts  = A.ref_major();
     const auto& indices = A.ref_minor();
 
-    idx dense = dense_threshold(m == 0 ? n : m);
+    // Dense means dense among the n columns, as CSparse's cs_amd counts it:
+    // sized by m, the threshold of a short, wide matrix was 0 (the n - 2 clamp
+    // of m = 2), every row was dropped, and colamd returned the identity
+    // (issue 865).
+    idx dense = dense_threshold(n);
 
     // col -> list of (kept) rows containing that column.
     std::vector<std::vector<idx>> col_rows(n);

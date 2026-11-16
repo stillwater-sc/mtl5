@@ -326,4 +326,10 @@ TEST_CASE("max-based norms accept a magnitude type without equality", "[operatio
     dense2D<O> m = {{O(1.0), O(-2.0)}, {O(3.0), O(4.0)}};
     REQUIRE(one_norm(m).v == 6.0);
     REQUIRE(infinity_norm(m).v == 7.0);
+    // Without `!=` the NaN test is skipped: a NaN is neither < nor > anything,
+    // so it never becomes the maximum, wherever it stands (issue 865).
+    const double qnan = std::numeric_limits<double>::quiet_NaN();
+    REQUIRE(infinity_norm(dense_vector<O>{O(1.0), O(qnan), O(3.0)}).v == 3.0);
+    REQUIRE(infinity_norm(dense_vector<O>{O(qnan), O(-2.0)}).v == 2.0);
+    REQUIRE(infinity_norm(dense_vector<O>{O(5.0), O(qnan)}).v == 5.0);
 }

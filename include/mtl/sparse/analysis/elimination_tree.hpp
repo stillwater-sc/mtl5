@@ -46,9 +46,13 @@ std::vector<std::size_t> elimination_tree(
             if (i >= k) continue;  // only upper triangular part
 
             // Follow path from i to root of its subtree, attaching to k
-            SizeType node = i;
-            SizeType next;
-            while (node != no_parent && node != k) {
+            // The walk is in std::size_t, the type of no_parent and of
+            // ancestor[]: with a 32-bit SizeType, `node = ancestor[node]`
+            // truncated the sentinel, `node != no_parent` never failed, and
+            // the walk indexed past n (issue 865).
+            std::size_t node = static_cast<std::size_t>(i);
+            std::size_t next;
+            while (node != no_parent && node != static_cast<std::size_t>(k)) {
                 next = ancestor[node];
                 ancestor[node] = k;  // path compression
                 if (next == no_parent) {
@@ -106,11 +110,12 @@ std::vector<std::size_t> column_counts(
             if (i >= k) continue;
 
             // Walk from i up to k in the etree, counting new entries
-            SizeType node = i;
-            while (node != no_parent && node < k) {
-                SizeType old_first = first[node];
+            // std::size_t, as in elimination_tree (issue 865).
+            std::size_t node = static_cast<std::size_t>(i);
+            while (node != no_parent && node < static_cast<std::size_t>(k)) {
+                const std::size_t old_first = first[node];
                 first[node] = k;
-                if (old_first == k) break;  // already counted this path
+                if (old_first == static_cast<std::size_t>(k)) break;  // already counted this path
                 counts[node]++;  // this path contributes a fill entry
                 node = parent[node];
             }
