@@ -2,6 +2,7 @@
 // MTL5 -- Cyclic iteration controller with periodic residual printing
 #include <iostream>
 #include <stdexcept>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/itl/iteration/basic_iteration.hpp>
 
 namespace mtl::itl {
@@ -62,7 +63,7 @@ protected:
     static int checked_cycle(int cycle) {
         // i_ % 0 is undefined (issue 866).
         if (cycle < 1)
-            throw std::invalid_argument("cyclic_iteration: cycle must be at least 1");
+            ::mtl::detail::throw_or_abort(std::invalid_argument("cyclic_iteration: cycle must be at least 1"));
         return cycle;
     }
 

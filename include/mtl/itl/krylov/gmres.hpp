@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- GMRES (Generalized Minimum Residual) solver with restart
 // Left-preconditioned, Modified Gram-Schmidt, Givens rotations for QR
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
 #include <stdexcept>
@@ -147,7 +148,7 @@ int gmres(const LinearOp& A, VecX& x, const VecB& b,
     // restart = 0 made no step and the loop below spun forever; a negative
     // one sized the Krylov basis from a negative count (issue 866).
     if (restart < 1)
-        throw std::invalid_argument("gmres: restart must be at least 1");
+        ::mtl::detail::throw_or_abort(std::invalid_argument("gmres: restart must be at least 1"));
     // At least one cycle: it tests the residual first, so an iteration object
     // still finished from an earlier solve is not taken as done (issue 866).
     do {
