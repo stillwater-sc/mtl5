@@ -104,11 +104,20 @@ constexpr bool int_less(A a, B b) noexcept {
 /// Convert a value to Target, clamping to [min, max] for integer types
 /// to prevent undefined behavior from signed integer overflow.
 /// Floating-point targets pass through without clamping.
+///
+/// Any non-integer source with numeric_limits is clamped, NaN to 0: a
+/// bfloat16 or posit source was cast unclamped, because only
+/// std::is_floating_point sources were (issue 887).
 template <typename Target, typename Value>
 Target saturating_cast(Value v) {
-    if constexpr (is_sat_int_v<Target> && std::is_floating_point_v<Value>) {
+    if constexpr (is_sat_int_v<Target> && !is_sat_int_v<Value> &&
+                  std::numeric_limits<Value>::is_specialized && !std::numeric_limits<Value>::is_integer) {
         using limit = sat_traits<Target>;
-        if (std::isnan(v)) return Target{0};
+        if constexpr (std::is_floating_point_v<Value>) {
+            if (std::isnan(v)) return Target{0};
+        } else {
+            if (v != v) return Target{0};
+        }
         if (v >= static_cast<Value>(limit::max())) return limit::max();
         if (v <= static_cast<Value>(limit::min())) return limit::min();
     } else if constexpr (is_sat_int_v<Target> && is_sat_int_v<Value>) {
@@ -133,13 +142,15 @@ Target saturating_cast(Value v) {
 // project_onto<Target>: wider -> narrower (lossy)
 // ============================================================================
 
-/// Project a dense vector onto a narrower element type.
+/// Project a dense vector onto a narrower element type. An integer target
+/// saturates, NaN to 0, as the scaled overloads do: a bare static_cast of an
+/// out-of-range or NaN floating value is undefined behavior (issue 887).
 template <Scalar Target, Scalar Source>
     requires ProjectableOnto<Target, Source>
 vec::dense_vector<Target> project_onto(const vec::dense_vector<Source>& src) {
     vec::dense_vector<Target> dst(src.size());
     for (std::size_t i = 0; i < src.size(); ++i)
-        dst(i) = static_cast<Target>(src(i));
+        dst(i) = detail::saturating_cast<Target>(src(i));
     return dst;
 }
 
@@ -157,14 +168,15 @@ vec::dense_vector<Target> project_onto(const vec::dense_vector<Source>& src, Sca
     return dst;
 }
 
-/// Project a dense 2D matrix onto a narrower element type.
+/// Project a dense 2D matrix onto a narrower element type; integer targets
+/// saturate (see the vector overload).
 template <Scalar Target, Scalar Source>
     requires ProjectableOnto<Target, Source>
 mat::dense2D<Target> project_onto(const mat::dense2D<Source>& src) {
     mat::dense2D<Target> dst(src.num_rows(), src.num_cols());
     for (std::size_t r = 0; r < src.num_rows(); ++r)
         for (std::size_t c = 0; c < src.num_cols(); ++c)
-            dst(r, c) = static_cast<Target>(src(r, c));
+            dst(r, c) = detail::saturating_cast<Target>(src(r, c));
     return dst;
 }
 
