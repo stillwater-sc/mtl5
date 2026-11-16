@@ -8,6 +8,9 @@
 // Windows (LLP64 data model), so shifting beyond 31 would be UB there.
 
 #include <cstdint>
+#include <stdexcept>
+
+#include <mtl/detail/exceptions.hpp>
 
 namespace mtl::recursion {
 
@@ -19,10 +22,19 @@ constexpr std::uint64_t lsb_mask(unsigned n) {
     return (std::uint64_t{1} << n) - std::uint64_t{1};
 }
 
-/// Row-major mask for block size K: interleaved bit pattern
-/// For K=1: 0xAAAA... (even bits set -- row index bits)
+/// Row-major mask for block size K: interleaved bit pattern, the bits
+/// [i + k, i + 2k) for i = 0, 2k, 4k, ... below 64.
+/// For K=1: 0xAAAA... (odd bits set -- row index bits)
 /// For K=2: 0xCCCC... (pairs of bits for row)
+/// For K >= 32 there is one block, clipped at bit 63 (K = 33: bits 33..63);
+/// for K >= 64 none (0).
+/// K = 0 has no blocks and the loop did not advance: it is rejected, which
+/// in a constant expression is a compile error (issue 877).
 constexpr std::uint64_t row_major_mask(unsigned k) {
+    if (k == 0) {
+        ::mtl::detail::throw_or_abort(std::invalid_argument("row_major_mask: block size k must be at least 1"));
+        return 0;
+    }
     std::uint64_t mask = 0;
     for (unsigned i = 0; i + k < 64; i += 2 * k) {
         mask |= (lsb_mask(k) << (i + k));
@@ -70,10 +82,10 @@ inline constexpr std::uint64_t doppled_64_col_mask = col_major_mask(6);
 inline constexpr std::uint64_t doppled_128_row_mask = row_major_mask(7);
 inline constexpr std::uint64_t doppled_128_col_mask = col_major_mask(7);
 
-// -- Shark-tooth masks (hybrid block + Z-order) ------------------------
-
-/// Shark-tooth: Z-order at fine granularity, row-major at coarse
-inline constexpr std::uint64_t shark_z_row_mask = morton_z_mask;
-inline constexpr std::uint64_t shark_z_col_mask = morton_mask;
+// The shark-tooth masks (shark_z_row_mask, shark_z_col_mask) were removed in
+// issue 877: described as "hybrid block + Z-order", they were plain Morton
+// aliases, with shark_z_row_mask = 0x5555... -- the column bits by this
+// file's convention, against doppled_2_row_mask = 0xAAAA... -- and nothing
+// used them.
 
 } // namespace mtl::recursion

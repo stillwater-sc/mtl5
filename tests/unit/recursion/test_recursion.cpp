@@ -5,6 +5,10 @@
 #include <mtl/mat/dense2D.hpp>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <limits>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace mtl;
@@ -249,4 +253,119 @@ TEST_CASE("lsb_mask helper", "[recursion][masks]") {
     REQUIRE(lsb_mask(1) == std::uint64_t{1});
     REQUIRE(lsb_mask(4) == std::uint64_t{0xF});
     REQUIRE(lsb_mask(8) == std::uint64_t{0xFF});
+}
+
+// -- Issue 877 (QA sweep #783) -------------------------------------------
+
+TEST_CASE("row_major_mask and the doppled masks: pinned values", "[recursion][masks][877]") {
+    // The old mask test checked only row | col == ~0, which every mask passes.
+    CHECK(row_major_mask(1) == UINT64_C(0xAAAAAAAAAAAAAAAA));
+    CHECK(row_major_mask(2) == UINT64_C(0xCCCCCCCCCCCCCCCC));
+    CHECK(row_major_mask(4) == UINT64_C(0xF0F0F0F0F0F0F0F0));
+    CHECK(row_major_mask(7) == UINT64_C(0x80FE03F80FE03F80));    // the last block clipped at bit 63
+    CHECK(row_major_mask(33) == UINT64_C(0xFFFFFFFE00000000));   // one block, bits 33..63
+    CHECK(row_major_mask(64) == UINT64_C(0));
+    CHECK(col_major_mask(7) == UINT64_C(0x7F01FC07F01FC07F));
+    CHECK(doppled_2_row_mask == row_major_mask(1));
+    CHECK(doppled_4_row_mask == UINT64_C(0xCCCCCCCCCCCCCCCC));
+    CHECK(doppled_16_row_mask == UINT64_C(0xF0F0F0F0F0F0F0F0));
+    CHECK(doppled_32_row_mask == UINT64_C(0x0F83E0F83E0F83E0));
+    CHECK(doppled_64_row_mask == UINT64_C(0x0FC0FC0FC0FC0FC0));
+    CHECK(doppled_128_row_mask == UINT64_C(0x80FE03F80FE03F80));
+    CHECK(doppled_32_col_mask == ~doppled_32_row_mask);
+    CHECK(doppled_64_col_mask == ~doppled_64_row_mask);
+    CHECK(doppled_128_col_mask == ~doppled_128_row_mask);
+    CHECK(lsb_mask(63) == UINT64_C(0x7FFFFFFFFFFFFFFF));
+    CHECK(lsb_mask(64) == ~std::uint64_t{0});
+    CHECK(lsb_mask(70) == ~std::uint64_t{0});
+    // Constant expressions, as the doppled constants are.
+    static_assert(row_major_mask(1) == UINT64_C(0xAAAAAAAAAAAAAAAA));
+}
+
+#if MTL5_HAS_EXCEPTIONS
+TEST_CASE("row_major_mask(0) and col_major_mask(0) are rejected", "[recursion][masks][877]") {
+    // The loop did not advance at k = 0: a run-time call hung, a constant
+    // expression hit the compiler's step limit. In a constant expression it
+    // is now a call to a non-constexpr function.
+    CHECK_THROWS_AS(row_major_mask(0), std::invalid_argument);
+    CHECK_THROWS_AS(col_major_mask(0), std::invalid_argument);
+}
+
+TEST_CASE("outer_bound beyond the largest power of 2 is rejected", "[recursion][utility][877]") {
+    constexpr std::size_t top = (std::numeric_limits<std::size_t>::max() >> 1) + 1;
+    CHECK(outer_bound(top) == top);
+    CHECK(outer_bound(top - 1) == top);
+    CHECK_THROWS_AS(outer_bound(top + 1), std::overflow_error);
+    CHECK_THROWS_AS(outer_bound(std::numeric_limits<std::size_t>::max()), std::overflow_error);
+}
+#endif
+
+namespace {
+
+/// Visits of each element of an r x c matrix by for_each with `test`, and the
+/// number of base cases.
+template <typename Test>
+std::pair<std::vector<int>, std::size_t> visits(std::size_t r, std::size_t c, const Test& test) {
+    mat::dense2D<int> A(r, c);
+    recursator<mat::dense2D<int>> rec(A);
+    std::vector<int> seen(r * c, 0);
+    std::size_t bases = 0;
+    for_each(rec,
+             [&](auto& sub) {
+                 ++bases;
+                 for (std::size_t i = 0; i < sub.num_rows(); ++i)
+                     for (std::size_t j = 0; j < sub.num_cols(); ++j)
+                         ++seen[(sub.row_offset() + i) * c + sub.col_offset() + j];
+             },
+             test);
+    return {seen, bases};
+}
+
+} // namespace
+
+TEST_CASE("for_each visits every element exactly once, also when the test rejects 1x1", "[recursion][for_each][877]") {
+    // min_dim_test(0) rejects every region, 1x1 included: north_west() of a
+    // 1x1 region is itself, and for_each recursed until the stack overflowed.
+    // The old coverage test wrote 1.0, which a double visit can't change.
+    for (const auto& [r, c] : std::vector<std::pair<std::size_t, std::size_t>>{
+             {0, 0}, {0, 3}, {1, 1}, {1, 5}, {5, 1}, {7, 5}, {8, 8}, {3, 9}}) {
+        INFO(r << " x " << c);
+        for (const std::size_t t : {0u, 1u, 2u}) {
+            const auto [seen, bases] = visits(r, c, min_dim_test(t));
+            for (const int v : seen) CHECK(v == 1);
+            if (t == 0) CHECK(bases == r * c);   // every base case is 1x1
+        }
+        const auto [seen, bases] = visits(r, c, max_dim_test(3));
+        for (const int v : seen) CHECK(v == 1);
+        (void)bases;
+    }
+}
+
+TEST_CASE("recursator accessors, thresholds and a const matrix", "[recursion][recursator][877]") {
+    mat::dense2D<int> A(5, 7);
+    for (std::size_t i = 0; i < 5; ++i)
+        for (std::size_t j = 0; j < 7; ++j)
+            A(i, j) = static_cast<int>(10 * i + j);
+    recursator<mat::dense2D<int>> rec(A);
+    const auto se = rec.south_east();   // rows 4..4, cols 4..6
+    CHECK(se.row_offset() == 4);
+    CHECK(se.col_offset() == 4);
+    CHECK(se.num_rows() == 1);
+    CHECK(se.num_cols() == 3);
+    CHECK(se.size() == 3);
+    CHECK(!se.is_empty());
+    CHECK(se(0, 2) == 46);              // the const operator()
+    CHECK(&se.get_matrix() == &A);
+    CHECK(min_dim_test(3).threshold == 3);
+    CHECK(max_dim_test(4).threshold == 4);
+    CHECK(max_dim_test_static<5>::threshold == 5);
+
+    // A const matrix: it binds an lvalue, not a temporary, which it would
+    // outlive (issue 877).
+    const mat::dense2D<int>& CA = A;
+    recursator<const mat::dense2D<int>> crec(CA);
+    CHECK(crec(4, 6) == 46);
+    static_assert(std::is_constructible_v<recursator<const mat::dense2D<int>>, const mat::dense2D<int>&>);
+    static_assert(!std::is_constructible_v<recursator<const mat::dense2D<int>>, mat::dense2D<int>&&>);
+    static_assert(!std::is_constructible_v<recursator<mat::dense2D<int>>, mat::dense2D<int>&&>);
 }

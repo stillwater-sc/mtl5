@@ -6,6 +6,11 @@
 #include <cstddef>
 #include <cassert>
 #include <bit>
+#include <limits>
+#include <stdexcept>
+#include <type_traits>
+
+#include <mtl/detail/exceptions.hpp>
 
 namespace mtl::recursion {
 
@@ -23,9 +28,16 @@ constexpr std::size_t first_part(std::size_t n) {
     return std::bit_floor(n);
 }
 
-/// Smallest power of 2 that is >= n
+/// Smallest power of 2 that is >= n. Above the largest power of 2 a
+/// size_t holds (2^63 on 64-bit) there is none: std::bit_ceil is undefined
+/// there, so it is rejected (issue 877).
 constexpr std::size_t outer_bound(std::size_t n) {
     if (n == 0) return 0;
+    constexpr std::size_t top = (std::numeric_limits<std::size_t>::max() >> 1) + 1;
+    if (n > top) {
+        ::mtl::detail::throw_or_abort(std::overflow_error("outer_bound: no power of 2 >= n fits in size_t"));
+        return 0;
+    }
     return std::bit_ceil(n);
 }
 
@@ -44,6 +56,11 @@ public:
         : mat_(&m),
           row_offset_(0), col_offset_(0),
           nrows_(m.num_rows()), ncols_(m.num_cols()) {}
+
+    /// A recursator holds a pointer: recursator<const M> bound a temporary
+    /// through Matrix& = const M&, and dangled at the end of the statement
+    /// (issue 877).
+    explicit recursator(std::remove_const_t<Matrix>&&) = delete;
 
     // -- Quadrant subdivision -------------------------------------------
 
@@ -138,7 +155,10 @@ template <typename Matrix, typename Function, typename BaseCaseTest>
 void for_each(recursator<Matrix> rec, Function&& fn, const BaseCaseTest& is_base) {
     if (rec.is_empty()) return;
 
-    if (is_base(rec)) {
+    // A 1x1 region can't be split -- its north_west() is itself -- so it is
+    // a base case whatever the test says: min_dim_test(0), or any test that
+    // rejects 1x1, recursed until the stack overflowed (issue 877).
+    if (is_base(rec) || (rec.num_rows() == 1 && rec.num_cols() == 1)) {
         fn(rec);
         return;
     }
