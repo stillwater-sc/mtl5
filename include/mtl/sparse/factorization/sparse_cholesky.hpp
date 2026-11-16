@@ -231,7 +231,8 @@ cholesky_symbolic sparse_cholesky_symbolic(
 /// \return     Numeric factorization result containing L in CSC
 ///
 /// \throws std::runtime_error if the matrix is not positive definite
-///         (diagonal entry becomes non-positive during factorization)
+///         (a diagonal entry becomes non-positive, NaN or infinite)
+/// \throws std::invalid_argument if `sym` does not match A's size
 template <typename Accumulator = void, typename Value, typename Parameters>
 cholesky_numeric<Value> sparse_cholesky_numeric(
     const mat::compressed2D<Value, Parameters>& A,
@@ -247,6 +248,12 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
             "sparse_cholesky_numeric: matrix dimensions ("
             + std::to_string(A.num_rows()) + "x" + std::to_string(A.num_cols())
             + ") do not match symbolic analysis (n=" + std::to_string(n) + ")");
+    }
+
+    // A symbolic analysis of another size would index past its arrays.
+    if (sym.perm.size() != n || sym.parent.size() != n || sym.col_counts.size() != n) {
+        throw std::invalid_argument(
+            "sparse_cholesky_numeric: symbolic analysis is invalid or wrong size");
     }
 
     auto PA = util::symmetric_permute(A, sym.perm);
@@ -267,6 +274,15 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
     std::vector<Acc> x(n);            // dense numeric workspace (accumulator policy)
     for (size_type i = 0; i < n; ++i) AT::clear(x[i]);
     std::vector<size_type> nz(n, 0);           // next free slot in each column of L
+    // Rows of a finished column k are consumed in increasing j, so next[k] walks
+    // column k once over the whole factorization: L(j,k) is found where it
+    // points, and the rows >= j that column j's update reads start there.
+    std::vector<size_type> next(n, 0);
+    // walk_mark[i] == j: column j's etree walk reached node i. row_mark[i] == j:
+    // row i is already in L(:,j). Both make their walks linear (issue 864).
+    constexpr size_type unmarked = analysis::no_parent;
+    std::vector<size_type> walk_mark(n, unmarked), row_mark(n, unmarked);
+    std::vector<size_type> affecting_cols;
 
     for (size_type j = 0; j < n; ++j) {
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
@@ -274,46 +290,40 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
             if (i >= j) AT::assign(x[i], C.values[p]);
         }
 
-        std::vector<size_type> affecting_cols;
+        // The row subtree of j: each walk up the etree stops at a node an
+        // earlier walk of this column reached (CSparse cs_ereach).
+        affecting_cols.clear();
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
             if (i >= j) continue;
             size_type node = i;
-            while (node != analysis::no_parent && node < j) {
+            while (node != analysis::no_parent && node < j && walk_mark[node] != j) {
+                walk_mark[node] = j;
                 affecting_cols.push_back(node);
                 node = sym.parent[node];
             }
         }
-
-        std::sort(affecting_cols.begin(), affecting_cols.end());
-        affecting_cols.erase(
-            std::unique(affecting_cols.begin(), affecting_cols.end()),
-            affecting_cols.end());
+        std::sort(affecting_cols.begin(), affecting_cols.end());   // ascending, as before
 
         for (size_type col_k : affecting_cols) {
-            Value ljk = Value{0};
-            size_type col_start = L.col_ptr[col_k];
-            size_type col_end = L.col_ptr[col_k] + nz[col_k];
-            for (size_type p = col_start; p < col_end; ++p) {
-                if (L.row_ind[p] == j) {
-                    ljk = L.values[p];
-                    break;
-                }
-            }
-
+            const size_type col_end = L.col_ptr[col_k] + nz[col_k];
+            size_type& q = next[col_k];
+            while (q < col_end && L.row_ind[q] < j) ++q;
+            if (q == col_end || L.row_ind[q] != j) continue;   // L(j,k) == 0
+            const Value ljk = L.values[q];
             if (ljk == Value{0}) continue;
 
-            for (size_type p = col_start; p < col_end; ++p) {
-                size_type i = L.row_ind[p];
-                if (i >= j) AT::add_product(x[i], -ljk, L.values[p]);
-            }
+            for (size_type p = q; p < col_end; ++p)            // rows >= j
+                AT::add_product(x[L.row_ind[p]], -ljk, L.values[p]);
         }
 
         Value diag = AT::value(x[j]);          // round once, on consume
-        if (diag <= Value{0}) {
+        // NaN and Inf fail too, as in the LDL^T factorizations (issue 864):
+        // NaN fails diag > 0, and diag - diag != 0 holds for Inf.
+        if (!(diag > Value{0}) || diag - diag != Value{0}) {
             throw std::runtime_error(
                 "sparse_cholesky_numeric: matrix is not positive definite "
-                "(non-positive diagonal at column " + std::to_string(j) + ")");
+                "(non-positive or non-finite diagonal at column " + std::to_string(j) + ")");
         }
         using std::sqrt;
         Value ljj = sqrt(diag);
@@ -332,39 +342,35 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
         };
 
         push_entry(j, ljj);
+        row_mark[j] = j;
 
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p) {
             size_type i = C.row_ind[p];
-            if (i > j) {
+            if (i > j && row_mark[i] != j) {
+                row_mark[i] = j;
                 Value xi = AT::value(x[i]);
                 if (xi != Value{0}) push_entry(i, xi / ljj);
             }
         }
 
         for (size_type col_k : affecting_cols) {
-            size_type col_start = L.col_ptr[col_k];
-            size_type col_end = L.col_ptr[col_k] + nz[col_k];
-            for (size_type p = col_start; p < col_end; ++p) {
+            const size_type col_end = L.col_ptr[col_k] + nz[col_k];
+            for (size_type p = next[col_k]; p < col_end; ++p) {
                 size_type i = L.row_ind[p];
-                if (i > j) {
+                if (i > j && row_mark[i] != j) {
+                    row_mark[i] = j;
                     Value xi = AT::value(x[i]);
-                    if (xi != Value{0}) {
-                        bool already = false;
-                        for (size_type q = L.col_ptr[j]; q < L.col_ptr[j] + nz[j]; ++q) {
-                            if (L.row_ind[q] == i) { already = true; break; }
-                        }
-                        if (!already) push_entry(i, xi / ljj);
-                    }
+                    if (xi != Value{0}) push_entry(i, xi / ljj);
                 }
             }
         }
 
+        // Only rows >= j of x were written.
         for (size_type p = C.col_ptr[j]; p < C.col_ptr[j + 1]; ++p)
             AT::clear(x[C.row_ind[p]]);
         for (size_type col_k : affecting_cols) {
-            size_type col_start = L.col_ptr[col_k];
-            size_type col_end = L.col_ptr[col_k] + nz[col_k];
-            for (size_type p = col_start; p < col_end; ++p)
+            const size_type col_end = L.col_ptr[col_k] + nz[col_k];
+            for (size_type p = next[col_k]; p < col_end; ++p)
                 AT::clear(x[L.row_ind[p]]);
         }
         AT::clear(x[j]);
@@ -383,6 +389,7 @@ cholesky_numeric<Value> sparse_cholesky_numeric(
             L.row_ind[b] = key_idx;
             L.values[b] = key_val;
         }
+        next[j] = col_begin + 1;               // past the diagonal
     }
 
     size_type actual_nnz = 0;

@@ -238,6 +238,11 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
             + ") do not match symbolic analysis (n=" + std::to_string(n) + ")");
     }
 
+    if (sym.sperm.size() != n || sym.snodes.col_counts.size() != n) {
+        throw std::invalid_argument(
+            "supernodal_ldlt_numeric: symbolic analysis is invalid or wrong size");
+    }
+
     auto C = util::crs_to_csc(util::symmetric_permute(A, sym.sperm));
 
     const auto& snodes   = sym.snodes;
@@ -300,8 +305,16 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
             const std::size_t gcol = f + c;
             for (std::size_t p = C.col_ptr[gcol]; p < C.col_ptr[gcol + 1]; ++p) {
                 const std::size_t i = static_cast<std::size_t>(C.row_ind[p]);
-                if (i >= gcol)                              // lower triangle incl. diagonal
-                    AT::add_product(P[c * m + rel[i]], C.values[p], Value{1});
+                if (i < gcol) continue;                     // lower triangle incl. diagonal
+                // An entry outside the symbolic pattern has no panel row: it
+                // wrote at P[c*m + NPOS] (issue 864).
+                if (rel[i] == NPOS) {
+                    for (std::size_t t = 0; t < m; ++t) rel[rows[t]] = NPOS;
+                    throw std::invalid_argument(
+                        "supernodal_ldlt_numeric: A has an entry outside the symbolic "
+                        "pattern (column " + std::to_string(gcol) + "); analyze it afresh");
+                }
+                AT::add_product(P[c * m + rel[i]], C.values[p], Value{1});
             }
         }
 

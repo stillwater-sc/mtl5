@@ -286,6 +286,10 @@ lu_numeric<Value> sparse_lu_numeric(
         throw std::invalid_argument(
             "sparse_lu_numeric: symbolic permutation is invalid or wrong size");
     }
+    // threshold <= 0 accepts any candidate, a zero one included (issue 864).
+    if (!(threshold > Value{0} && threshold <= Value{1})) {
+        throw std::invalid_argument("sparse_lu_numeric: threshold must be in (0, 1]");
+    }
 
     // Column-permute A (apply the fill-reducing ordering) and convert to CSC.
     auto AQ = util::column_permute(A, sym.col_perm);
@@ -544,8 +548,9 @@ lu_numeric<Value> sparse_lu_numeric(
 /// with changing values (e.g. SPICE transient analysis: one factor, many
 /// refactor); nothing is copied but the recomputed values.
 ///
-/// Preconditions: A has the same column ordering (fac.symbolic) and the same
-/// nonzero pattern that produced fac. Relies on fac.L / fac.U columns being
+/// Preconditions: A has the same column ordering (fac.symbolic) and its nonzero
+/// pattern lies inside the factor's (A's pattern at factor time, plus fill).
+/// Checked: an entry outside it throws std::invalid_argument. Relies on fac.L / fac.U columns being
 /// stored in ascending row order (as sparse_lu_numeric produces).
 ///
 /// Strong exception guarantee: the values are computed into scratch arrays and
@@ -554,6 +559,7 @@ lu_numeric<Value> sparse_lu_numeric(
 ///
 /// \throws std::runtime_error if a reused pivot is numerically zero for the new
 ///         values (the prior pivot sequence is no longer valid).
+/// \throws std::invalid_argument if A has an entry outside the factor's pattern.
 template <typename Value, typename Parameters>
     requires OrderedField<Value>
 void sparse_lu_refactor_in_place(
@@ -590,8 +596,27 @@ void sparse_lu_refactor_in_place(
     std::vector<Value> Ux(U.values.size(), Value{0});
 
     std::vector<Value> x(n, Value{0});
+    // mark[i] == k: pivot-space row i is in L(:,k) or U(:,k), the positions the
+    // replay below computes for column k.
+    std::vector<size_type> mark(n, n);
 
     for (size_type k = 0; k < n; ++k) {
+        // An entry of A outside the factor's pattern would be scattered and never
+        // consumed: the refactor would return a wrong factor with no error (issue
+        // 864). Entries in the fill are fine: U(:,k)'s pattern is closed under the
+        // reach in L, so the replay computes them exactly.
+        for (size_type p = U.col_ptr[k]; p < U.col_ptr[k + 1]; ++p) mark[U.row_ind[p]] = k;
+        for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) mark[L.row_ind[p]] = k;
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) {
+            if (mark[pinv[C.row_ind[p]]] != k) {
+                throw std::invalid_argument(
+                    "sparse_lu_refactor: A has an entry in row "
+                    + std::to_string(C.row_ind[p]) + ", column "
+                    + std::to_string(fac.symbolic.col_perm[k])
+                    + " outside the prior factor's pattern; factor it afresh");
+            }
+        }
+
         // Scatter column k of the (column-permuted) A into the pivot-space
         // workspace.
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)

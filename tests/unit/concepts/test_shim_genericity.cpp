@@ -387,6 +387,63 @@ TEMPLATE_TEST_CASE("genericity: Krylov solvers with identity, diagonal and ILU(0
     SECTION("minres") { run(minres, identity, identity); }
 }
 
+TEMPLATE_TEST_CASE("genericity: sparse Cholesky, QR, LU refinement and shift-invert", "[generic][sparse]",
+                   MTL5_SHIMS) {
+    // The sparse direct solvers have no native-only path: bit for bit (#864).
+    using S = TestType;
+    using N = typename S::native_type;
+    using P = pair_data<S>;
+    namespace fz = sparse::factorization;
+    const std::size_t n = 12;
+    const auto A = P::laplacian(n);
+    const auto As = P::shim(A);
+    vec::dense_vector<N> b(n);
+    for (std::size_t i = 0; i < n; ++i) b(i) = N(1) + N(i % 3);
+    const auto bs = P::shim(b);
+    SECTION("sparse_cholesky_solve") {
+        vec::dense_vector<N> x(n);
+        vec::dense_vector<S> xs(n);
+        fz::sparse_cholesky_solve(A, x, b);
+        fz::sparse_cholesky_solve(As, xs, bs);
+        agree(xs, x, true);
+    }
+    SECTION("sparse_qr_solve, with a column scaled past the sum of squares' range") {
+        // 2^70 overflows float's squares summed over 12 rows; 2^600 double's.
+        const N big = std::is_same_v<N, float> ? N(0x1p70) : N(0x1p600);
+        mat::compressed2D<N> B(n, n);
+        {
+            mat::inserter<mat::compressed2D<N>> ins(B);
+            for (std::size_t i = 0; i < n; ++i)
+                for (std::size_t j = 0; j < n; ++j)
+                    if (i == j || i + 1 == j || j + 1 == i || j == 0)
+                        ins[i][j] << (j == 0 ? big : (i == j ? N(4) : N(-1)));
+        }
+        const auto Bs = P::shim(B);
+        vec::dense_vector<N> x(n);
+        vec::dense_vector<S> xs(n);
+        fz::sparse_qr_solve(B, x, b);
+        fz::sparse_qr_solve(Bs, xs, bs);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(std::isfinite(double(x(i))));
+        agree(xs, x, true);
+    }
+    SECTION("iterative_refine over sparse_lu") {
+        const auto fac = fz::sparse_lu_numeric(A, fz::sparse_lu_symbolic(A));
+        const auto facs = fz::sparse_lu_numeric(As, fz::sparse_lu_symbolic(As));
+        vec::dense_vector<N> x(n, N(0));
+        vec::dense_vector<S> xs(n, S(0));
+        sparse::refine_options opt;
+        opt.max_iter = 2;
+        sparse::iterative_refine(A, fac, b, x, opt);
+        sparse::iterative_refine(As, facs, bs, xs, opt);
+        agree(xs, x, true);
+    }
+    SECTION("shift_invert_operator") {
+        const sparse::shift_invert_operator<N> op(A, N(1));
+        const sparse::shift_invert_operator<S> ops(As, S(1));
+        agree(ops * bs, op * b, true);
+    }
+}
+
 TEMPLATE_TEST_CASE("genericity: project_onto and embed_into", "[generic][projection]", MTL5_SHIMS) {
     using S = TestType;
     using N = typename S::native_type;

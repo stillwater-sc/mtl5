@@ -4,10 +4,13 @@
 // It provides O(1) amortized insert/lookup by maintaining a dense work
 // vector with a timestamp-based validity check, avoiding explicit clearing.
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <limits>
 #include <vector>
+
+#include <mtl/math/identity.hpp>
 
 namespace mtl::sparse::util {
 
@@ -18,7 +21,7 @@ template <typename Value, typename SizeType = std::size_t>
 class sparse_accumulator {
 public:
     explicit sparse_accumulator(SizeType n)
-        : n_(n), x_(n, Value{0}), mark_(n, SizeType{0}), generation_(1) {}
+        : n_(n), x_(n, mtl::math::zero<Value>()), mark_(n, SizeType{0}), generation_(1) {}
 
     /// Reset for a new column assembly. O(1) - just bumps the generation counter.
     void clear() {
@@ -63,7 +66,7 @@ public:
     /// Read value at position i. Returns 0 if not set.
     Value operator()(SizeType i) const {
         assert(i < n_);
-        return (mark_[i] == generation_) ? x_[i] : Value{0};
+        return (mark_[i] == generation_) ? x_[i] : mtl::math::zero<Value>();
     }
 
     /// Mutable access to value at position i.
@@ -71,7 +74,7 @@ public:
         assert(i < n_);
         if (mark_[i] != generation_) {
             mark_[i] = generation_;
-            x_[i] = Value{0};
+            x_[i] = mtl::math::zero<Value>();
             indices_.push_back(i);
         }
         return x_[i];

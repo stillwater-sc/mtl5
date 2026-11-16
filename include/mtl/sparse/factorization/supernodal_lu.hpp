@@ -567,7 +567,9 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
 /// (ascending-row) order, so the values replay directly. Mirrors
 /// sparse_lu_refactor_in_place.
 ///
-/// Preconditions: A uses fac's column ordering and the same nonzero pattern.
+/// Preconditions: A uses fac's column ordering, and its nonzero pattern lies
+/// inside the factor's (A's at factor time, plus fill). Checked: an entry outside
+/// it throws std::invalid_argument.
 /// Strong exception guarantee: values are computed into scratch arrays and
 /// installed only after the last column succeeds, so a throw leaves `fac` exactly
 /// as it was.
@@ -623,7 +625,23 @@ void supernodal_lu_refactor_in_place(
     std::vector<Value> Ux(U.values.size(), Value{0});
 
     std::vector<Value> x(n, Value{0});
+    std::vector<size_type> mark(n, n);   // mark[i] == k: row i is in L(:,k) or U(:,k)
     for (size_type k = 0; k < n; ++k) {
+        // An entry of A outside the factor's pattern would be scattered and never
+        // consumed, a wrong factor with no error (issue 864). Fill positions are
+        // fine: U(:,k)'s pattern is closed under the reach in L.
+        for (size_type p = U.col_ptr[k]; p < U.col_ptr[k + 1]; ++p) mark[U.row_ind[p]] = k;
+        for (size_type p = L.col_ptr[k]; p < L.col_ptr[k + 1]; ++p) mark[L.row_ind[p]] = k;
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) {
+            if (mark[pinv[C.row_ind[p]]] != k) {
+                throw std::invalid_argument(
+                    "supernodal_lu_refactor: A has an entry in row "
+                    + std::to_string(C.row_ind[p]) + ", column "
+                    + std::to_string(fac.symbolic.col_perm[k])
+                    + " outside the prior factor's pattern; factor it afresh");
+            }
+        }
+
         // Scatter column k of the column-permuted A into the pivot-space workspace.
         for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
             x[pinv[C.row_ind[p]]] = C.values[p];
