@@ -5,6 +5,11 @@
 // bit identity of each width in depth, this test only that the defines reach
 // the kernels.
 //
+// A contiguous column-major A takes the column sweep (#777), which has no row
+// width, so the overrides do not apply to it; the last case pins that a
+// column-major trmv and lower_trisolve still give the one-row loop's bits
+// with the overrides defined (issue 878).
+//
 // Built with -ffp-contract=off (tests/unit/CMakeLists.txt), as that test is.
 #undef MTL5_INTERLEAVE_ROWS
 #undef MTL5_INTERLEAVE_ROWS_F32
@@ -19,6 +24,8 @@
 
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/parameter.hpp>
+#include <mtl/tag/orientation.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/trmv.hpp>
@@ -96,4 +103,29 @@ TEST_CASE("the configured widths give the one-row loop's bits", "[operation][772
     check_public_matches_one_row<float>();
     check_public_matches_one_row<double>();
     check_public_matches_one_row<long double>();
+}
+
+TEST_CASE("a column-major A takes the column sweep, unaffected by the overrides", "[operation][772][878]") {
+    // The sweep has no row width; with MTL5_INTERLEAVE_ROWS = 5 and _F32 = 7
+    // defined it must still give the one-row loop's bits (issue 878).
+    using cmd = mat::dense2D<double, mat::parameters<tag::col_major>>;
+    constexpr std::size_t n = 23;
+    const auto R = lower<double>(n);
+    cmd A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) A(i, j) = R(i, j);
+    STATIC_REQUIRE(detail::column_sweep_v<double, cmd>);
+    const auto x0 = vec_of<double>(n);
+    if constexpr (!detail::trmv_dispatches_blas_v<void, cmd, vec::dense_vector<double>>)
+    for (bool upper : {false, true}) {
+        auto p = x0, q = x0;
+        trmv(A, p, upper);
+        if (upper) detail::trmv_upper_rows<1>(A, q, std::size_t{0}, false);
+        else       detail::trmv_lower_rows<1>(A, q, n, false);
+        require_same(p, q);
+    }
+    auto u = x0, w = x0;
+    lower_trisolve(A, u);
+    detail::lower_trisolve_rows<1>(A, w, w, false);
+    require_same(u, w);
 }

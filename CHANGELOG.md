@@ -95,6 +95,16 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **SIMD and the dense kernels: sizes in the blocking override, and the tests the sweep found missing** (issue 878, from QA sweep #783).
+  - **`MTL5_BLOCKING_KC`, `_MC` and `_NC` are parsed as a whole positive `std::size_t`.** These are the diagnostic overrides, live only with `MTL5_ENABLE_BLOCKING_OVERRIDE`. They went through `std::atol` into a `long`, which is 32 bits on Windows and breaks the `std::size_t` rule. It also read "96x" as 96. Anything but digits, 0 and overflow now leave the derived value.
+  - **Tests:**
+    - **A new `test_blocking_override.cpp`.** It is the first test built with `MTL5_ENABLE_BLOCKING_OVERRIDE`, `MTL5_GEMM_MR_OVERRIDE` and `MTL5_ENABLE_CACHE_DETECTION_L1`. It covers the parser, the env values reaching `runtime_blocking`, the mr override and `configured_detect_levels()`.
+    - **`test_algorithm.cpp`:** dyadic non-integer data whose sums are exact in any order, so body, tail and a plain loop are compared without `Approx`. Also NaN and Inf in the body and in the tail, unaligned pointers, and `scalar_fma` on NaN and Inf.
+    - **`test_trmv_trsv_interleaved.cpp`:** the public column sweep across a strip boundary (n above `column_strip_rows`), and mixed-type column-major `trmv` and `lower_trisolve` (a float A, a double x).
+    - **`test_interleave_rows_override.cpp`:** a column-major case that pins the sweep as unaffected by the width overrides.
+    - **`test_blas_dispatch.cpp`:** Level 1 against a long double reference past one pool chunk and on strided vectors, and `two_norm` at the overflow and underflow ends. The bit-for-bit Level 1 case is now documented as a self-check without BLAS.
+    - **The `keep_scalar` test** is documented as checking bits, not codegen.
+
 - **Recursion: `for_each` on an unsplittable region, `row_major_mask(0)`, `outer_bound` past 2^63, a dangling `recursator<const M>`; the shark-tooth masks removed** (issue 877, from QA sweep #783).
   - **`for_each` treats a 1x1 region as a base case** whatever the test says. Its `north_west()` is itself, so a test that rejects 1x1 regions, such as `min_dim_test(0)`, made `for_each` recurse until the stack overflowed.
   - **`row_major_mask(0)` and `col_major_mask(0)` are rejected** with `std::invalid_argument` (a compile error in a constant expression). The loop did not advance at k = 0, so a run-time call hung.

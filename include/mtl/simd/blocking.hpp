@@ -20,11 +20,37 @@
 
 #include <cstddef>
 #include <cstdlib>   // getenv, for the diagnostic override below
+#include <limits>
 
 #include <mtl/simd/batch.hpp>        // simd::width<T>
 #include <mtl/util/cache_info.hpp>   // util::cached_cache_info (#222)
 
 namespace mtl::simd {
+
+namespace detail {
+
+/// A blocking override from environment variable `name`: a whole positive
+/// decimal that fits in std::size_t (digits only, no sign, space or trailing
+/// characters); false otherwise, and the derived value stays. It was
+/// std::atol into a long, 32 bits on Windows against the std::size_t rule
+/// for sizes, which also read "96x" as 96 and an out-of-range value as
+/// whatever atol returned (issue 878).
+inline bool env_block_size(const char* name, std::size_t& out) {
+    const char* e = std::getenv(name);
+    if (e == nullptr || *e == '\0') return false;
+    std::size_t v = 0;
+    for (const char* p = e; *p != '\0'; ++p) {
+        if (*p < '0' || *p > '9') return false;
+        const auto d = static_cast<std::size_t>(*p - '0');
+        if (v > (std::numeric_limits<std::size_t>::max() - d) / 10) return false;
+        v = v * 10 + d;
+    }
+    if (v == 0) return false;
+    out = v;
+    return true;
+}
+
+} // namespace detail
 
 // -- small constexpr integer helpers ---------------------------------------
 namespace detail {
@@ -498,18 +524,10 @@ inline const blocking_params& runtime_blocking() {
         // build must not have a knob that silently changes blocking, and the
         // sidecar's mc_used would record the effect without explaining it.
 #if defined(MTL5_ENABLE_BLOCKING_OVERRIDE)
-        if (const char* e = std::getenv("MTL5_BLOCKING_KC")) {
-            const long v = std::atol(e);
-            if (v > 0) p.kc = static_cast<std::size_t>(v);
-        }
-        if (const char* e = std::getenv("MTL5_BLOCKING_MC")) {
-            const long v = std::atol(e);
-            if (v > 0) p.mc = static_cast<std::size_t>(v);
-        }
-        if (const char* e = std::getenv("MTL5_BLOCKING_NC")) {
-            const long v = std::atol(e);
-            if (v > 0) p.nc = static_cast<std::size_t>(v);
-        }
+        std::size_t v = 0;
+        if (detail::env_block_size("MTL5_BLOCKING_KC", v)) p.kc = v;
+        if (detail::env_block_size("MTL5_BLOCKING_MC", v)) p.mc = v;
+        if (detail::env_block_size("MTL5_BLOCKING_NC", v)) p.nc = v;
 #endif
         return p;
     }();

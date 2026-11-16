@@ -458,7 +458,11 @@ TEST_CASE("interleave_rows defaults and overrides", "[operation][772]") {
 
 TEST_CASE("keep_scalar applies to row-major float at W >= 4 under GCC only", "[operation][776][795]") {
     // Where it applies, the row-major float cases of the width sweep above
-    // check that it leaves the bits alone.
+    // check that it leaves the bits alone. This pins where the barrier is
+    // enabled and that results keep their bits; it does not see the
+    // instruction stream, which is what the barrier is for (issue 878).
+    // keep_scalar is plain inline: GCC inlines it at -Og and -O2, and
+    // outlines it only at -O0, where every accumulator is in memory anyway.
 #if defined(__GNUC__) && !defined(__clang__) && (defined(__x86_64__) || defined(__aarch64__))
     STATIC_REQUIRE(detail::keep_scalar_v<float, rm<float>, 4>);
     STATIC_REQUIRE(detail::keep_scalar_v<float, rm<float>, 6>);
@@ -715,4 +719,61 @@ TEMPLATE_TEST_CASE("lower_trisolve(L, x, x): b aliasing x is the in-place solve 
             old_lower_trisolve(A, y, unit);
             require_identical(x, y);
         }
+}
+
+// -- Issue 878 (QA sweep #783) -----------------------------------------------
+//
+// The public column sweep with more than one strip: column_strip_rows is 2048
+// rows for double and 4096 for float, and every n above is at most 64, so the
+// public path never left its first strip (the detail sweeps were called with
+// small strips). And the mixed-type column-major path: a float A with a
+// double x, whose accumulator is double (trmv's acc_type).
+
+TEMPLATE_TEST_CASE("the public column sweep across strip boundaries", "[operation][777][878]",
+                   cm<float>, cm<double>) {
+    using M = TestType;
+    using T = typename M::value_type;
+    using V = vec::dense_vector<T>;
+    constexpr std::size_t strip = detail::column_strip_rows<T>;
+    const std::size_t n = strip + strip / 2 + 3;   // one full strip and a partial one
+    const M A = triangular<M>(n, 5);
+    const V x0 = filled<T>(n, 6);
+    // BLAS, or native-fast's blocked trmv above triangular_block rows (it adds
+    // the off-diagonal panel last), round differently: close, not identical.
+    const bool approx = detail::trmv_dispatches_blas_v<void, M, V> ||
+                        (detail::trmv_uses_blocked_v<void, M, V> && n > detail::triangular_block);
+    for (bool upper : {false, true}) {
+        INFO((upper ? "upper" : "lower") << ", n = " << n);
+        V x = x0, y = x0;
+        trmv(A, x, upper, false);
+        old_trmv(A, y, upper, false);
+        if (approx) require_close(x, y); else require_identical(x, y);
+    }
+    {
+        V x(n), y(n);
+        lower_trisolve(A, x, x0, false);
+        old_lower_trisolve(A, y, x0, false);
+        require_identical(x, y);
+    }
+}
+
+TEST_CASE("mixed-type trmv and lower_trisolve on column-major: a float A, a double x", "[operation][777][878]") {
+    for (std::size_t n : {std::size_t{1}, std::size_t{7}, std::size_t{33}, std::size_t{129}}) {
+        INFO("n = " << n);
+        const cm<float> A = triangular<cm<float>>(n, 3);
+        const vec::dense_vector<double> x0 = filled<double>(n, 4);
+        using V = vec::dense_vector<double>;
+        const bool approx = detail::trmv_dispatches_blas_v<void, cm<float>, V> ||
+                            (detail::trmv_uses_blocked_v<void, cm<float>, V> && n > detail::triangular_block);
+        for (bool upper : {false, true}) {
+            V x = x0, y = x0;
+            trmv(A, x, upper, false);
+            old_trmv(A, y, upper, false);   // accumulates float * double in double
+            if (approx) require_close(x, y); else require_identical(x, y);
+        }
+        vec::dense_vector<double> x(n), y(n);
+        lower_trisolve(A, x, x0, false);
+        old_lower_trisolve(A, y, x0, false);
+        require_identical(x, y);
+    }
 }
