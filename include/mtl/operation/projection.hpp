@@ -55,17 +55,36 @@ namespace detail {
 /// The integer types saturating_cast clamps: the integral types, and
 /// __int128 / unsigned __int128 where the compiler has them. Under strict
 /// -std=c++20 (MTL5's own build) std::is_integral is false for those, so a
-/// cast from __int128 skipped the clamp and truncated (issue 865);
-/// std::numeric_limits is specialized for them in both modes.
-template <typename T> struct is_sat_int : std::is_integral<T> {};
+/// cast from __int128 skipped the clamp and truncated (issue 865). Their
+/// signedness and limits are given here too: with MSVC's standard library
+/// (clang-cl) std::numeric_limits is not specialized for them, so is_signed
+/// was false and min() and max() were 0 (#871, Windows Clang-CL).
+template <typename T> struct sat_traits {
+    static constexpr bool is_int    = std::is_integral_v<T>;
+    static constexpr bool is_signed = std::numeric_limits<T>::is_signed;
+    static constexpr T min() noexcept { return std::numeric_limits<T>::min(); }
+    static constexpr T max() noexcept { return std::numeric_limits<T>::max(); }
+};
 template <typename T> struct sat_unsigned { using type = std::make_unsigned_t<T>; };
 #if defined(__SIZEOF_INT128__)
-__extension__ template <> struct is_sat_int<__int128> : std::true_type {};
-__extension__ template <> struct is_sat_int<unsigned __int128> : std::true_type {};
+__extension__ template <> struct sat_traits<unsigned __int128> {
+    __extension__ typedef unsigned __int128 T;
+    static constexpr bool is_int    = true;
+    static constexpr bool is_signed = false;
+    static constexpr T min() noexcept { return T(0); }
+    static constexpr T max() noexcept { return ~T(0); }
+};
+__extension__ template <> struct sat_traits<__int128> {
+    __extension__ typedef __int128 T;
+    static constexpr bool is_int    = true;
+    static constexpr bool is_signed = true;
+    static constexpr T max() noexcept { return T(~static_cast<unsigned __int128>(0) >> 1); }
+    static constexpr T min() noexcept { return -max() - 1; }
+};
 __extension__ template <> struct sat_unsigned<__int128> { __extension__ typedef unsigned __int128 type; };
 #endif
-template <typename T> inline constexpr bool is_sat_int_v = is_sat_int<T>::value;
-template <typename T> inline constexpr bool sat_signed_v = std::numeric_limits<T>::is_signed;
+template <typename T> inline constexpr bool is_sat_int_v = sat_traits<T>::is_int;
+template <typename T> inline constexpr bool sat_signed_v = sat_traits<T>::is_signed;
 
 /// a < b by value, for integral types of any signedness and width. With the
 /// same signedness the usual conversions widen both to the wider type, which
@@ -88,7 +107,7 @@ constexpr bool int_less(A a, B b) noexcept {
 template <typename Target, typename Value>
 Target saturating_cast(Value v) {
     if constexpr (is_sat_int_v<Target> && std::is_floating_point_v<Value>) {
-        using limit = std::numeric_limits<Target>;
+        using limit = sat_traits<Target>;
         if (std::isnan(v)) return Target{0};
         if (v >= static_cast<Value>(limit::max())) return limit::max();
         if (v <= static_cast<Value>(limit::min())) return limit::min();
@@ -101,7 +120,7 @@ Target saturating_cast(Value v) {
         // which truncated __int128 (an integral type under gnu++20) before the
         // comparison (issue 865); std::cmp_less itself rejects bool, the
         // character types and __int128.
-        using limit = std::numeric_limits<Target>;
+        using limit = sat_traits<Target>;
         if (int_less(limit::max(), v)) return limit::max();
         if (int_less(v, limit::min())) return limit::min();
     }
