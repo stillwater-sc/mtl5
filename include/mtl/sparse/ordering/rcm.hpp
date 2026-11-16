@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <stdexcept>
 #include <cstddef>
 #include <queue>
 #include <vector>
@@ -30,7 +31,8 @@ struct rcm {
     {
         using size_type = typename mat::compressed2D<Value, Parameters>::size_type;
         size_type n = A.num_rows();
-        assert(A.num_rows() == A.num_cols());
+        if (A.num_rows() != A.num_cols())
+            throw std::invalid_argument("rcm: matrix must be square");
 
         const auto& starts  = A.ref_major();
         const auto& indices = A.ref_minor();
@@ -44,17 +46,23 @@ struct rcm {
         std::vector<std::size_t> order;
         order.reserve(n);
 
+        // Each component starts at the unvisited node of minimum degree, the
+        // lowest index among ties: the first unvisited node of `by_degree`, the
+        // nodes stably sorted by degree once. A cursor walks it over all the
+        // components; rescanning all n nodes per component was quadratic in the
+        // number of components (a diagonal matrix: n = 40000 took 2.4 s,
+        // issue 865). The order produced is the same.
+        std::vector<size_type> by_degree(n);
+        for (size_type i = 0; i < n; ++i) by_degree[i] = i;
+        std::stable_sort(by_degree.begin(), by_degree.end(),
+                         [&degree](size_type a, size_type b) { return degree[a] < degree[b]; });
+        size_type cursor = 0;
+        std::vector<size_type> neighbors;   // reused across nodes
+
         // Process each connected component
         while (order.size() < n) {
-            // Find unvisited node with minimum degree (pseudo-peripheral start)
-            size_type start = 0;
-            size_type min_deg = n + 1;
-            for (size_type i = 0; i < n; ++i) {
-                if (!visited[i] && degree[i] < min_deg) {
-                    min_deg = degree[i];
-                    start = i;
-                }
-            }
+            while (visited[by_degree[cursor]]) ++cursor;
+            const size_type start = by_degree[cursor];
 
             // BFS from start, ordering neighbors by increasing degree
             std::queue<size_type> bfs;
@@ -67,7 +75,7 @@ struct rcm {
                 order.push_back(node);
 
                 // Collect unvisited neighbors
-                std::vector<size_type> neighbors;
+                neighbors.clear();
                 for (size_type k = starts[node]; k < starts[node + 1]; ++k) {
                     size_type nb = indices[k];
                     if (!visited[nb]) {

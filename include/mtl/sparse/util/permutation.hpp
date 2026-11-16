@@ -2,11 +2,18 @@
 // MTL5 -- Permutation vector utilities for sparse direct solvers
 // A permutation p maps new index -> old index: x_new[i] = x_old[p[i]]
 // An inverse permutation pinv maps old index -> new index: pinv[p[i]] = i
+//
+// Sizes and indices are checked once per call, in every build, and a bad one
+// throws std::invalid_argument (issue 865): they were asserts, so under NDEBUG
+// a short permutation or an index past n read or wrote out of bounds. This is
+// the index-check policy of #825/#826, one O(n) pass per call.
 
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <numeric>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -18,9 +25,11 @@ namespace mtl::sparse::util {
 /// Given p where p[new] = old, returns pinv where pinv[old] = new.
 inline std::vector<std::size_t> invert_permutation(const std::vector<std::size_t>& p) {
     std::size_t n = p.size();
-    std::vector<std::size_t> pinv(n);
+    std::vector<std::size_t> pinv(n, n);   // n: not yet seen
     for (std::size_t i = 0; i < n; ++i) {
-        assert(p[i] < n);
+        if (p[i] >= n || pinv[p[i]] != n)
+            throw std::invalid_argument("invert_permutation: not a permutation of [0, "
+                + std::to_string(n) + "): entry " + std::to_string(i) + " is " + std::to_string(p[i]));
         pinv[p[i]] = i;
     }
     return pinv;
@@ -38,11 +47,14 @@ inline std::vector<std::size_t> compose_permutations(
     const std::vector<std::size_t>& a,
     const std::vector<std::size_t>& b)
 {
-    assert(a.size() == b.size());
+    if (a.size() != b.size())
+        throw std::invalid_argument("compose_permutations: sizes differ");
     std::size_t n = b.size();
     std::vector<std::size_t> result(n);
     for (std::size_t i = 0; i < n; ++i) {
-        assert(b[i] < n);
+        if (b[i] >= n)
+            throw std::invalid_argument("compose_permutations: index " + std::to_string(b[i])
+                                        + " out of range");
         result[i] = a[b[i]];
     }
     return result;
@@ -69,10 +81,12 @@ mat::compressed2D<Value, Parameters> symmetric_permute(
 {
     using size_type = typename mat::compressed2D<Value, Parameters>::size_type;
     std::size_t n = A.num_rows();
-    assert(A.num_rows() == A.num_cols());
-    assert(perm.size() == n);
+    if (A.num_rows() != A.num_cols())
+        throw std::invalid_argument("symmetric_permute: matrix must be square");
+    if (perm.size() != n)
+        throw std::invalid_argument("symmetric_permute: permutation size does not match the matrix");
 
-    auto pinv = invert_permutation(perm);
+    auto pinv = invert_permutation(perm);   // checks perm
 
     mat::compressed2D<Value, Parameters> B(n, n);
     {
@@ -102,9 +116,10 @@ mat::compressed2D<Value, Parameters> column_permute(
 {
     std::size_t nrows = A.num_rows();
     std::size_t ncols = A.num_cols();
-    assert(perm.size() == ncols);
+    if (perm.size() != ncols)
+        throw std::invalid_argument("column_permute: permutation size does not match the columns");
 
-    auto pinv = invert_permutation(perm);
+    auto pinv = invert_permutation(perm);   // checks perm
 
     mat::compressed2D<Value, Parameters> B(nrows, ncols);
     {
@@ -132,9 +147,10 @@ mat::compressed2D<Value, Parameters> row_permute(
 {
     std::size_t nrows = A.num_rows();
     std::size_t ncols = A.num_cols();
-    assert(perm.size() == nrows);
+    if (perm.size() != nrows)
+        throw std::invalid_argument("row_permute: permutation size does not match the rows");
 
-    auto pinv = invert_permutation(perm);
+    auto pinv = invert_permutation(perm);   // checks perm
 
     mat::compressed2D<Value, Parameters> B(nrows, ncols);
     {
@@ -159,11 +175,14 @@ std::vector<Value> permute_vector(
     const std::vector<Value>& x,
     const std::vector<std::size_t>& perm)
 {
-    assert(x.size() == perm.size());
+    if (x.size() != perm.size())
+        throw std::invalid_argument("permute_vector: sizes differ");
     std::size_t n = x.size();
     std::vector<Value> y(n);
-    for (std::size_t i = 0; i < n; ++i)
+    for (std::size_t i = 0; i < n; ++i) {
+        if (perm[i] >= n) throw std::invalid_argument("permute_vector: index out of range");
         y[i] = x[perm[i]];
+    }
     return y;
 }
 
@@ -173,11 +192,14 @@ std::vector<Value> ipermute_vector(
     const std::vector<Value>& x,
     const std::vector<std::size_t>& perm)
 {
-    assert(x.size() == perm.size());
+    if (x.size() != perm.size())
+        throw std::invalid_argument("ipermute_vector: sizes differ");
     std::size_t n = x.size();
     std::vector<Value> y(n);
-    for (std::size_t i = 0; i < n; ++i)
+    for (std::size_t i = 0; i < n; ++i) {
+        if (perm[i] >= n) throw std::invalid_argument("ipermute_vector: index out of range");
         y[perm[i]] = x[i];
+    }
     return y;
 }
 

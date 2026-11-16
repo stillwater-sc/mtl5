@@ -90,7 +90,7 @@ Mag rescaled_two_norm(ForEachAbs&& for_each_abs) {
         const Mag s = ldexp(a, -e);    // in [0, 1): s*s cannot overflow
         ss = ss + s * s;
     });
-    return ldexp(Mag(sqrt(ss)), e);
+    return static_cast<Mag>(ldexp(Mag(sqrt(ss)), e));
 }
 } // namespace norms_adl
 
@@ -219,10 +219,15 @@ auto two_norm(const V& v) {
         }
         if constexpr (detail::rescalable_sum_squares_v<mag_t>) {
             if (detail::sum_squares_needs_rescan(acc)) {   // #690
-                return detail::rescaled_two_norm<mag_t>([&](auto&& f) {
+                // The type the sqrt below returns, so the two return statements
+                // agree for a type whose sqrt returns another type; for an
+                // integer, sqrt's double stays the result (issue 865).
+                using std::sqrt;
+                using result_t = decltype(sqrt(acc));
+                return static_cast<result_t>(detail::rescaled_two_norm<mag_t>([&](auto&& f) {
                     for (typename V::size_type i = 0; i < v.size(); ++i)
                         f(static_cast<mag_t>(detail::generic_abs(v(i))));
-                });
+                }));
             }
         }
         using std::sqrt;
@@ -300,11 +305,14 @@ auto frobenius_norm(const M& m) {
         }
         if constexpr (detail::rescalable_sum_squares_v<mag_t>) {
             if (detail::sum_squares_needs_rescan(acc)) {   // #690
-                return detail::rescaled_two_norm<mag_t>([&](auto&& f) {
+                // As in two_norm: the type of sqrt(acc) below (issue 865).
+                using std::sqrt;
+                using result_t = decltype(sqrt(acc));
+                return static_cast<result_t>(detail::rescaled_two_norm<mag_t>([&](auto&& f) {
                     for (typename M::size_type r = 0; r < m.num_rows(); ++r)
                         for (typename M::size_type c = 0; c < m.num_cols(); ++c)
                             f(static_cast<mag_t>(detail::generic_abs(m(r, c))));
-                });
+                }));
             }
         }
         using std::sqrt;
