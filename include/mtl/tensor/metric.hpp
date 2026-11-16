@@ -9,6 +9,8 @@
 // Provides common metrics: Euclidean (identity) and Minkowski.
 
 #include <cstddef>
+#include <type_traits>
+#include <mtl/math/identity.hpp>
 #include <mtl/tensor/tensor.hpp>
 
 namespace mtl::tensor {
@@ -25,11 +27,14 @@ tensor<V, 2, D> euclidean_metric() {
 /// Convention: (-,+,+,+) "mostly plus" / particle physics convention.
 template <typename V>
 tensor<V, 2, 4> minkowski_metric() {
+    // -1 has no unsigned value: -one<unsigned>() is UINT_MAX, not the metric.
+    static_assert(!std::is_unsigned_v<V>,
+                  "minkowski_metric: the time component is -1, which an unsigned type cannot hold");
     tensor<V, 2, 4> g;
-    g(0, 0) = V{-1};
-    g(1, 1) = V{1};
-    g(2, 2) = V{1};
-    g(3, 3) = V{1};
+    g(0, 0) = -math::one<V>();
+    g(1, 1) = math::one<V>();
+    g(2, 2) = math::one<V>();
+    g(3, 3) = math::one<V>();
     return g;
 }
 
@@ -40,7 +45,7 @@ template <typename V, std::size_t D>
 tensor<V, 1, D> lower(const tensor<V, 1, D>& v, const tensor<V, 2, D>& g) {
     tensor<V, 1, D> result;
     for (std::size_t i = 0; i < D; ++i) {
-        V sum = V{0};
+        V sum = math::zero<V>();
         for (std::size_t j = 0; j < D; ++j) sum += g(i, j) * v(j);
         result(i) = sum;
     }
@@ -62,7 +67,7 @@ tensor<V, 2, D> lower_first(const tensor<V, 2, D>& t, const tensor<V, 2, D>& g) 
     tensor<V, 2, D> result;
     for (std::size_t i = 0; i < D; ++i)
         for (std::size_t j = 0; j < D; ++j) {
-            V sum = V{0};
+            V sum = math::zero<V>();
             for (std::size_t k = 0; k < D; ++k) sum += g(i, k) * t(k, j);
             result(i, j) = sum;
         }
@@ -75,7 +80,7 @@ tensor<V, 2, D> lower_second(const tensor<V, 2, D>& t, const tensor<V, 2, D>& g)
     tensor<V, 2, D> result;
     for (std::size_t i = 0; i < D; ++i)
         for (std::size_t j = 0; j < D; ++j) {
-            V sum = V{0};
+            V sum = math::zero<V>();
             for (std::size_t k = 0; k < D; ++k) sum += t(i, k) * g(k, j);
             result(i, j) = sum;
         }

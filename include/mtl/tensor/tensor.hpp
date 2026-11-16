@@ -22,7 +22,10 @@
 #include <mtl/traits/category.hpp>
 #include <mtl/traits/ashape.hpp>
 #include <mtl/traits/is_expression.hpp>
+#include <mtl/concepts/magnitude.hpp>
 #include <mtl/detail/contiguous_memory_block.hpp>
+#include <mtl/detail/exceptions.hpp>
+#include <mtl/math/identity.hpp>
 
 namespace mtl::tensor {
 
@@ -103,42 +106,46 @@ public:
         std::fill_n(mem_.data(), num_components, val);
     }
 
-    /// Construct from initializer list (row-major order for rank-2).
+    /// Construct from initializer list (row-major order for rank-2). Fewer
+    /// values than components leave the rest zero; more throw
+    /// std::invalid_argument, in every build (#857: it was an assert, and
+    /// under NDEBUG the copy ran past the storage).
     tensor(std::initializer_list<Value> il) {
-        assert(il.size() <= num_components);
+        if (il.size() > num_components)
+            ::mtl::detail::throw_or_abort(std::invalid_argument(
+                "tensor: an initializer list longer than the tensor's components"));
         std::copy(il.begin(), il.end(), mem_.data());
     }
 
     // -- Element access ------------------------------------------------------
 
     /// Multi-index access: T(i, j), T(i, j, k, l), etc.
+    /// Under bounds_checking every index is checked against Dim (#857: the
+    /// check was on the flat offset, so t(0, 3) of a tensor<V, 2, 3> passed
+    /// and aliased t(1, 0)).
     template <typename... Indices>
         requires (sizeof...(Indices) == Rank)
     reference operator()(Indices... indices) {
-        const size_type off = detail::flat_index<Dim, Rank>(indices...);
-        if constexpr (bounds_checking) check_bounds(off);
-        return mem_[off];
+        if constexpr (bounds_checking) check_bounds({static_cast<size_type>(indices)...});
+        return mem_[detail::flat_index<Dim, Rank>(indices...)];
     }
 
     template <typename... Indices>
         requires (sizeof...(Indices) == Rank)
     const_reference operator()(Indices... indices) const {
-        const size_type off = detail::flat_index<Dim, Rank>(indices...);
-        if constexpr (bounds_checking) check_bounds(off);
-        return mem_[off];
+        if constexpr (bounds_checking) check_bounds({static_cast<size_type>(indices)...});
+        return mem_[detail::flat_index<Dim, Rank>(indices...)];
     }
 
     /// Array-index access.
     reference operator[](const std::array<size_type, Rank>& idx) {
-        const size_type off = detail::flat_index_arr<Dim, Rank>(idx);
-        if constexpr (bounds_checking) check_bounds(off);
-        return mem_[off];
+        if constexpr (bounds_checking) check_bounds(idx);
+        return mem_[detail::flat_index_arr<Dim, Rank>(idx)];
     }
 
     const_reference operator[](const std::array<size_type, Rank>& idx) const {
-        const size_type off = detail::flat_index_arr<Dim, Rank>(idx);
-        if constexpr (bounds_checking) check_bounds(off);
-        return mem_[off];
+        if constexpr (bounds_checking) check_bounds(idx);
+        return mem_[detail::flat_index_arr<Dim, Rank>(idx)];
     }
 
     // -- Size / shape --------------------------------------------------------
@@ -161,7 +168,7 @@ public:
         std::fill_n(mem_.data(), num_components, val);
     }
 
-    void set_to_zero() { fill(Value{0}); }
+    void set_to_zero() { fill(math::zero<Value>()); }
 
     // -- Arithmetic (element-wise) -------------------------------------------
 
@@ -207,9 +214,10 @@ public:
     bool operator!=(const tensor& other) const { return !(*this == other); }
 
 private:
-    void check_bounds(size_type off) const {
-        if (off >= num_components)
-            throw std::out_of_range("tensor: index out of bounds");
+    static void check_bounds(const std::array<size_type, Rank>& idx) {
+        for (size_type i = 0; i < Rank; ++i)
+            if (idx[i] >= Dim)
+                ::mtl::detail::throw_or_abort(std::out_of_range("tensor: index out of bounds"));
     }
 };
 
@@ -218,7 +226,7 @@ private:
 /// Trace of a rank-2 tensor: sum of diagonal elements.
 template <typename V, std::size_t D>
 V trace(const tensor<V, 2, D>& t) {
-    V result = V{0};
+    V result = math::zero<V>();
     for (std::size_t i = 0; i < D; ++i) result += t(i, i);
     return result;
 }
@@ -236,13 +244,23 @@ V determinant(const tensor<V, 2, 3>& t) {
          + t(0, 2) * (t(1, 0) * t(2, 1) - t(1, 1) * t(2, 0));
 }
 
-/// Frobenius norm: sqrt(sum of squared components).
+/// Frobenius norm: sqrt(sum of |t_i|^2), a real magnitude for a complex V too
+/// (#857: it summed t * t, so for a complex V it was the square root of a
+/// complex sum of squares, not a norm). abs and sqrt are found by ADL.
 template <typename V, std::size_t R, std::size_t D>
-V frobenius_norm(const tensor<V, R, D>& t) {
-    V result = V{0};
-    for (std::size_t i = 0; i < tensor<V, R, D>::num_components; ++i)
-        result += t.data()[i] * t.data()[i];
+magnitude_t<V> frobenius_norm(const tensor<V, R, D>& t) {
+    using std::abs;
     using std::sqrt;
+    using M = magnitude_t<V>;
+    M result = math::zero<M>();
+    for (std::size_t i = 0; i < tensor<V, R, D>::num_components; ++i) {
+        // An unsigned component is its own magnitude, and std::abs of one is
+        // not guaranteed to exist.
+        M a;
+        if constexpr (std::is_unsigned_v<V>) a = t.data()[i];
+        else                                 a = abs(t.data()[i]);
+        result += a * a;
+    }
     return sqrt(result);
 }
 
@@ -260,7 +278,7 @@ tensor<V, 2, D> transpose(const tensor<V, 2, D>& t) {
 template <typename V, std::size_t D>
 tensor<V, 2, D> identity() {
     tensor<V, 2, D> result;
-    for (std::size_t i = 0; i < D; ++i) result(i, i) = V{1};
+    for (std::size_t i = 0; i < D; ++i) result(i, i) = math::one<V>();
     return result;
 }
 
