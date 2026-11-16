@@ -44,6 +44,8 @@
 // three lines over the smoother rather than a parallel copy of it. Keeping one
 // implementation is not only tidiness: the x = b bug fixed in #398 lived in the
 // duplicate, and could not have been written here.
+#include <mtl/detail/same_object.hpp>
+#include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
 #include <cstddef>
@@ -77,6 +79,16 @@ public:
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
         assert(x.size() == n_ && b.size() == n_);
+
+        // x over b's storage (M.solve(b, b)): zeroing x below would zero b
+        // too, and the result was 0 (issue 867). Sweep from a copy of b, as
+        // ilu_0, ilut and diagonal give M^-1 b for aliased arguments.
+        if (mtl::detail::storage_overlaps(x, b)) {
+            vec::dense_vector<value_type> b_copy(n_);
+            for (size_type i = 0; i < n_; ++i) b_copy(i) = b(i);
+            solve(x, b_copy);
+            return;
+        }
 
         // Start from ZERO -- see the header note. Anything else adds a G x0
         // term and the result is not M^-1 b. This zeroing is the ONLY thing

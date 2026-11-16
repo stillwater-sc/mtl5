@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- Jacobi smoother
 // Allocates x_new, computes all updates, then copies back (true Jacobi).
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
@@ -10,6 +11,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/itl/detail/owned_csr.hpp>
 
 namespace mtl::itl::smoother {
 
@@ -28,8 +30,11 @@ class jacobi {
     using size_type  = typename Matrix::size_type;
 public:
     explicit jacobi(const Matrix& A) : A_(A), dia_inv_(A.num_rows()) {
-        for (size_type i = 0; i < A.num_rows(); ++i)
+        for (size_type i = 0; i < A.num_rows(); ++i) {
+            if (A(i, i) == math::zero<value_type>())
+                detail::throw_zero_diagonal("jacobi", i);
             dia_inv_(i) = value_type(1) / A(i, i);
+        }
     }
 
     template <typename VecX, typename VecB>
@@ -80,12 +85,15 @@ public:
         const auto& indices = A.ref_minor();
         const auto& data    = A.ref_data();
         for (size_type i = 0; i < A.num_rows(); ++i) {
+            bool found = false;
             for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
                 if (indices[k] == i) {
-                    dia_inv_(i) = value_type(1) / data[k];
+                    found = data[k] != math::zero<value_type>();
+                    if (found) dia_inv_(i) = value_type(1) / data[k];
                     break;
                 }
             }
+            if (!found) detail::throw_zero_diagonal("jacobi", i);
         }
     }
 
@@ -126,6 +134,34 @@ public:
 private:
     const matrix_type& A_;
     vec::dense_vector<value_type> dia_inv_;
+};
+
+/// coordinate2D and ell_matrix: the compressed2D sweep on a copy made once, at
+/// construction (detail/owned_csr.hpp; issue 867). The generic sweep looked up
+/// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
+template <Field Value, typename Parameters, typename Accumulator>
+class jacobi<mat::coordinate2D<Value, Parameters>, Accumulator>
+    : private detail::owned_csr<Value>,
+      public jacobi<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = jacobi<mat::compressed2D<Value>, Accumulator>;
+public:
+    explicit jacobi(const mat::coordinate2D<Value, Parameters>& A)
+        : holder(A), base(*holder::csr_) {}
+};
+
+/// coordinate2D and ell_matrix: the compressed2D sweep on a copy made once, at
+/// construction (detail/owned_csr.hpp; issue 867). The generic sweep looked up
+/// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
+template <Field Value, typename Parameters, typename Accumulator>
+class jacobi<mat::ell_matrix<Value, Parameters>, Accumulator>
+    : private detail::owned_csr<Value>,
+      public jacobi<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = jacobi<mat::compressed2D<Value>, Accumulator>;
+public:
+    explicit jacobi(const mat::ell_matrix<Value, Parameters>& A)
+        : holder(A), base(*holder::csr_) {}
 };
 
 } // namespace mtl::itl::smoother

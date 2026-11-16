@@ -29,6 +29,7 @@
 // its accumulator path keeps one live accumulator per component (workspace n,
 // the shape of the transposed SpMV in operation/mult.hpp; see the workspace
 // note in math/accumulator_traits.hpp).
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <algorithm>
 #include <cassert>
@@ -223,12 +224,15 @@ private:
                         AT::add_product(acc[slot[uj]], -l, uv);
             }
 
+            u_diag_[i] = math::zero<value_type>();
             for (auto j : cols) {
                 const size_type sj = slot[j];
                 if (j < i)       l_rows[i].emplace_back(j, lval[sj]);
                 else if (j > i)  u_rows[i].emplace_back(j, AT::template value<value_type>(acc[sj]));
                 else             u_diag_[i] = AT::template value<value_type>(acc[sj]);
             }
+            // U(i,i) divides rows below and the solves (issue 867).
+            if (u_diag_[i] == math::zero<value_type>()) detail::throw_zero_diagonal("ilu_0", i);
             for (auto j : cols) slot[j] = none;
         }
     }
@@ -301,6 +305,7 @@ private:
             // every input (#323). Storing it once removes the possibility:
             // there is no diagonal entry left in u_rows for a consumer to
             // forget to skip.
+            u_diag_[i] = math::zero<value_type>();
             for (auto j : nz_cols) {
                 if (j < i) {
                     l_rows[i].emplace_back(j, row_work[j]);
@@ -310,6 +315,10 @@ private:
                     u_diag_[i] = row_work[j];
                 }
             }
+            // A zero or unstored U(i,i) left u_diag_[i] = 0, and the solves
+            // divided by it: (-inf, inf, 0.33) for a 3x3 without (1,1). It
+            // also divides every later row that eliminates column i (issue 867).
+            if (u_diag_[i] == math::zero<value_type>()) detail::throw_zero_diagonal("ilu_0", i);
 
             // Reset work arrays
             for (auto j : nz_cols) {

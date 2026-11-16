@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- Gauss-Seidel smoother
 // Generic version uses A(i,j); compressed2D specialization uses raw CRS access.
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
@@ -10,6 +11,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/itl/detail/owned_csr.hpp>
 
 namespace mtl::itl::smoother {
 
@@ -40,8 +42,11 @@ class gauss_seidel {
     using size_type  = typename Matrix::size_type;
 public:
     explicit gauss_seidel(const Matrix& A) : A_(A), dia_inv_(A.num_rows()) {
-        for (size_type i = 0; i < A.num_rows(); ++i)
+        for (size_type i = 0; i < A.num_rows(); ++i) {
+            if (A(i, i) == math::zero<value_type>())
+                detail::throw_zero_diagonal("gauss_seidel", i);
             dia_inv_(i) = value_type(1) / A(i, i);
+        }
     }
 
     /// Forward sweep (rows 0..n-1). Default application.
@@ -103,13 +108,16 @@ public:
         const auto& data    = A.ref_data();
         dia_pos_.resize(A.num_rows());
         for (size_type i = 0; i < A.num_rows(); ++i) {
+            bool found = false;
             for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
                 if (indices[k] == i) {
+                    found = data[k] != math::zero<value_type>();
                     dia_pos_[i] = k;
-                    dia_inv_(i) = value_type(1) / data[k];
+                    if (found) dia_inv_(i) = value_type(1) / data[k];
                     break;
                 }
             }
+            if (!found) detail::throw_zero_diagonal("gauss_seidel", i);
         }
     }
 
@@ -161,6 +169,34 @@ private:
     const matrix_type& A_;
     vec::dense_vector<value_type> dia_inv_;
     std::vector<size_type> dia_pos_;
+};
+
+/// coordinate2D and ell_matrix: the compressed2D sweep on a copy made once, at
+/// construction (detail/owned_csr.hpp; issue 867). The generic sweep looked up
+/// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
+template <Field Value, typename Parameters, typename Accumulator>
+class gauss_seidel<mat::coordinate2D<Value, Parameters>, Accumulator>
+    : private detail::owned_csr<Value>,
+      public gauss_seidel<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = gauss_seidel<mat::compressed2D<Value>, Accumulator>;
+public:
+    explicit gauss_seidel(const mat::coordinate2D<Value, Parameters>& A)
+        : holder(A), base(*holder::csr_) {}
+};
+
+/// coordinate2D and ell_matrix: the compressed2D sweep on a copy made once, at
+/// construction (detail/owned_csr.hpp; issue 867). The generic sweep looked up
+/// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
+template <Field Value, typename Parameters, typename Accumulator>
+class gauss_seidel<mat::ell_matrix<Value, Parameters>, Accumulator>
+    : private detail::owned_csr<Value>,
+      public gauss_seidel<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = gauss_seidel<mat::compressed2D<Value>, Accumulator>;
+public:
+    explicit gauss_seidel(const mat::ell_matrix<Value, Parameters>& A)
+        : holder(A), base(*holder::csr_) {}
 };
 
 /// Backward Gauss-Seidel: one in-place sweep in descending row order.

@@ -1,5 +1,6 @@
 #pragma once
 // MTL5 -- Diagonal (Jacobi) preconditioner: stores inv(diag(A))
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
 #include <mtl/concepts/matrix.hpp>
@@ -7,6 +8,7 @@
 #include <mtl/operation/diagonal.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/math/identity.hpp>
 
 namespace mtl::itl::pc {
 
@@ -23,8 +25,10 @@ public:
     explicit diagonal(const Matrix& A) {
         auto d = mtl::diagonal(A);
         inv_diag_ = vec::dense_vector<value_type>(d.size());
-        for (size_type i = 0; i < d.size(); ++i)
+        for (size_type i = 0; i < d.size(); ++i) {
+            if (d(i) == math::zero<value_type>()) detail::throw_zero_diagonal("pc::diagonal", i);
             inv_diag_(i) = value_type(1) / d(i);
+        }
     }
 
     /// solve: x(i) = inv_diag(i) * b(i)

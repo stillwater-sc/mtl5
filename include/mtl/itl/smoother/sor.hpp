@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- SOR (Successive Over-Relaxation) smoother
 // Relaxed Gauss-Seidel: x[i] = omega * GS_update + (1 - omega) * x[i]
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
@@ -10,6 +11,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/itl/detail/owned_csr.hpp>
 
 namespace mtl::itl::smoother {
 
@@ -47,8 +49,11 @@ public:
     explicit sor(const Matrix& A, value_type omega = value_type(1))
         : A_(A), omega_(omega), dia_inv_(A.num_rows())
     {
-        for (size_type i = 0; i < A.num_rows(); ++i)
+        for (size_type i = 0; i < A.num_rows(); ++i) {
+            if (A(i, i) == math::zero<value_type>())
+                detail::throw_zero_diagonal("sor", i);
             dia_inv_(i) = value_type(1) / A(i, i);
+        }
     }
 
     /// Forward relaxed sweep (rows 0..n-1). Default application.
@@ -114,12 +119,15 @@ public:
         const auto& indices = A.ref_minor();
         const auto& data    = A.ref_data();
         for (size_type i = 0; i < A.num_rows(); ++i) {
+            bool found = false;
             for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
                 if (indices[k] == i) {
-                    dia_inv_(i) = value_type(1) / data[k];
+                    found = data[k] != math::zero<value_type>();
+                    if (found) dia_inv_(i) = value_type(1) / data[k];
                     break;
                 }
             }
+            if (!found) detail::throw_zero_diagonal("sor", i);
         }
     }
 
@@ -173,6 +181,34 @@ private:
     const matrix_type& A_;
     value_type omega_;
     vec::dense_vector<value_type> dia_inv_;
+};
+
+/// coordinate2D and ell_matrix: the compressed2D sweep on a copy made once, at
+/// construction (detail/owned_csr.hpp; issue 867). The generic sweep looked up
+/// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
+template <Field Value, typename Parameters, typename Accumulator>
+class sor<mat::coordinate2D<Value, Parameters>, Accumulator>
+    : private detail::owned_csr<Value>,
+      public sor<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = sor<mat::compressed2D<Value>, Accumulator>;
+public:
+    explicit sor(const mat::coordinate2D<Value, Parameters>& A, Value omega = Value(1))
+        : holder(A), base(*holder::csr_, omega) {}
+};
+
+/// coordinate2D and ell_matrix: the compressed2D sweep on a copy made once, at
+/// construction (detail/owned_csr.hpp; issue 867). The generic sweep looked up
+/// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
+template <Field Value, typename Parameters, typename Accumulator>
+class sor<mat::ell_matrix<Value, Parameters>, Accumulator>
+    : private detail::owned_csr<Value>,
+      public sor<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = sor<mat::compressed2D<Value>, Accumulator>;
+public:
+    explicit sor(const mat::ell_matrix<Value, Parameters>& A, Value omega = Value(1))
+        : holder(A), base(*holder::csr_, omega) {}
 };
 
 /// Backward SOR: one in-place relaxed sweep in descending row order.

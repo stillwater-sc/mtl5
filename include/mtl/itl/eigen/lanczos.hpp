@@ -49,6 +49,7 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
     using Acc = std::conditional_t<std::is_void_v<Accumulator>, T, Accumulator>;
     using AT  = mtl::math::accumulator_traits<Acc, T>;
     using std::abs;
+    using std::sqrt;   // ADL: a custom number type's own sqrt (issue 867)
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = v0.size();
 
@@ -60,7 +61,12 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
     if (m > n) m = n;
     if (k > m) k = m;
 
-    const T breakdown = std::sqrt(std::numeric_limits<T>::epsilon());
+    // Breakdown is relative to the operator's scale, estimated by the largest
+    // |alpha| and beta seen: an absolute sqrt(eps) stopped A = 1e-10 *
+    // tridiag(4,-1) at one column, largest eigenvalue 2.06e-10 for 5.98e-10
+    // (issue 867).
+    const T breakdown = sqrt(std::numeric_limits<T>::epsilon());
+    T anorm = T(0);
 
     // Orthonormal Lanczos basis (columns) and tridiagonal entries.
     mat::dense2D<T> V(n, m);
@@ -83,6 +89,7 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
 
         T a = mtl::dot<Acc, T>(q, w);
         alpha[j] = a;
+        if (anorm < abs(a)) anorm = abs(a);
         for (size_type i = 0; i < n; ++i) w(i) -= a * q(i);
 
         // Full reorthogonalization (two passes) against all built columns.
@@ -97,13 +104,17 @@ ritz_pairs<T> lanczos(const LinearOp& A, vec::dense_vector<T> v0, std::size_t k,
         Acc acc{};
         AT::clear(acc);
         for (size_type i = 0; i < n; ++i) AT::add_product(acc, w(i), w(i));
-        T bn = std::sqrt(AT::template value<T>(acc));
+        T bn = sqrt(AT::template value<T>(acc));
         beta_next = bn;
-        if (bn <= breakdown) break;         // invariant subspace found
+        if (anorm < bn) anorm = bn;
+        if (bn <= breakdown * anorm) break;   // invariant subspace found
         if (j + 1 < m) beta[j + 1] = bn;
         for (size_type i = 0; i < n; ++i) { q_prev(i) = q(i); q(i) = w(i) / bn; }
     }
     m = built;
+    // An invariant subspace of dimension m < k has only m Ritz pairs (exact
+    // ones); the loop below read S(m-1, c) past them (issue 867).
+    if (k > m) k = m;
 
     // Symmetric tridiagonal projection T_m.
     mat::dense2D<T> Tm(m, m);
