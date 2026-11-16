@@ -125,8 +125,15 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
                     r_hat[i](k) -= alpha * u_hat[i + 1](k);
             }
 
-            // Early convergence check (before x += alpha*u_hat[0], matching MTL4)
-            if (iter.finished(r_hat[j])) {
+            for (size_type k = 0; k < n; ++k)
+                x(k) += alpha * u_hat[0](k);
+
+            // Early convergence check. r_hat[0] is now the residual of x, so
+            // the update above comes first; MTL4 checked r_hat[j] before it,
+            // returning x without its last step (x = 0 for A = 2I) and, for
+            // j > 0, judging a vector that is not the residual (issue 866).
+            // Only convergence: the iteration limit is tested once per cycle.
+            if (iter.converged_now(r_hat[0])) {
                 finalize();
                 return iter;
             }
@@ -134,9 +141,6 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
             // r_hat[j+1] = A * M^{-1} * r_hat[j]
             M.solve(y, r_hat[j]);
             apply_operator<Accumulator>(A, y, r_hat[j + 1]);
-
-            for (size_type k = 0; k < n; ++k)
-                x(k) += alpha * u_hat[0](k);
         }
 
         // Modified Gram-Schmidt (MR part)

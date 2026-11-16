@@ -83,8 +83,10 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         for (size_type i = 0; i < n; ++i)
             s(i) = r(i) - alpha * v(i);
 
-        // Check convergence of s
-        if (iter.finished(mtl::two_norm(s))) {
+        // Check convergence of s. Only convergence: the iteration limit is
+        // tested on the full step's r, so the last allowed iteration is not cut
+        // to the half step x += alpha phat (issue 866).
+        if (iter.converged_now(mtl::two_norm(s))) {
             // x += alpha * phat
             for (size_type i = 0; i < n; ++i)
                 x(i) += alpha * phat(i);
@@ -104,6 +106,13 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
             return iter;
         }
         omega = mtl::dot<Accumulator, value_type>(t, s) / tt;
+        // omega == 0 stalls x and divides the next beta by zero (issue 866).
+        if (omega == value_type(0)) {
+            for (size_type i = 0; i < n; ++i)
+                x(i) += alpha * phat(i);
+            iter.fail(5, "bicgstab breakdown: omega == 0");
+            return iter;
+        }
 
         // x += alpha * phat + omega * shat
         for (size_type i = 0; i < n; ++i)

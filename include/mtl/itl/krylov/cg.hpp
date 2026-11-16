@@ -47,10 +47,15 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     value_type rho = mtl::dot<Accumulator, value_type>(r, z);
     value_type rho_1{};
 
+    // The recurrences start on this solve's first step, not iter's: a reused
+    // iteration object is past its first (it made cg return NaN, issue 866).
+    bool first_step = true;
     while (!iter.finished(r)) {
         ++iter;
+        const bool first = first_step;
+        first_step = false;
 
-        if (iter.first()) {
+        if (first) {
             // p = z
             for (size_type i = 0; i < n; ++i)
                 p(i) = z(i);
@@ -64,8 +69,14 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // q = A * p
         apply_operator<Accumulator>(A, p, q);
 
-        // alpha = rho / dot(p, q)
-        value_type alpha = rho / mtl::dot<Accumulator, value_type>(p, q);
+        // alpha = rho / dot(p, q). On an indefinite A, p^T A p can be zero for
+        // p != 0: alpha was rho / 0 and x became inf or NaN (issue 866).
+        const value_type pq = mtl::dot<Accumulator, value_type>(p, q);
+        if (pq == value_type(0)) {
+            iter.fail(2, "cg breakdown: dot(p, A p) == 0");
+            return iter;
+        }
+        value_type alpha = rho / pq;
 
         // x += alpha * p
         for (size_type i = 0; i < n; ++i)

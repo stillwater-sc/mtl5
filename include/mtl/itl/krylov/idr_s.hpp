@@ -2,10 +2,12 @@
 // MTL5 -- IDR(s) solver (Induced Dimension Reduction)
 // Sonneveld & van Gijzen (2008). Modern Krylov solver for non-symmetric systems.
 // Parameter s controls shadow space dimension (default 4).
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
 #include <random>
 #include <numbers>
+#include <stdexcept>
 #include <vector>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -56,6 +58,9 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     using size_type  = typename VecX::size_type;
     using std::abs;
     const size_type n = x.size();
+    // s = 0 has no shadow space and reached `% s` (issue 866).
+    if (s < 1)
+        ::mtl::detail::throw_or_abort(std::invalid_argument("idr_s: s must be at least 1"));
 
     // Random shadow space P (n x s)
     std::mt19937 gen(42);
@@ -95,6 +100,10 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
         if (tt != value_type(0))
             omega = mtl::dot<Accumulator, value_type>(t, w) / tt;
     };
+
+    // A converged x0, or max_iter = 0, returns before any step: the steps
+    // below update x before they test iter (max_iter = 0 made one, issue 866).
+    if (iter.finished(r)) return iter;
 
     // s initial minimal-residual steps build dR and dX.
     for (size_type k = 0; k < s; ++k) {

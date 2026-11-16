@@ -1,8 +1,10 @@
 #pragma once
 // MTL5 -- GMRES (Generalized Minimum Residual) solver with restart
 // Left-preconditioned, Modified Gram-Schmidt, Givens rotations for QR
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
+#include <stdexcept>
 #include <vector>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/dense2D.hpp>
@@ -18,7 +20,10 @@ namespace mtl::itl {
 namespace detail {
 
 /// Single GMRES cycle (inner iteration) -- up to kmax Arnoldi steps.
-/// Returns 0 on convergence, 1 if kmax exhausted (restart needed).
+/// Returns 0 once `iter` is finished (converged, at its limit, or broken
+/// down: its error code says which), 1 if kmax was exhausted first (restart
+/// needed). It does not call iter.error_code(), which a cyclic_iteration
+/// answers by printing its summary (issue 866).
 template <typename Accumulator = void,
           typename LinearOp, typename VecX, typename VecB,
           typename PC, typename Iter>
@@ -40,7 +45,7 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
     // Real for a complex system (#853): the iteration takes a magnitude.
     const auto beta = mtl::two_norm(r);
     if (iter.finished(beta))
-        return iter.error_code();
+        return 0;
 
     // Arnoldi basis vectors V[0..kmax]
     std::vector<vec::dense_vector<value_type>> V(kmax + 1, vec::dense_vector<value_type>(n));
@@ -124,7 +129,7 @@ int gmres_inner(const LinearOp& A, VecX& x, const VecB& b,
         for (size_type i = 0; i < n; ++i)
             x(i) += y(j) * V[j](i);
 
-    return iter.error_code();
+    return iter.is_finished() ? 0 : 1;
 }
 
 } // namespace detail
@@ -140,9 +145,15 @@ template <typename Accumulator = void,
     requires FieldVector<VecX>
 int gmres(const LinearOp& A, VecX& x, const VecB& b,
           const PC& M, Iter& iter, int restart = 30) {
-    while (!iter.is_finished()) {
+    // restart = 0 made no step and the loop below spun forever; a negative
+    // one sized the Krylov basis from a negative count (issue 866).
+    if (restart < 1)
+        ::mtl::detail::throw_or_abort(std::invalid_argument("gmres: restart must be at least 1"));
+    // At least one cycle: it tests the residual first, so an iteration object
+    // still finished from an earlier solve is not taken as done (issue 866).
+    do {
         detail::gmres_inner<Accumulator>(A, x, b, M, iter, restart);
-    }
+    } while (!iter.is_finished());
     return iter;
 }
 
