@@ -85,8 +85,12 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
             r_hat[0](i) = b(i);
     }
     value_type norm_r0 = mtl::two_norm(r_hat[0]);
-    if (norm_r0 == zero)
+    // An exact x0: the controller still records it (a reused one kept the
+    // error and residual of its last solve).
+    if (norm_r0 == zero) {
+        iter.finished(r_hat[0]);
         return iter;
+    }
 
     // The loop tests r_hat[0], the residual it updates by recurrence, which
     // drifts from b - A x by rounding. On a strongly nonnormal

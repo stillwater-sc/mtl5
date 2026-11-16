@@ -529,4 +529,19 @@ TEST_CASE("the true-residual check: limit and converged x0 (issue 873)", "[itl][
         CHECK(s.solve(A, x, b, M, iter) == 1);
         CHECK(std::abs(iter.resid() - true_residual(A, x, b)) <= 1e-12 * norm(b));
     }
+    // An exact x0 with a reused controller that last failed: each solver
+    // reports convergence and a zero residual (bicgstab_ell returned before
+    // asking the controller, so it kept error 3 and residual 1).
+    const csr I = scaled_identity(n, 1.0);
+    for (const auto& s : all_solvers()) {
+        if (std::find(fixed.begin(), fixed.end(), std::string(s.name)) == fixed.end()) continue;
+        INFO(s.name);
+        const pc_id M(I);
+        vec_t x = b;
+        iter_t iter(b, 10, 1e-10);
+        iter.finished(1.0);
+        iter.fail(3, "an earlier solve");
+        CHECK(s.solve(I, x, b, M, iter) == 0);
+        CHECK(iter.resid() == 0.0);
+    }
 }
