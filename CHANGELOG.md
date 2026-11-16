@@ -95,6 +95,14 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Recursion: `for_each` on an unsplittable region, `row_major_mask(0)`, `outer_bound` past 2^63, a dangling `recursator<const M>`; the shark-tooth masks removed** (issue 877, from QA sweep #783).
+  - **`for_each` treats a 1x1 region as a base case** whatever the test says. Its `north_west()` is itself, so a test that rejects 1x1 regions, such as `min_dim_test(0)`, made `for_each` recurse until the stack overflowed.
+  - **`row_major_mask(0)` and `col_major_mask(0)` are rejected** with `std::invalid_argument` (a compile error in a constant expression). The loop did not advance at k = 0, so a run-time call hung.
+  - **`outer_bound(n)` above the largest power of 2 throws `std::overflow_error`.** `std::bit_ceil` is undefined there.
+  - **`recursator<const M>` no longer binds a temporary**, which it would have outlived. The rvalue constructor is deleted.
+  - **Removed: `shark_z_row_mask` and `shark_z_col_mask`.** They were described as "hybrid block + Z-order" but were plain Morton aliases. `shark_z_row_mask` was 0x5555..., the column bits by the file's own convention, while `doppled_2_row_mask` is 0xAAAA.... Nothing used them. Code that named them no longer compiles.
+  - **Tests:** pinned mask values for k = 1, 2, 4, 7, 33 and 64, and every doppled mask; `lsb_mask(n >= 64)`. `for_each` on empty, 1x1, 1xN, Nx1 and odd-sized matrices, counting each element's visits (the old coverage test wrote 1.0, which a double visit can't change). The recursator accessors, the threshold members, and `int` matrices.
+
 - **Thread pools: construction failure, env parsing, false sharing in `parallel_accumulate`** (issue 876, from QA sweep #783).
   - **`thread_pool` no longer hangs when a worker can't start.** The constructor unwound with the started workers still waiting on a condition variable that was destroyed first, so `pthread_cond_destroy` blocked: `thread_pool(2000)` under `ulimit -v 400000` hung. It now stops and joins the started workers and rethrows the `std::system_error`, as `spin_pool` already did.
   - **Signed and out-of-range env values are invalid.** `MTL5_POOL_SPIN` and `MTL5_NUM_THREADS` were read with `strtoul`, which accepts a leading `-` and wraps: `MTL5_POOL_SPIN=-1` gave the largest spin, 4294967295 iterations. Both now go through one parser that takes digits only, up to 2^32 - 1, and treats anything else as unset.
