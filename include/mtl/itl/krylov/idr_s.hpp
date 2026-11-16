@@ -254,6 +254,15 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
         std::size_t steps_since_start = 0;
         bool breakdown = false;
         mag_type peak = mtl::two_norm(r);   // largest ||r|| since the last replacement
+        // The peak is recorded after every step, not only at cycle starts: a
+        // transient inside a cycle (||r|| = 2^20 after one step of a float
+        // 2x2 system, 1/16 after the next) was missed, and with it the
+        // replacement its fall calls for.
+        auto note_peak = [&]() {
+            if (!opt.residual_replacement) return;
+            const mag_type nr = mtl::two_norm(r);
+            if (nr > peak) peak = nr;
+        };
 
         bool done = iter.finished(tested());
         while (!done) {
@@ -347,6 +356,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
                 ++iter;
                 ++steps_since_start;
                 r_is_true = false;
+                note_peak();
                 if (opt.smoothing) smooth();
                 if (iter.finished(tested())) { done = true; break; }
 
@@ -392,6 +402,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
             ++iter;
             ++steps_since_start;
             r_is_true = false;
+            note_peak();
             if (opt.smoothing) smooth();
             done = iter.finished(tested());
         }

@@ -519,3 +519,52 @@ TEST_CASE("IDR(s): smoothing with a tiny float residual (issue 874)", "[itl][kry
     }
     CHECK(std::sqrt(r / nb) <= 2e-4);
 }
+
+namespace {
+
+/// A matrix-free float operator that counts its products.
+struct counting_op {
+    const mat::compressed2D<float>& S;
+    int* products;
+    vec::dense_vector<float> operator*(const vec::dense_vector<float>& x) const {
+        ++*products;
+        return S * x;
+    }
+};
+
+} // namespace
+
+TEST_CASE("IDR(s): residual replacement sees a peak inside a cycle (issue 874)", "[itl][krylov][idr_s][874]") {
+    // A = [[1, 2^-24], [2^20, 1]], b = e1, P = {e1}, float: the first step
+    // makes ||r|| = 2^20, the omega step brings it to about 1/16. The peak was
+    // recorded only at cycle starts (1 there), so the next cycle did not
+    // replace r although it had fallen far more than 100x from its peak. A
+    // replacement costs one product with A: with it, a run of three
+    // iterations takes one product more than without.
+    using fcsr = mat::compressed2D<float>;
+    using fvec = vec::dense_vector<float>;
+    fcsr S(2, 2);
+    {
+        mat::inserter<fcsr> ins(S);
+        ins[0][0] << 1.0f;
+        ins[0][1] << std::ldexp(1.0f, -24);
+        ins[1][0] << std::ldexp(1.0f, 20);
+        ins[1][1] << 1.0f;
+    }
+    fvec b(2, 0.0f);
+    b(0) = 1.0f;
+    std::vector<fvec> P(1, fvec(2, 0.0f));
+    P[0](0) = 1.0f;
+    const itl::pc::identity<fcsr> M(S);
+    auto products = [&](bool replacement) {
+        int count = 0;
+        const counting_op A{S, &count};
+        fvec x(2, 0.0f);
+        itl::basic_iteration<float> iter(b, 3, 0.0f);
+        itl::idrs_options opt;
+        opt.residual_replacement = replacement;
+        (void)itl::idr_s(A, x, b, M, iter, opt, P);
+        return count;
+    };
+    CHECK(products(true) == products(false) + 1);
+}
