@@ -738,13 +738,16 @@ TEMPLATE_TEST_CASE("the public column sweep across strip boundaries", "[operatio
     const std::size_t n = strip + strip / 2 + 3;   // one full strip and a partial one
     const M A = triangular<M>(n, 5);
     const V x0 = filled<T>(n, 6);
-    constexpr bool via_blas = detail::trmv_dispatches_blas_v<void, M, V>;
+    // BLAS, or native-fast's blocked trmv above triangular_block rows (it adds
+    // the off-diagonal panel last), round differently: close, not identical.
+    const bool approx = detail::trmv_dispatches_blas_v<void, M, V> ||
+                        (detail::trmv_uses_blocked_v<void, M, V> && n > detail::triangular_block);
     for (bool upper : {false, true}) {
         INFO((upper ? "upper" : "lower") << ", n = " << n);
         V x = x0, y = x0;
         trmv(A, x, upper, false);
         old_trmv(A, y, upper, false);
-        if constexpr (via_blas) require_close(x, y); else require_identical(x, y);
+        if (approx) require_close(x, y); else require_identical(x, y);
     }
     {
         V x(n), y(n);
@@ -759,11 +762,14 @@ TEST_CASE("mixed-type trmv and lower_trisolve on column-major: a float A, a doub
         INFO("n = " << n);
         const cm<float> A = triangular<cm<float>>(n, 3);
         const vec::dense_vector<double> x0 = filled<double>(n, 4);
+        using V = vec::dense_vector<double>;
+        const bool approx = detail::trmv_dispatches_blas_v<void, cm<float>, V> ||
+                            (detail::trmv_uses_blocked_v<void, cm<float>, V> && n > detail::triangular_block);
         for (bool upper : {false, true}) {
-            vec::dense_vector<double> x = x0, y = x0;
+            V x = x0, y = x0;
             trmv(A, x, upper, false);
             old_trmv(A, y, upper, false);   // accumulates float * double in double
-            require_identical(x, y);
+            if (approx) require_close(x, y); else require_identical(x, y);
         }
         vec::dense_vector<double> x(n), y(n);
         lower_trisolve(A, x, x0, false);

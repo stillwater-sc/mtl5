@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
 #include <string>
 
 using namespace mtl::simd;
@@ -47,6 +48,27 @@ TEST_CASE("env_block_size: a whole positive size_t, else the derived value", "[s
         CHECK(detail::env_block_size("MTL5_TEST_BLOCK", v) == c.valid);
         CHECK(v == (c.valid ? c.expected : std::size_t{7}));   // unchanged when invalid
     }
+}
+
+TEST_CASE("env_block_size at the exact std::size_t limit", "[simd][blocking][878]") {
+    // max() is accepted; its decimal successor is rejected and leaves v alone,
+    // on 32-bit and 64-bit size_t alike.
+    const std::size_t top = std::numeric_limits<std::size_t>::max();
+    const std::string max_str = std::to_string(top);
+    std::string next = max_str;   // max() + 1 in decimal: increment with carry
+    for (std::size_t i = next.size(); i-- > 0;) {
+        if (next[i] == '9') { next[i] = '0'; continue; }
+        ++next[i];
+        break;
+    }
+    std::size_t v = 7;
+    set_env("MTL5_TEST_BLOCK", max_str.c_str());
+    CHECK(detail::env_block_size("MTL5_TEST_BLOCK", v));
+    CHECK(v == top);
+    v = 7;
+    set_env("MTL5_TEST_BLOCK", next.c_str());
+    CHECK_FALSE(detail::env_block_size("MTL5_TEST_BLOCK", v));
+    CHECK(v == 7);
 }
 
 TEST_CASE("the blocking overrides reach the blocking parameters", "[simd][blocking][878]") {
