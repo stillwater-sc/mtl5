@@ -4,11 +4,17 @@
 // exercised; otherwise the generic C++ fallback paths are tested.
 //
 // Level 1 (dot, two_norm, axpy, scale) never dispatches to BLAS (#754): the
-// last test case pins each to MTL5's own SIMD loop, bit for bit, in every build.
+// "Level 1 takes MTL5's SIMD loops" case pins each to MTL5's own SIMD loop, bit
+// for bit, in every build. Without BLAS that is a self-check -- both sides are
+// the same loop -- so it guards the dispatch only in a BLAS build. The cases
+// after it check Level 1 against an independent reference in every build: a
+// length past the 65,536-element pool chunk, strided vectors, and two_norm's
+// overflow and underflow (issue 878).
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
+#include <mtl/vec/strided_vector_ref.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/dot.hpp>
@@ -18,6 +24,7 @@
 #include <mtl/detail/thread_pool.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <mtl/math/identity.hpp>
 
@@ -247,4 +254,46 @@ TEMPLATE_TEST_CASE("Level 1 takes MTL5's SIMD loops, also in a BLAS build", "[in
         scale(T(1.0009), x);
         for (std::size_t i = 0; i < n; ++i) REQUIRE(x(i) == expected(i));
     }
+}
+
+TEMPLATE_TEST_CASE("Level 1 against a long double reference: past one pool chunk, strided", "[interface][blas][878]",
+                   float, double) {
+    using T = TestType;
+    using L = long double;
+    static volatile std::size_t n_runtime = 200000;   // three 65,536-element chunks and a part
+    const std::size_t n = n_runtime;
+    vec::dense_vector<T> x(n), y(n);
+    L dot_ref = 0, sq_ref = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        x(i) = static_cast<T>(std::sin(0.37 * static_cast<double>(i)));
+        y(i) = static_cast<T>(std::cos(0.11 * static_cast<double>(i)) - 0.5);
+        dot_ref += static_cast<L>(x(i)) * static_cast<L>(y(i));
+        sq_ref += static_cast<L>(x(i)) * static_cast<L>(x(i));
+    }
+    // A sum of n terms of size ~1: the error bound grows with n eps.
+    const L tol = static_cast<L>(n) * static_cast<L>(std::numeric_limits<T>::epsilon());
+    CHECK(std::fabs(static_cast<L>(dot(x, y)) - dot_ref) <= tol);
+    CHECK(std::fabs(static_cast<L>(two_norm(x)) - std::sqrt(sq_ref)) <= tol);
+
+    // Every third element, as a strided view over the same storage.
+    const std::size_t m = n / 3;
+    vec::strided_vector_ref<T> xs(x.data(), m, 3), ys(y.data(), m, 3);
+    L sdot = 0, ssq = 0;
+    for (std::size_t i = 0; i < m; ++i) {
+        sdot += static_cast<L>(x(3 * i)) * static_cast<L>(y(3 * i));
+        ssq += static_cast<L>(x(3 * i)) * static_cast<L>(x(3 * i));
+    }
+    const L stol = static_cast<L>(m) * static_cast<L>(std::numeric_limits<T>::epsilon());
+    CHECK(std::fabs(static_cast<L>(dot(xs, ys)) - sdot) <= stol);
+    CHECK(std::fabs(static_cast<L>(two_norm(xs)) - std::sqrt(ssq)) <= stol);
+}
+
+TEMPLATE_TEST_CASE("two_norm does not overflow or underflow", "[interface][blas][878]", float, double) {
+    using T = TestType;
+    const T big = std::numeric_limits<T>::max() / T(4);
+    const T tiny = std::numeric_limits<T>::min() * T(4);
+    vec::dense_vector<T> b = {T(3) * (big / T(8)), T(4) * (big / T(8))};
+    CHECK(std::fabs(two_norm(b) / (T(5) * (big / T(8))) - T(1)) <= T(4) * std::numeric_limits<T>::epsilon());
+    vec::dense_vector<T> t = {T(3) * tiny, T(4) * tiny};
+    CHECK(std::fabs(two_norm(t) / (T(5) * tiny) - T(1)) <= T(4) * std::numeric_limits<T>::epsilon());
 }
