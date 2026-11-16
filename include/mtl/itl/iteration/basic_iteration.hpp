@@ -45,7 +45,28 @@ public:
             is_finished_ = true;
             return true;
         }
+        // Each test reports afresh: an object reused for a second solve was
+        // still finished from the first, and gmres's restart loop, which asks
+        // is_finished(), returned without a step (issue 866).
+        is_finished_ = false;
         return false;
+    }
+
+    /// Convergence test only, without the iteration-limit test: for a check
+    /// in the middle of an iteration (bicgstab's half step, bicgstab_ell's
+    /// BiCG part), where reaching max_iter must not cut the iteration short
+    /// (issue 866). Finishes, with error code 0, only when r converged.
+    template <Vector V>
+    bool converged_now(const V& r) {
+        return converged_now(mtl::two_norm(r));
+    }
+
+    bool converged_now(Real r) {
+        resid_ = r;
+        if (!converged(r)) return false;
+        error_ = 0;
+        is_finished_ = true;
+        return true;
     }
 
     /// Pre-increment iteration counter
@@ -54,7 +75,9 @@ public:
     /// Post-increment iteration counter
     basic_iteration operator++(int) { auto tmp = *this; ++i_; return tmp; }
 
-    /// Returns true if this is the first iteration (i <= 1)
+    /// Returns true if this is the first iteration (i <= 1). The solvers do not
+    /// use it to start their recurrences: an iteration object reused for a
+    /// second solve is past its first iteration (issue 866).
     bool first() const { return i_ <= 1; }
 
     /// Error code: 0 = converged, 1 = max_iter exceeded

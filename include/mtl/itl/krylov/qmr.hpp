@@ -67,8 +67,13 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     value_type epsilon = value_type(1);
     value_type theta = value_type(0);
 
+    // The recurrences start on this solve's first step, not iter's: a reused
+    // iteration object is past its first (it made cg return NaN, issue 866).
+    bool first_step = true;
     while (!iter.finished(r)) {
         ++iter;
+        const bool first = first_step;
+        first_step = false;
 
         if (rho == value_type(0) || xi == value_type(0)) {
             iter.fail(2, "qmr breakdown: rho or xi == 0");
@@ -97,7 +102,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         //   z~ = M1^-T z = M^-T z       -- the adjoint solve lives HERE
         // p = y~ - (xi*delta/epsilon)*p;  q = z~ - (rho*delta/epsilon)*q
         M.adjoint_solve(z_tilde, z);
-        if (iter.first()) {
+        if (first) {
             for (size_type i = 0; i < n; ++i) {
                 p(i) = y(i);
                 q(i) = z_tilde(i);
@@ -151,7 +156,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // d = eta_new * p + (theta * gamma_new)^2 * d
         // s = eta_new * p_tilde + (theta * gamma_new)^2 * s
         value_type ratio = (theta * gamma_new) * (theta * gamma_new);
-        if (iter.first()) {
+        if (first) {
             for (size_type i = 0; i < n; ++i) {
                 d(i) = eta_new * p(i);
                 s(i) = eta_new * p_tilde(i);

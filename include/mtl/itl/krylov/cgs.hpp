@@ -45,8 +45,13 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     value_type alpha = value_type(0);
     value_type beta  = value_type(0);
 
+    // The recurrences start on this solve's first step, not iter's: a reused
+    // iteration object is past its first (it made cg return NaN, issue 866).
+    bool first_step = true;
     while (!iter.finished(r)) {
         ++iter;
+        const bool first = first_step;
+        first_step = false;
         rho_1 = mtl::dot<Accumulator, value_type>(rtilde, r);
 
         if (rho_1 == value_type(0)) {
@@ -54,7 +59,7 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             return iter;
         }
 
-        if (iter.first()) {
+        if (first) {
             for (size_type i = 0; i < n; ++i) {
                 u(i) = r(i);
                 p(i) = r(i);

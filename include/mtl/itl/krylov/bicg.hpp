@@ -61,10 +61,15 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     value_type rho = mtl::dot<Accumulator, value_type>(r_tilde, z);
     value_type rho_1{};
 
+    // The recurrences start on this solve's first step, not iter's: a reused
+    // iteration object is past its first (it made cg return NaN, issue 866).
+    bool first_step = true;
     while (!iter.finished(r)) {
         ++iter;
+        const bool first = first_step;
+        first_step = false;
 
-        if (iter.first()) {
+        if (first) {
             for (size_type i = 0; i < n; ++i) {
                 p(i) = z(i);
                 p_tilde(i) = z_tilde(i);
@@ -83,7 +88,13 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // q_tilde = A^T * p_tilde
         apply_transpose<Accumulator>(A, p_tilde, q_tilde);
 
-        value_type alpha = rho / mtl::dot<Accumulator, value_type>(p_tilde, q);
+        // p~^T A p == 0 is a breakdown: alpha was rho / 0 (issue 866).
+        const value_type ptq = mtl::dot<Accumulator, value_type>(p_tilde, q);
+        if (ptq == value_type(0)) {
+            iter.fail(3, "bicg breakdown: dot(p_tilde, A p) == 0");
+            return iter;
+        }
+        value_type alpha = rho / ptq;
 
         // x += alpha * p
         for (size_type i = 0; i < n; ++i)

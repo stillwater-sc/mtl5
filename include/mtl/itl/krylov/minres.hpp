@@ -17,7 +17,8 @@ namespace mtl::itl {
 
 /// MINRES method for symmetric (possibly indefinite) systems.
 /// Solves A*x = b with preconditioner M and iteration controller iter.
-/// A must be symmetric.
+/// A must be symmetric and M symmetric positive definite (Hermitian for a
+/// complex system): the Lanczos process runs in the M^{-1} inner product.
 ///
 /// Accumulator (optional): accumulation type for the dot products and the
 /// matrix-vector products (see math/accumulator_traits.hpp, #158).
@@ -38,26 +39,47 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     const size_type n = x.size();
     const auto zero = math::zero<value_type>();
 
-    // Workspace
+    // Preconditioned Lanczos in the M^{-1} inner product (Paige & Saunders;
+    // Greenbaum, Iterative Methods, Sec. 8.2). With M SPD this is MINRES on
+    // M^{-1/2} A M^{-1/2}, which is symmetric. The former loop ran Lanczos on
+    // A M^{-1} in the plain inner product, which is symmetric only for M = cI:
+    // a diagonal PC with a varying diagonal did not converge (issue 866).
+    //
+    //   v: the Lanczos vectors in A's range, scaled so that v^T M^{-1} v = 1;
+    //   z = M^{-1} v, the direction the solution is built from;
+    //   beta = sqrt(v^T M^{-1} v), alpha = z^T A z.
+    // One preconditioner solve and one product with A per step.
     vec::dense_vector<value_type> v_old(n), v(n), v_new(n);
+    vec::dense_vector<value_type> z(n), z_new(n);
     vec::dense_vector<value_type> d(n), d_old(n), d_older(n);
-    vec::dense_vector<value_type> z(n), w(n);
+    vec::dense_vector<value_type> w(n);
+
+    // ||v||_{M^{-1}} = sqrt(v^T z), z = M^{-1} v; real and positive for an SPD
+    // (HPD) M, which MINRES requires. Formed as sqrt(a) sqrt(|(v/a)^T z|) with
+    // a = ||v||_2 (two_norm scales), so v^T z cannot overflow or underflow for
+    // an operator of 2^+-600 (#671); `tmp` holds v/a. For M = I it is a.
+    auto m_norm = [&](const vec::dense_vector<value_type>& vv, const vec::dense_vector<value_type>& zz,
+                      vec::dense_vector<value_type>& tmp) -> value_type {
+        const auto a = mtl::two_norm(vv);
+        if (a == decltype(a)(0)) return zero;
+        for (size_type i = 0; i < n; ++i)
+            tmp(i) = vv(i) / a;
+        return value_type(sqrt(a) * sqrt(abs(mtl::dot<Accumulator, value_type>(tmp, zz))));
+    };
 
     // Initial residual: r = b - A*x
-    vec::dense_vector<value_type> Ax(n);
-    apply_operator<Accumulator>(A, x, Ax);
+    apply_operator<Accumulator>(A, x, w);
     for (size_type i = 0; i < n; ++i)
-        v(i) = b(i) - Ax(i);
-
-    // For preconditioned MINRES, beta = sqrt(r^T M^{-1} r)
-    // but for simplicity with right preconditioning, we use beta = ||r||
-    value_type beta = mtl::two_norm(v);
+        v(i) = b(i) - w(i);
+    const auto r0_norm = mtl::two_norm(v);
+    M.solve(z, v);
+    value_type beta = m_norm(v, z, w);
 
     if (beta == zero) return iter;
 
-    // v = r / beta  (normalized Lanczos vector)
     for (size_type i = 0; i < n; ++i) {
         v(i) /= beta;
+        z(i) /= beta;
         v_old(i) = zero;
         d(i) = zero;
         d_old(i) = zero;
@@ -70,25 +92,36 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     value_type cs     = value_type(1);   // c_{j-1}
     value_type sn     = zero;            // s_{j-1}
 
-    // Transformed RHS: |eta| tracks the residual norm
+    // Transformed RHS: |eta| is the residual in the M^{-1} norm. Scaled by
+    // ||r0||_2 / ||r0||_{M^{-1}}, it estimates the 2-norm the iteration object
+    // tests (exactly so for M = I); when the estimate meets the tolerance the
+    // true residual decides, and the recurrence goes on if it has not.
     value_type eta = beta;
+    const auto scale = r0_norm / abs(beta);
+    auto true_residual = [&]() {
+        apply_operator<Accumulator>(A, x, w);
+        for (size_type i = 0; i < n; ++i)
+            w(i) = b(i) - w(i);
+        return mtl::two_norm(w);
+    };
 
-    while (!iter.finished(abs(eta))) {
+    for (;;) {
+        if (iter.finished(abs(eta) * scale)) {
+            // Converged by the estimate, or at the limit: the true residual
+            // decides (finished() is true again at the limit).
+            if (iter.finished(true_residual())) return iter;
+        }
         ++iter;
 
-        // Lanczos step: w = A * M^{-1} * v (right preconditioned)
-        M.solve(z, v);
+        // Lanczos step: w = A z, alpha = z^T A z
         apply_operator<Accumulator>(A, z, w);
+        value_type alpha = mtl::dot<Accumulator, value_type>(z, w);
 
-        // alpha = v^T * w
-        value_type alpha = mtl::dot<Accumulator, value_type>(v, w);
-
-        // v_new = w - alpha*v - beta*v_old
+        // v_new = w - alpha*v - beta*v_old; beta_new = ||v_new||_{M^{-1}}
         for (size_type i = 0; i < n; ++i)
             v_new(i) = w(i) - alpha * v(i) - beta * v_old(i);
-
-        // beta_new = ||v_new||
-        value_type beta_new = mtl::two_norm(v_new);
+        M.solve(z_new, v_new);
+        value_type beta_new = m_norm(v_new, z_new, w);   // w is free until the next step
 
         // Apply previous Givens rotations to column [beta, alpha, beta_new]
         // of the tridiagonal matrix.
@@ -115,8 +148,7 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         value_type sn_new = g_new.s;
 
         // Update direction vectors
-        // d_new = (M^{-1}*v - delta*d_old - epsilon*d_older) / gamma
-        M.solve(z, v);
+        // d_new = (z - delta*d_old - epsilon*d_older) / gamma, z = M^{-1} v
         for (size_type i = 0; i < n; ++i)
             d_older(i) = d_old(i);
         for (size_type i = 0; i < n; ++i)
@@ -132,15 +164,19 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // Update residual tracking
         eta = -sn_new * eta;
 
-        // Shift Lanczos vectors: v_old <- v, v <- v_new/beta_new
+        // Shift Lanczos vectors: v_old <- v, (v, z) <- (v_new, z_new) / beta_new
         for (size_type i = 0; i < n; ++i)
             v_old(i) = v(i);
         if (beta_new != zero) {
-            for (size_type i = 0; i < n; ++i)
+            for (size_type i = 0; i < n; ++i) {
                 v(i) = v_new(i) / beta_new;
+                z(i) = z_new(i) / beta_new;
+            }
         } else {
-            for (size_type i = 0; i < n; ++i)
+            for (size_type i = 0; i < n; ++i) {
                 v(i) = zero;
+                z(i) = zero;
+            }
         }
 
         // Shift Givens state
@@ -150,8 +186,6 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         sn = sn_new;
         beta = beta_new;
     }
-
-    return iter;
 }
 
 } // namespace mtl::itl

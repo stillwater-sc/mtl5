@@ -114,6 +114,14 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         while (!tau_done && !iter.finished(tau)) {
             ++iter;
 
+            // rho is tested where it is used: a zero rho_new from the last
+            // pass made alpha = 0 and the first half step divided by it, before
+            // the test that stood after both half steps could run (issue 866).
+            // A converged w has already left the loop through tau.
+            if (rho == value_type(0)) {
+                iter.fail(2, "tfqmr breakdown: rho == 0");
+                return iter;
+            }
             const value_type sigma = mtl::dot<Accumulator, value_type>(r_star, v);
             if (sigma == value_type(0)) {
                 iter.fail(2, "tfqmr breakdown: sigma == 0");
@@ -134,10 +142,6 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
             // u_{m+2} = w + beta u_{m+1};
             // v_{m+2} = A M^-1 u_{m+2} + beta (A M^-1 u_{m+1} + beta v_m).
-            if (rho == value_type(0)) {
-                iter.fail(2, "tfqmr breakdown: rho == 0");
-                return iter;
-            }
             const value_type rho_new = mtl::dot<Accumulator, value_type>(r_star, w);
             const value_type beta = rho_new / rho;
             rho = rho_new;
