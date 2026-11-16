@@ -4,6 +4,7 @@
 // P = 2 * R^T is the standard relationship.
 #include <stdexcept>
 #include <cstddef>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -20,7 +21,7 @@ inline mat::compressed2D<double> make_prolongation_1d(std::size_t n_coarse) {
     // n_coarse = 0 is a 1 x 0 operator that no restriction produces: the
     // smallest is make_restriction_1d(3), with n_coarse = 1 (issue 867).
     if (n_coarse < 1)
-        throw std::invalid_argument("make_prolongation_1d: n_coarse must be at least 1");
+        ::mtl::detail::throw_or_abort(std::invalid_argument("make_prolongation_1d: n_coarse must be at least 1"));
     std::size_t n_fine = 2 * n_coarse + 1;
     mat::compressed2D<double> P(n_fine, n_coarse);
     {

@@ -21,17 +21,24 @@
 
 namespace mtl::itl::detail {
 
+// The copy is always a row-major compressed2D<Value>, whatever A's
+// parameters: compressed2D rejects column-major ones, and a column-major
+// coordinate2D smoother has to keep compiling (#870 review).
 template <typename Value, typename Parameters>
-mat::compressed2D<Value, Parameters> to_compressed(const mat::coordinate2D<Value, Parameters>& A) {
-    return A.compress();   // sums duplicates, as A(i, j) does
+mat::compressed2D<Value> to_compressed(const mat::coordinate2D<Value, Parameters>& A) {
+    // The same triplets in a row-major coordinate2D: its compress() sums
+    // duplicates in insertion order, as A(i, j) does.
+    mat::coordinate2D<Value> rm(A.num_rows(), A.num_cols());
+    for (const auto& [r, c, v] : A.ref_entries()) rm.insert(r, c, v);
+    return rm.compress();
 }
 
 template <typename Value, typename Parameters>
-mat::compressed2D<Value, Parameters> to_compressed(const mat::ell_matrix<Value, Parameters>& A) {
+mat::compressed2D<Value> to_compressed(const mat::ell_matrix<Value, Parameters>& A) {
     using size_type = typename mat::ell_matrix<Value, Parameters>::size_type;
-    mat::compressed2D<Value, Parameters> C(A.num_rows(), A.num_cols());
+    mat::compressed2D<Value> C(A.num_rows(), A.num_cols());
     {
-        mat::inserter<mat::compressed2D<Value, Parameters>> ins(C);
+        mat::inserter<mat::compressed2D<Value>> ins(C);
         const auto& idx = A.ref_indices();
         const auto& val = A.ref_data();
         const size_type w = A.max_width();
@@ -46,9 +53,9 @@ mat::compressed2D<Value, Parameters> to_compressed(const mat::ell_matrix<Value, 
 }
 
 /// The owned compressed2D copy, as a base constructed before the smoother.
-template <typename Value, typename Parameters>
+template <typename Value>
 struct owned_csr {
-    using csr_type = mat::compressed2D<Value, Parameters>;
+    using csr_type = mat::compressed2D<Value>;
     template <typename Matrix>
     explicit owned_csr(const Matrix& A) : csr_(std::make_shared<const csr_type>(to_compressed(A))) {}
     std::shared_ptr<const csr_type> csr_;

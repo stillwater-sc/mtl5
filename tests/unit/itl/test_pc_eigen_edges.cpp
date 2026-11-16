@@ -284,6 +284,32 @@ TEST_CASE("smoothers on coordinate2D and ell_matrix match compressed2D", "[itl][
     check_formats<itl::smoother::sor>(30, 1.3);
 }
 
+TEST_CASE("smoothers on a column-major coordinate2D", "[itl][smoother][867]") {
+    // compressed2D rejects column-major parameters, so the copy is a
+    // row-major compressed2D<Value> whatever the coordinate2D's (#870 review).
+    using cm_coo = mat::coordinate2D<double, mat::parameters<tag::col_major>>;
+    const std::size_t n = 12;
+    const entries e = tridiagonal_entries(n, 4.0, -1.0);
+    const csr A = make(n, e);
+    cm_coo C(n, n);
+    for (const auto& [i, j, v] : e) C.insert(i, j, v);
+    const vec_t b = ramp(n);
+    vec_t xa(n, 0.0), xj(n, 0.0), xg(n, 0.0), xs(n, 0.0);
+    vec_t ya(n, 0.0), za(n, 0.0);
+    itl::smoother::jacobi<cm_coo> sj(C);
+    itl::smoother::gauss_seidel<cm_coo> sg(C);
+    itl::smoother::sor<cm_coo> ss(C, 1.3);
+    itl::smoother::jacobi<csr> rj(A);
+    itl::smoother::gauss_seidel<csr> rg(A);
+    itl::smoother::sor<csr> rs(A, 1.3);
+    for (int s = 0; s < 2; ++s) { sj(xj, b); sg(xg, b); ss(xs, b); rj(xa, b); rg(ya, b); rs(za, b); }
+    for (std::size_t i = 0; i < n; ++i) {
+        CHECK(xj(i) == xa(i));
+        CHECK(xg(i) == ya(i));
+        CHECK(xs(i) == za(i));
+    }
+}
+
 TEST_CASE("smoothers on coordinate2D sweep in O(nnz)", "[itl][smoother][cost][867]") {
     // The generic sweep looked up every A(i, j), and coordinate2D's lookup
     // scans every entry: O(n^2 nnz) per sweep. 4x in n is ~4x in time now;

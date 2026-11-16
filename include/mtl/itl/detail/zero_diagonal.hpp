@@ -11,11 +11,15 @@
 #include <stdexcept>
 #include <string>
 
+#include <mtl/detail/exceptions.hpp>
+
 namespace mtl::itl::detail {
 
+/// Through throw_or_abort, so a build with exceptions disabled still compiles
+/// and aborts instead (#870 review).
 [[noreturn]] inline void throw_zero_diagonal(const char* who, std::size_t row) {
-    throw std::runtime_error(std::string(who) + ": zero or missing diagonal at row "
-                             + std::to_string(row));
+    ::mtl::detail::throw_or_abort(std::runtime_error(
+        std::string(who) + ": zero or missing diagonal at row " + std::to_string(row)));
 }
 
 } // namespace mtl::itl::detail

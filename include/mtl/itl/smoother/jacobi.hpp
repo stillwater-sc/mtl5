@@ -141,10 +141,10 @@ private:
 /// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
 template <Field Value, typename Parameters, typename Accumulator>
 class jacobi<mat::coordinate2D<Value, Parameters>, Accumulator>
-    : private detail::owned_csr<Value, Parameters>,
-      public jacobi<mat::compressed2D<Value, Parameters>, Accumulator> {
-    using holder = detail::owned_csr<Value, Parameters>;
-    using base   = jacobi<mat::compressed2D<Value, Parameters>, Accumulator>;
+    : private detail::owned_csr<Value>,
+      public jacobi<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = jacobi<mat::compressed2D<Value>, Accumulator>;
 public:
     explicit jacobi(const mat::coordinate2D<Value, Parameters>& A)
         : holder(A), base(*holder::csr_) {}
@@ -155,10 +155,10 @@ public:
 /// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
 template <Field Value, typename Parameters, typename Accumulator>
 class jacobi<mat::ell_matrix<Value, Parameters>, Accumulator>
-    : private detail::owned_csr<Value, Parameters>,
-      public jacobi<mat::compressed2D<Value, Parameters>, Accumulator> {
-    using holder = detail::owned_csr<Value, Parameters>;
-    using base   = jacobi<mat::compressed2D<Value, Parameters>, Accumulator>;
+    : private detail::owned_csr<Value>,
+      public jacobi<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = jacobi<mat::compressed2D<Value>, Accumulator>;
 public:
     explicit jacobi(const mat::ell_matrix<Value, Parameters>& A)
         : holder(A), base(*holder::csr_) {}

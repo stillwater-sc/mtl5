@@ -3,6 +3,7 @@
 // Full-weighting stencil [1/4, 1/2, 1/4] for 1D geometric multigrid.
 #include <stdexcept>
 #include <cstddef>
+#include <mtl/detail/exceptions.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -19,7 +20,7 @@ inline mat::compressed2D<double> make_restriction_1d(std::size_t n_fine) {
     // n_fine = 0 underflowed (n_fine - 1) / 2, and an even n_fine gave a
     // restriction whose size the prolongation cannot match (issue 867).
     if (n_fine < 3 || n_fine % 2 == 0)
-        throw std::invalid_argument("make_restriction_1d: n_fine must be odd and at least 3 (n_fine = 2 n_coarse + 1)");
+        ::mtl::detail::throw_or_abort(std::invalid_argument("make_restriction_1d: n_fine must be odd and at least 3 (n_fine = 2 n_coarse + 1)"));
     std::size_t n_coarse = (n_fine - 1) / 2;
     mat::compressed2D<double> R(n_coarse, n_fine);
     {

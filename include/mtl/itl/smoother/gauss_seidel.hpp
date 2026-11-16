@@ -176,10 +176,10 @@ private:
 /// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
 template <Field Value, typename Parameters, typename Accumulator>
 class gauss_seidel<mat::coordinate2D<Value, Parameters>, Accumulator>
-    : private detail::owned_csr<Value, Parameters>,
-      public gauss_seidel<mat::compressed2D<Value, Parameters>, Accumulator> {
-    using holder = detail::owned_csr<Value, Parameters>;
-    using base   = gauss_seidel<mat::compressed2D<Value, Parameters>, Accumulator>;
+    : private detail::owned_csr<Value>,
+      public gauss_seidel<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = gauss_seidel<mat::compressed2D<Value>, Accumulator>;
 public:
     explicit gauss_seidel(const mat::coordinate2D<Value, Parameters>& A)
         : holder(A), base(*holder::csr_) {}
@@ -190,10 +190,10 @@ public:
 /// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
 template <Field Value, typename Parameters, typename Accumulator>
 class gauss_seidel<mat::ell_matrix<Value, Parameters>, Accumulator>
-    : private detail::owned_csr<Value, Parameters>,
-      public gauss_seidel<mat::compressed2D<Value, Parameters>, Accumulator> {
-    using holder = detail::owned_csr<Value, Parameters>;
-    using base   = gauss_seidel<mat::compressed2D<Value, Parameters>, Accumulator>;
+    : private detail::owned_csr<Value>,
+      public gauss_seidel<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = gauss_seidel<mat::compressed2D<Value>, Accumulator>;
 public:
     explicit gauss_seidel(const mat::ell_matrix<Value, Parameters>& A)
         : holder(A), base(*holder::csr_) {}

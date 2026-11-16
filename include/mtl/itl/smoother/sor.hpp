@@ -188,10 +188,10 @@ private:
 /// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
 template <Field Value, typename Parameters, typename Accumulator>
 class sor<mat::coordinate2D<Value, Parameters>, Accumulator>
-    : private detail::owned_csr<Value, Parameters>,
-      public sor<mat::compressed2D<Value, Parameters>, Accumulator> {
-    using holder = detail::owned_csr<Value, Parameters>;
-    using base   = sor<mat::compressed2D<Value, Parameters>, Accumulator>;
+    : private detail::owned_csr<Value>,
+      public sor<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = sor<mat::compressed2D<Value>, Accumulator>;
 public:
     explicit sor(const mat::coordinate2D<Value, Parameters>& A, Value omega = Value(1))
         : holder(A), base(*holder::csr_, omega) {}
@@ -202,10 +202,10 @@ public:
 /// every A(i, j): O(n^2) per sweep, O(n^2 nnz) for coordinate2D.
 template <Field Value, typename Parameters, typename Accumulator>
 class sor<mat::ell_matrix<Value, Parameters>, Accumulator>
-    : private detail::owned_csr<Value, Parameters>,
-      public sor<mat::compressed2D<Value, Parameters>, Accumulator> {
-    using holder = detail::owned_csr<Value, Parameters>;
-    using base   = sor<mat::compressed2D<Value, Parameters>, Accumulator>;
+    : private detail::owned_csr<Value>,
+      public sor<mat::compressed2D<Value>, Accumulator> {
+    using holder = detail::owned_csr<Value>;
+    using base   = sor<mat::compressed2D<Value>, Accumulator>;
 public:
     explicit sor(const mat::ell_matrix<Value, Parameters>& A, Value omega = Value(1))
         : holder(A), base(*holder::csr_, omega) {}
