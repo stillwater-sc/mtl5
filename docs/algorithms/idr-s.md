@@ -30,15 +30,15 @@ A tolerance below what double precision can reach on a system is not met: the so
 
 A diagonal entry of `P^H G` that is negligible against `‖G_k‖` is a near-breakdown of the recurrence, not of the problem. IDR(s) then restarts from the current `x`.
 
-On `σ I + S`, with `S` the 2D central-difference convection operator, IDR(1) met `P^H G = 2·10⁻¹⁷` (against `‖G‖ = 1`) after 102 iterations. BiCGSTAB breaks down on the same system. With the restart, IDR(1) converges in 1399 iterations.
+On `σ I + S`, with `S` the 2D central-difference convection operator, IDR(1) met `P^H G = 2·10⁻¹⁷` (against `‖G‖ = 1`) after 102 iterations. BiCGSTAB breaks down on the same system. With restarts, IDR(1) converges: in 1399 iterations on x86-64 without FMA, and in 2149 with FMA contraction. A system this close to breakdown is sensitive to rounding, and the iteration counts vary between platforms.
 
-The solver fails only when a breakdown recurs before any step has completed since the last restart.
+A breakdown at the first step after a restart means the shadow space is degenerate for the current residual. An example is `P = e₁` for a diagonal `A` whose residual has a zero first entry: `P^H r` then stays 0. IDR(s) draws a new shadow space from `seed + 1`, `+ 2` and `+ 3`, even when `P` was supplied, and returns 2 only if that does not help.
 
 | Return | Meaning |
 |---|---|
 | 0 | converged (true residual) |
 | 1 | iteration limit |
-| 2 | `P^H G` singular at the first step after a (re)start |
+| 2 | `P^H G` singular after three redraws of the shadow space |
 | 3 | `t = A M⁻¹ r` is zero, or `ω = 0` |
 
 ## Options

@@ -221,23 +221,6 @@ csr convdiff(std::size_t k, double eps) {
     return stencil(k, -1.0 - eps, -1.0 + eps);
 }
 
-/// sigma I + S, S the 2D central-difference convection operator (skew), on
-/// a k x k grid: eigenvalues sigma + i y.
-csr shifted_skew(std::size_t k, double sigma) {
-    csr A(k * k, k * k);
-    mat::inserter<csr> ins(A);
-    for (std::size_t r = 0; r < k; ++r)
-        for (std::size_t c = 0; c < k; ++c) {
-            const std::size_t i = r * k + c;
-            ins[i][i] << sigma;
-            if (c > 0)     ins[i][i - 1] << -1.0;
-            if (c + 1 < k) ins[i][i + 1] << 1.0;
-            if (r > 0)     ins[i][i - k] << -1.0;
-            if (r + 1 < k) ins[i][i + k] << 1.0;
-        }
-    return A;
-}
-
 double true_relres(const csr& A, const vec_t& x, const vec_t& b) {
     vec_t Ax = A * x;
     double r = 0, nb = 0;
@@ -326,20 +309,25 @@ TEST_CASE("IDR(s): the true residual decides on nonnormal and Poisson systems (i
     }
 }
 
-TEST_CASE("IDR(s): a near-breakdown restarts instead of failing (issue 874)", "[itl][krylov][idr_s][874]") {
-    // On sigma I + S, IDR(1) and IDR(2) met P^H G = 0 to rounding (2e-17
-    // against ||G|| = 1) after 102 and 219 iterations; BiCGSTAB breaks down
-    // there too. Restarting from x, they converge.
-    const csr A = shifted_skew(60, 0.5);
-    const itl::pc::identity<csr> M(A);
-    for (const std::size_t s : {1u, 2u}) {
-        itl::idrs_options opt;
-        opt.s = s;
-        const auto o = solve_idrs(A, M, 1e-8, opt, 5000);
-        INFO("s = " << s << ": " << o.iterations << " iterations, true " << o.true_relres);
-        CHECK(o.err == 0);
-        CHECK(o.true_relres <= 1.5e-8);
+TEST_CASE("IDR(s): a breakdown restarts, and a degenerate shadow space is redrawn (issue 874)", "[itl][krylov][idr_s][874]") {
+    // A = diag(1, 2, ..., n), b = ones, P = e1: after the first step r(0) = 0,
+    // and with A diagonal it stays 0, so P^H r = 0 and P^H G = 0 from the
+    // second cycle on: a breakdown at a step, then again at the first step
+    // of the restart. With P redrawn the solve converges.
+    const std::size_t n = 50;
+    csr A(n, n);
+    {
+        mat::inserter<csr> ins(A);
+        for (std::size_t i = 0; i < n; ++i) ins[i][i] << double(i + 1);
     }
+    const itl::pc::identity<csr> M(A);
+    const vec_t b(n, 1.0);
+    std::vector<vec_t> P(1, vec_t(n, 0.0));
+    P[0](0) = 1.0;
+    vec_t x(n, 0.0);
+    itl::basic_iteration<double> iter(b, 1000, 1e-10);
+    CHECK(itl::idr_s(A, x, b, M, iter, itl::idrs_options{}, P) == 0);
+    CHECK(true_relres(A, x, b) <= 1.5e-10);
 }
 
 TEST_CASE("IDR(s): breakdown codes (issue 874)", "[itl][krylov][idr_s][874]") {

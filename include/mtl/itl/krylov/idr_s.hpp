@@ -141,9 +141,12 @@ std::vector<vec::dense_vector<Value>> idrs_random_shadow(std::size_t n, std::siz
 /// returned iter reports the true residual.
 ///
 /// A near-breakdown in P^H G (a diagonal entry negligible against ||G_k||)
-/// restarts the method from the current x. Return codes: 0 converged, 1
-/// iteration limit, 2 breakdown in P^H G at the first step after a (re)start,
-/// 3 breakdown in omega (t = 0 or omega = 0).
+/// restarts the method from the current x. One at the first step after a
+/// start means P is degenerate for the residual: a new shadow space is drawn
+/// from opt.seed + 1, + 2, + 3 (also when P was supplied), and the solve
+/// fails only when that does not help. Return codes: 0 converged, 1
+/// iteration limit, 2 breakdown in P^H G after the redraws, 3 breakdown in
+/// omega (t = 0 or omega = 0).
 ///
 /// Accumulator (optional): accumulation type for the dot products and the
 /// matrix-vector products. A is a Matrix or any LinearOperator (A * x).
@@ -216,6 +219,8 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
         rs = vec::dense_vector<value_type>(n);
     }
     bool r_is_true = true;   // no step since r was computed from x
+    constexpr std::size_t max_redraws = 3;
+    std::size_t redraws = 0;   // consecutive breakdowns at a first step
     for (;;) {
         // (Re)start: G = U = 0, P^H G = I, omega = 1; the smoothed pair is
         // the current one.
@@ -301,11 +306,20 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
                     // problem: restart from x, as BiCG-type methods do (on
                     // a shifted skew system, sigma I + S, IDR(1) met one
                     // after 102 iterations and converges after restarts).
-                    // Fail only when no step was made since the last start.
+                    // A breakdown at the first step after a start means P
+                    // is degenerate for this residual: draw a new shadow
+                    // space, up to max_redraws times in a row, then fail.
                     if (steps_since_start == 0) {
-                        settle_x();
-                        iter.fail(2, "idr_s breakdown: P^H G is singular");
-                        return iter;
+                        if (redraws == max_redraws) {
+                            settle_x();
+                            iter.fail(2, "idr_s breakdown: P^H G is singular");
+                            return iter;
+                        }
+                        ++redraws;
+                        P = detail::idrs_random_shadow<value_type>(n, s, opt.seed + redraws);
+                        detail::idrs_orthonormalize<Accumulator>(P);
+                    } else {
+                        redraws = 0;
                     }
                     breakdown = true;
                     break;
