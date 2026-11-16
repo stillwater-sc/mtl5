@@ -13,7 +13,7 @@
 // Key advantages over LL^T:
 //   - No square roots - avoids precision loss for ill-conditioned matrices
 //   - Works for symmetric indefinite matrices (D can have negative entries)
-//   - Only fails on zero pivots (D(j) == 0)
+//   - Only fails on zero or non-finite pivots (D(j) == 0, NaN or Inf)
 //
 // Reference: Davis, "Direct Methods for Sparse Linear Systems", SIAM, 2006.
 
@@ -178,7 +178,8 @@ ldlt_symbolic sparse_ldlt_symbolic(
 /// \return     Numeric factorization result containing L (unit lower, no
 ///             diagonal stored) and D
 ///
-/// \throws std::runtime_error if a zero pivot is encountered (D(j) == 0)
+/// \throws std::runtime_error if a pivot D(j) is zero, NaN or infinite
+/// \throws std::invalid_argument if `sym` does not match A's size
 template <typename Accumulator = void, typename Value, typename Parameters>
 ldlt_numeric<Value> sparse_ldlt_numeric(
     const mat::compressed2D<Value, Parameters>& A,
@@ -195,6 +196,12 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
             "sparse_ldlt_numeric: matrix dimensions ("
             + std::to_string(A.num_rows()) + "x" + std::to_string(A.num_cols())
             + ") do not match symbolic analysis (n=" + std::to_string(n) + ")");
+    }
+
+    // A symbolic analysis of another size would index past its arrays (issue 864).
+    if (sym.perm.size() != n || sym.parent.size() != n || sym.col_counts.size() != n) {
+        throw std::invalid_argument(
+            "sparse_ldlt_numeric: symbolic analysis is invalid or wrong size");
     }
 
     auto PA = util::symmetric_permute(A, sym.perm);
@@ -297,9 +304,12 @@ ldlt_numeric<Value> sparse_ldlt_numeric(
         }
 
         Value dj = AT::value(x[j]);            // round once, on consume
-        if (dj == Value{0}) {
+        // A NaN or Inf pivot fails too, as in supernodal_ldlt_numeric (issue 864):
+        // dj - dj != 0 holds for exactly those, and needs no <cmath> for a
+        // custom type.
+        if (dj == Value{0} || dj - dj != Value{0}) {
             throw std::runtime_error(
-                "sparse_ldlt_numeric: zero pivot at column " + std::to_string(j));
+                "sparse_ldlt_numeric: zero or non-finite pivot at column " + std::to_string(j));
         }
         D[j] = dj;
 

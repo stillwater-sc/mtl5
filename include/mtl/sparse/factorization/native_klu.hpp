@@ -28,6 +28,7 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include <type_traits>
@@ -153,6 +154,9 @@ klu_numeric<Value> native_klu_factor(
     if (A.num_rows() != A.num_cols()) {
         throw std::invalid_argument("native_klu_factor: matrix must be square");
     }
+    if (!(threshold > Value{0} && threshold <= Value{1})) {
+        throw std::invalid_argument("native_klu_factor: threshold must be in (0, 1]");
+    }
     const std::size_t n = A.num_rows();
 
     klu_numeric<Value> result;
@@ -276,7 +280,8 @@ klu_numeric<Value> native_klu_factor(
 /// Intended for repeated solves of a fixed circuit-matrix pattern with changing
 /// values (SPICE transient analysis; the mp-spice mixed-precision study).
 ///
-/// \throws std::invalid_argument if A's dimensions do not match `prev`.
+/// \throws std::invalid_argument if A's dimensions do not match `prev`, or A has
+///                               an entry outside the prior BTF and factor pattern.
 /// \throws std::runtime_error    if a reused pivot is numerically zero for the
 ///                               new values (prior pivot sequence invalid).
 template <typename Value, typename Parameters>
@@ -331,8 +336,19 @@ klu_numeric<Value> native_klu_refactor(
         for (std::size_t i = 0; i < n; ++i) {
             std::size_t orow = result.btf.row_perm[i];
             Value s = scale ? result.row_scale[orow] : Value{1};
-            for (std::size_t k = rp[orow]; k < rp[orow + 1]; ++k)
-                ins[i][q_inv[ci[k]]] << s * dat[k];
+            for (std::size_t k = rp[orow]; k < rp[orow + 1]; ++k) {
+                const std::size_t j = q_inv[ci[k]];
+                // Below the block diagonal, the solve never reads an entry: the
+                // prior BTF does not hold A's pattern (issue 864). A changed
+                // pattern inside a diagonal block is caught by sparse_lu_refactor.
+                if (result.block_of[j] < result.block_of[i]) {
+                    throw std::invalid_argument(
+                        "native_klu_refactor: A has an entry in row "
+                        + std::to_string(orow) + ", column " + std::to_string(ci[k])
+                        + " below the prior block triangular form; factor it afresh");
+                }
+                ins[i][j] << s * dat[k];
+            }
         }
     }
     result.B = std::move(B);

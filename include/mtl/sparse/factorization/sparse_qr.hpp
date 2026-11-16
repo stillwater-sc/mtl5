@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -31,6 +32,7 @@
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/math/pow2_scaling.hpp>
 
 namespace mtl::sparse::factorization {
 
@@ -136,6 +138,11 @@ struct qr_numeric {
             if (R.col_ptr[col] > diag_pos) continue;
 
             Value diag = R.values[diag_pos];
+            // Rank deficiency means an exactly zero (or subnormal) R(j,j); a
+            // small but normal one is solved as is, so a nearly singular A
+            // gives a large x rather than an exception. A relative tolerance
+            // (n eps max|R(j,j)|) was considered and not adopted (issue 864):
+            // it would reject systems that solve today.
             if (abs(diag) < std::numeric_limits<Value>::min()) {
                 throw std::runtime_error(
                     "qr_numeric::solve: zero diagonal in R at column "
@@ -247,6 +254,13 @@ qr_numeric<Value> sparse_qr_numeric(
     // Dense workspace
     std::vector<Value> w(m, Value{0});
 
+    // Column magnitudes outside [safe_lo, safe_hi] are scaled before their
+    // squares are summed (see the Householder step below).
+    using std::abs;
+    using limits = std::numeric_limits<Value>;
+    const Value safe_hi = sqrt(limits::max() / static_cast<Value>(static_cast<double>(m > 0 ? m : 1)));
+    const Value safe_lo = sqrt(limits::min() / limits::epsilon());
+
     // Output
     std::vector<std::vector<size_type>> R_rows(nc);
     std::vector<std::vector<Value>>     R_vals(nc);
@@ -284,12 +298,32 @@ qr_numeric<Value> sparse_qr_numeric(
             }
         }
 
-        // Compute Householder for w[k:m-1]
-        // sigma = sum(w[i]^2 for i = k+1..m-1)
+        // Compute Householder for w[k:m-1].
+        // The sum of squares overflows for entries near sqrt(max()/m) and loses
+        // its digits (or underflows to 0) near sqrt(min()/eps): (1e200, 1e200)
+        // gave R(k,k) = -inf (issue 864). Such a column is scaled by 2^-e into
+        // [1/2, 1): exact, so the reflector is the same, and v and beta are
+        // stored scaled (H = I - beta v v^T does not change). Every other
+        // column takes the unscaled path, bit for bit as before.
+        Value amax = Value{0};
+        for (size_type i = k; i < m; ++i) {
+            const Value a = abs(w[i]);
+            if (amax < a) amax = a;
+        }
+        int e = 0;
+        if (amax > Value{0} && (amax > safe_hi || amax < safe_lo))
+            e = math::pow2_scaling<Value>::exponent(amax) + 1;
+        auto down = [e](const Value& v) {
+            return e == 0 ? v : math::pow2_scaling<Value>::scale(v, -e);
+        };
+
+        // sigma = sum(w[i]^2 for i = k+1..m-1), scaled when e != 0
         Acc sigma_acc;
         AT::clear(sigma_acc);
-        for (size_type i = k + 1; i < m; ++i)
-            AT::add_product(sigma_acc, w[i], w[i]);
+        for (size_type i = k + 1; i < m; ++i) {
+            const Value wi = down(w[i]);
+            AT::add_product(sigma_acc, wi, wi);
+        }
         Value sigma = AT::value(sigma_acc);
 
         Value x0 = w[k];
@@ -309,30 +343,31 @@ qr_numeric<Value> sparse_qr_numeric(
             V_idx[k].push_back(k);
             V_vals[k].push_back(Value{1});
         } else {
-            Value norm_x = sqrt(x0 * x0 + sigma);
+            const Value x0s = down(x0);
+            Value norm_x = sqrt(x0s * x0s + sigma);
 
             // alpha = -sign(x0) * ||x||
-            Value alpha = (x0 >= Value{0}) ? -norm_x : norm_x;
+            Value alpha = (x0s >= Value{0}) ? -norm_x : norm_x;
 
             // v = x; v[0] -= alpha  =>  v[0] = x0 - alpha
-            Value v0 = x0 - alpha;
+            Value v0 = x0s - alpha;
 
             // beta = 2 / (v^T * v) = 2 / (v0^2 + sigma)
             Value vtv = v0 * v0 + sigma;
             Value beta_k = Value{2} / vtv;
             betas[k] = beta_k;
 
-            // R(k,k) = alpha
+            // R(k,k) = alpha, in A's units
             R_rows[k].push_back(k);
-            R_vals[k].push_back(alpha);
+            R_vals[k].push_back(e == 0 ? alpha : math::pow2_scaling<Value>::scale(alpha, e));
 
-            // Store Householder vector v = [v0, w[k+1], ..., w[m-1]]
+            // Store Householder vector v = [v0, w[k+1], ..., w[m-1]] (scaled by 2^-e)
             V_idx[k].push_back(k);
             V_vals[k].push_back(v0);
             for (size_type i = k + 1; i < m; ++i) {
                 if (w[i] != Value{0}) {
                     V_idx[k].push_back(i);
-                    V_vals[k].push_back(w[i]);
+                    V_vals[k].push_back(down(w[i]));
                 }
             }
         }

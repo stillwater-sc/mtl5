@@ -95,7 +95,11 @@ refine_result iterative_refine(
     int stalls = 0;                          // consecutive non-improving steps
 
     refine_result res;
-    for (int it = 0; it < opt.max_iter; ++it) {
+    // Each pass evaluates the residual of the current x, then applies one
+    // correction, so max_iter corrections get max_iter + 1 evaluations: the
+    // last correction is judged like the others (it was dropped, issue 864),
+    // and max_iter <= 0 evaluates the supplied x only.
+    for (int it = 0; ; ++it) {
         // r = b - A x   (Residual precision)
         for (std::size_t i = 0; i < n; ++i) {
             Residual ax{0};
@@ -107,17 +111,20 @@ refine_result iterative_refine(
         // Track the best iterate; a low-precision residual is noisy, so allow up
         // to `patience` consecutive non-improving steps before giving up (the
         // returned x is always the best seen, so extra steps never degrade it).
-        if (rn < best_rn) { best_rn = rn; best_x = x; stalls = 0; }
-        else              { ++stalls; }
+        if (rn < best_rn || it == 0) { best_rn = rn; best_x = x; stalls = 0; }
+        else                         { ++stalls; }
 
         double rel = (bnorm > 0.0) ? rn / bnorm : rn;
         if (opt.rel_tol > 0.0 && rel <= opt.rel_tol) { res.converged = true; break; }
+        if (it >= opt.max_iter) break;       // no corrections left
         if (stalls >= patience) break;       // plateaued / diverging
 
         // Correction solve through the factorization (in its own precision).
         if (opt.scaled) {
-            Residual rho = static_cast<Residual>(rn);
             if (rn == 0.0) break;
+            // rn is a double; in a narrower Residual it can round to zero.
+            const Residual rho = static_cast<Residual>(rn);
+            if (rho == Residual{0}) break;
             for (std::size_t i = 0; i < n; ++i) r(static_cast<int>(i)) /= rho;
             fac.solve(dx, r);
             for (std::size_t i = 0; i < n; ++i)
@@ -128,19 +135,6 @@ refine_result iterative_refine(
                 x(static_cast<int>(i)) += dx(static_cast<int>(i));
         }
         ++res.iters;
-    }
-
-    // If the loop never ran (max_iter <= 0), best_rn is still infinity; report
-    // the residual of the supplied x instead of an invalid inf.
-    if (!std::isfinite(best_rn)) {
-        double rn = 0.0;
-        for (std::size_t i = 0; i < n; ++i) {
-            Residual ax{0};
-            for (std::size_t k = rp[i]; k < rp[i + 1]; ++k)
-                ax += dat[k] * x(static_cast<int>(ci[k]));
-            rn = std::max(rn, static_cast<double>(abs(b(static_cast<int>(i)) - ax)));
-        }
-        best_rn = rn;
     }
 
     x = best_x;                              // keep the best iterate

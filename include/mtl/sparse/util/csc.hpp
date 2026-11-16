@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
+#include <mtl/math/identity.hpp>
 
 namespace mtl::sparse::util {
 
@@ -35,7 +36,7 @@ struct csc_matrix {
         if (it != end && *it == r) {
             return values[it - row_ind.begin()];
         }
-        return Value{0};
+        return mtl::math::zero<Value>();
     }
 };
 

@@ -25,6 +25,8 @@
 #include <cstddef>
 #include <limits>
 #include <map>
+#include <stdexcept>
+#include <string>
 #include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -41,6 +43,12 @@ mat::compressed2D<Value> shift_diagonal(const mat::compressed2D<Value, Parameter
                                         Value sigma) {
     using size_type = std::size_t;
     const size_type n = A.num_rows();
+    // A - sigma*I needs a square A: a column past n reached column_permute's
+    // n-sized permutation, a heap overflow (issue 864).
+    if (A.num_cols() != n)
+        throw std::invalid_argument(
+            "shift_diagonal: A must be square (got " + std::to_string(n) + "x"
+            + std::to_string(A.num_cols()) + ")");
     const auto& rp = A.ref_major();
     const auto& ci = A.ref_minor();
     const auto& dat = A.ref_data();
@@ -76,11 +84,13 @@ public:
 
         // Guard against an (near-)exactly singular shift: perturb tiny pivots
         // rather than throwing, scaled to the magnitude of B.
+        using std::abs;    // ADL: a custom number type's own abs and sqrt
+        using std::sqrt;
         Value maxabs = Value(0);
-        for (Value v : B.ref_data()) { Value a = std::abs(v); if (a > maxabs) maxabs = a; }
+        for (Value v : B.ref_data()) { Value a = abs(v); if (a > maxabs) maxabs = a; }
         if (maxabs == Value(0)) maxabs = Value(1);
         const Value perturb =
-            std::sqrt(std::numeric_limits<Value>::epsilon()) * maxabs;
+            sqrt(std::numeric_limits<Value>::epsilon()) * maxabs;
 
         auto sym = factorization::sparse_lu_symbolic(B);
         num_ = factorization::sparse_lu_numeric<Accumulator>(B, sym, Value(1), perturb);
@@ -138,7 +148,8 @@ sparse_eigs_shift_invert(const mat::compressed2D<Value, Parameters>& A, Value si
     out.converged = r.converged;
     for (std::size_t i = 0; i < r.values.size(); ++i) {
         complex_type theta = r.values(i);
-        out.values(i) = (std::abs(theta) == Value(0))
+        using std::abs;
+        out.values(i) = (abs(theta) == Value(0))
                             ? complex_type(std::numeric_limits<Value>::infinity())
                             : complex_type(sigma) + complex_type(Value(1)) / theta;
     }
