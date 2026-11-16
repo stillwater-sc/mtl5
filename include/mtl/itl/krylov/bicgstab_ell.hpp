@@ -41,40 +41,7 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
     std::vector<vec::dense_vector<value_type>> r_hat(ell + 1, vec::dense_vector<value_type>(n));
     std::vector<vec::dense_vector<value_type>> u_hat(ell + 1, vec::dense_vector<value_type>(n));
 
-    // Shift problem: save x0, set x=0, compute r_hat[0] = b - A*x0
-    vec::dense_vector<value_type> x0(n);
-    for (size_type i = 0; i < n; ++i)
-        x0(i) = x(i);
-
-    bool x_is_zero = (mtl::two_norm(x) == zero);
-    if (!x_is_zero) {
-        vec::dense_vector<value_type> Ax(n);
-        apply_operator<Accumulator>(A, x, Ax);
-        for (size_type i = 0; i < n; ++i)
-            r_hat[0](i) = b(i) - Ax(i);
-        for (size_type i = 0; i < n; ++i)
-            x(i) = zero;
-    } else {
-        for (size_type i = 0; i < n; ++i)
-            r_hat[0](i) = b(i);
-    }
-
-    // r0_tilde = r_hat[0] / ||r_hat[0]|| (fixed shadow residual)
-    vec::dense_vector<value_type> r0_tilde(n);
-    value_type norm_r0 = mtl::two_norm(r_hat[0]);
-    if (norm_r0 == zero) {
-        for (size_type i = 0; i < n; ++i)
-            x(i) = x0(i);
-        return iter;
-    }
-    for (size_type i = 0; i < n; ++i)
-        r0_tilde(i) = r_hat[0](i) / norm_r0;
-
-    vec::dense_vector<value_type> y(n);
-
-    for (size_type i = 0; i < n; ++i)
-        u_hat[0](i) = zero;
-
+    vec::dense_vector<value_type> x0(n), r0_tilde(n), y(n);
     value_type rho_0 = one, alpha = zero, omega = one;
 
     // MR part workspace
@@ -93,116 +60,173 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
             x(i) = y(i) + x0(i);
     };
 
-    while (!iter.finished(r_hat[0])) {
-        ++iter;
-        rho_0 = -omega * rho_0;
-
-        // BiCG part
-        for (std::size_t j = 0; j < ell; ++j) {
-            value_type rho_1 = mtl::dot<Accumulator, value_type>(r0_tilde, r_hat[j]);
-            value_type beta = alpha * rho_1 / rho_0;
-            rho_0 = rho_1;
-
-            for (std::size_t i = 0; i <= j; ++i) {
-                for (size_type k = 0; k < n; ++k)
-                    u_hat[i](k) = r_hat[i](k) - beta * u_hat[i](k);
-            }
-
-            // u_hat[j+1] = A * M^{-1} * u_hat[j]
-            M.solve(y, u_hat[j]);
-            apply_operator<Accumulator>(A, y, u_hat[j + 1]);
-
-            value_type gamma_val = mtl::dot<Accumulator, value_type>(r0_tilde, u_hat[j + 1]);
-            if (gamma_val == zero) {
-                iter.fail(3, "bicgstab_ell breakdown: gamma == 0");
-                finalize();
-                return iter;
-            }
-            alpha = rho_0 / gamma_val;
-
-            for (std::size_t i = 0; i <= j; ++i) {
-                for (size_type k = 0; k < n; ++k)
-                    r_hat[i](k) -= alpha * u_hat[i + 1](k);
-            }
-
-            for (size_type k = 0; k < n; ++k)
-                x(k) += alpha * u_hat[0](k);
-
-            // Early convergence check. r_hat[0] is now the residual of x, so
-            // the update above comes first; MTL4 checked r_hat[j] before it,
-            // returning x without its last step (x = 0 for A = 2I) and, for
-            // j > 0, judging a vector that is not the residual (issue 866).
-            // Only convergence: the iteration limit is tested once per cycle.
-            if (iter.converged_now(r_hat[0])) {
-                finalize();
-                return iter;
-            }
-
-            // r_hat[j+1] = A * M^{-1} * r_hat[j]
-            M.solve(y, r_hat[j]);
-            apply_operator<Accumulator>(A, y, r_hat[j + 1]);
+    // (Re)start from the real x, given r_hat[0] = b - A x: shift the problem
+    // (x0 = x, internal x = 0), the fixed shadow residual
+    // r0_tilde = r_hat[0] / ||r_hat[0]||, u_hat[0] = 0, fresh scalars.
+    auto start = [&](value_type norm_r0) {
+        for (size_type i = 0; i < n; ++i) {
+            x0(i) = x(i);
+            x(i) = zero;
+            r0_tilde(i) = r_hat[0](i) / norm_r0;
+            u_hat[0](i) = zero;
         }
+        rho_0 = one;
+        alpha = zero;
+        omega = one;
+    };
 
-        // Modified Gram-Schmidt (MR part)
-        for (std::size_t j = 1; j <= ell; ++j) {
-            for (std::size_t i = 1; i < j; ++i) {
-                if (sigma(i) == zero) continue;
-                tau(i, j) = mtl::dot<Accumulator, value_type>(r_hat[j], r_hat[i]) / sigma(i);
-                for (size_type k = 0; k < n; ++k)
-                    r_hat[j](k) -= tau(i, j) * r_hat[i](k);
-            }
-            sigma(j) = mtl::dot<Accumulator, value_type>(r_hat[j], r_hat[j]);
-            gamma_a(j) = mtl::dot<Accumulator, value_type>(r_hat[0], r_hat[j]) / sigma(j);
-        }
-
-        gamma(ell) = gamma_a(ell);
-        omega = gamma(ell);
-
-        if (omega == zero) {
-            iter.fail(3, "bicgstab_ell breakdown: omega == 0");
-            finalize();
-            return iter;
-        }
-
-        // Back-solve for gamma
-        for (std::size_t jj = 1; jj < ell; ++jj) {
-            std::size_t j = ell - jj;
-            value_type sum = zero;
-            for (std::size_t i = j + 1; i <= ell; ++i)
-                sum += tau(j, i) * gamma(i);
-            gamma(j) = gamma_a(j) - sum;
-        }
-
-        // Compute gamma_aa (double-prime)
-        // gamma_aa(j) = gamma(j+1) + sum_{k=j+1}^{ell-1} tau(j,k) * gamma(k+1)
-        for (std::size_t j = 1; j < ell; ++j) {
-            value_type sum = zero;
-            for (std::size_t k = j + 1; k < ell; ++k)
-                sum += tau(j, k) * gamma(k + 1);
-            gamma_aa(j) = gamma(j + 1) + sum;
-        }
-
-        // Update x, r_hat[0], u_hat[0]
-        for (size_type k = 0; k < n; ++k)
-            x(k) += gamma(1) * r_hat[0](k);
-        for (size_type k = 0; k < n; ++k)
-            r_hat[0](k) -= gamma_a(ell) * r_hat[ell](k);
-        for (size_type k = 0; k < n; ++k)
-            u_hat[0](k) -= gamma(ell) * u_hat[ell](k);
-
-        for (std::size_t j = 1; j < ell; ++j) {
-            for (size_type k = 0; k < n; ++k)
-                u_hat[0](k) -= gamma(j) * u_hat[j](k);
-            for (size_type k = 0; k < n; ++k)
-                x(k) += gamma_aa(j) * r_hat[j](k);
-            for (size_type k = 0; k < n; ++k)
-                r_hat[0](k) -= gamma_a(j) * r_hat[j](k);
-        }
+    // r_hat[0] = b - A x0, without the product when x0 = 0.
+    if (mtl::two_norm(x) != zero) {
+        apply_operator<Accumulator>(A, x, y);
+        for (size_type i = 0; i < n; ++i)
+            r_hat[0](i) = b(i) - y(i);
+    } else {
+        for (size_type i = 0; i < n; ++i)
+            r_hat[0](i) = b(i);
+    }
+    value_type norm_r0 = mtl::two_norm(r_hat[0]);
+    // An exact x0: the controller still records it (a reused one kept the
+    // error and residual of its last solve).
+    if (norm_r0 == zero) {
+        iter.finished(r_hat[0]);
+        return iter;
     }
 
-    // Convert to real solution and undo shift
-    finalize();
-    return iter;
+    // The loop tests r_hat[0], the residual it updates by recurrence, which
+    // drifts from b - A x by rounding. On a strongly nonnormal
+    // convection-diffusion system without a PC, BiCGSTAB(2) reported 7e-11 at
+    // a true residual of 7e-3 (issue 873). So when it has converged (or
+    // reached the limit) the true residual decides, and if that has not
+    // converged it restarts from the current x, as tfqmr does (#752). The
+    // check costs one product with A and one PC solve per claim of
+    // convergence. The returned iter reflects the true residual.
+    bool r_is_true = true;   // no step since r_hat[0] was computed from x
+    for (;;) {
+        start(norm_r0);
+        bool converged_early = false;
+        while (!converged_early && !iter.finished(r_hat[0])) {
+            ++iter;
+            r_is_true = false;
+            rho_0 = -omega * rho_0;
+
+            // BiCG part
+            for (std::size_t j = 0; j < ell; ++j) {
+                value_type rho_1 = mtl::dot<Accumulator, value_type>(r0_tilde, r_hat[j]);
+                value_type beta = alpha * rho_1 / rho_0;
+                rho_0 = rho_1;
+
+                for (std::size_t i = 0; i <= j; ++i) {
+                    for (size_type k = 0; k < n; ++k)
+                        u_hat[i](k) = r_hat[i](k) - beta * u_hat[i](k);
+                }
+
+                // u_hat[j+1] = A * M^{-1} * u_hat[j]
+                M.solve(y, u_hat[j]);
+                apply_operator<Accumulator>(A, y, u_hat[j + 1]);
+
+                value_type gamma_val = mtl::dot<Accumulator, value_type>(r0_tilde, u_hat[j + 1]);
+                if (gamma_val == zero) {
+                    iter.fail(3, "bicgstab_ell breakdown: gamma == 0");
+                    finalize();
+                    return iter;
+                }
+                alpha = rho_0 / gamma_val;
+
+                for (std::size_t i = 0; i <= j; ++i) {
+                    for (size_type k = 0; k < n; ++k)
+                        r_hat[i](k) -= alpha * u_hat[i + 1](k);
+                }
+
+                for (size_type k = 0; k < n; ++k)
+                    x(k) += alpha * u_hat[0](k);
+
+                // Early convergence check. r_hat[0] is now the residual of x, so
+                // the update above comes first; MTL4 checked r_hat[j] before it,
+                // returning x without its last step (x = 0 for A = 2I) and, for
+                // j > 0, judging a vector that is not the residual (issue 866).
+                // Only convergence: the iteration limit is tested once per
+                // cycle. The true residual then decides, below.
+                if (iter.converged_now(r_hat[0])) {
+                    converged_early = true;
+                    break;
+                }
+
+                // r_hat[j+1] = A * M^{-1} * r_hat[j]
+                M.solve(y, r_hat[j]);
+                apply_operator<Accumulator>(A, y, r_hat[j + 1]);
+            }
+            if (converged_early) break;
+
+            // Modified Gram-Schmidt (MR part)
+            for (std::size_t j = 1; j <= ell; ++j) {
+                for (std::size_t i = 1; i < j; ++i) {
+                    if (sigma(i) == zero) continue;
+                    tau(i, j) = mtl::dot<Accumulator, value_type>(r_hat[j], r_hat[i]) / sigma(i);
+                    for (size_type k = 0; k < n; ++k)
+                        r_hat[j](k) -= tau(i, j) * r_hat[i](k);
+                }
+                sigma(j) = mtl::dot<Accumulator, value_type>(r_hat[j], r_hat[j]);
+                gamma_a(j) = mtl::dot<Accumulator, value_type>(r_hat[0], r_hat[j]) / sigma(j);
+            }
+
+            gamma(ell) = gamma_a(ell);
+            omega = gamma(ell);
+
+            if (omega == zero) {
+                iter.fail(3, "bicgstab_ell breakdown: omega == 0");
+                finalize();
+                return iter;
+            }
+
+            // Back-solve for gamma
+            for (std::size_t jj = 1; jj < ell; ++jj) {
+                std::size_t j = ell - jj;
+                value_type sum = zero;
+                for (std::size_t i = j + 1; i <= ell; ++i)
+                    sum += tau(j, i) * gamma(i);
+                gamma(j) = gamma_a(j) - sum;
+            }
+
+            // Compute gamma_aa (double-prime)
+            // gamma_aa(j) = gamma(j+1) + sum_{k=j+1}^{ell-1} tau(j,k) * gamma(k+1)
+            for (std::size_t j = 1; j < ell; ++j) {
+                value_type sum = zero;
+                for (std::size_t k = j + 1; k < ell; ++k)
+                    sum += tau(j, k) * gamma(k + 1);
+                gamma_aa(j) = gamma(j + 1) + sum;
+            }
+
+            // Update x, r_hat[0], u_hat[0]
+            for (size_type k = 0; k < n; ++k)
+                x(k) += gamma(1) * r_hat[0](k);
+            for (size_type k = 0; k < n; ++k)
+                r_hat[0](k) -= gamma_a(ell) * r_hat[ell](k);
+            for (size_type k = 0; k < n; ++k)
+                u_hat[0](k) -= gamma(ell) * u_hat[ell](k);
+
+            for (std::size_t j = 1; j < ell; ++j) {
+                for (size_type k = 0; k < n; ++k)
+                    u_hat[0](k) -= gamma(j) * u_hat[j](k);
+                for (size_type k = 0; k < n; ++k)
+                    x(k) += gamma_aa(j) * r_hat[j](k);
+                for (size_type k = 0; k < n; ++k)
+                    r_hat[0](k) -= gamma_a(j) * r_hat[j](k);
+            }
+        }
+
+        // Convert to the real solution and undo the shift.
+        finalize();
+        // Converged by the recurrence, or at the limit: the true residual
+        // decides (finished() is true again at the limit).
+        if (r_is_true) return iter;
+        apply_operator<Accumulator>(A, x, y);
+        for (size_type i = 0; i < n; ++i)
+            r_hat[0](i) = b(i) - y(i);
+        r_is_true = true;
+        if (iter.finished(r_hat[0])) return iter;
+        norm_r0 = mtl::two_norm(r_hat[0]);
+        if (norm_r0 == zero) return iter;
+    }
 }
 
 } // namespace mtl::itl

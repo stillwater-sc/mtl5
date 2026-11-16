@@ -85,12 +85,10 @@ void run(const char* name, const char* pcname, const char* matrix, const csr& A,
 TEST_CASE("Krylov family regression: 2D convection-diffusion, ILU(0) PC", "[regression][itl][krylov]") {
     const csr A = convdiff_2d(100);   // n = 10000
     const itl::pc::ilu_0<double> pc(A);
-    // CGS stops on its recursively updated residual, which drifts from
-    // b - A x by rounding: it reports 1e-10 here at a true 7.6e-8. TFQMR, which
-    // shares its polynomial, checks the true residual since #752; CGS does not
-    // yet, so its bound is looser.
+    // CGS reported 1e-10 here at a true 7.6e-8 before it checked the true
+    // residual (issue 873).
     run("CGS", "ILU(0)", "ConvDiff-2D", A, pc,
-        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::cgs(M, x, b, P, it); }, 5000, 1e-6);
+        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::cgs(M, x, b, P, it); }, 5000);
     run("QMR", "ILU(0)", "ConvDiff-2D", A, pc,
         [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::qmr(M, x, b, P, it); }, 5000);
     run("TFQMR", "ILU(0)", "ConvDiff-2D", A, pc,
@@ -100,6 +98,22 @@ TEST_CASE("Krylov family regression: 2D convection-diffusion, ILU(0) PC", "[regr
     run("BiCGSTAB(2)", "ILU(0)", "ConvDiff-2D", A, pc,
         [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::bicgstab_ell(M, x, b, P, it, 2); },
         5000);
+}
+
+TEST_CASE("Krylov family regression: strongly nonnormal convection-diffusion, no PC", "[regression][itl][krylov]") {
+    // eps = 0.9: BiCGSTAB reported convergence at a true residual of 0.2, and
+    // BiCGSTAB(2) at 7e-3, before they checked the true residual (issue 873).
+    const csr A = convdiff_2d(100, 0.9);   // n = 10000
+    const itl::pc::identity<csr> pc(A);
+    run("BiCGSTAB", "none", "ConvDiff-0.9", A, pc,
+        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::bicgstab(M, x, b, P, it); }, 5000);
+    run("BiCGSTAB(2)", "none", "ConvDiff-0.9", A, pc,
+        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::bicgstab_ell(M, x, b, P, it, 2); },
+        5000);
+    run("IDR(4)", "none", "ConvDiff-0.9", A, pc,
+        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::idr_s(M, x, b, P, it, 4); }, 5000);
+    run("GMRES(30)", "none", "ConvDiff-0.9", A, pc,
+        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::gmres(M, x, b, P, it, 30); }, 5000);
 }
 
 TEST_CASE("Krylov family regression: 2D Laplacian, Jacobi PC", "[regression][itl][krylov]") {

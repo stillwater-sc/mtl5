@@ -11,9 +11,12 @@
 //   - cyclic_iteration prints its summary once, through `return iter;`;
 //   - breakdowns are reported (cg, bicg, bicgstab, cgs, tfqmr, bicgstab_ell);
 //   - max_iter = 0, zero rhs, a converged x0 and 1x1 systems for each solver;
-//   - relresid() and the atol test; minres with a varying diagonal PC.
+//   - relresid() and the atol test; minres with a varying diagonal PC;
+//   - cg, bicg, cgs, bicgstab, bicgstab_ell and qmr judge convergence by the
+//     true residual, not the recursively updated one (issue 873).
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <functional>
@@ -28,6 +31,7 @@
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/itl/itl.hpp>
+#include <mtl/generators/laplacian.hpp>
 
 using namespace mtl;
 
@@ -294,7 +298,10 @@ TEST_CASE("cyclic_iteration prints its summary once, through return iter", "[itl
         vec_t x(20, 0.0);
         CHECK(itl::cg(A, x, b, M, iter) == 1);
         CHECK(count(out.str(), "NOT converged after 2 iterations") == 1);
-        CHECK(count(out.str(), "iteration ") == 3);   // i = 0, 1, 2
+        // i = 0, 1, 2, and 2 again: at the limit cg tests the true residual
+        // after the recursive one (issue 873), and noisy_iteration prints
+        // every test.
+        CHECK(count(out.str(), "iteration ") == 4);
     }
 }
 
@@ -429,4 +436,112 @@ TEST_CASE("minres when ||M^{-1} r||_2 overflows but its entries do not", "[itl][
     iter_t iter(b, 50, 1e-12);
     REQUIRE(itl::minres(A, x, b, M, iter) == 0);
     for (std::size_t i = 0; i < n; ++i) CHECK(std::abs(x(i) / big - 1.0) < 1e-12);
+}
+
+namespace {
+
+/// The 5-point convection-diffusion operator on a k x k grid, convection eps
+/// in both directions (tests/regression/itl/test_krylov_family.cpp): eps =
+/// 0.9 is strongly nonnormal.
+csr convdiff_2d(std::size_t k, double eps) {
+    const std::size_t n = k * k;
+    entries e;
+    for (std::size_t i = 0; i < k; ++i)
+        for (std::size_t j = 0; j < k; ++j) {
+            const std::size_t r = i * k + j;
+            e.emplace_back(r, r, 4.0);
+            if (j > 0)     e.emplace_back(r, r - 1, -1.0 - eps);
+            if (j + 1 < k) e.emplace_back(r, r + 1, -1.0 + eps);
+            if (i > 0)     e.emplace_back(r, r - k, -1.0 - eps);
+            if (i + 1 < k) e.emplace_back(r, r + k, -1.0 + eps);
+        }
+    return make(n, e);
+}
+
+/// Solve from x = 0, b = ones at rtol; require convergence and a true
+/// relative residual within the tolerance (1.5 rtol: the test forms b - A x
+/// its own way, which differs from the solver's in the last digits).
+template <typename PC, typename Solve>
+void true_converged(const csr& A, const PC& M, double rtol, Solve solve) {
+    const std::size_t n = A.num_rows();
+    const vec_t b(n, 1.0);
+    vec_t x(n, 0.0);
+    iter_t iter(b, 20000, rtol);
+    REQUIRE(solve(A, x, b, M, iter) == 0);
+    CHECK(true_residual(A, x, b) <= 1.5 * rtol * norm(b));
+    // The iteration object reports the true residual it stopped on.
+    CHECK(iter.relresid() <= rtol);
+}
+
+} // namespace
+
+TEST_CASE("the true residual decides convergence (issue 873)", "[itl][873]") {
+    // Each case claimed convergence on main with a true residual above the
+    // tolerance (measured on main, d3ef7b4).
+    SECTION("bicgstab, eps = 0.9 unpreconditioned: true 2.0e-1 at rtol 1e-10") {
+        const csr A = convdiff_2d(100, 0.9);
+        true_converged(A, pc_id(A), 1e-10,
+                       [](auto& a, auto& x, auto& b, auto& m, auto& it) { return itl::bicgstab(a, x, b, m, it); });
+    }
+    SECTION("bicgstab_ell(2), eps = 0.9 unpreconditioned: true 7.2e-3 at rtol 1e-10") {
+        const csr A = convdiff_2d(100, 0.9);
+        true_converged(A, pc_id(A), 1e-10, [](auto& a, auto& x, auto& b, auto& m, auto& it) {
+            return itl::bicgstab_ell(a, x, b, m, it, 2);
+        });
+    }
+    SECTION("cgs, eps = 0.3 with ILU(0): true 7.6e-8 at rtol 1e-10") {
+        const csr A = convdiff_2d(100, 0.3);
+        const itl::pc::ilu_0<double> M(A);
+        true_converged(A, M, 1e-10,
+                       [](auto& a, auto& x, auto& b, auto& m, auto& it) { return itl::cgs(a, x, b, m, it); });
+    }
+    SECTION("bicg, eps = 0.3 with ILU(0): true 4.1e-11 at rtol 1e-13") {
+        const csr A = convdiff_2d(100, 0.3);
+        const itl::pc::ilu_0<double> M(A);
+        true_converged(A, M, 1e-13,
+                       [](auto& a, auto& x, auto& b, auto& m, auto& it) { return itl::bicg(a, x, b, m, it); });
+    }
+    SECTION("cg, 2D Laplacian unpreconditioned: true 1.3e-12 at rtol 1e-13") {
+        const csr A = generators::laplacian_2d<double>(100, 100);
+        true_converged(A, pc_id(A), 1e-13,
+                       [](auto& a, auto& x, auto& b, auto& m, auto& it) { return itl::cg(a, x, b, m, it); });
+    }
+    SECTION("qmr, 2D Laplacian unpreconditioned: true 1.2e-12 at rtol 1e-13") {
+        const csr A = generators::laplacian_2d<double>(100, 100);
+        true_converged(A, pc_id(A), 1e-13,
+                       [](auto& a, auto& x, auto& b, auto& m, auto& it) { return itl::qmr(a, x, b, m, it); });
+    }
+}
+
+TEST_CASE("the true-residual check: limit and converged x0 (issue 873)", "[itl][873]") {
+    // At the iteration limit the solve returns 1 and reports the true
+    // residual; a converged x0 costs no step.
+    const csr A = convdiff_2d(20, 0.3);
+    const std::size_t n = A.num_rows();
+    const vec_t b(n, 1.0);
+    const std::vector<std::string> fixed = {"cg", "cgs", "bicg", "bicgstab", "bicgstab_ell(2)", "qmr"};
+    for (const auto& s : all_solvers()) {
+        if (std::find(fixed.begin(), fixed.end(), std::string(s.name)) == fixed.end()) continue;
+        INFO(s.name);
+        const pc_id M(A);
+        vec_t x(n, 0.0);
+        iter_t iter(b, 3, 1e-14);
+        CHECK(s.solve(A, x, b, M, iter) == 1);
+        CHECK(std::abs(iter.resid() - true_residual(A, x, b)) <= 1e-12 * norm(b));
+    }
+    // An exact x0 with a reused controller that last failed: each solver
+    // reports convergence and a zero residual (bicgstab_ell returned before
+    // asking the controller, so it kept error 3 and residual 1).
+    const csr I = scaled_identity(n, 1.0);
+    for (const auto& s : all_solvers()) {
+        if (std::find(fixed.begin(), fixed.end(), std::string(s.name)) == fixed.end()) continue;
+        INFO(s.name);
+        const pc_id M(I);
+        vec_t x = b;
+        iter_t iter(b, 10, 1e-10);
+        iter.finished(1.0);
+        iter.fail(3, "an earlier solve");
+        CHECK(s.solve(I, x, b, M, iter) == 0);
+        CHECK(iter.resid() == 0.0);
+    }
 }

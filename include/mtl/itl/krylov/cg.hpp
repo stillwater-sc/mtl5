@@ -34,69 +34,89 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // Workspace vectors
     vec::dense_vector<value_type> r(n), z(n), p(n), q(n);
 
-    // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    apply_operator<Accumulator>(A, x, Ax);
-    for (size_type i = 0; i < n; ++i)
-        r(i) = b(i) - Ax(i);
 
-    // z = M^{-1} r
-    M.solve(z, r);
-
-    // rho = dot(r, z)
-    value_type rho = mtl::dot<Accumulator, value_type>(r, z);
-    value_type rho_1{};
-
-    // The recurrences start on this solve's first step, not iter's: a reused
-    // iteration object is past its first (it made cg return NaN, issue 866).
-    bool first_step = true;
-    while (!iter.finished(r)) {
-        ++iter;
-        const bool first = first_step;
-        first_step = false;
-
-        if (first) {
-            // p = z
-            for (size_type i = 0; i < n; ++i)
-                p(i) = z(i);
-        } else {
-            // p = z + (rho / rho_1) * p
-            value_type beta = rho / rho_1;
-            for (size_type i = 0; i < n; ++i)
-                p(i) = z(i) + beta * p(i);
-        }
-
-        // q = A * p
-        apply_operator<Accumulator>(A, p, q);
-
-        // alpha = rho / dot(p, q). On an indefinite A, p^T A p can be zero for
-        // p != 0: alpha was rho / 0 and x became inf or NaN (issue 866).
-        const value_type pq = mtl::dot<Accumulator, value_type>(p, q);
-        if (pq == value_type(0)) {
-            iter.fail(2, "cg breakdown: dot(p, A p) == 0");
-            return iter;
-        }
-        value_type alpha = rho / pq;
-
-        // x += alpha * p
+    // r = b - A x, the true residual.
+    auto true_residual = [&]() {
+        apply_operator<Accumulator>(A, x, Ax);
         for (size_type i = 0; i < n; ++i)
-            x(i) += alpha * p(i);
+            r(i) = b(i) - Ax(i);
+    };
 
-        // Save rho for next iteration
-        rho_1 = rho;
+    value_type rho{}, rho_1{};
 
-        // r -= alpha * q
-        for (size_type i = 0; i < n; ++i)
-            r(i) -= alpha * q(i);
-
-        // z = M^{-1} r
+    // The loop tests the residual it updates by recurrence, r -= alpha A p,
+    // which drifts from b - A x by rounding: on an unpreconditioned 2D
+    // Laplacian at rtol 1e-13 it reported 9.6e-14 at a true 1.3e-12 (issue
+    // 873). So when it has converged (or reached the limit) the true
+    // residual decides, and if that has not converged CG restarts from the
+    // current x, as tfqmr does (#752). The check costs one product with A per
+    // claim of convergence. The returned iter reflects the true residual.
+    true_residual();
+    bool r_is_true = true;   // no step since r was computed from x
+    for (;;) {
+        // z = M^{-1} r, rho = dot(r, z)
         M.solve(z, r);
-
-        // rho = dot(r, z)
         rho = mtl::dot<Accumulator, value_type>(r, z);
-    }
 
-    return iter;
+        // The recurrences start on this pass's first step, not iter's: a reused
+        // iteration object is past its first (it made cg return NaN, issue 866),
+        // and so is a restart.
+        bool first_step = true;
+        while (!iter.finished(r)) {
+            ++iter;
+            r_is_true = false;
+            const bool first = first_step;
+            first_step = false;
+
+            if (first) {
+                // p = z
+                for (size_type i = 0; i < n; ++i)
+                    p(i) = z(i);
+            } else {
+                // p = z + (rho / rho_1) * p
+                value_type beta = rho / rho_1;
+                for (size_type i = 0; i < n; ++i)
+                    p(i) = z(i) + beta * p(i);
+            }
+
+            // q = A * p
+            apply_operator<Accumulator>(A, p, q);
+
+            // alpha = rho / dot(p, q). On an indefinite A, p^T A p can be zero for
+            // p != 0: alpha was rho / 0 and x became inf or NaN (issue 866).
+            const value_type pq = mtl::dot<Accumulator, value_type>(p, q);
+            if (pq == value_type(0)) {
+                iter.fail(2, "cg breakdown: dot(p, A p) == 0");
+                return iter;
+            }
+            value_type alpha = rho / pq;
+
+            // x += alpha * p
+            for (size_type i = 0; i < n; ++i)
+                x(i) += alpha * p(i);
+
+            // Save rho for next iteration
+            rho_1 = rho;
+
+            // r -= alpha * q
+            for (size_type i = 0; i < n; ++i)
+                r(i) -= alpha * q(i);
+
+            // z = M^{-1} r
+            M.solve(z, r);
+
+            // rho = dot(r, z)
+            rho = mtl::dot<Accumulator, value_type>(r, z);
+        }
+
+        // Converged by the recurrence, or at the limit: the true residual
+        // decides (finished() is true again at the limit).
+        if (r_is_true) return iter;
+        true_residual();
+        r_is_true = true;
+        if (iter.finished(r)) return iter;
+    }
 }
 
 } // namespace mtl::itl
