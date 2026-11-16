@@ -295,6 +295,20 @@ This triggers the release workflow (`.github/workflows/release.yml`) which:
 
 The CMake build system extracts the version from the git tag automatically (`git describe --tags`). When building outside a git repo or without a tag, it falls back to `MTL5_FALLBACK_VERSION` in `CMakeLists.txt`.
 
+**Choosing the version number.** Nothing computes it. `release.yml` only warns when the tag and `MTL5_FALLBACK_VERSION` disagree, so whoever cuts the release picks it. Decide from the commit subjects in the range:
+
+```bash
+git log <prev-tag>..main --pretty=%s
+```
+
+| The range contains | Bump | Example |
+|---|---|---|
+| a `feat`, or a breaking change (`!` after the type, or a `BREAKING CHANGE:` footer) | MINOR | 5.23.0 → 5.24.0 |
+| only `fix`, `perf`, `docs`, `test`, `chore`, `refactor`, `style` | PATCH | 5.23.0 → 5.23.1 |
+
+- **MAJOR stays at 5.** All MTL5 development is in the context of V5, so a breaking change bumps MINOR, not MAJOR. A MAJOR version is a management decision, not a consequence of the commit types.
+- **Fixes are not batched for a feature.** One `feat` in the range turns the whole release into a MINOR, so fixes that wait for the next feature never get a patch number. When only fixes have landed since the last tag, cut a PATCH release rather than holding them back. 5.23.0 had no `feat` (four fixes) and should have been 5.22.1.
+
 **Version bumping checklist:**
 1. **List what the release actually contains**: `git log <prev-tag>..main --oneline`.
    Write the CHANGELOG from that range, not from memory of what you worked on.
@@ -305,7 +319,7 @@ The CMake build system extracts the version from the git tag automatically (`git
    gap surfaced only because the auto-generated release notes take the range
    correctly (`git describe --tags --abbrev=0 HEAD^`) and listed PRs the CHANGELOG
    did not.
-2. Update `MTL5_FALLBACK_VERSION` in `CMakeLists.txt` to the new version
+2. Update `MTL5_FALLBACK_VERSION` in `CMakeLists.txt` to the new version, chosen by the rule above
 3. Update `CHANGELOG.md` with the release date and the changes from step 1
 4. Commit, push, create and merge the PR
 5. Tag the merge commit: `git tag v<major>.<minor>.<patch>`
