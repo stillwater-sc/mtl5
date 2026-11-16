@@ -83,7 +83,10 @@ double residual_inf(const M& A, const Vec& x, const Vec& b) {
     for (std::size_t i = 0; i < A.num_rows(); ++i) {
         double ax = 0.0;
         for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) ax += d[k] * x(ci[k]);
-        r = std::max(r, std::abs(b(i) - ax));
+        const double ri = std::abs(b(i) - ax);
+        // std::max(r, NaN) keeps r: a NaN solution must not pass as residual 0.
+        if (!std::isfinite(ri)) return std::numeric_limits<double>::infinity();
+        r = std::max(r, ri);
     }
     return r;
 }
@@ -295,7 +298,9 @@ TEST_CASE("supernodal_ldlt_numeric rejects an entry outside the symbolic pattern
 // --- sparse_qr -------------------------------------------------------------------
 
 TEST_CASE("sparse_qr scales a column whose squares overflow or underflow", "[sparse][qr][864]") {
-    for (double s : {1e200, 1e-200, 1e300, 1e-300}) {
+    // 2^511 passes the bound on the sum of squares but overflows v0^2, the
+    // reflector's own denominator (#868 review): beta was 0 and x wrong.
+    for (double s : {1e200, 1e-200, 1e300, 1e-300, 0x1p511}) {
         // [[s, 1], [s, -1]] x = (2, 0): x = (1/s, 1).
         const M A = make(2, 2, {{0, 0, s}, {0, 1, 1.0}, {1, 0, s}, {1, 1, -1.0}});
         Vec b(2), x(2);

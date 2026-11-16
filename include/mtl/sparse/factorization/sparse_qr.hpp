@@ -255,10 +255,14 @@ qr_numeric<Value> sparse_qr_numeric(
     std::vector<Value> w(m, Value{0});
 
     // Column magnitudes outside [safe_lo, safe_hi] are scaled before their
-    // squares are summed (see the Householder step below).
+    // squares are summed (see the Householder step below). The largest square
+    // formed is v^T v = v0^2 + sigma <= (|x0| + ||x||)^2 + sigma <= 4 ||x||^2
+    // <= 4 m amax^2, so amax <= sqrt(max / 4m) keeps it finite: a column
+    // [2^511; 2^511] passed sqrt(max / m), overflowed v0^2 and got beta = 0
+    // (#868 review).
     using std::abs;
     using limits = std::numeric_limits<Value>;
-    const Value safe_hi = sqrt(limits::max() / static_cast<Value>(static_cast<double>(m > 0 ? m : 1)));
+    const Value safe_hi = sqrt(limits::max() / static_cast<Value>(4.0 * static_cast<double>(m > 0 ? m : 1)));
     const Value safe_lo = sqrt(limits::min() / limits::epsilon());
 
     // Output
@@ -299,7 +303,7 @@ qr_numeric<Value> sparse_qr_numeric(
         }
 
         // Compute Householder for w[k:m-1].
-        // The sum of squares overflows for entries near sqrt(max()/m) and loses
+        // The sum of squares overflows for entries near sqrt(max()/4m) and loses
         // its digits (or underflows to 0) near sqrt(min()/eps): (1e200, 1e200)
         // gave R(k,k) = -inf (issue 864). Such a column is scaled by 2^-e into
         // [1/2, 1): exact, so the reflector is the same, and v and beta are
