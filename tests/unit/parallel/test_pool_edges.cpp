@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <mutex>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -52,9 +53,34 @@ void unset_env(const char* name) {
 #endif
 }
 
+/// Restores an environment variable's value, or its absence, on scope exit,
+/// so a test leaves the process as it found it (MTL5_NUM_THREADS=4 set for
+/// the whole run must still be there for a later spin_pool::instance()).
+class env_guard {
+public:
+    explicit env_guard(const char* name) : name_(name) {
+        if (const char* v = std::getenv(name)) {
+            had_ = true;
+            value_ = v;
+        }
+    }
+    ~env_guard() {
+        if (had_) set_env(name_, value_.c_str());
+        else unset_env(name_);
+    }
+    env_guard(const env_guard&) = delete;
+    env_guard& operator=(const env_guard&) = delete;
+
+private:
+    const char* name_;
+    bool had_ = false;
+    std::string value_;
+};
+
 } // namespace
 
 TEST_CASE("pool env parsing: MTL5_POOL_SPIN", "[parallel][876]") {
+    const env_guard keep("MTL5_POOL_SPIN");
     struct cases { const char* value; unsigned expected; };
     const unsigned fallback = 77;
     for (const auto& c : {cases{"0", 0u}, cases{"4096", 4096u}, cases{"4294967295", 4294967295u},
@@ -70,6 +96,7 @@ TEST_CASE("pool env parsing: MTL5_POOL_SPIN", "[parallel][876]") {
 }
 
 TEST_CASE("pool env parsing: MTL5_NUM_THREADS", "[parallel][876]") {
+    const env_guard keep("MTL5_NUM_THREADS");
     unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0) hw = 1;
     set_env("MTL5_NUM_THREADS", "-4");   // was clamped to the hardware threads
@@ -101,10 +128,12 @@ namespace {
 /// current size plus `headroom` bytes, so only a few worker stacks fit.
 /// Returns the child's exit code: 0 the constructor threw std::system_error,
 /// 1 it threw something else, 2 it did not throw, 3 setrlimit failed, -1 the
-/// child had to be killed after 30 s (it hung).
+/// child had to be killed after 30 s (it hung), -2 it died on a signal, -3
+/// fork() failed (no child: waitpid(-1) and kill(-1) must not be reached).
 template <typename Make>
 int construct_under_rlimit(Make make, unsigned long headroom) {
     const pid_t pid = fork();
+    if (pid < 0) return -3;
     if (pid == 0) {
         long pages = 0;
         if (std::FILE* f = std::fopen("/proc/self/statm", "r")) {
@@ -202,6 +231,22 @@ TEST_CASE("team_for and the chunked loops at their edges", "[parallel][876]") {
         [](std::vector<long>& into, const std::vector<long>& from) { into[0] += from[0]; into[1] += from[1]; });
     CHECK(sums[0] == 999L * 1000L / 2);
     CHECK(sums[1] == 1000);
+}
+
+TEST_CASE("parallel_accumulate with an over-aligned accumulator", "[parallel][876]") {
+    // The padded wrapper keeps Acc's own alignment when it exceeds 128
+    // bytes; alignas(128) alone made the wrapper ill-formed for this Acc.
+    struct alignas(256) wide {
+        long sum = 0;
+    };
+    thread_pool pool(4);
+    const wide total = pool.parallel_accumulate<wide>(
+        1000, 8, [] { return wide{}; },
+        [](wide& a, std::size_t b, std::size_t e) {
+            for (std::size_t i = b; i < e; ++i) a.sum += static_cast<long>(i);
+        },
+        [](wide& into, const wide& from) { into.sum += from.sum; });
+    CHECK(total.sum == 999L * 1000L / 2);
 }
 
 TEST_CASE("spin_pool::instance() and spin()", "[parallel][876]") {

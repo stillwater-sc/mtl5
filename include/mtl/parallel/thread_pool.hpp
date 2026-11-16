@@ -330,8 +330,9 @@ Acc chunked_accumulate(Pool& pool, std::size_t n, std::size_t grain, unsigned ma
     // whole chunk, and contiguous partials shared lines between threads --
     // 1.1-1.4x slower at 4 threads in a memory-bound loop (issue 876). 128
     // bytes covers the 128-byte lines of Apple silicon and x86's adjacent-line
-    // prefetch.
-    struct alignas(128) padded {
+    // prefetch. alignas(Acc) keeps a stricter alignment of Acc's own: a
+    // wrapper less aligned than its member is ill-formed.
+    struct alignas(128) alignas(Acc) padded {
         Acc v;
     };
     std::vector<padded> partials;
