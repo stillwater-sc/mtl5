@@ -1,6 +1,9 @@
 #pragma once
 // MTL5 -- Matrix inverse via LU factorization
 #include <cassert>
+#include <stdexcept>
+#include <string>
+#include <vector>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -10,14 +13,17 @@
 namespace mtl {
 
 /// Compute the inverse of a square matrix A via LU factorization.
-/// Returns inv(A) as a dense2D. Throws if A is singular.
+/// Returns inv(A) as a dense2D. Throws std::runtime_error if A is singular
+/// (a zero or NaN pivot) and std::invalid_argument if it is not square. A 0x0
+/// A gives a 0x0 inverse.
 /// `Accumulator` (#585) is forwarded to lu_factor and to every lu_solve.
 template <typename Accumulator = void, FieldMatrix M>
 auto inv(const M& A) {
     using value_type = typename M::value_type;
     using size_type  = typename M::size_type;
     const size_type n = A.num_rows();
-    assert(A.num_cols() == n);
+    if (A.num_cols() != n)   // in every build (#854): it was an assert
+        throw std::invalid_argument("inv: matrix must be square");
 
     // Copy A for in-place LU
     mat::dense2D<value_type> LU(n, n);

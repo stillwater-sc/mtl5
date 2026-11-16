@@ -48,10 +48,12 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <mtl/detail/pivot_test.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/detail/thread_pool.hpp>
 
 namespace mtl {
@@ -184,7 +186,7 @@ int ldlt_bk_factor_acc(M& A, bk_pivot_info& pivots) {
     while (k < n) {
         column(ck, k, k);
         if (k == n - 1) {
-            if (ck[k] == math::zero<value_type>())
+            if (detail::pivot_unusable(ck[k]))
                 return static_cast<int>(k + 1);
             A(k, k) = ck[k];
             pivots.ipiv[k] = static_cast<int>(k + 1);
@@ -205,7 +207,7 @@ int ldlt_bk_factor_acc(M& A, bk_pivot_info& pivots) {
         bool use_2x2 = false;
         std::size_t swap_r = k;
         if (lambda_val == math::zero<value_type>()) {
-            if (ck[k] == math::zero<value_type>())
+            if (detail::pivot_unusable(ck[k]))
                 return static_cast<int>(k + 1);
         } else if (abs(ck[k]) >= alpha * lambda_val) {
             // Test 1: 1x1, no interchange.
@@ -238,7 +240,7 @@ int ldlt_bk_factor_acc(M& A, bk_pivot_info& pivots) {
 
         if (!use_2x2) {
             const value_type dkk = ck[k];
-            if (dkk == math::zero<value_type>())
+            if (detail::pivot_unusable(dkk))
                 return static_cast<int>(k + 1);
             pivots.ipiv[k] = static_cast<int>(swap_r + 1);
             A(k, k) = dkk;
@@ -250,7 +252,7 @@ int ldlt_bk_factor_acc(M& A, bk_pivot_info& pivots) {
         } else {
             const value_type d00 = ck[k], d10 = ck[k + 1], d11 = cr[k + 1];
             const value_type det = d00 * d11 - d10 * d10;
-            if (det == math::zero<value_type>())
+            if (detail::pivot_unusable(det))
                 return static_cast<int>(k + 1);
             pivots.ipiv[k]     = -static_cast<int>(r + 1);
             pivots.ipiv[k + 1] = -static_cast<int>(r + 1);
@@ -370,7 +372,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
     while (k < n) {
         if (k == n - 1) {
             // Last 1x1 pivot - no choice
-            if (A(k, k) == math::zero<value_type>())
+            if (detail::pivot_unusable(A(k, k)))
                 return static_cast<int>(k + 1);
             pivots.ipiv[k] = static_cast<int>(k + 1);  // 1-based, positive = 1x1
             ++k;
@@ -395,7 +397,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
 
         if (lambda_val == math::zero<value_type>()) {
             // Column k is zero below diagonal - 1x1 pivot (might be zero)
-            if (A(k, k) == math::zero<value_type>())
+            if (detail::pivot_unusable(A(k, k)))
                 return static_cast<int>(k + 1);
             use_1x1 = true;
             swap_r = k;  // no swap needed
@@ -440,7 +442,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
         if (use_1x1) {
             // 1x1 pivot at position k
             value_type dkk = A(k, k);
-            if (dkk == math::zero<value_type>())
+            if (detail::pivot_unusable(dkk))
                 return static_cast<int>(k + 1);
 
             // Record pivot (1-based, positive = 1x1 with swap target)
@@ -450,12 +452,26 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
             //   A(i,j) -= A(i,k) * A(j,k) / D(k,k)  for i,j > k
             // Then store L(i,k) = A(i,k) / D(k,k).
             // Must update A(i,j) using original A(j,k) BEFORE overwriting
-            // column k with L values. Process column-by-column:
-            for (std::size_t j = k + 1; j < n; ++j) {
-                value_type ajk = A(j, k);
-                value_type ajk_over_d = ajk / dkk;
-                for (std::size_t i = j; i < n; ++i)
-                    A(i, j) = A(i, j) - A(i, k) * ajk_over_d;
+            // column k with L values. Every A(i,j) gets one and the same
+            // update in either loop order (up to how the compiler contracts it
+            // into an fma), so the order is chosen for the storage (#854): by
+            // columns, the row-major dense2D was walked at stride n, 3.1x
+            // slower than ldlt_factor at n = 1200.
+            if constexpr (detail::row_major_contiguous_v<M>) {
+                std::vector<value_type> w(n);
+                for (std::size_t j = k + 1; j < n; ++j) w[j] = A(j, k) / dkk;
+                for (std::size_t i = k + 1; i < n; ++i) {
+                    const value_type aik = A(i, k);
+                    for (std::size_t j = k + 1; j <= i; ++j)
+                        A(i, j) = A(i, j) - aik * w[j];
+                }
+            } else {
+                for (std::size_t j = k + 1; j < n; ++j) {
+                    value_type ajk = A(j, k);
+                    value_type ajk_over_d = ajk / dkk;
+                    for (std::size_t i = j; i < n; ++i)
+                        A(i, j) = A(i, j) - A(i, k) * ajk_over_d;
+                }
             }
             // Now store L column
             for (std::size_t i = k + 1; i < n; ++i)
@@ -467,7 +483,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
             value_type d10 = A(k + 1, k);
             value_type d11 = A(k + 1, k + 1);
             value_type det = d00 * d11 - d10 * d10;
-            if (det == math::zero<value_type>())
+            if (detail::pivot_unusable(det))
                 return static_cast<int>(k + 1);
 
             // Record pivot (negative = 2x2 block)
@@ -487,15 +503,29 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
             // Perform rank-2 update on the trailing submatrix:
             //   A(i,j) -= [A(i,k) A(i,k+1)] * D^{-1} * [A(j,k) A(j,k+1)]^T
             // Must use original A(:,k) and A(:,k+1) before overwriting with L.
-            // Process column-by-column in the trailing submatrix:
-            for (std::size_t j = k + 2; j < n; ++j) {
-                value_type ajk0 = A(j, k);
-                value_type ajk1 = A(j, k + 1);
-                // Compute D^{-1} * [ajk0, ajk1]^T
-                value_type t0 = di00 * ajk0 + di01 * ajk1;
-                value_type t1 = di01 * ajk0 + di11 * ajk1;
-                for (std::size_t i = j; i < n; ++i)
-                    A(i, j) = A(i, j) - A(i, k) * t0 - A(i, k + 1) * t1;
+            // The loop order follows the storage, as for the 1x1 update.
+            if constexpr (detail::row_major_contiguous_v<M>) {
+                std::vector<value_type> t0(n), t1(n);
+                for (std::size_t j = k + 2; j < n; ++j) {
+                    const value_type ajk0 = A(j, k), ajk1 = A(j, k + 1);
+                    t0[j] = di00 * ajk0 + di01 * ajk1;   // D^{-1} [ajk0, ajk1]^T
+                    t1[j] = di01 * ajk0 + di11 * ajk1;
+                }
+                for (std::size_t i = k + 2; i < n; ++i) {
+                    const value_type aik0 = A(i, k), aik1 = A(i, k + 1);
+                    for (std::size_t j = k + 2; j <= i; ++j)
+                        A(i, j) = A(i, j) - aik0 * t0[j] - aik1 * t1[j];
+                }
+            } else {
+                for (std::size_t j = k + 2; j < n; ++j) {
+                    value_type ajk0 = A(j, k);
+                    value_type ajk1 = A(j, k + 1);
+                    // Compute D^{-1} * [ajk0, ajk1]^T
+                    value_type t0 = di00 * ajk0 + di01 * ajk1;
+                    value_type t1 = di01 * ajk0 + di11 * ajk1;
+                    for (std::size_t i = j; i < n; ++i)
+                        A(i, j) = A(i, j) - A(i, k) * t0 - A(i, k + 1) * t1;
+                }
             }
             // Now store L columns: L(i,:) = [A(i,k) A(i,k+1)] * D^{-1}
             for (std::size_t i = k + 2; i < n; ++i) {

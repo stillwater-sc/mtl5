@@ -323,6 +323,13 @@ int cholesky_factor(M& A, tag::subtract_term_by_term) {
 template <typename Accumulator = void, FieldMatrix M, Vector VecX, Vector VecB>
 void cholesky_solve(const M& L, VecX& x, const VecB& b) {
     using value_type = typename VecX::value_type;
+    // L^T, not L^H: a Hermitian factor from cholesky_h_factor solved here gave
+    // a residual of 2.0 for [[4, 1+2i], [1-2i, 6]] (#854). Rejected like
+    // cholesky_factor (#353).
+    static_assert(!is_complex_v<typename M::value_type> && !is_complex_v<value_type>,
+        "cholesky_solve applies L and L^T, for the factor of a REAL symmetric positive "
+        "definite matrix. For a HERMITIAN one, factored by cholesky_h_factor, use "
+        "cholesky_h_solve, which applies L^H (#353, #854).");
     using size_type  = typename M::size_type;
     const size_type n = L.num_rows();
     assert(L.num_cols() == n && x.size() == n && b.size() == n);

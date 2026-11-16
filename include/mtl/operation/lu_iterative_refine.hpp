@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <mtl/mat/dense2D.hpp>
@@ -64,7 +65,9 @@ struct lu_refine_result {
 /// A and b are supplied in Residual precision; the refined x is returned in
 /// Residual precision (any prior contents are overwritten by the initial solve).
 ///
-/// Returns the BEST iterate found.
+/// Returns the BEST iterate found. Throws std::invalid_argument for a
+/// non-square A or a b of the wrong size, and std::runtime_error when the
+/// Working-precision copy of A is singular (or overflows to a NaN pivot).
 template <typename Working, typename Residual, typename PA, typename PV>
 lu_refine_result lu_iterative_refine(
     const mat::dense2D<Residual, PA>& A,
@@ -87,7 +90,12 @@ lu_refine_result lu_iterative_refine(
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = 0; j < n; ++j) LU(i, j) = static_cast<Working>(A(i, j));
     std::vector<typename WMat::size_type> pivot;
-    lu_factor(LU, pivot);
+    // A singular -- or, in a narrow Working type, overflowing -- factor would
+    // make every solve below divide by a zero pivot: x came back inf or NaN
+    // with converged = false and no error (#854).
+    if (const int info = lu_factor(LU, pivot); info != 0)
+        throw std::runtime_error("lu_iterative_refine: the Working-precision LU factor has a "
+                                 "zero or NaN pivot at step " + std::to_string(info));
 
     // ||b - A x||_inf, accumulated in double for a precision-independent yardstick.
     auto residual_norm = [&](const RVec& xx) {
