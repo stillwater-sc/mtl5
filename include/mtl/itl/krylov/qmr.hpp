@@ -32,16 +32,14 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     vec::dense_vector<value_type> v(n), w(n), y(n), z(n);
     vec::dense_vector<value_type> p(n), q(n), d(n), s(n), p_tilde(n), z_tilde(n);
 
-    // r = b - A*x
-    vec::dense_vector<value_type> Ax(n);
-    apply_operator<Accumulator>(A, x, Ax);
-    for (size_type i = 0; i < n; ++i) {
-        r(i) = b(i) - Ax(i);
-        v_tilde(i) = r(i);
-        w_tilde(i) = r(i);
-        d(i) = value_type(0);
-        s(i) = value_type(0);
-    }
+    vec::dense_vector<value_type> Ax(n), Atq(n);
+
+    // r = b - A x, the true residual.
+    auto true_residual = [&]() {
+        apply_operator<Accumulator>(A, x, Ax);
+        for (size_type i = 0; i < n; ++i)
+            r(i) = b(i) - Ax(i);
+    };
 
     // Left preconditioning, i.e. the split M = M1*M2 with M1 = M and M2 = I
     // (Barrett et al., Templates Alg. 7.3):
@@ -56,132 +54,157 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // the same error #392 fixed in bicg. With pc::identity the two coincide,
     // which is why identity was the only preconditioner qmr converged with
     // (#393).
-    M.solve(y, v_tilde);
-    for (size_type i = 0; i < n; ++i)
-        z(i) = w_tilde(i);
+    value_type rho{}, xi{}, gamma{}, eta{}, epsilon{}, theta{};
 
-    value_type rho = mtl::two_norm(y);
-    value_type xi = mtl::two_norm(z);
-    value_type gamma = value_type(1);
-    value_type eta = value_type(-1);
-    value_type epsilon = value_type(1);
-    value_type theta = value_type(0);
-
-    // The recurrences start on this solve's first step, not iter's: a reused
-    // iteration object is past its first (it made cg return NaN, issue 866).
-    bool first_step = true;
-    while (!iter.finished(r)) {
-        ++iter;
-        const bool first = first_step;
-        first_step = false;
-
-        if (rho == value_type(0) || xi == value_type(0)) {
-            iter.fail(2, "qmr breakdown: rho or xi == 0");
-            return iter;
-        }
-
-        // v = v_tilde / rho;  y = y / rho
+    // The loop tests the residual it updates by recurrence, r -= s, which
+    // drifts from b - A x by rounding: on an unpreconditioned 2D Laplacian at
+    // rtol 1e-13 it reported 9.9e-14 at a true 1.2e-12 (issue 873). So when
+    // it has converged (or reached the limit) the true residual decides, and
+    // if that has not converged QMR restarts from the current x, as tfqmr
+    // does (#752). The check costs one product with A per claim of
+    // convergence. The returned iter reflects the true residual.
+    true_residual();
+    bool r_is_true = true;   // no step since r was computed from x
+    for (;;) {
         for (size_type i = 0; i < n; ++i) {
-            v(i) = v_tilde(i) / rho;
-            y(i) = y(i) / rho;
+            v_tilde(i) = r(i);
+            w_tilde(i) = r(i);
+            d(i) = value_type(0);
+            s(i) = value_type(0);
         }
-        // w = w_tilde / xi;  z = z / xi
-        for (size_type i = 0; i < n; ++i) {
-            w(i) = w_tilde(i) / xi;
-            z(i) = z(i) / xi;
-        }
-
-        value_type delta = mtl::dot<Accumulator, value_type>(z, y);
-        if (delta == value_type(0)) {
-            iter.fail(2, "qmr breakdown: delta == 0");
-            return iter;
-        }
-
-        // Left preconditioning (M1 = M, M2 = I):
-        //   y~ = M2^-1 y = y            -- no work
-        //   z~ = M1^-T z = M^-T z       -- the adjoint solve lives HERE
-        // p = y~ - (xi*delta/epsilon)*p;  q = z~ - (rho*delta/epsilon)*q
-        M.adjoint_solve(z_tilde, z);
-        if (first) {
-            for (size_type i = 0; i < n; ++i) {
-                p(i) = y(i);
-                q(i) = z_tilde(i);
-            }
-        } else {
-            value_type pcoeff = xi * delta / epsilon;
-            value_type qcoeff = rho * delta / epsilon;
-            for (size_type i = 0; i < n; ++i) {
-                p(i) = y(i) - pcoeff * p(i);
-                q(i) = z_tilde(i) - qcoeff * q(i);
-            }
-        }
-
-        // p_tilde = A * p
-        apply_operator<Accumulator>(A, p, p_tilde);
-
-        epsilon = mtl::dot<Accumulator, value_type>(q, p_tilde);
-        if (epsilon == value_type(0)) {
-            iter.fail(2, "qmr breakdown: epsilon == 0");
-            return iter;
-        }
-
-        value_type beta = epsilon / delta;
-
-        // v_tilde = p_tilde - beta * v
-        for (size_type i = 0; i < n; ++i)
-            v_tilde(i) = p_tilde(i) - beta * v(i);
-
-        // y = M^{-1} v_tilde
         M.solve(y, v_tilde);
-
-        value_type rho_new = mtl::two_norm(y);
-
-        // w_tilde = A^T * q - beta * w
-        vec::dense_vector<value_type> Atq(n);
-        apply_transpose<Accumulator>(A, q, Atq);
-        for (size_type i = 0; i < n; ++i)
-            w_tilde(i) = Atq(i) - beta * w(i);
-
-        // z = M2^-T w~ = w~ for left preconditioning; the adjoint solve is
-        // applied to z~ at the top of the next iteration.
         for (size_type i = 0; i < n; ++i)
             z(i) = w_tilde(i);
 
-        value_type xi_new = mtl::two_norm(z);
+        rho = mtl::two_norm(y);
+        xi = mtl::two_norm(z);
+        gamma = value_type(1);
+        eta = value_type(-1);
+        epsilon = value_type(1);
+        theta = value_type(0);
 
-        value_type theta_new = rho_new / (gamma * abs(beta));
-        value_type gamma_new = value_type(1) / sqrt(value_type(1) + theta_new * theta_new);
-        value_type eta_new = -eta * rho * gamma_new * gamma_new / (beta * gamma * gamma);
+        // The recurrences start on this pass's first step, not iter's: a reused
+        // iteration object is past its first (it made cg return NaN, issue 866),
+        // and so is a restart.
+        bool first_step = true;
+        while (!iter.finished(r)) {
+            ++iter;
+            r_is_true = false;
+            const bool first = first_step;
+            first_step = false;
 
-        // d = eta_new * p + (theta * gamma_new)^2 * d
-        // s = eta_new * p_tilde + (theta * gamma_new)^2 * s
-        value_type ratio = (theta * gamma_new) * (theta * gamma_new);
-        if (first) {
-            for (size_type i = 0; i < n; ++i) {
-                d(i) = eta_new * p(i);
-                s(i) = eta_new * p_tilde(i);
+            if (rho == value_type(0) || xi == value_type(0)) {
+                iter.fail(2, "qmr breakdown: rho or xi == 0");
+                return iter;
             }
-        } else {
+
+            // v = v_tilde / rho;  y = y / rho
             for (size_type i = 0; i < n; ++i) {
-                d(i) = eta_new * p(i) + ratio * d(i);
-                s(i) = eta_new * p_tilde(i) + ratio * s(i);
+                v(i) = v_tilde(i) / rho;
+                y(i) = y(i) / rho;
             }
+            // w = w_tilde / xi;  z = z / xi
+            for (size_type i = 0; i < n; ++i) {
+                w(i) = w_tilde(i) / xi;
+                z(i) = z(i) / xi;
+            }
+
+            value_type delta = mtl::dot<Accumulator, value_type>(z, y);
+            if (delta == value_type(0)) {
+                iter.fail(2, "qmr breakdown: delta == 0");
+                return iter;
+            }
+
+            // Left preconditioning (M1 = M, M2 = I):
+            //   y~ = M2^-1 y = y            -- no work
+            //   z~ = M1^-T z = M^-T z       -- the adjoint solve lives HERE
+            // p = y~ - (xi*delta/epsilon)*p;  q = z~ - (rho*delta/epsilon)*q
+            M.adjoint_solve(z_tilde, z);
+            if (first) {
+                for (size_type i = 0; i < n; ++i) {
+                    p(i) = y(i);
+                    q(i) = z_tilde(i);
+                }
+            } else {
+                value_type pcoeff = xi * delta / epsilon;
+                value_type qcoeff = rho * delta / epsilon;
+                for (size_type i = 0; i < n; ++i) {
+                    p(i) = y(i) - pcoeff * p(i);
+                    q(i) = z_tilde(i) - qcoeff * q(i);
+                }
+            }
+
+            // p_tilde = A * p
+            apply_operator<Accumulator>(A, p, p_tilde);
+
+            epsilon = mtl::dot<Accumulator, value_type>(q, p_tilde);
+            if (epsilon == value_type(0)) {
+                iter.fail(2, "qmr breakdown: epsilon == 0");
+                return iter;
+            }
+
+            value_type beta = epsilon / delta;
+
+            // v_tilde = p_tilde - beta * v
+            for (size_type i = 0; i < n; ++i)
+                v_tilde(i) = p_tilde(i) - beta * v(i);
+
+            // y = M^{-1} v_tilde
+            M.solve(y, v_tilde);
+
+            value_type rho_new = mtl::two_norm(y);
+
+            // w_tilde = A^T * q - beta * w
+            apply_transpose<Accumulator>(A, q, Atq);
+            for (size_type i = 0; i < n; ++i)
+                w_tilde(i) = Atq(i) - beta * w(i);
+
+            // z = M2^-T w~ = w~ for left preconditioning; the adjoint solve is
+            // applied to z~ at the top of the next iteration.
+            for (size_type i = 0; i < n; ++i)
+                z(i) = w_tilde(i);
+
+            value_type xi_new = mtl::two_norm(z);
+
+            value_type theta_new = rho_new / (gamma * abs(beta));
+            value_type gamma_new = value_type(1) / sqrt(value_type(1) + theta_new * theta_new);
+            value_type eta_new = -eta * rho * gamma_new * gamma_new / (beta * gamma * gamma);
+
+            // d = eta_new * p + (theta * gamma_new)^2 * d
+            // s = eta_new * p_tilde + (theta * gamma_new)^2 * s
+            value_type ratio = (theta * gamma_new) * (theta * gamma_new);
+            if (first) {
+                for (size_type i = 0; i < n; ++i) {
+                    d(i) = eta_new * p(i);
+                    s(i) = eta_new * p_tilde(i);
+                }
+            } else {
+                for (size_type i = 0; i < n; ++i) {
+                    d(i) = eta_new * p(i) + ratio * d(i);
+                    s(i) = eta_new * p_tilde(i) + ratio * s(i);
+                }
+            }
+
+            // x += d;  r -= s
+            for (size_type i = 0; i < n; ++i) {
+                x(i) += d(i);
+                r(i) -= s(i);
+            }
+
+            rho = rho_new;
+            xi = xi_new;
+            theta = theta_new;
+            gamma = gamma_new;
+            eta = eta_new;
         }
 
-        // x += d;  r -= s
-        for (size_type i = 0; i < n; ++i) {
-            x(i) += d(i);
-            r(i) -= s(i);
-        }
-
-        rho = rho_new;
-        xi = xi_new;
-        theta = theta_new;
-        gamma = gamma_new;
-        eta = eta_new;
+        // Converged by the recurrence, or at the limit: the true residual
+        // decides (finished() is true again at the limit).
+        if (r_is_true) return iter;
+        true_residual();
+        r_is_true = true;
+        if (iter.finished(r)) return iter;
     }
-
-    return iter;
 }
 
 } // namespace mtl::itl

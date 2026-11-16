@@ -31,101 +31,123 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
     vec::dense_vector<value_type> r(n), r_star(n), p(n), phat(n);
     vec::dense_vector<value_type> v(n), s(n), shat(n), t(n);
 
-    // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    apply_operator<Accumulator>(A, x, Ax);
-    for (size_type i = 0; i < n; ++i) {
-        r(i) = b(i) - Ax(i);
-        r_star(i) = r(i);
-    }
+
+    // r = b - A x, the true residual.
+    auto true_residual = [&]() {
+        apply_operator<Accumulator>(A, x, Ax);
+        for (size_type i = 0; i < n; ++i)
+            r(i) = b(i) - Ax(i);
+    };
 
     value_type rho_1 = value_type(1);
     value_type alpha = value_type(1);
     value_type omega = value_type(1);
 
-    // v = 0, p = 0
-    for (size_type i = 0; i < n; ++i) {
-        v(i) = value_type(0);
-        p(i) = value_type(0);
-    }
-
-    while (!iter.finished(r)) {
-        ++iter;
-
-        value_type rho = mtl::dot<Accumulator, value_type>(r_star, r);
-
-        if (rho == value_type(0)) {
-            iter.fail(2, "bicgstab breakdown: rho == 0");
-            return iter;
+    // The loop tests the residual it updates by recurrence (s = r - alpha v,
+    // r = s - omega t), which drifts from b - A x by rounding. On a strongly
+    // nonnormal convection-diffusion system without a PC, BiCGSTAB reported
+    // 3e-11 at a true residual of 0.2 (issue 873). So when it has converged
+    // (or reached the limit) the true residual decides, and if that has not
+    // converged BiCGSTAB restarts from the current x with fresh recurrences
+    // and shadow residual, as tfqmr does (#752). The check costs one product
+    // with A per claim of convergence. The returned iter reflects the true
+    // residual.
+    true_residual();
+    bool r_is_true = true;   // no step since r was computed from x
+    for (;;) {
+        // (Re)start: r* = r, p = v = 0, rho_1 = alpha = omega = 1.
+        for (size_type i = 0; i < n; ++i) {
+            r_star(i) = r(i);
+            v(i) = value_type(0);
+            p(i) = value_type(0);
         }
+        rho_1 = alpha = omega = value_type(1);
 
-        value_type beta = (rho / rho_1) * (alpha / omega);
+        while (!iter.finished(r)) {
+            ++iter;
+            r_is_true = false;
 
-        // p = r + beta * (p - omega * v)
-        for (size_type i = 0; i < n; ++i)
-            p(i) = r(i) + beta * (p(i) - omega * v(i));
+            value_type rho = mtl::dot<Accumulator, value_type>(r_star, r);
 
-        // phat = M^{-1} p
-        M.solve(phat, p);
+            if (rho == value_type(0)) {
+                iter.fail(2, "bicgstab breakdown: rho == 0");
+                return iter;
+            }
 
-        // v = A * phat
-        apply_operator<Accumulator>(A, phat, v);
+            value_type beta = (rho / rho_1) * (alpha / omega);
 
-        // alpha = rho / dot(r_star, v)
-        value_type rsv = mtl::dot<Accumulator, value_type>(r_star, v);
-        if (rsv == value_type(0)) {
-            iter.fail(3, "bicgstab breakdown: dot(r_star, v) == 0");
-            return iter;
-        }
-        alpha = rho / rsv;
-
-        // s = r - alpha * v
-        for (size_type i = 0; i < n; ++i)
-            s(i) = r(i) - alpha * v(i);
-
-        // Check convergence of s. Only convergence: the iteration limit is
-        // tested on the full step's r, so the last allowed iteration is not cut
-        // to the half step x += alpha phat (issue 866).
-        if (iter.converged_now(mtl::two_norm(s))) {
-            // x += alpha * phat
+            // p = r + beta * (p - omega * v)
             for (size_type i = 0; i < n; ++i)
-                x(i) += alpha * phat(i);
-            return iter;
-        }
+                p(i) = r(i) + beta * (p(i) - omega * v(i));
 
-        // shat = M^{-1} s
-        M.solve(shat, s);
+            // phat = M^{-1} p
+            M.solve(phat, p);
 
-        // t = A * shat
-        apply_operator<Accumulator>(A, shat, t);
+            // v = A * phat
+            apply_operator<Accumulator>(A, phat, v);
 
-        // omega = dot(t, s) / dot(t, t)
-        value_type tt = mtl::dot<Accumulator, value_type>(t, t);
-        if (tt == value_type(0)) {
-            iter.fail(4, "bicgstab breakdown: dot(t, t) == 0");
-            return iter;
-        }
-        omega = mtl::dot<Accumulator, value_type>(t, s) / tt;
-        // omega == 0 stalls x and divides the next beta by zero (issue 866).
-        if (omega == value_type(0)) {
+            // alpha = rho / dot(r_star, v)
+            value_type rsv = mtl::dot<Accumulator, value_type>(r_star, v);
+            if (rsv == value_type(0)) {
+                iter.fail(3, "bicgstab breakdown: dot(r_star, v) == 0");
+                return iter;
+            }
+            alpha = rho / rsv;
+
+            // s = r - alpha * v
             for (size_type i = 0; i < n; ++i)
-                x(i) += alpha * phat(i);
-            iter.fail(5, "bicgstab breakdown: omega == 0");
-            return iter;
+                s(i) = r(i) - alpha * v(i);
+
+            // Check convergence of s. Only convergence: the iteration limit is
+            // tested on the full step's r, so the last allowed iteration is not
+            // cut to the half step x += alpha phat (issue 866). The true
+            // residual then decides, below.
+            if (iter.converged_now(mtl::two_norm(s))) {
+                // x += alpha * phat
+                for (size_type i = 0; i < n; ++i)
+                    x(i) += alpha * phat(i);
+                break;
+            }
+
+            // shat = M^{-1} s
+            M.solve(shat, s);
+
+            // t = A * shat
+            apply_operator<Accumulator>(A, shat, t);
+
+            // omega = dot(t, s) / dot(t, t)
+            value_type tt = mtl::dot<Accumulator, value_type>(t, t);
+            if (tt == value_type(0)) {
+                iter.fail(4, "bicgstab breakdown: dot(t, t) == 0");
+                return iter;
+            }
+            omega = mtl::dot<Accumulator, value_type>(t, s) / tt;
+            // omega == 0 stalls x and divides the next beta by zero (issue 866).
+            if (omega == value_type(0)) {
+                for (size_type i = 0; i < n; ++i)
+                    x(i) += alpha * phat(i);
+                iter.fail(5, "bicgstab breakdown: omega == 0");
+                return iter;
+            }
+
+            // x += alpha * phat + omega * shat
+            for (size_type i = 0; i < n; ++i)
+                x(i) += alpha * phat(i) + omega * shat(i);
+
+            // r = s - omega * t
+            for (size_type i = 0; i < n; ++i)
+                r(i) = s(i) - omega * t(i);
+
+            rho_1 = rho;
         }
-
-        // x += alpha * phat + omega * shat
-        for (size_type i = 0; i < n; ++i)
-            x(i) += alpha * phat(i) + omega * shat(i);
-
-        // r = s - omega * t
-        for (size_type i = 0; i < n; ++i)
-            r(i) = s(i) - omega * t(i);
-
-        rho_1 = rho;
+        // Converged by the recurrence, or at the limit: the true residual
+        // decides (finished() is true again at the limit).
+        if (r_is_true) return iter;
+        true_residual();
+        r_is_true = true;
+        if (iter.finished(r)) return iter;
     }
-
-    return iter;
 }
 
 } // namespace mtl::itl

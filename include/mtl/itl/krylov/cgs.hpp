@@ -31,89 +31,109 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // Workspace vectors
     vec::dense_vector<value_type> r(n), rtilde(n), p(n), phat(n);
     vec::dense_vector<value_type> u(n), uhat(n), q(n), vhat(n), qhat(n);
-
-    // r = b - A*x
     vec::dense_vector<value_type> Ax(n);
-    apply_operator<Accumulator>(A, x, Ax);
-    for (size_type i = 0; i < n; ++i) {
-        r(i) = b(i) - Ax(i);
-        rtilde(i) = r(i);
-    }
+
+    // r = b - A x, the true residual.
+    auto true_residual = [&]() {
+        apply_operator<Accumulator>(A, x, Ax);
+        for (size_type i = 0; i < n; ++i)
+            r(i) = b(i) - Ax(i);
+    };
 
     value_type rho_1 = value_type(0);
     value_type rho_2 = value_type(0);
     value_type alpha = value_type(0);
     value_type beta  = value_type(0);
 
-    // The recurrences start on this solve's first step, not iter's: a reused
-    // iteration object is past its first (it made cg return NaN, issue 866).
-    bool first_step = true;
-    while (!iter.finished(r)) {
-        ++iter;
-        const bool first = first_step;
-        first_step = false;
-        rho_1 = mtl::dot<Accumulator, value_type>(rtilde, r);
+    // The loop tests the residual it updates by recurrence, r -= alpha A uhat,
+    // which drifts from b - A x by rounding: on a 2D convection-diffusion
+    // system with ILU(0) it reported 2e-11 at a true 7.6e-8 (issue 873). So
+    // when it has converged (or reached the limit) the true residual decides,
+    // and if that has not converged CGS restarts from the current x with
+    // fresh recurrences and shadow residual, as tfqmr does (#752). The check
+    // costs one product with A per claim of convergence. The returned iter
+    // reflects the true residual.
+    true_residual();
+    bool r_is_true = true;   // no step since r was computed from x
+    for (;;) {
+        for (size_type i = 0; i < n; ++i)
+            rtilde(i) = r(i);
+        // The recurrences start on this pass's first step, not iter's: a
+        // reused iteration object is past its first (it made cg return NaN,
+        // issue 866), and so is a restart.
+        bool first_step = true;
+        while (!iter.finished(r)) {
+            ++iter;
+            r_is_true = false;
+            const bool first = first_step;
+            first_step = false;
+            rho_1 = mtl::dot<Accumulator, value_type>(rtilde, r);
 
-        if (rho_1 == value_type(0)) {
-            iter.fail(2, "cgs breakdown: rho == 0");
-            return iter;
-        }
-
-        if (first) {
-            for (size_type i = 0; i < n; ++i) {
-                u(i) = r(i);
-                p(i) = r(i);
+            if (rho_1 == value_type(0)) {
+                iter.fail(2, "cgs breakdown: rho == 0");
+                return iter;
             }
-        } else {
-            beta = rho_1 / rho_2;
-            // u = r + beta * q
+
+            if (first) {
+                for (size_type i = 0; i < n; ++i) {
+                    u(i) = r(i);
+                    p(i) = r(i);
+                }
+            } else {
+                beta = rho_1 / rho_2;
+                // u = r + beta * q
+                for (size_type i = 0; i < n; ++i)
+                    u(i) = r(i) + beta * q(i);
+                // p = u + beta * (q + beta * p)
+                for (size_type i = 0; i < n; ++i)
+                    p(i) = u(i) + beta * (q(i) + beta * p(i));
+            }
+
+            // phat = M^{-1} p
+            M.solve(phat, p);
+
+            // vhat = A * phat
+            apply_operator<Accumulator>(A, phat, vhat);
+
+            // alpha = rho_1 / dot(rtilde, vhat)
+            value_type rtv = mtl::dot<Accumulator, value_type>(rtilde, vhat);
+            if (rtv == value_type(0)) {
+                iter.fail(3, "cgs breakdown: dot(rtilde, vhat) == 0");
+                return iter;
+            }
+            alpha = rho_1 / rtv;
+
+            // q = u - alpha * vhat
             for (size_type i = 0; i < n; ++i)
-                u(i) = r(i) + beta * q(i);
-            // p = u + beta * (q + beta * p)
+                q(i) = u(i) - alpha * vhat(i);
+
+            // u += q (accumulate u + q)
             for (size_type i = 0; i < n; ++i)
-                p(i) = u(i) + beta * (q(i) + beta * p(i));
+                u(i) += q(i);
+
+            // uhat = M^{-1} u
+            M.solve(uhat, u);
+
+            // x += alpha * uhat
+            for (size_type i = 0; i < n; ++i)
+                x(i) += alpha * uhat(i);
+
+            // qhat = A * uhat
+            apply_operator<Accumulator>(A, uhat, qhat);
+
+            // r -= alpha * qhat
+            for (size_type i = 0; i < n; ++i)
+                r(i) -= alpha * qhat(i);
+
+            rho_2 = rho_1;
         }
-
-        // phat = M^{-1} p
-        M.solve(phat, p);
-
-        // vhat = A * phat
-        apply_operator<Accumulator>(A, phat, vhat);
-
-        // alpha = rho_1 / dot(rtilde, vhat)
-        value_type rtv = mtl::dot<Accumulator, value_type>(rtilde, vhat);
-        if (rtv == value_type(0)) {
-            iter.fail(3, "cgs breakdown: dot(rtilde, vhat) == 0");
-            return iter;
-        }
-        alpha = rho_1 / rtv;
-
-        // q = u - alpha * vhat
-        for (size_type i = 0; i < n; ++i)
-            q(i) = u(i) - alpha * vhat(i);
-
-        // u += q (accumulate u + q)
-        for (size_type i = 0; i < n; ++i)
-            u(i) += q(i);
-
-        // uhat = M^{-1} u
-        M.solve(uhat, u);
-
-        // x += alpha * uhat
-        for (size_type i = 0; i < n; ++i)
-            x(i) += alpha * uhat(i);
-
-        // qhat = A * uhat
-        apply_operator<Accumulator>(A, uhat, qhat);
-
-        // r -= alpha * qhat
-        for (size_type i = 0; i < n; ++i)
-            r(i) -= alpha * qhat(i);
-
-        rho_2 = rho_1;
+        // Converged by the recurrence, or at the limit: the true residual
+        // decides (finished() is true again at the limit).
+        if (r_is_true) return iter;
+        true_residual();
+        r_is_true = true;
+        if (iter.finished(r)) return iter;
     }
-
-    return iter;
 }
 
 } // namespace mtl::itl
