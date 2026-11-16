@@ -18,6 +18,7 @@
 // solve() forms b(i) - sum and y(i) - sum inside the accumulator, rounded once;
 // the void path rounds the sum first, so the two agree only for one-term rows.
 // adjoint_solve() scatters into one live accumulator per component.
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <mtl/concepts/magnitude.hpp>   // magnitude_t (#505 review)
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <algorithm>
@@ -295,6 +296,10 @@ private:
                 else if (j > i)  u_entries.emplace_back(j, w[j]);
                 else             u_diag_[i] = w[j];
             }
+            // U(i,i) is zero or was never formed (no diagonal in A and no fill
+            // reaching it): the solves and later rows divide by it (issue 867).
+            if (!w_nz[i] || u_diag_[i] == math::zero<value_type>())
+                detail::throw_zero_diagonal("ilut", i);
 
             // Count original nnz in each part for fill limit
             size_type orig_l = 0, orig_u = 0;

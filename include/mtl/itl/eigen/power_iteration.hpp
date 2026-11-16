@@ -40,6 +40,7 @@ eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
     using Acc = std::conditional_t<std::is_void_v<Accumulator>, T, Accumulator>;
     using AT  = mtl::math::accumulator_traits<Acc, T>;
     using std::abs;
+    using std::sqrt;   // ADL: a custom number type's own sqrt (issue 867)
     using size_type = typename vec::dense_vector<T>::size_type;
     const size_type n = v0.size();
 
@@ -67,11 +68,17 @@ eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
             T ri = w(i) - lambda * v0(i);
             AT::add_product(res_acc, ri, ri);
         }
-        T res = std::sqrt(AT::template value<T>(res_acc));
+        T res = sqrt(AT::template value<T>(res_acc));
 
         // Normalize w to become the next iterate.
         T nw = mtl::two_norm(w);
-        if (nw == T(0)) break;               // A v = 0: v spans a null vector
+        if (nw == T(0)) {
+            // A v = 0: v is an eigenvector of eigenvalue 0, exactly. It was
+            // reported as not converged with residual 0 (issue 867).
+            result.converged = true;
+            ++it;
+            break;
+        }
         for (size_type i = 0; i < n; ++i) v0(i) = w(i) / nw;
 
         if (res <= tol * (abs(lambda) + tol)) {

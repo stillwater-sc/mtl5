@@ -45,6 +45,7 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
                                     eigen_which which = eigen_which::largest_magnitude,
                                     std::size_t subspace = 0, std::type_identity_t<T> tol = T(1e-8)) {
     using std::abs;
+    using std::sqrt;   // ADL: a custom number type's own abs and sqrt (issue 867)
     // void (the default) accumulates in T, as the former `Accumulator = T` did.
     using Acc = std::conditional_t<std::is_void_v<Accumulator>, T, Accumulator>;
     using AT  = mtl::math::accumulator_traits<Acc, T>;
@@ -60,7 +61,11 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
     if (m > n) m = n;
     if (k > m) k = m;
 
-    const T breakdown = std::sqrt(std::numeric_limits<T>::epsilon());
+    // Breakdown is relative to the operator's scale, estimated by the largest
+    // |H| entry seen: an absolute sqrt(eps) stopped a 1e-10-scaled operator
+    // too early (issue 867, as in lanczos).
+    const T breakdown = sqrt(std::numeric_limits<T>::epsilon());
+    T anorm = T(0);
 
     mat::dense2D<T> V(n, m);
     mat::dense2D<T> H(m, m);            // upper Hessenberg projection
@@ -88,6 +93,7 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
                 for (size_type i = 0; i < n; ++i) AT::add_product(acc_s, V(i, c), w(i));
                 T s = AT::template value<T>(acc_s);
                 H(c, j) += s;
+                if (anorm < abs(H(c, j))) anorm = abs(H(c, j));
                 for (size_type i = 0; i < n; ++i) w(i) -= s * V(i, c);
             }
 
@@ -95,12 +101,16 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
         Acc acc_h{};
         AT::clear(acc_h);
         for (size_type i = 0; i < n; ++i) AT::add_product(acc_h, w(i), w(i));
-        T hn = std::sqrt(AT::template value<T>(acc_h));
+        T hn = sqrt(AT::template value<T>(acc_h));
         h_next = hn;
-        if (hn <= breakdown) break;         // invariant subspace found
+        if (anorm < hn) anorm = hn;
+        if (hn <= breakdown * anorm) break;   // invariant subspace found
         if (j + 1 < m) { H(j + 1, j) = hn; for (size_type i = 0; i < n; ++i) q(i) = w(i) / hn; }
     }
     m = built;
+    // An invariant subspace of dimension m < k has only m Ritz pairs; the loop
+    // below read S(m-1, c) past them (issue 867).
+    if (k > m) k = m;
 
     // Trim H to the built m x m block if we stopped early.
     mat::dense2D<T> Hm(m, m);
@@ -119,11 +129,11 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
     switch (which) {
         case eigen_which::largest_magnitude:
             std::sort(order.begin(), order.end(),
-                      [&](size_type a2, size_type b2){ return std::abs(mu(a2)) > std::abs(mu(b2)); });
+                      [&](size_type a2, size_type b2){ return abs(mu(a2)) > abs(mu(b2)); });
             break;
         case eigen_which::smallest_magnitude:
             std::sort(order.begin(), order.end(),
-                      [&](size_type a2, size_type b2){ return std::abs(mu(a2)) < std::abs(mu(b2)); });
+                      [&](size_type a2, size_type b2){ return abs(mu(a2)) < abs(mu(b2)); });
             break;
         case eigen_which::largest_algebraic:
             std::sort(order.begin(), order.end(),
@@ -149,8 +159,8 @@ ritz_pairs<std::complex<T>> arnoldi(const LinearOp& A, vec::dense_vector<T> v0,
             out.vectors(i, w2) = acc;
         }
         // Ritz residual estimate: |h_next| * |last component of S(:,c)|.
-        T rest = abs(h_next) * std::abs(S(m - 1, c));
-        if (rest > tol * (std::abs(mu(c)) + tol)) all_conv = false;
+        T rest = abs(h_next) * abs(S(m - 1, c));
+        if (rest > tol * (abs(mu(c)) + tol)) all_conv = false;
     }
     out.converged = all_conv;
     return out;

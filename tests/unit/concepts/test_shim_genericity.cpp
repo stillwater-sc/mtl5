@@ -444,6 +444,34 @@ TEMPLATE_TEST_CASE("genericity: sparse Cholesky, QR, LU refinement and shift-inv
     }
 }
 
+TEMPLATE_TEST_CASE("genericity: lanczos and power_iteration", "[generic][eigen]", MTL5_SHIMS) {
+    // ADL sqrt and abs (#867). dot and two_norm reduce native types their own
+    // way, so the comparison has a tolerance.
+    using S = TestType;
+    using N = typename S::native_type;
+    using P = pair_data<S>;
+    const std::size_t n = 12;
+    const auto A = P::laplacian(n);
+    const auto As = P::shim(A);
+    vec::dense_vector<N> v0(n);
+    for (std::size_t i = 0; i < n; ++i) v0(i) = N(1) + N(i % 3);
+    const auto v0s = P::shim(v0);
+    const double tol = std::is_same_v<N, float> ? 1e-3 : 1e-9;
+    {
+        const auto r = itl::lanczos(A, v0, 2, itl::eigen_which::largest_algebraic, n);
+        const auto rs = itl::lanczos(As, v0s, 2, itl::eigen_which::largest_algebraic, n);
+        REQUIRE(rs.values.size() == r.values.size());
+        for (std::size_t i = 0; i < r.values.size(); ++i)
+            REQUIRE(std::abs(double(rs.values(i)) - double(r.values(i))) <= tol * std::abs(double(r.values(i))));
+    }
+    {
+        const auto r = itl::power_iteration(A, v0, 5000, N(1e-6));
+        const auto rs = itl::power_iteration(As, v0s, 5000, S(1e-6));
+        REQUIRE(r.converged == rs.converged);
+        REQUIRE(std::abs(double(rs.value) - double(r.value)) <= tol * std::abs(double(r.value)));
+    }
+}
+
 TEMPLATE_TEST_CASE("genericity: project_onto and embed_into", "[generic][projection]", MTL5_SHIMS) {
     using S = TestType;
     using N = typename S::native_type;

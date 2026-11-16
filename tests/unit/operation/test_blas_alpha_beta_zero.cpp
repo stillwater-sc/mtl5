@@ -195,21 +195,34 @@ void check_trmm() {
             CAPTURE(upper, unit);
             REQUIRE(all_equal(B, 3, 2, 0.0));
         }
-    // alpha != 0 is unchanged: upper triangular A times B.
-    M A = filled<M>(3, 3, nan_v);          // the other triangle is not read
-    A(0, 0) = 1; A(0, 1) = 2; A(0, 2) = 3;
-    A(1, 1) = 4; A(1, 2) = 5;
-    A(2, 2) = 6;
-    M B = make_a<M>();
-    const M B0 = B;
-    trmm<Acc>(1.0, A, B, true, false);
-    for (std::size_t c = 0; c < 2; ++c)
-        for (std::size_t i = 0; i < 3; ++i) {
-            double ref = 0;
-            for (std::size_t j = i; j < 3; ++j) ref += A(i, j) * B0(j, c);
-            CAPTURE(i, c);
-            REQUIRE(B(i, c) == ref);
-        }
+    // alpha != 0 is unchanged: alpha * op(A) * B for each triangle, unit and
+    // non-unit diagonal, and alpha = 1 and 2.5 (only upper, non-unit, alpha = 1
+    // was checked; issue 867). The other triangle, and a unit diagonal, are
+    // NaN: neither may be read.
+    for (bool upper : {true, false})
+        for (bool unit : {true, false})
+            for (double alpha : {1.0, 2.5}) {
+                CAPTURE(upper, unit, alpha);
+                M A = filled<M>(3, 3, nan_v);
+                double v = 1.0;
+                for (std::size_t i = 0; i < 3; ++i)
+                    for (std::size_t j = 0; j < 3; ++j)
+                        if ((upper ? j > i : j < i) || (i == j && !unit)) A(i, j) = v++;
+                M B = make_a<M>();
+                const M B0 = B;
+                trmm<Acc>(alpha, A, B, upper, unit);
+                for (std::size_t c = 0; c < 2; ++c)
+                    for (std::size_t i = 0; i < 3; ++i) {
+                        double ref = 0;
+                        for (std::size_t j = 0; j < 3; ++j) {
+                            if (upper ? j < i : j > i) continue;
+                            const double aij = (i == j && unit) ? 1.0 : A(i, j);
+                            ref += aij * B0(j, c);
+                        }
+                        CAPTURE(i, c);
+                        REQUIRE(B(i, c) == alpha * ref);
+                    }
+            }
 }
 
 } // namespace

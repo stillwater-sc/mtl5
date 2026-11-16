@@ -83,7 +83,18 @@ public:
     }
 
     /// V-cycle starting from the given level.
-    void vcycle(vector_type& x, const vector_type& b, int level = 0) {
+    // The smoothers hold references into levels_: a copy's would point into
+    // the source, and dangle once it is gone (issue 867). A move keeps the
+    // vector's buffer, and so the references.
+    multigrid(const multigrid&) = delete;
+    multigrid& operator=(const multigrid&) = delete;
+    multigrid(multigrid&&) = default;
+    multigrid& operator=(multigrid&&) = default;
+
+    // const: the cycles read the hierarchy and call the stored smoothers and
+    // coarse solver, which std::function calls through a const object.
+    // solve() const reached vcycle through a const_cast (issue 867).
+    void vcycle(vector_type& x, const vector_type& b, int level = 0) const {
         size_type l = static_cast<size_type>(level);
 
         // Base case: coarsest level -- solve directly
@@ -119,7 +130,7 @@ public:
     }
 
     /// W-cycle: like V-cycle but recurses twice at each level.
-    void wcycle(vector_type& x, const vector_type& b, int level = 0) {
+    void wcycle(vector_type& x, const vector_type& b, int level = 0) const {
         size_type l = static_cast<size_type>(level);
 
         if (l == n_levels_ - 1) {
@@ -154,7 +165,7 @@ public:
     }
 
     /// Apply V-cycle as operator() for use as a stand-alone solver iteration.
-    void operator()(vector_type& x, const vector_type& b) {
+    void operator()(vector_type& x, const vector_type& b) const {
         vcycle(x, b, 0);
     }
 
@@ -166,7 +177,7 @@ public:
         vector_type bb(n);
         for (size_type i = 0; i < n; ++i)
             bb(i) = b(i);
-        const_cast<multigrid*>(this)->vcycle(xx, bb, 0);
+        vcycle(xx, bb, 0);
         for (size_type i = 0; i < n; ++i)
             x(i) = xx(i);
     }
