@@ -55,16 +55,23 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     vec::dense_vector<value_type> w(n);
 
     // ||v||_{M^{-1}} = sqrt(v^T z), z = M^{-1} v; real and positive for an SPD
-    // (HPD) M, which MINRES requires. Formed as sqrt(a) sqrt(|(v/a)^T z|) with
-    // a = ||v||_2 (two_norm scales), so v^T z cannot overflow or underflow for
-    // an operator of 2^+-600 (#671); `tmp` holds v/a. For M = I it is a.
+    // (HPD) M, which MINRES requires. Formed as sqrt(a) sqrt(c) sqrt(|(v/a)^T (z/c)|)
+    // with a = ||v||_2 (two_norm scales) and c = max |z_i|, so v^T z cannot
+    // overflow or underflow for an operator of 2^+-600 (#671), nor when z's
+    // entries are finite but its 2-norm is not (z = 2^1023 ones with n = 16).
+    // `tmp` holds v/a and `zs` z/c. For M = I it is a.
+    vec::dense_vector<value_type> zs(n);
     auto m_norm = [&](const vec::dense_vector<value_type>& vv, const vec::dense_vector<value_type>& zz,
                       vec::dense_vector<value_type>& tmp) -> value_type {
         const auto a = mtl::two_norm(vv);
         if (a == decltype(a)(0)) return zero;
-        for (size_type i = 0; i < n; ++i)
+        const auto c = mtl::infinity_norm(zz);
+        if (c == decltype(c)(0)) return zero;
+        for (size_type i = 0; i < n; ++i) {
             tmp(i) = vv(i) / a;
-        return value_type(sqrt(a) * sqrt(abs(mtl::dot<Accumulator, value_type>(tmp, zz))));
+            zs(i)  = zz(i) / c;
+        }
+        return value_type(sqrt(a) * sqrt(c) * sqrt(abs(mtl::dot<Accumulator, value_type>(tmp, zs))));
     };
 
     // Initial residual: r = b - A*x

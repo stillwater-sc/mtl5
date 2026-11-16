@@ -411,3 +411,22 @@ TEST_CASE("minres with a varying diagonal preconditioner", "[itl][minres][866]")
     REQUIRE(itl::minres(A, x, b, M, iter) == 0);
     CHECK(true_residual(A, x, b) < 1e-10 * norm(b));
 }
+
+TEST_CASE("minres when ||M^{-1} r||_2 overflows but its entries do not", "[itl][minres][866]") {
+    // b = 2^1016 ones, M = 2^-7 I, n = 16: z = M^{-1} b = 2^1023 ones is
+    // finite, but (b/||b||)^T z = 16 * 2^-2 * 2^1023 = 2^1025 overflowed, so
+    // beta was inf and the first step 0 * inf = NaN. Scaling z by max|z_i|
+    // keeps beta = ||b||_{M^{-1}} = 2^1021.5 finite.
+    // (A preconditioned operator whose own norm is near overflow, such as
+    // M = 2^-1022 I, cannot be solved in double at all: the next solve
+    // multiplies the rounding of v_new by 2^1022.)
+    const std::size_t n = 16;
+    const csr A = scaled_identity(n, 1.0);
+    const double big = std::ldexp(1.0, 1016);
+    const vec_t b(n, big);
+    const itl::pc::diagonal<csr> M(scaled_identity(n, std::ldexp(1.0, -7)));
+    vec_t x(n, 0.0);
+    iter_t iter(b, 50, 1e-12);
+    REQUIRE(itl::minres(A, x, b, M, iter) == 0);
+    for (std::size_t i = 0; i < n; ++i) CHECK(std::abs(x(i) / big - 1.0) < 1e-12);
+}
