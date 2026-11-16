@@ -14,8 +14,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstddef>
+#include <stdexcept>
 #include <vector>
+
+#include <mtl/generators/laplacian.hpp>
 
 using namespace mtl;
 
@@ -200,6 +204,285 @@ TEST_CASE("IDR(s): float solves the unsymmetric system", "[itl][krylov][idr_s][7
             r  += (b(i) - Ax(i)) * (b(i) - Ax(i));
             nb += b(i) * b(i);
         }
-        CHECK(std::sqrt(r / nb) <= 1e-3f);   // float: the updated residual drifts from b - A x
+        // The true residual decides convergence (issue 874), so it is within
+        // the tolerance; 2x for the test's own float residual.
+        CHECK(std::sqrt(r / nb) <= 2e-4f);
+    }
+}
+
+// -- The biorthogonal IDR(s) (issue 874) ---------------------------------------
+
+namespace {
+
+/// The 5-point convection-diffusion operator on a k x k grid with
+/// convection eps (tests/regression/itl/test_krylov_family.cpp); eps = 0.9
+/// is strongly nonnormal.
+csr convdiff(std::size_t k, double eps) {
+    return stencil(k, -1.0 - eps, -1.0 + eps);
+}
+
+/// sigma I + S, S the 2D central-difference convection operator (skew), on
+/// a k x k grid: eigenvalues sigma + i y.
+csr shifted_skew(std::size_t k, double sigma) {
+    csr A(k * k, k * k);
+    mat::inserter<csr> ins(A);
+    for (std::size_t r = 0; r < k; ++r)
+        for (std::size_t c = 0; c < k; ++c) {
+            const std::size_t i = r * k + c;
+            ins[i][i] << sigma;
+            if (c > 0)     ins[i][i - 1] << -1.0;
+            if (c + 1 < k) ins[i][i + 1] << 1.0;
+            if (r > 0)     ins[i][i - k] << -1.0;
+            if (r + 1 < k) ins[i][i + k] << 1.0;
+        }
+    return A;
+}
+
+double true_relres(const csr& A, const vec_t& x, const vec_t& b) {
+    vec_t Ax = A * x;
+    double r = 0, nb = 0;
+    for (std::size_t i = 0; i < b.size(); ++i) {
+        r  += (b(i) - Ax(i)) * (b(i) - Ax(i));
+        nb += b(i) * b(i);
+    }
+    return std::sqrt(r / nb);
+}
+
+struct idrs_outcome {
+    int err;
+    int iterations;
+    double true_relres;
+};
+
+template <typename PC>
+idrs_outcome solve_idrs(const csr& A, const PC& M, double rtol, const itl::idrs_options& opt, int max_iter = 20000) {
+    const std::size_t n = A.num_rows();
+    const vec_t b(n, 1.0);
+    vec_t x(n, 0.0);
+    itl::basic_iteration<double> iter(b, max_iter, rtol);
+    const int err = itl::idr_s(A, x, b, M, iter, opt);
+    return {err, iter.iterations(), true_relres(A, x, b)};
+}
+
+/// A controller that records each residual the solver tests.
+struct recording : itl::basic_iteration<double> {
+    using basic_iteration::basic_iteration;
+    std::vector<double> seen;
+    template <typename V>
+    bool finished(const V& r) { return finished(mtl::two_norm(r)); }
+    bool finished(double r) {
+        seen.push_back(r);
+        return basic_iteration::finished(r);
+    }
+};
+
+} // namespace
+
+TEST_CASE("IDR(s): every s converges to the true tolerance, also at 1e-13 (issue 874)", "[itl][krylov][idr_s][874]") {
+    // The prototype IDR(s) on convection-diffusion with ILU(0) at 1e-13
+    // (main at d3ef7b4): s = 2 took 729 iterations, s = 8 took 1612, and the
+    // true residual was 5-35x the reported one (IDR(4): 1.3e-12).
+    const csr A = convdiff(100, 0.3);
+    const itl::pc::ilu_0<double> M(A);
+    for (const double rtol : {1e-10, 1e-13}) {
+        for (const std::size_t s : {1u, 2u, 4u, 8u, 16u}) {
+            itl::idrs_options opt;
+            opt.s = s;
+            const auto o = solve_idrs(A, M, rtol, opt);
+            INFO("rtol " << rtol << ", s = " << s << ": " << o.iterations << " iterations, true " << o.true_relres);
+            CHECK(o.err == 0);
+            CHECK(o.true_relres <= 1.5 * rtol);
+            CHECK(o.iterations <= 150);
+        }
+    }
+}
+
+TEST_CASE("IDR(s): the true residual decides on nonnormal and Poisson systems (issue 874)", "[itl][krylov][idr_s][874]") {
+    SECTION("convection-diffusion eps = 0.9, no PC") {
+        // The recursive residual drifted: IDR(16) stopped at an updated 9e-11
+        // whose true value was 2.5e-9 before residual replacement.
+        const csr A = convdiff(100, 0.9);
+        const itl::pc::identity<csr> M(A);
+        for (const std::size_t s : {1u, 4u, 16u}) {
+            itl::idrs_options opt;
+            opt.s = s;
+            const auto o = solve_idrs(A, M, 1e-10, opt);
+            INFO("s = " << s << ": " << o.iterations << " iterations, true " << o.true_relres);
+            CHECK(o.err == 0);
+            CHECK(o.true_relres <= 1.5e-10);
+            CHECK(o.iterations <= 500);
+        }
+    }
+    SECTION("2D Laplacian, no PC") {
+        // The prototype's IDR(16) returned converged at a true 3.0e-10 for
+        // rtol 1e-10.
+        const csr A = generators::laplacian_2d<double>(100, 100);
+        const itl::pc::identity<csr> M(A);
+        itl::idrs_options opt;
+        opt.s = 16;
+        const auto o = solve_idrs(A, M, 1e-10, opt);
+        CHECK(o.err == 0);
+        CHECK(o.true_relres <= 1.5e-10);
+    }
+}
+
+TEST_CASE("IDR(s): a near-breakdown restarts instead of failing (issue 874)", "[itl][krylov][idr_s][874]") {
+    // On sigma I + S, IDR(1) and IDR(2) met P^H G = 0 to rounding (2e-17
+    // against ||G|| = 1) after 102 and 219 iterations; BiCGSTAB breaks down
+    // there too. Restarting from x, they converge.
+    const csr A = shifted_skew(60, 0.5);
+    const itl::pc::identity<csr> M(A);
+    for (const std::size_t s : {1u, 2u}) {
+        itl::idrs_options opt;
+        opt.s = s;
+        const auto o = solve_idrs(A, M, 1e-8, opt, 5000);
+        INFO("s = " << s << ": " << o.iterations << " iterations, true " << o.true_relres);
+        CHECK(o.err == 0);
+        CHECK(o.true_relres <= 1.5e-8);
+    }
+}
+
+TEST_CASE("IDR(s): breakdown codes (issue 874)", "[itl][krylov][idr_s][874]") {
+    SECTION("A = 0: P^H G = 0 at the first step, code 2") {
+        const csr A(3, 3);
+        const itl::pc::identity<csr> M(A);
+        const vec_t b(3, 1.0);
+        vec_t x(3, 0.0);
+        itl::basic_iteration<double> iter(b, 50, 1e-10);
+        CHECK(itl::idr_s(A, x, b, M, iter, 1) == 2);
+    }
+    SECTION("a skew A: t is orthogonal to r, omega = 0, code 3") {
+        // A = [[0, 1], [-1, 0]], b = e1, s = 1: after the first step r is
+        // nonzero, and t = A r is orthogonal to it.
+        csr A(2, 2);
+        {
+            mat::inserter<csr> ins(A);
+            ins[0][1] << 1.0;
+            ins[1][0] << -1.0;
+        }
+        const itl::pc::identity<csr> M(A);
+        vec_t b(2, 0.0);
+        b(0) = 1.0;
+        vec_t x(2, 0.0);
+        itl::basic_iteration<double> iter(b, 50, 1e-10);
+        CHECK(itl::idr_s(A, x, b, M, iter, 1) == 3);
+    }
+}
+
+TEST_CASE("IDR(s): options, the shadow space and reproducibility (issue 874)", "[itl][krylov][idr_s][874]") {
+    const csr A = stencil(16, -1.4, -0.6);
+    const std::size_t n = A.num_rows();
+    const itl::pc::identity<csr> M(A);
+    const vec_t b(n, 1.0);
+
+    SECTION("a seeded run is bit-reproducible; another seed takes another path") {
+        itl::idrs_options opt;
+        opt.s = 4;
+        opt.seed = 7;
+        vec_t x1(n, 0.0), x2(n, 0.0), x3(n, 0.0);
+        itl::basic_iteration<double> i1(b, 500, 1e-10), i2(b, 500, 1e-10), i3(b, 500, 1e-10);
+        REQUIRE(itl::idr_s(A, x1, b, M, i1, opt) == 0);
+        REQUIRE(itl::idr_s(A, x2, b, M, i2, opt) == 0);
+        opt.seed = 8;
+        REQUIRE(itl::idr_s(A, x3, b, M, i3, opt) == 0);
+        bool same = true, differs = false;
+        for (std::size_t i = 0; i < n; ++i) {
+            same = same && x1(i) == x2(i);
+            differs = differs || x1(i) != x3(i);
+        }
+        CHECK(same);
+        CHECK(i1.iterations() == i2.iterations());
+        CHECK(differs);
+    }
+    SECTION("a user-supplied shadow space") {
+        // Any full-rank P: here unit vectors and a ramp, orthonormalized inside.
+        std::vector<vec_t> P(3, vec_t(n, 0.0));
+        P[0](0) = 1.0;
+        P[1](n / 2) = 1.0;
+        for (std::size_t i = 0; i < n; ++i) P[2](i) = 1.0 + double(i % 5);
+        vec_t x(n, 0.0);
+        itl::basic_iteration<double> iter(b, 1000, 1e-10);
+        CHECK(itl::idr_s(A, x, b, M, iter, itl::idrs_options{}, P) == 0);
+        CHECK(true_relres(A, x, b) <= 1.5e-10);
+    }
+    SECTION("a rank-deficient or wrongly sized shadow space throws") {
+        vec_t x(n, 0.0);
+        itl::basic_iteration<double> iter(b, 100, 1e-10);
+        std::vector<vec_t> P(2, vec_t(n, 1.0));   // two equal vectors
+        CHECK_THROWS_AS(itl::idr_s(A, x, b, M, iter, itl::idrs_options{}, P), std::invalid_argument);
+        std::vector<vec_t> Q(1, vec_t(n - 1, 1.0));
+        CHECK_THROWS_AS(itl::idr_s(A, x, b, M, iter, itl::idrs_options{}, Q), std::invalid_argument);
+    }
+    SECTION("smoothing gives a monotone residual and the same accuracy") {
+        itl::idrs_options opt;
+        opt.smoothing = true;
+        vec_t x(n, 0.0);
+        recording iter(b, 1000, 1e-10);
+        REQUIRE(itl::idr_s(A, x, b, M, iter, opt) == 0);
+        CHECK(true_relres(A, x, b) <= 1.5e-10);
+        // Up to the final true-residual test, each smoothed residual is at
+        // most the one before it.
+        REQUIRE(iter.seen.size() >= 3);
+        for (std::size_t k = 1; k + 1 < iter.seen.size(); ++k) CHECK(iter.seen[k] <= iter.seen[k - 1] * (1 + 1e-12));
+    }
+    SECTION("kappa = 0.7, and replacement off, still converge") {
+        itl::idrs_options opt;
+        opt.kappa = 0.7;
+        opt.residual_replacement = false;
+        vec_t x(n, 0.0);
+        itl::basic_iteration<double> iter(b, 1000, 1e-10);
+        CHECK(itl::idr_s(A, x, b, M, iter, opt) == 0);
+        CHECK(true_relres(A, x, b) <= 1.5e-10);
+    }
+    SECTION("s is clamped to n; an empty system has converged") {
+        const csr B = stencil(2, -1.4, -0.6);   // n = 4
+        const vec_t c(4, 1.0);
+        vec_t y(4, 0.0);
+        itl::basic_iteration<double> iter(c, 100, 1e-12);
+        itl::idrs_options opt;
+        opt.s = 16;
+        CHECK(itl::idr_s(B, y, c, itl::pc::identity<csr>(B), iter, opt) == 0);
+        const csr E(0, 0);
+        const vec_t e(0);
+        vec_t z(0);
+        itl::basic_iteration<double> it0(1.0, 10, 1e-10);
+        CHECK(itl::idr_s(E, z, e, itl::pc::identity<csr>(E), it0, 4) == 0);
+    }
+}
+
+TEST_CASE("IDR(s): a complex nonsymmetric system, with a complex shadow space (issue 874)", "[itl][krylov][idr_s][874]") {
+    using C = std::complex<double>;
+    using ccsr = mat::compressed2D<C>;
+    using cvec = vec::dense_vector<C>;
+    const std::size_t g = 12, n = g * g;
+    ccsr A(n, n);
+    {
+        // convection-diffusion plus an imaginary shift, 4 + 0.5i on the diagonal
+        mat::inserter<ccsr> ins(A);
+        for (std::size_t r = 0; r < g; ++r)
+            for (std::size_t c = 0; c < g; ++c) {
+                const std::size_t i = r * g + c;
+                ins[i][i] << C(4.0, 0.5);
+                if (c > 0)     ins[i][i - 1] << C(-1.3, 0.0);
+                if (c + 1 < g) ins[i][i + 1] << C(-0.7, 0.0);
+                if (r > 0)     ins[i][i - g] << C(-1.3, 0.0);
+                if (r + 1 < g) ins[i][i + g] << C(-0.7, 0.0);
+            }
+    }
+    cvec b(n), x(n, C(0.0, 0.0));
+    for (std::size_t i = 0; i < n; ++i) b(i) = C(1.0 + double(i % 3), double(i % 2));
+    const itl::pc::identity<ccsr> M(A);
+    for (const std::size_t s : {1u, 4u}) {
+        for (std::size_t i = 0; i < n; ++i) x(i) = C(0.0, 0.0);
+        itl::basic_iteration<double> iter(b, 500, 1e-10);
+        INFO("s = " << s);
+        REQUIRE(itl::idr_s(A, x, b, M, iter, s) == 0);
+        cvec Ax = A * x;
+        double r = 0, nb = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            r  += std::norm(b(i) - Ax(i));
+            nb += std::norm(b(i));
+        }
+        CHECK(std::sqrt(r / nb) <= 1.5e-10);
     }
 }

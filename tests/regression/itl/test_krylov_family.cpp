@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <iomanip>
 #include <iostream>
+#include <string>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -65,6 +66,22 @@ void report(const char* solver, const char* pc, const char* matrix, std::size_t 
               << std::endl;
 }
 
+/// Solve with `solve(A, x, b, pc, iter)` from x = 0 at `rtol` within
+/// `max_iter`; require convergence, at most `max_iter` iterations, and a
+/// true residual below `bound`.
+template <typename Solve, typename PC>
+void run_at(const char* name, const char* pcname, const char* matrix, const csr& A, const PC& pc,
+            Solve solve, int max_iter, double rtol, double bound) {
+    const std::size_t n = A.num_rows();
+    vec_t b(n, 1.0), x(n, 0.0);
+    itl::basic_iteration<double> iter(b, max_iter, rtol);
+    const int err = solve(A, x, b, pc, iter);
+    const double rr = true_relres(A, x, b);
+    report(name, pcname, matrix, n, iter.iterations(), rr);
+    CHECK(err == 0);
+    CHECK(rr < bound);
+}
+
 /// Solve with `solve(A, x, b, pc, iter)` from x = 0 at rtol 1e-10; require
 /// convergence and a true residual below `bound` (1e-8 unless stated).
 template <typename Solve, typename PC>
@@ -114,6 +131,28 @@ TEST_CASE("Krylov family regression: strongly nonnormal convection-diffusion, no
         [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::idr_s(M, x, b, P, it, 4); }, 5000);
     run("GMRES(30)", "none", "ConvDiff-0.9", A, pc,
         [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::gmres(M, x, b, P, it, 30); }, 5000);
+}
+
+TEST_CASE("Krylov family regression: IDR(s) across s at tight tolerances", "[regression][itl][krylov]") {
+    // The prototype IDR(s) took 729 (s = 2) and 1612 (s = 8) iterations at
+    // rtol 1e-13 here, and stopped at true residuals 5-35x the tolerance; on
+    // the 200^2 grid s = 2, 4, 8 ran to 20000 iterations (issue 874).
+    const csr A = convdiff_2d(200);   // n = 40000
+    const itl::pc::ilu_0<double> pc(A);
+    for (const std::size_t s : {1u, 2u, 4u, 8u, 16u}) {
+        const std::string name = "IDR(" + std::to_string(s) + ")";
+        run_at(name.c_str(), "ILU(0)", "ConvDiff-2D", A, pc,
+               [s](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::idr_s(M, x, b, P, it, s); },
+               400, 1e-13, 1.5e-13);
+    }
+    const csr B = convdiff_2d(100, 0.9);
+    const itl::pc::identity<csr> none(B);
+    for (const std::size_t s : {1u, 2u, 4u, 8u}) {
+        const std::string name = "IDR(" + std::to_string(s) + ")";
+        run_at(name.c_str(), "none", "ConvDiff-0.9", B, none,
+               [s](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::idr_s(M, x, b, P, it, s); },
+               800, 1e-13, 1.5e-13);
+    }
 }
 
 TEST_CASE("Krylov family regression: 2D Laplacian, Jacobi PC", "[regression][itl][krylov]") {

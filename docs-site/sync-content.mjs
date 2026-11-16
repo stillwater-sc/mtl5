@@ -77,6 +77,7 @@ const FILE_MAP = {
   'algorithms/mixed-precision-kernels.md':      'algorithms/mixed-precision-kernels.md',
   'algorithms/measuring-solver-accuracy.md':    'algorithms/measuring-solver-accuracy.md',
   'algorithms/accumulation-configurations.md':  'algorithms/accumulation-configurations.md',
+  'algorithms/idr-s.md':                        'algorithms/idr-s.md',
   'numerical/index.md':                         'numerical/index.md',
   'numerical/summation-order-in-cholesky.md':   'numerical/summation-order-in-cholesky.md',
   'numerical/householder-reflector-forms.md':   'numerical/householder-reflector-forms.md',

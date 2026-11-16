@@ -385,6 +385,20 @@ TEMPLATE_TEST_CASE("genericity: Krylov solvers with identity, diagonal and ILU(0
     SECTION("bicgstab") { run(bicgstab, ilu, ilu); }
     SECTION("gmres") { run(gmres, identity, identity); }
     SECTION("minres") { run(minres, identity, identity); }
+    SECTION("idr_s") {
+        // The shadow space is drawn and orthonormalized in the value type
+        // itself, so the shim takes the native path's steps (issue 874).
+        auto idrs = [](auto& M, auto& x, auto& rhs, auto& pc, auto& it) { return itl::idr_s(M, x, rhs, pc, it, 4); };
+        run(idrs, ilu, ilu);
+    }
+    SECTION("idr_s with smoothing") {
+        auto idrs = [](auto& M, auto& x, auto& rhs, auto& pc, auto& it) {
+            itl::idrs_options opt;
+            opt.smoothing = true;
+            return itl::idr_s(M, x, rhs, pc, it, opt);
+        };
+        run(idrs, identity, identity);
+    }
 }
 
 TEMPLATE_TEST_CASE("genericity: sparse Cholesky, QR, LU refinement and shift-invert", "[generic][sparse]",
