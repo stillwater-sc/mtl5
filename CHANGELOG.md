@@ -95,6 +95,19 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Thread pools: construction failure, env parsing, false sharing in `parallel_accumulate`** (issue 876, from QA sweep #783).
+  - **`thread_pool` no longer hangs when a worker can't start.** The constructor unwound with the started workers still waiting on a condition variable that was destroyed first, so `pthread_cond_destroy` blocked: `thread_pool(2000)` under `ulimit -v 400000` hung. It now stops and joins the started workers and rethrows the `std::system_error`, as `spin_pool` already did.
+  - **Signed and out-of-range env values are invalid.** `MTL5_POOL_SPIN` and `MTL5_NUM_THREADS` were read with `strtoul`, which accepts a leading `-` and wraps: `MTL5_POOL_SPIN=-1` gave the largest spin, 4294967295 iterations. Both now go through one parser that takes digits only, up to 2^32 - 1, and treats anything else as unset.
+  - **`parallel_accumulate`'s partials sit on separate cache lines.** They were contiguous, and each thread updates its own for its whole chunk. A memory-bound accumulate on an i7-12700K took 24.2 ms at 2 threads and 8.4 ms at 8 before, and takes 14.3 and 6.3 ms now.
+  - **Tests:** a new `test_pool_edges.cpp` covers:
+    - the env parsing, including "-1", "", "12x", " 12", "+12" and overflow;
+    - both pools' constructors under a lowered `RLIMIT_AS`, in a child process (Linux only, skipped under sanitizers);
+    - `team_for` and the chunked loops at n = 0, grain = 0, `max_threads` = 1 and around n = 2 grain;
+    - the n = 0 contract of `parallel_reduce` and `parallel_accumulate`;
+    - `spin_pool::instance()` and `spin()`.
+
+    `test_spin_pool_mt.cpp`'s "workers asleep" test now spins 64 iterations instead of the default, so its 3 ms gap outlasts the spin with certainty, not just likely.
+
 - **`idr_s` is the biorthogonal IDR(s), with true-residual convergence, residual replacement, breakdown restarts and options** (issue 874).
   - **The algorithm:** van Gijzen and Sonneveld's Algorithm 913 (ACM TOMS 2011) replaces the 2008 prototype. Each new direction is kept orthogonal to the shadow vectors before it, so the small system `P^H G` is lower triangular and solved by forward substitution, and the shadow space is orthonormalized. The prototype was erratic at tight tolerances. On 2D convection-diffusion with ILU(0) at 1e-13, `s = 2` took 729 iterations and `s = 8` took 1612; on a 200² grid, `s = 2`, 4 and 8 ran to 20000. The new one takes 133-160 iterations there, and is 5-20% faster per solve at 1e-8.
   - **Accuracy:** the true residual decides convergence, as in issue 873, with a restart from x when it has not converged. Residual replacement (on by default) keeps the updated residual at rounding distance from `b - A x`: IDR(16) had stopped at an updated 9e-11 whose true value was 2.5e-9.

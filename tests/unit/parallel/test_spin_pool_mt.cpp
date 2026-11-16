@@ -82,6 +82,10 @@ struct spinning_pool {
     using type = spin_pool;
     static std::unique_ptr<type> make(unsigned n) { return std::make_unique<type>(n); }
 };
+struct short_spin_pool {   // spin 64: a few microseconds, far below a 3 ms gap
+    using type = spin_pool;
+    static std::unique_ptr<type> make(unsigned n) { return std::make_unique<type>(n, 64u); }
+};
 struct sleeping_pool {   // spin 0: every worker and every join sleeps at once
     using type = spin_pool;
     static std::unique_ptr<type> make(unsigned n) { return std::make_unique<type>(n, 0u); }
@@ -259,9 +263,11 @@ TEMPLATE_TEST_CASE("spin_pool: the chunked loops partition as thread_pool's do",
 }
 
 TEMPLATE_TEST_CASE("spin_pool: regions spaced past the spin wake sleeping workers",
-                   "[parallel][spin_pool]", spinning_pool, sleeping_pool) {
+                   "[parallel][spin_pool]", short_spin_pool, sleeping_pool) {
     // A gap longer than any spin, so every worker has gone to sleep when the
-    // next region is published.
+    // next region is published. The default spin (4096 iterations, with a
+    // yield every 64) made that likely, not certain: a 64-iteration spin is
+    // over in microseconds, and spin 0 sleeps at once (issue 876).
     auto pool = TestType::make(4);
     for (int rep = 0; rep < 10; ++rep) {
         std::this_thread::sleep_for(std::chrono::milliseconds(3));
