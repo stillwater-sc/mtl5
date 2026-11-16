@@ -195,11 +195,14 @@ TEST_CASE("signum on unsigned element types (issue 887)", "[operation][signum][8
 }
 
 TEST_CASE("condition_number of a singular matrix (issue 887)", "[operation][spectral][887]") {
-    const mat::dense2D<double> Z = {{1, 2}, {2, 4}};   // rank 1
+    // diag(1, 0): an exactly zero singular value in every SVD, LAPACK's too
+    // (a rank-1 [[1,2],[2,4]] gives sigma_min ~ 1e-16 there, and a finite
+    // condition number).
+    const mat::dense2D<double> Z = {{1, 0}, {0, 0}};
     CHECK(condition_number(Z) == inf);
     // Without infinity, numeric_limits::infinity() is 0, the opposite of
     // infinite: the largest finite value now.
-    const mat::dense2D<no_inf> N = {{no_inf(1), no_inf(2)}, {no_inf(2), no_inf(4)}};
+    const mat::dense2D<no_inf> N = {{no_inf(1), no_inf(0)}, {no_inf(0), no_inf(0)}};
     CHECK(double(condition_number(N)) == double(std::numeric_limits<no_inf>::max()));
 }
 
