@@ -267,6 +267,13 @@ target_compile_definitions(bench_interleave_dispatch_runtime PRIVATE MTL5_INTERL
 set_target_properties(bench_interleave_dispatch_runtime PROPERTIES FOLDER "Benchmarks")
 set_target_properties(bench_interleave_rows PROPERTIES FOLDER "Benchmarks")
 
+# The column sweep against the row kernel, by shape (#884): times both on a
+# column-major A for square, short-wide and tall shapes and prints CSV with
+# the ratio, to find where the sweep stops paying.
+add_executable(bench_column_sweep bench_column_sweep.cpp)
+target_link_libraries(bench_column_sweep PRIVATE MTL5::mtl5)
+set_target_properties(bench_column_sweep PROPERTIES FOLDER "Benchmarks")
+
 # Future: individual focused benchmarks can be added here
 # add_executable(bench_gemm bench_gemm.cpp)
 # target_link_libraries(bench_gemm PRIVATE MTL5::mtl5)

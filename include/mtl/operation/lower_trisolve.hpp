@@ -90,7 +90,10 @@ void lower_trisolve_rows(const M& L, VecX& x, const VecB& b, bool unit_diag,
 /// same expressions as the one-row loop, so x is bit-identical to it. The
 /// in-place overload passes x as b: b(j) is read when row j is solved, before
 /// anything writes x(j).
-template <std::size_t S, typename M, typename VecX, typename VecB>
+///
+/// The solved columns j < r0 go C at a time (#884, see
+/// column_sweep_columns); C = 1 is the sweep as #777 wrote it.
+template <std::size_t S, std::size_t C = column_sweep_columns, typename M, typename VecX, typename VecB>
 void lower_trisolve_column_sweep(const M& L, VecX& x, const VecB& b, bool unit_diag) {
     static_assert(S >= 1);
     using value_type = typename VecX::value_type;
@@ -101,11 +104,9 @@ void lower_trisolve_column_sweep(const M& L, VecX& x, const VecB& b, bool unit_d
     for (std::size_t r0 = 0; r0 < n; r0 += S) {
         const std::size_t r1 = std::min(n, r0 + S);
         for (std::size_t l = 0; l < r1 - r0; ++l) s[l] = math::zero<value_type>();
-        for (std::size_t j = 0; j < r0; ++j) {
-            const auto& xj = x(static_cast<size_type>(j));
-            const auto* col = a + j * n;
-            for (std::size_t i = r0; i < r1; ++i) s[i - r0] += col[i] * xj;
-        }
+        detail::sweep_columns<C>(s, a, n, r0, r1 - r0, 0, r0,
+            [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); },
+            [](const value_type& t, const auto& lij, const auto& xj) -> value_type { return t + lij * xj; });
         for (std::size_t j = r0; j < r1; ++j) {
             const auto jj = static_cast<size_type>(j);
             if (unit_diag) x(jj) = b(jj) - s[j - r0];

@@ -83,7 +83,10 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
 /// A, S rows per strip (#777; see detail/column_sweep.hpp). Row r sums
 /// generic_fma<Result>(acc, A(r, c), x(c)) for c ascending from zero, as the
 /// one-row loop does, so y is bit-identical to it.
-template <std::size_t S, typename M, typename VIn, typename VOut>
+///
+/// C columns per pass (#884, see column_sweep_columns); C = 1 is the sweep as
+/// #777 wrote it, kept for bench_column_sweep. The bits are the same for any C.
+template <std::size_t S, std::size_t C = column_sweep_columns, typename M, typename VIn, typename VOut>
 void mult_rows_column_sweep(const M& A, const VIn& x, VOut& y,
                             std::size_t rb, std::size_t re) {
     static_assert(S >= 1);
@@ -100,11 +103,9 @@ void mult_rows_column_sweep(const M& A, const VIn& x, VOut& y,
     for (std::size_t r0 = rb; r0 < re; r0 += S) {
         const std::size_t rr = std::min(S, re - r0);
         for (std::size_t l = 0; l < rr; ++l) acc[l] = math::zero<Result>();
-        for (size_type c = 0; c < ncols; ++c) {
-            const auto& xc = x(c);
-            const auto* col = a + static_cast<std::size_t>(c) * m + r0;
-            for (std::size_t l = 0; l < rr; ++l) acc[l] = generic_fma<Result>(acc[l], col[l], xc);
-        }
+        sweep_columns<C>(acc, a, m, r0, rr, 0, static_cast<std::size_t>(ncols),
+                         [&](std::size_t c) -> decltype(auto) { return x(static_cast<size_type>(c)); },
+                         [](const Result& t, const auto& aij, const auto& xc) { return generic_fma<Result>(t, aij, xc); });
         for (std::size_t l = 0; l < rr; ++l) y(static_cast<y_size>(r0 + l)) = acc[l];
     }
 }

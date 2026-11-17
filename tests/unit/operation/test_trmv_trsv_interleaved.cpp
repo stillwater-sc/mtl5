@@ -490,13 +490,14 @@ TEST_CASE("keep_scalar applies to row-major float at W >= 4 under GCC only", "[o
 
 namespace {
 
-/// The column sweeps with S rows per strip against the one-row loops.
-template <std::size_t S, typename M>
+/// The column sweeps with S rows per strip and C columns per pass (#884)
+/// against the one-row loops.
+template <std::size_t S, typename M, std::size_t C = detail::column_sweep_columns>
 void check_strip() {
     using T = typename M::value_type;
     using V = vec::dense_vector<T>;
     for (std::size_t n : sizes) {
-        INFO("S = " << S << ", n = " << n);
+        INFO("S = " << S << ", C = " << C << ", n = " << n);
         const M A = triangular<M>(n, 21 + n);
         const V x0 = filled<T>(n, 22 + n);
         for (bool unit : {false, true}) {
@@ -504,26 +505,26 @@ void check_strip() {
             for (bool upper : {false, true}) {
                 INFO((upper ? "upper" : "lower"));
                 V x = x0, y = x0;
-                detail::trmv_column_sweep<S>(A, x, upper, unit);
+                detail::trmv_column_sweep<S, C>(A, x, upper, unit);
                 old_trmv(A, y, upper, unit);
                 require_identical(x, y);
             }
             V x(n), y(n);
-            detail::lower_trisolve_column_sweep<S>(A, x, x0, unit);
+            detail::lower_trisolve_column_sweep<S, C>(A, x, x0, unit);
             old_lower_trisolve(A, y, x0, unit);
             require_identical(x, y);
             V u = x0;
-            detail::lower_trisolve_column_sweep<S>(A, u, u, unit);
+            detail::lower_trisolve_column_sweep<S, C>(A, u, u, unit);
             require_identical(u, y);
         }
         V y(n), z(n);
         old_mult_generic(A, x0, y);
-        detail::mult_rows_column_sweep<S>(A, x0, z, 0, n);
+        detail::mult_rows_column_sweep<S, C>(A, x0, z, 0, n);
         require_identical(z, y);
         if (n >= 3) {   // a band starting and ending off a strip
             V u = y;
             for (std::size_t i = 1; i + 1 < n; ++i) u(i) = T(0);
-            detail::mult_rows_column_sweep<S>(A, x0, u, 1, n - 1);
+            detail::mult_rows_column_sweep<S, C>(A, x0, u, 1, n - 1);
             require_identical(u, y);
         }
     }
@@ -539,6 +540,18 @@ void check_strips(std::index_sequence<S...>) {
 TEMPLATE_TEST_CASE("the column sweeps are bit-identical to the one-row loops at every strip size", "[operation][777]",
                    cm<float>, cm<double>, cm<long double>) {
     check_strips<TestType>(std::index_sequence<1, 2, 3, 5, 8, 16>{});
+}
+
+TEMPLATE_TEST_CASE("the column sweeps are bit-identical at every number of columns per pass", "[operation][884]",
+                   cm<float>, cm<double>, cm<long double>) {
+    // C columns per pass, then 4, then 1 for the rest: every accumulator takes
+    // the same terms in the same order (#884). C = 1 is #777's sweep.
+    check_strip<5, TestType, 1>();
+    check_strip<5, TestType, 2>();
+    check_strip<5, TestType, 3>();
+    check_strip<5, TestType, 8>();
+    check_strip<16, TestType, 8>();
+    check_strip<64, TestType, 8>();
 }
 
 TEST_CASE("the column-major mat*vec keeps wrapping integers and mixed types bit for bit", "[operation][777]") {

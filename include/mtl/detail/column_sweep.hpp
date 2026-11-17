@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <type_traits>
+#include <utility>
 
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/tag/orientation.hpp>
@@ -57,5 +58,53 @@ inline constexpr bool column_sweep_v =
 /// Rows per strip: 16 KB of accumulators, at least one.
 template <typename T>
 inline constexpr std::size_t column_strip_rows = std::max<std::size_t>(1, 16384 / sizeof(T));
+
+/// Columns per pass over a strip (#884). One column per pass loads and stores
+/// every accumulator of the strip for each column, so on a short strip the
+/// loop is bound by that traffic, not by A: a 4 x 1000 gemv ran at half the
+/// row kernel's speed. Eight columns per pass keep each accumulator in a
+/// register across eight terms, measured 1.3-2x faster at every shape on an
+/// i7-12700K, generic and -march=native.
+inline constexpr std::size_t column_sweep_columns = 8;
+
+/// Columns [cb, ce) of the column-major a (leading dimension ld) into the
+/// strip's accumulators: acc[l] = op(acc[l], a[c * ld + r0 + l], x(c)) for
+/// l < rr and c ascending. C columns per pass, then 4, then 1 for the rest.
+/// Every accumulator takes the same terms in the same order with the same
+/// expression as one column per pass, so the result is bit-identical to it
+/// (and so to the one-row loop the sweep matches).
+template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
+void sweep_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
+                   std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
+    std::size_t c = cb;
+    if constexpr (C > 1) {
+        using XV = std::remove_cvref_t<decltype(x_at(cb))>;
+        for (; ce - c >= C; c += C) {
+            const T* col[C];
+            XV xs[C];
+            for (std::size_t k = 0; k < C; ++k) {
+                col[k] = a + (c + k) * ld + r0;
+                xs[k] = x_at(c + k);
+            }
+            for (std::size_t l = 0; l < rr; ++l) {
+                Acc t = acc[l];
+                [&]<std::size_t... K>(std::index_sequence<K...>) {
+                    ((t = op(t, col[K][l], xs[K])), ...);
+                }(std::make_index_sequence<C>{});
+                acc[l] = t;
+            }
+        }
+        if constexpr (C > 4)
+            sweep_columns<4>(acc, a, ld, r0, rr, c, ce, x_at, op);
+        else
+            sweep_columns<1>(acc, a, ld, r0, rr, c, ce, x_at, op);
+    } else {
+        for (; c < ce; ++c) {
+            const auto& xc = x_at(c);
+            const T* col = a + c * ld + r0;
+            for (std::size_t l = 0; l < rr; ++l) acc[l] = op(acc[l], col[l], xc);
+        }
+    }
+}
 
 } // namespace mtl::detail
