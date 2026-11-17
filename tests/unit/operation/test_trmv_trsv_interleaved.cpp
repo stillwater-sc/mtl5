@@ -558,7 +558,7 @@ TEST_CASE("the column-sweep dispatch cutoffs (#884)", "[operation][884]") {
     // Measured on five machines (bench_column_sweep): the row kernels for the
     // smallest shapes, the sweep above them; one column per pass at 8 KB
     // between columns; MSVC keeps #777's sweep.
-    STATIC_REQUIRE(detail::column_sweep_gemv_row_kernel_rows == 4);   // #898
+    STATIC_REQUIRE(detail::column_sweep_gemv_row_kernel_rows == 2);
     STATIC_REQUIRE(detail::column_sweep_trmv_row_kernel_n == 64);      // #898
     STATIC_REQUIRE(detail::row_kernel_fixed_rows_min_columns == 16);
     STATIC_REQUIRE(detail::column_sweep_trsv_row_kernel_n == 64);

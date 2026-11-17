@@ -120,10 +120,12 @@ constexpr bool column_sweep_unrolled(std::size_t ld) {
 /// over the best of the sweep and the row kernel. #884 set gemv m <= 2 and
 /// trmv n <= 32, held there by GCC's code for the row kernels on a
 /// column-major A on x86 (1.3-3.3x slower native than generic); with that
-/// fixed (#898, row_kernel_fixed_rows_v) the same simulation gives m <= 4 and
-/// n <= 64: gemv 1.110 -> 1.098 of the best, trmv 1.046 -> 1.013, and the
-/// worst case 7.9 -> 5.6 and 2.0 -> 1.5.
-inline constexpr std::size_t column_sweep_gemv_row_kernel_rows = 4;   // gemv: m <= 4
+/// fixed (#898, row_kernel_fixed_rows_v) the same simulation gives trmv
+/// n <= 64: 1.046 -> 1.013 of the best, the worst case 2.0 -> 1.5. It also
+/// suggested gemv m <= 4, but m = 3 then ran 2x slower than in the sweep
+/// (a 2-row and a 1-row block, where the sweep takes one 3-row strip) on
+/// every build measured, so gemv stays at m <= 2.
+inline constexpr std::size_t column_sweep_gemv_row_kernel_rows = 2;   // gemv: m <= 2
 inline constexpr std::size_t column_sweep_trmv_row_kernel_n = 64;     // trmv: n <= 64
 inline constexpr std::size_t column_sweep_trsv_row_kernel_n = 64;     // forward substitution: n <= 64
 

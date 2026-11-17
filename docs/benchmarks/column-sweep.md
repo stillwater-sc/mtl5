@@ -45,8 +45,8 @@ and sum in their own order.
   Each cutoff minimized the geometric mean of the time over the best of the
   two kernels across all the builds below. Larger cutoffs ran into GCC's
   code for the row kernels on a column-major A on x86, 1.3-3.3x slower with
-  `-march=native` than generic. #898 fixed that and raised the cutoffs to
-  `gemv` m <= 4 and `trmv` n <= 64 (see the last section).
+  `-march=native` than generic. #898 fixed that and raised the `trmv`
+  cutoff to n <= 64 (see the last section).
 - **MSVC keeps #777's sweep.** Its code for the eight-column pass ran at
   0.23-0.89 of the one-column loop from 48 rows up, so under MSVC
   `column_sweep_columns` is 1. It still gets the row-kernel cutoffs.
@@ -152,15 +152,15 @@ up to 256:
 | Xeon E5-2420 v2 | g++-generic | 2.01 | 1.63 |
 | Xeon E5-2420 v2 | g++-native | 3.12 | 2.13 |
 
-With those times, the cutoff simulation over every build gives `gemv`
-m <= 4 and `trmv` n <= 64:
+With those times, the cutoff simulation over every build moves `trmv` from
+n <= 32 to n <= 64: the time over the best of the two kernels goes from
+1.046 to 1.013 in geometric mean, and the worst case from 2.0 to 1.5.
 
-| kernel | cutoff | time / best, geometric mean | worst |
-|---|---|---|---|
-| `gemv` | m <= 2 -> m <= 4 | 1.110 -> 1.098 | 7.9 -> 5.6 |
-| `trmv` | n <= 32 -> n <= 64 | 1.046 -> 1.013 | 2.0 -> 1.5 |
-
-The forward substitution's row kernel was not affected and keeps n <= 64.
+It also suggested `gemv` m <= 4 (1.110 -> 1.098). Measured, m = 3 then ran
+at half its speed in the sweep, on every build: the row kernel takes it as a
+2-row and a 1-row block, where the sweep takes one 3-row strip. So `gemv`
+keeps m <= 2. The forward substitution's row kernel was not affected and
+keeps n <= 64.
 The sessions are under `benchmarks/data/{i7-12700k,xeon-e5-2420v2}/column_sweep/`,
 the later of the two in each.
 
