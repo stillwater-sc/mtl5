@@ -133,9 +133,12 @@ void trmv_upper_rows(const M& A, VX& x, typename M::size_type i, bool unit_diag)
             ([&] {
                 for (size_type j = i0 + K + 1; j < i0 + W; ++j) acc[K] += A(i0 + K, j) * x(j);
             }(), ...);
-            if constexpr (column_sweep_v<acc_type, M>) {
-                // A contiguous column-major A: sweep_fixed_rows<W>, as in
-                // mult_rows_interleaved (#898). A row-major A keeps the loop.
+            // GCC on x86-64, a contiguous column-major A: sweep_fixed_rows<W>,
+            // as in mult_rows_interleaved (#898). Otherwise the loop below.
+            bool fixed = false;
+            if constexpr (row_kernel_fixed_rows_v<acc_type, M>)
+                fixed = static_cast<std::size_t>(n - (i0 + W)) >= row_kernel_fixed_rows_min_columns;
+            if (fixed) {
                 sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(n), static_cast<std::size_t>(i0),
                                     static_cast<std::size_t>(i0 + W), static_cast<std::size_t>(n),
                                     [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); },
@@ -169,8 +172,12 @@ void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag
         for (; ii >= W; ii -= W) {
             const size_type r0 = ii - W;
             acc_type acc[W] = {(unit_diag ? x(r0 + K) : A(r0 + K, r0 + K) * x(r0 + K))...};
-            if constexpr (column_sweep_v<acc_type, M>) {
-                // A contiguous column-major A: sweep_fixed_rows<W> (#898).
+            // GCC on x86-64, a contiguous column-major A: sweep_fixed_rows<W>
+            // (#898). Otherwise the loop below.
+            bool fixed = false;
+            if constexpr (row_kernel_fixed_rows_v<acc_type, M>)
+                fixed = static_cast<std::size_t>(r0) >= row_kernel_fixed_rows_min_columns;
+            if (fixed) {
                 sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(A.num_rows()),
                                     static_cast<std::size_t>(r0), 0, static_cast<std::size_t>(r0),
                                     [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); },

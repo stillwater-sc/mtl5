@@ -41,11 +41,12 @@ and sum in their own order.
   at 0.46-0.75 of one column per pass, as on the Xeon at 4096. The public
   calls then run #777's one-column instantiation itself.
 - **The smallest shapes take the row kernels:** `gemv` with m <= 2, `trmv`
-  with n <= 32, the forward substitution with n <= 64. Each cutoff
-  minimized the geometric mean of the time over the best of the two kernels
-  across all the builds below. Larger cutoffs run into GCC's `-O3
-  -march=native` code for the row kernels on a column-major A on x86, 2-5x
-  slower than its generic code from about 32 rows.
+  with n <= 32, the forward substitution with n <= 64, as #884 set them.
+  Each cutoff minimized the geometric mean of the time over the best of the
+  two kernels across all the builds below. Larger cutoffs ran into GCC's
+  code for the row kernels on a column-major A on x86, 1.3-3.3x slower with
+  `-march=native` than generic. #898 fixed that and raised the cutoffs to
+  `gemv` m <= 4 and `trmv` n <= 64 (see the last section).
 - **MSVC keeps #777's sweep.** Its code for the eight-column pass ran at
   0.23-0.89 of the one-column loop from 48 rows up, so under MSVC
   `column_sweep_columns` is 1. It still gets the row-kernel cutoffs.
@@ -121,6 +122,47 @@ a kernel called directly. The cases that cost more than 0.1 us:
   At these strides the public calls run #777's own one-column instantiation,
   so this is the run-to-run spread of a memory-bound loop, not a different
   kernel.
+
+## The row kernels on a column-major A under GCC (#898)
+
+The cutoffs above were held low by GCC on x86. For a column-major A it could
+vectorize the row kernels' column loop as an in-order reduction: R x 4
+columns loaded, then each row's chain rebuilt with shuffles and scalar
+merges. Which code it emitted depended on the calling context, so the same
+`mult_rows_interleaved<8>` ran 64 x 64 f64 in 0.35 us in one binary and
+2.2 us in another (i7-12700K, `-O3 -march=native`).
+
+Since #898, under GCC on x86-64, a row kernel on a contiguous column-major A
+runs each block's column loop as `sweep_fixed_rows<W>` once it has at least
+16 columns. That is the same terms in the same order, with GCC's loop
+vectorizer off for that function (`row_kernel_fixed_rows_v`). Row-major
+code is unchanged: the f64 W = 8 kernels compile to identical code before
+and after. The other compilers and the ARM boards keep the row kernel's own
+loop, which measured as fast or faster there. Through `sweep_fixed_rows`,
+`trmv` ran at 0.8-0.94 on the Jetson and the Ventuno under GCC, and at 0.83
+under MSVC.
+
+The row-kernel time, before over after, as a geometric mean over the shapes
+up to 256:
+
+| machine | build | gemv | trmv |
+|---|---|---|---|
+| i7-12700K | g++-generic | 2.01 | 1.65 |
+| i7-12700K | g++-native | 4.00 | 2.36 |
+| Xeon E5-2420 v2 | g++-generic | 2.01 | 1.63 |
+| Xeon E5-2420 v2 | g++-native | 3.12 | 2.13 |
+
+With those times, the cutoff simulation over every build gives `gemv`
+m <= 4 and `trmv` n <= 64:
+
+| kernel | cutoff | time / best, geometric mean | worst |
+|---|---|---|---|
+| `gemv` | m <= 2 -> m <= 4 | 1.110 -> 1.098 | 7.9 -> 5.6 |
+| `trmv` | n <= 32 -> n <= 64 | 1.046 -> 1.013 | 2.0 -> 1.5 |
+
+The forward substitution's row kernel was not affected and keeps n <= 64.
+The sessions are under `benchmarks/data/{i7-12700k,xeon-e5-2420v2}/column_sweep/`,
+the later of the two in each.
 
 ## Reproducing
 

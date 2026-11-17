@@ -44,7 +44,8 @@
 #include <mtl/tag/orientation.hpp>
 
 /// GCC's loop vectorizer off for one function, the SLP vectorizer on (#884,
-/// #898). In the row kernels and the fixed-row strip, the R accumulators are
+/// #898). In the fixed-row strip (and so in the row kernels on a column-major
+/// A under GCC on x86-64, row_kernel_fixed_rows_v), the R accumulators are
 /// R independent chains over the columns. GCC's SLP vectorizer packs them into
 /// registers, which is what these loops want. With AVX its loop vectorizer can
 /// instead vectorize the column loop itself, as an in-order reduction: R x 4
@@ -116,11 +117,14 @@ constexpr bool column_sweep_unrolled(std::size_t ld) {
 /// The shapes the row kernels take although A is column-major (#884): where
 /// the sweep's per-strip fixed cost isn't amortized. Measured across the five
 /// machines above, a size up to these minimized the geometric mean of the time
-/// over the best of the sweep and the row kernel. Larger cutoffs run into
-/// GCC's -O3 -march=native code for the row kernels on a column-major A on
-/// x86, 2-5x slower than its generic code from about 32 rows.
-inline constexpr std::size_t column_sweep_gemv_row_kernel_rows = 2;   // gemv: m <= 2
-inline constexpr std::size_t column_sweep_trmv_row_kernel_n = 32;     // trmv: n <= 32
+/// over the best of the sweep and the row kernel. #884 set gemv m <= 2 and
+/// trmv n <= 32, held there by GCC's code for the row kernels on a
+/// column-major A on x86 (1.3-3.3x slower native than generic); with that
+/// fixed (#898, row_kernel_fixed_rows_v) the same simulation gives m <= 4 and
+/// n <= 64: gemv 1.110 -> 1.098 of the best, trmv 1.046 -> 1.013, and the
+/// worst case 7.9 -> 5.6 and 2.0 -> 1.5.
+inline constexpr std::size_t column_sweep_gemv_row_kernel_rows = 4;   // gemv: m <= 4
+inline constexpr std::size_t column_sweep_trmv_row_kernel_n = 64;     // trmv: n <= 64
 inline constexpr std::size_t column_sweep_trsv_row_kernel_n = 64;     // forward substitution: n <= 64
 
 /// Columns [cb, ce) of the column-major a (leading dimension ld) into the
@@ -132,6 +136,28 @@ inline constexpr std::size_t column_sweep_trsv_row_kernel_n = 64;     // forward
 template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
 void sweep_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
                    std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op);
+
+/// Whether the row kernels (mult_rows_interleaved, trmv_upper_rows,
+/// trmv_lower_rows) run a block's column loop as sweep_fixed_rows<W> on a
+/// contiguous column-major A (#898): GCC on x86-64 only. There GCC's loop
+/// vectorizer could turn the loop into an in-order reduction across the
+/// columns, which on the i7-12700K and the Xeon E5-2420 v2 ran gemv 2.0-4.0x
+/// and trmv 1.6-2.4x slower than sweep_fixed_rows (geometric mean over the
+/// shapes up to 256, generic and -march=native). Elsewhere the row kernel's
+/// own loop measured as fast or faster: GCC on the Jetson and the Ventuno,
+/// Clang and MSVC lost up to 2x on trmv through sweep_fixed_rows. A row-major
+/// A always keeps its loop.
+template <typename Acc, typename M>
+inline constexpr bool row_kernel_fixed_rows_v =
+#if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__)
+    column_sweep_v<Acc, M>;
+#else
+    false;
+#endif
+
+/// ... and only over at least this many columns: below it the call costs more
+/// than the loop (2 x 2 and 4 x 4 ran at 0.46-0.83 through it).
+inline constexpr std::size_t row_kernel_fixed_rows_min_columns = 16;
 
 /// Strips of at most this many rows take sweep_fixed_rows (#884).
 inline constexpr std::size_t column_sweep_fixed_rows = 16;

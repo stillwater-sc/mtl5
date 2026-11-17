@@ -558,8 +558,9 @@ TEST_CASE("the column-sweep dispatch cutoffs (#884)", "[operation][884]") {
     // Measured on five machines (bench_column_sweep): the row kernels for the
     // smallest shapes, the sweep above them; one column per pass at 8 KB
     // between columns; MSVC keeps #777's sweep.
-    STATIC_REQUIRE(detail::column_sweep_gemv_row_kernel_rows == 2);
-    STATIC_REQUIRE(detail::column_sweep_trmv_row_kernel_n == 32);
+    STATIC_REQUIRE(detail::column_sweep_gemv_row_kernel_rows == 4);   // #898
+    STATIC_REQUIRE(detail::column_sweep_trmv_row_kernel_n == 64);      // #898
+    STATIC_REQUIRE(detail::row_kernel_fixed_rows_min_columns == 16);
     STATIC_REQUIRE(detail::column_sweep_trsv_row_kernel_n == 64);
     STATIC_REQUIRE(detail::column_sweep_unrolled_stride == 8192);
     STATIC_REQUIRE(detail::column_sweep_fixed_rows == 16);
@@ -620,8 +621,8 @@ TEMPLATE_TEST_CASE("the column-major dispatch is bit-identical on both sides of 
 #endif
     }
     // gemv on short, wide A: m on both sides of column_sweep_gemv_row_kernel_rows.
-    for (std::size_t m : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{16},
-                          std::size_t{17}}) {
+    for (std::size_t m : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{5},
+                          std::size_t{16}, std::size_t{17}}) {
         INFO("m = " << m);
         M A(m, 300);
         for (std::size_t i = 0; i < m; ++i)

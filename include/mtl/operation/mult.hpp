@@ -66,12 +66,13 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
     [&]<std::size_t... K>(std::index_sequence<K...>) {
         for (; re - r >= W; r += W) {
             Result acc[W] = {(static_cast<void>(K), math::zero<Result>())...};
-            if constexpr (column_sweep_v<Result, M>) {
-                // A contiguous column-major A: the block's column loop is
-                // sweep_fixed_rows<W>, the same terms in the same order, with
-                // GCC's loop vectorizer off. GCC could otherwise vectorize this
-                // loop across the columns as an in-order reduction, 2.6-9x
-                // slower (#898). A row-major A keeps the loop below unchanged.
+            // GCC on x86-64, a contiguous column-major A: the block's column
+            // loop is sweep_fixed_rows<W>, the same terms in the same order,
+            // with GCC's loop vectorizer off (#898; row_kernel_fixed_rows_v).
+            bool fixed = false;
+            if constexpr (row_kernel_fixed_rows_v<Result, M>)
+                fixed = static_cast<std::size_t>(ncols) >= row_kernel_fixed_rows_min_columns;
+            if (fixed) {
                 sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(A.num_rows()), r, 0,
                                     static_cast<std::size_t>(ncols),
                                     [&](std::size_t c) -> decltype(auto) { return x(static_cast<size_type>(c)); },
