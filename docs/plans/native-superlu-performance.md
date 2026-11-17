@@ -229,6 +229,67 @@ of columns at once, which turns the GEMVs into GEMMs. In order of leverage:
    symbolic pass per panel (June's step 3), and building the solve schedules
    from the supernode structure.
 
+## Step 2 of #195: panels, and relaxation measured (2026-11-17)
+
+**Relaxed supernodes, measured.** The symbolic phase's groups were never
+relaxed. `column_supernodes` builds fundamental supernodes (exact count
+nesting), so its groups average 3.7 columns on wang3, against 30.3 on
+raefsky3. SuperLU-style leaf relaxation (`relax_snode`) was implemented, with
+the zeros stored in the dense block. It widened wang3's supernodes from 2.4
+columns to 10.1 at relax = 64, with the same fill and residuals. It gave **no
+speedup**, alone or with panels (wang3 7.07 s at every relax, 5.0 s with
+panels). The column-at-a-time update reads every block it applies once per
+column, so wider blocks don't reduce the traffic. The relaxation code was
+left out of the PR.
+
+**Panels.** `supernodal_lu_numeric` takes `panel` (default 16, 1 = column at
+a time). At the start of each panel of W columns, a DFS from each panel
+column through the columns before the panel finds the pre-panel part of its
+reach. Paths in L only go to later columns, so that part is complete before
+any panel column is factored. Every supernode closed before the panel is then
+applied to all the panel columns that reach it: the TRSV per column, and the
+GEMV fused across them with an 8-row register tile held over the w terms.
+Each accumulator takes the same terms in the same order, so with contraction
+off L and U are bit-identical for every panel width (the test pins 1, 2, 7, 16
+and 64, built with `-ffp-contract=off`; under GCC's default contraction the
+two GEMV forms can fuse differently and differ in the last ulp). The
+register tile mattered: with the accumulators loaded and stored once per
+block column, the fused GEMV gained only on wang3 (1.20x).
+
+Numeric factorization against main (i7-12700K, one thread):
+
+| matrix | main | panel 16 | |
+|---|---|---|---|
+| wang3 | 7.04 s | 4.97 s | 1.42x |
+| wang4 | 6.61 s | 4.56 s | 1.45x |
+| raefsky3 | 1.81 s | 1.58 s | 1.14x |
+| add32 | 3 ms | 3 ms | 1.00x |
+
+**When panels don't pay.** On the convection-diffusion grids (small
+supernodes, short reaches) the pre-pass, a second DFS per column plus the
+panel scatter, made the numeric factorization 15-20% slower at every panel
+width. So each pre-pass compares the block entries it saves,
+sum over its supernodes of (columns - 1) * w * m, with its reach. When the
+saving is below 128 times the reach, the next 16 panels run column at a time,
+and then it probes again. The mean columns per supernode update was a worse
+signal: convdiff 256^2 has 2.62, wang3 4.83, raefsky3 9.11, and no threshold
+on it kept both. With the gate, the grids cost 3-5% (the probes), and the
+SuiteSparse gains stay.
+
+Through `bench_superlu` (`benchmarks/data/i7-12700k/superlu/20261117T221848Z/`,
+one thread, CPU 0) the supernodal LU is now 1.88-2.39x SuperLU's time on wang3,
+wang4 and raefsky3 (from 2.57-3.45x) and 1.99x on bbmat (from 2.80x), at the
+same fill. The grids read 1.70-2.88x (from 1.69-2.52x). The machine had a
+load average of 4-6 from other users during that session, and KLU, whose code
+is unchanged, ran 11% slower on the grids than in the baseline. Two pinned
+reruns gave 2.26-2.76x, about 6% over the baseline on 256^2; the isolated
+numeric runs above gave 3-5%.
+
+**Next**, from the profile with panels: the pre-panel TRSVs and the
+gathers/scatters of each panel column's rows (about a quarter of wang3), the
+per-column pivot search and L/U emission (about 10%), and the reach DFS
+(about 10%, half of it the pre-pass's).
+
 ## References
 
 - Demmel, Eisenstat, Gilbert, Li, Liu, "A Supernodal Approach to Sparse Partial

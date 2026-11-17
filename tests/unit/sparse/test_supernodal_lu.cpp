@@ -1,4 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
+
+#include <cstring>
+#include <utility>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
@@ -368,6 +371,46 @@ TEST_CASE("Supernodal LU refined solve with zero-pivot perturbation (#185)",
         REQUIRE(on.num_perturbed == 0);
         REQUIRE(on.rel_residual == off.rel_residual);
         for (std::size_t i = 0; i < n; ++i) REQUIRE(x(static_cast<int>(i)) == y(static_cast<int>(i)));
+    }
+}
+
+// #195: the panel update applies the supernodes closed before a panel to all
+// of its columns at once. Each accumulator takes the same terms in the same
+// order as the column-at-a-time update, so L and U are the same bits. This
+// target is built with -ffp-contract=off (tests/unit/CMakeLists.txt): with
+// contraction the compiler may fuse one of the two GEMV forms and not the
+// other, and the factors then differ in the last ulp.
+TEST_CASE("Supernodal LU panel update gives the column-at-a-time factors (#195)",
+          "[sparse][lu][supernodal][panel]") {
+    auto same_bits = [](const auto& a, const auto& b) {
+        if (a.factorL().values.size() != b.factorL().values.size()) return false;
+        if (a.factorU().values.size() != b.factorU().values.size()) return false;
+        if (a.factorL().row_ind != b.factorL().row_ind || a.factorU().row_ind != b.factorU().row_ind) return false;
+        auto eq = [](const std::vector<double>& x, const std::vector<double>& y) {
+            return std::memcmp(x.data(), y.data(), x.size() * sizeof(double)) == 0;
+        };
+        return eq(a.factorL().values, b.factorL().values) && eq(a.factorU().values, b.factorU().values);
+    };
+    // Wide supernodes (dense), many small ones with long reaches (convdiff),
+    // irregular (random), and a size that ends in a partial panel.
+    for (auto&& [name, A] : {std::pair{"dense_unsym(40)", dense_unsym(40)},
+                             std::pair{"convdiff(9)", convdiff(9)},
+                             std::pair{"random_unsym(150)", random_unsym(150, 0.04, 7)}}) {
+        INFO(name);
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        const auto ref = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, false, 0.0, 1);
+        for (std::size_t panel : {std::size_t{2}, std::size_t{7}, std::size_t{16}, std::size_t{64}}) {
+            INFO("panel = " << panel);
+            const auto f = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, false, 0.0, panel);
+            REQUIRE(same_bits(f, ref));
+        }
+        REQUIRE(same_bits(factorization::supernodal_lu_numeric(A, sym), ref));   // the default panel
+    }
+    SECTION("a panel outside [1, 64] is rejected") {
+        auto A = dense_unsym(4);
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        REQUIRE_THROWS_AS(factorization::supernodal_lu_numeric(A, sym, 1.0, 64, false, 0.0, 0), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::supernodal_lu_numeric(A, sym, 1.0, 64, false, 0.0, 65), std::invalid_argument);
     }
 }
 
