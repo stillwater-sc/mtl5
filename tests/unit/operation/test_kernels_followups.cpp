@@ -178,6 +178,12 @@ TEST_CASE("sparse norms and predicates are O(nnz) (issue 886)", "[operation][nor
         ins[0][7] << 1.0; ins[1][7] << -2.0; ins[2][7] << 0.5; ins[1][40000000] << 4.0;
     }
     CHECK(one_norm(V) == 4.0);
+    // Empty dense matrices return 0 before any buffer: a row-major 0 x 1e8
+    // one_norm allocated 800 MB, as did a column-major 1e8 x 0 infinity_norm.
+    CHECK(one_norm(rm(0, 100000000)) == 0.0);
+    CHECK(infinity_norm(cm(100000000, 0)) == 0.0);
+    CHECK(one_norm(cm(0, 5)) == 0.0);
+    CHECK(infinity_norm(rm(5, 0)) == 0.0);
 }
 
 TEST_CASE("structural predicates on a compressed2D agree with the dense loops (issue 886)", "[operation][properties][886]") {
@@ -325,6 +331,21 @@ TEST_CASE("symm and gemmt with C aliasing an operand (issue 886)", "[operation][
         rm E = {{1, 2}, {3, 4}};
         syr2k(1.0, E + E, S2, 0.0, E);   // 2E S2^T + S2 2E^T
         CHECK(E(1, 0) == 20.0); CHECK(E(1, 1) == 28.0);
+    }
+    {
+        // An empty output returns before an expression operand is evaluated.
+        const rm S3 = filled<rm>(3, 3);
+        rm B(3, 0), C(3, 0);
+        mult(S3 + S3, B, C);
+        CHECK(C.num_cols() == 0);
+    }
+    {
+        // trmm with an expression A keeps A's element type: a copy in B's
+        // (int) type turned 1.5 into 1 and gave 2.
+        const rm A = {{1.5}};
+        mat::dense2D<int> B = {{2}};
+        trmm(1.0, A * 1.0, B, true);
+        CHECK(B(0, 0) == 3);
     }
     {
         // trmm(0, B, B): zero-filled, without copying A first.

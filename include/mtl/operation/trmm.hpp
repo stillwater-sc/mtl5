@@ -198,15 +198,14 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
     // -- trmm(1, B, B, upper) -- is read after B overwrote it; ?trmm does not
     // allow the overlap either. A is copied first (issue 886).
     // After the alpha == 0 return, which needs no copy (issue 886).
-    if constexpr (std::is_constructible_v<MB, typename MB::size_type, typename MB::size_type>) {
-        if (traits::is_expression_v<MA> || detail::storage_overlaps(A, B)) {
-            MB Acopy(static_cast<typename MB::size_type>(m), static_cast<typename MB::size_type>(m));
-            for (size_type i = 0; i < m; ++i)
-                for (size_type j = 0; j < m; ++j)
-                    Acopy(static_cast<typename MB::size_type>(i), static_cast<typename MB::size_type>(j)) = A(i, j);
-            trmm<Accumulator>(alpha, Acopy, B, upper, unit_diag);
-            return;
-        }
+    // An expression A, or a view of one, is copied too (storage_overlaps
+    // can't see into it). The copy keeps A's element type: a copy in B's type
+    // turned a double 1.5 into an int 1 for an integer B (issue 886).
+    if (m == 0 || n == 0) return;
+    if (detail::holds_expression_v<MA> || detail::storage_overlaps(A, B)) {
+        const auto Acopy = detail::dense_copy(A);
+        trmm<Accumulator>(alpha, Acopy, B, upper, unit_diag);
+        return;
     }
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {

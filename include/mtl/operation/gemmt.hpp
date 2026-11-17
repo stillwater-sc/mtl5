@@ -407,17 +407,17 @@ void gemmt(const S& alpha_in, const MA& A, const MB& B, const S& beta_in, MC& C,
     assert(static_cast<std::size_t>(B.num_rows()) == k);
     if (n == 0)
         return;
-    // A lazy expression operand (C + C, 2 * A, ...) is evaluated once into a
-    // dense matrix first: storage_overlaps can't see the storage behind it, so
+    // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
+    // evaluated once into a dense matrix of its own element type first: storage_overlaps can't see the storage behind it, so
     // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
     // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
     // each element of the expression many times.
-    if constexpr (traits::is_expression_v<MA>) {
-        const mat::dense2D<typename MA::value_type> Am(A);
+    if constexpr (detail::holds_expression_v<MA>) {
+        const auto Am = detail::dense_copy(A);
         return gemmt<Accumulator>(alpha_in, Am, B, beta_in, C, t, fill);
     }
-    if constexpr (traits::is_expression_v<MB>) {
-        const mat::dense2D<typename MB::value_type> Bm(B);
+    if constexpr (detail::holds_expression_v<MB>) {
+        const auto Bm = detail::dense_copy(B);
         return gemmt<Accumulator>(alpha_in, A, Bm, beta_in, C, t, fill);
     }
     // A C that shares storage with A or B is formed in a copy of C (which

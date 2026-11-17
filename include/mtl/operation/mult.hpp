@@ -910,6 +910,35 @@ void mult_mat_via_temporary(MC& C, F&& compute) {
     C = t;
 }
 
+/// Whether an operand is, or views, a lazy expression: an expression type, or a
+/// view (anything with base(): trans, hermitian, the triangular and banded
+/// views) whose base is one. storage_overlaps finds no storage behind an
+/// expression, so such an operand that reads C is not seen to alias it
+/// (issue 886): auto E = C + C; gemmt(1, S, trans(E), 0, C).
+template <typename T>
+constexpr bool holds_expression() {
+    if constexpr (traits::is_expression_v<T>) {
+        return true;
+    } else if constexpr (requires(const T& t) { t.base(); }) {
+        return holds_expression<std::remove_cvref_t<decltype(std::declval<const T&>().base())>>();
+    } else {
+        return false;
+    }
+}
+template <typename T>
+inline constexpr bool holds_expression_v = holds_expression<std::remove_cvref_t<T>>();
+
+/// An owning dense copy of a matrix operand, in its own element type: what an
+/// expression operand is evaluated into before a kernel that writes C runs.
+template <typename M>
+mat::dense2D<typename M::value_type> dense_copy(const M& A) {
+    mat::dense2D<typename M::value_type> D(A.num_rows(), A.num_cols());
+    for (typename M::size_type r = 0; r < A.num_rows(); ++r)
+        for (typename M::size_type c = 0; c < A.num_cols(); ++c)
+            D(r, c) = A(r, c);
+    return D;
+}
+
 /// Whether mult can route an aliased C through mult_mat_via_temporary: C's
 /// type can be made at C's size and copy-assigned. Every matrix mult writes
 /// can (dense2D, compressed2D).
@@ -933,17 +962,20 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
-    // A lazy expression operand (C + C, 2 * A, ...) is evaluated once into a
-    // dense matrix first: storage_overlaps can't see the storage behind it, so
+    // Nothing to write: before an expression operand is evaluated (a 200000 x
+    // 200000 S + S with a 200000 x 0 C would build 320 GB, issue 886).
+    if (C.num_rows() == 0 || C.num_cols() == 0) return;
+    // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
+    // evaluated once into a dense matrix of its own element type first: storage_overlaps can't see the storage behind it, so
     // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
     // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
     // each element of the expression many times.
-    if constexpr (traits::is_expression_v<MA>) {
-        const mat::dense2D<typename MA::value_type> Am(A);
+    if constexpr (detail::holds_expression_v<MA>) {
+        const auto Am = detail::dense_copy(A);
         return mult<Accumulator>(Am, B, C);
     }
-    if constexpr (traits::is_expression_v<MB>) {
-        const mat::dense2D<typename MB::value_type> Bm(B);
+    if constexpr (detail::holds_expression_v<MB>) {
+        const auto Bm = detail::dense_copy(B);
         return mult<Accumulator>(A, Bm, C);
     }
     // Every kernel writes C while it still reads A and B, so a C that shares

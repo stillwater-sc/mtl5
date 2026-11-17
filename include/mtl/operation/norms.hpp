@@ -399,6 +399,9 @@ template <Matrix M>
 auto one_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
     auto result = math::zero<mag_t>();
+    // An empty matrix: 0, before any buffer (a row-major 0 x 1e8 one_norm
+    // allocated 800 MB, issue 886).
+    if (m.num_rows() == 0 || m.num_cols() == 0) return result;
     if constexpr (interface::is_compressed2D_v<M>) {
         const std::size_t nnz = m.ref_data().size();
         if (static_cast<std::size_t>(m.num_cols()) <= 4 * nnz + 4096) {
@@ -453,6 +456,9 @@ template <Matrix M>
 auto infinity_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
     auto result = math::zero<mag_t>();
+    // An empty matrix: 0, before any buffer (a row-major 0 x 1e8 one_norm
+    // allocated 800 MB, issue 886).
+    if (m.num_rows() == 0 || m.num_cols() == 0) return result;
     if constexpr (interface::is_compressed2D_v<M>) {
         // Row by row over the stored entries: no buffer.
         const auto& starts = m.ref_major();
