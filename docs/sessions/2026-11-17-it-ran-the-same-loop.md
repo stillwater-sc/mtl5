@@ -14,9 +14,10 @@
   Ryzen 7 8845HS, the Arduino Ventuno Q and the Xeon E5-2420 v2, plus the
   local i7-12700K.
 
-**Merged:** #895 (#894), #896 (#884).
+**Merged:** #895 (#894), #896 (#884), #899 (#898).
 
-**Filed:** #894, split out of issue 888 at the user's request.
+**Filed:** #894, split out of issue 888 at the user's request; #898, from
+this log's open item on GCC's row kernels.
 
 **Closed:** #872, #886, #887, #888.
 
@@ -118,12 +119,36 @@ only when the merge gate counted the unresolved threads:
 - `ExitCode` read `$null` without a cached handle;
 - a restore command lost its quoting.
 
+### The row kernels on a column-major A under GCC (#898, #899)
+
+The open item below turned out narrower than it was written. On a row-major
+A, GCC's native row kernels are as fast as its generic ones or faster
+(`bench_interleave_rows`, i7). The slowdown is only on a column-major A,
+1.3-3.3x, not the 2-5x this log first said.
+
+- **The cause** was the same loop vectorization #896 had found in
+  `sweep_fixed_rows`: an in-order reduction across the columns. GCC emitted
+  it depending on the calling context. The same `mult_rows_interleaved<8>`
+  ran in 0.35 us in one test program and in 2.2 us once more code was added
+  to its `main`.
+- **The fix:** under GCC on x86-64, a row kernel on a column-major A runs
+  its column loop of 16 or more columns through `sweep_fixed_rows`.
+  - `gemv` is 1.96-3.86x faster and `trmv` 1.44-2.08x, on the i7 and the
+    Xeon.
+  - The `trmv` cutoff moves to n <= 64.
+- **What stayed the same:**
+  - Row-major machine code is identical.
+  - Clang, MSVC and the ARM boards keep their loops: through the helper,
+    `trmv` lost up to 2x there.
+  - The user chose column-major only, over one attribute on the shared
+    kernels, which would have changed row-major both ways.
+- **Two wrong turns, both caught by measuring:**
+  - The simulation suggested `gemv` m <= 4, and m = 3 then halved.
+  - A run-time `if` around a call that needs `A.data()` built in the bench
+    and broke every view in the test suite.
+
 ## Open
 
 - **Clang's forward substitution at n = 96-256:** the blocked diagonal
   compiles less well there than the one-column loop. Raising the cutoff
   for Clang alone would cost GCC.
-- **GCC's `-O3 -march=native` code for the row kernels on a column-major A
-  on x86** is 2-5x slower than its generic code. The sweep now avoids it,
-  but a row-major A uses those kernels too, and that case was not measured
-  here.
