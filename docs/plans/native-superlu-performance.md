@@ -171,16 +171,21 @@ solve, timed together as SuperLU's column is.
 
 **Single thread, i7-12700K P-core, factor + solve:**
 
-| matrix | n | supernodal / SuperLU, time | fill | before #195's first PR |
-|---|---|---|---|---|
-| add32 | 4,960 | 2.89x (8 ms against 3 ms) | 0.63x | |
-| wang3 | 26,064 | 3.32x | 1.04x | 4.41x |
-| wang4 | 26,068 | 2.78x | 0.93x | 3.62x |
-| raefsky3 | 21,200 | 2.40x | 0.74x | 3.45x |
+| matrix | n | supernodal / SuperLU, time | fill | before #195's first PR | native KLU / SuperLU |
+|---|---|---|---|---|---|
+| add32 | 4,960 | 2.92x (8 ms against 3 ms) | 0.63x | | 1.7x |
+| wang3 | 26,064 | 3.45x | 1.04x | 4.41x | 2.3x |
+| wang4 | 26,068 | 2.74x | 0.93x | 3.62x | 2.1x |
+| raefsky3 | 21,200 | 2.57x | 0.74x | 3.45x | 7.4x |
+| bbmat | 38,744 | 2.80x (13.0 s against 4.7 s) | 1.04x | | 19.4x |
+| convdiff 32^2 - 256^2 | 1,024 - 65,536 | 1.69 - 2.52x | 0.83 - 0.92x | | 1.0 - 1.8x |
 
-Fill already meets the 1.2x target. Time is what's left: 2.4-3.3x against
-1.5x. KLU is still faster than the supernodal LU on wang3 and wang4 (5.0 s
-against 7.2 s).
+Fill already meets the 1.2x target. Time is what's left: 2.6-3.5x on the
+SuiteSparse matrices, against 1.5x. KLU is still faster than the supernodal LU
+on wang3, wang4 and the convection-diffusion grids, where supernodes are
+narrow, and 7-19x slower on raefsky3 and bbmat, where they are not. The
+session is `benchmarks/data/i7-12700k/superlu/20261117T202641Z/` (the
+"before" column is an unpinned scratch run of main).
 
 **Where the numeric factorization spends its time**, by `rdtsc` phase timers
 in a scratch copy of the kernel, before the first PR:

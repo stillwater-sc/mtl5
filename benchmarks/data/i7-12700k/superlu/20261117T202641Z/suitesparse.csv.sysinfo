@@ -1,0 +1,10 @@
+host=sw-21
+cpu=12th Gen Intel(R) Core(TM) i7-12700K
+kernel=Linux 7.0.0-43-generic
+bench=bench_superlu (benchmarks/bench_superlu.cpp)
+commit=8210938
+build=CMake Release, MTL5_WITH_SUPERLU=ON, g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+superlu=7.0.1+dfsg1-2build1
+bench_cpu=0
+threads=MTL5_NUM_THREADS=1
+clock_policy=governor performance on policy0 (was powersave)

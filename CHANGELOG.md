@@ -579,7 +579,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
-- **Native supernodal LU, first step of #195:** the numeric factorization is 1.3-1.55x faster on wang3, wang4 and raefsky3, with bit-identical factors. `bench_superlu` now times the supernodal LU itself. It had timed native KLU, so its scoreboard and #195's "about 4x" never measured the solver #195 is about. Measured against SuiteSparse SuperLU (single thread, i7-12700K), the supernodal LU is now 2.4-3.3x in time (from 3.45-4.41x) and 0.74-1.04x in fill, against #195's 1.5x / 1.2x targets.
+- **Native supernodal LU, first step of #195:** the numeric factorization is 1.3-1.55x faster on wang3, wang4 and raefsky3, with bit-identical factors. `bench_superlu` now times the supernodal LU itself. It had timed native KLU, so its scoreboard and #195's "about 4x" never measured the solver #195 is about. Measured against SuiteSparse SuperLU (single thread, i7-12700K), the supernodal LU is now 2.6-3.5x in time on wang3, wang4, raefsky3 and bbmat (from 3.45-4.41x) and 0.74-1.04x in fill, against #195's 1.5x / 1.2x targets; the session is under `benchmarks/data/i7-12700k/superlu/`.
   - **The closed-supernode GEMV** gathers the supernode's off-diagonal rows and sweeps its block a column at a time. It walked the block a row at a time, at stride m.
   - **Closing a supernode** finds each entry's row through a position map instead of searching the row list, which had been 17-18% of the factorization.
   - **The finalize** transposes L and U into sorted CSC in O(nnz) instead of sorting each column.
