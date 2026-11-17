@@ -408,7 +408,8 @@ void gemmt(const S& alpha_in, const MA& A, const MB& B, const S& beta_in, MC& C,
     if (n == 0)
         return;
     // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
-    // evaluated once into a dense matrix of its own element type first: storage_overlaps can't see the storage behind it, so
+    // evaluated once into a dense matrix of its own element type first:
+    // storage_overlaps can't see the storage behind it, so
     // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
     // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
     // each element of the expression many times.

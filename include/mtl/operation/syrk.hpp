@@ -76,7 +76,8 @@ void syrk(const S& alpha, const MA& A, const S& beta, MC& C) {
     // 200000 S + S with a 200000 x 0 C would build 320 GB, issue 886).
     if (C.num_rows() == 0 || C.num_cols() == 0) return;
     // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
-    // evaluated once into a dense matrix of its own element type first: storage_overlaps can't see the storage behind it, so
+    // evaluated once into a dense matrix of its own element type first:
+    // storage_overlaps can't see the storage behind it, so
     // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
     // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
     // each element of the expression many times.

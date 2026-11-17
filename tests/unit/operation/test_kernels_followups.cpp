@@ -333,6 +333,17 @@ TEST_CASE("symm and gemmt with C aliasing an operand (issue 886)", "[operation][
         CHECK(E(1, 0) == 20.0); CHECK(E(1, 1) == 28.0);
     }
     {
+        // symm evaluates only the lower triangle of an expression A: here the
+        // upper entries of U + U would overflow int (undefined; a UBSan build
+        // flags the old full copy).
+        const int big = std::numeric_limits<int>::max();
+        const mat::dense2D<int> U = {{1, big}, {2, 3}};
+        const mat::dense2D<int> B = {{1, 0}, {0, 1}};
+        mat::dense2D<int> C(2, 2);
+        symm(1, U + U, B, 0, C);   // lower of 2U, read symmetric: [[2, 4], [4, 6]]
+        CHECK(C(0, 0) == 2); CHECK(C(0, 1) == 4); CHECK(C(1, 0) == 4); CHECK(C(1, 1) == 6);
+    }
+    {
         // An empty output returns before an expression operand is evaluated.
         const rm S3 = filled<rm>(3, 3);
         rm B(3, 0), C(3, 0);

@@ -102,12 +102,18 @@ void symm(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
     // 200000 S + S with a 200000 x 0 C would build 320 GB, issue 886).
     if (C.num_rows() == 0 || C.num_cols() == 0) return;
     // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
-    // evaluated once into a dense matrix of its own element type first: storage_overlaps can't see the storage behind it, so
+    // evaluated once into a dense matrix of its own element type first:
+    // storage_overlaps can't see the storage behind it, so
     // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
     // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
     // each element of the expression many times.
     if constexpr (detail::holds_expression_v<MA>) {
-        const auto Am = detail::dense_copy(A);
+        // Only the lower triangle is read, so only it is evaluated: an upper
+        // entry of an integer expression (U + U at INT_MAX) would overflow
+        // for nothing (issue 886).
+        mat::dense2D<typename MA::value_type> Am(A.num_rows(), A.num_cols());
+        for (size_type i = 0; i < A.num_rows(); ++i)
+            for (size_type k = 0; k <= i; ++k) Am(i, k) = A(i, k);
         return symm<Accumulator>(alpha, Am, B, beta, C);
     }
     if constexpr (detail::holds_expression_v<MB>) {
