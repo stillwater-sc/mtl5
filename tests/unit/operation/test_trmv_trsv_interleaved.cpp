@@ -570,7 +570,7 @@ TEST_CASE("the column-sweep dispatch cutoffs (#884)", "[operation][884]") {
 #endif
 }
 
-TEMPLATE_TEST_CASE("the public column-major kernels are bit-identical on both sides of each cutoff",
+TEMPLATE_TEST_CASE("the column-major dispatch is bit-identical on both sides of each cutoff",
                    "[operation][884]", cm<float>, cm<double>) {
     // Both sides of the gemv, trmv and forward-substitution cutoffs, a strip
     // tail in the fixed-row kernel, and (1100 x 1100 double, 8.6 KB between
@@ -587,9 +587,20 @@ TEMPLATE_TEST_CASE("the public column-major kernels are bit-identical on both si
         const V x0 = filled<T>(n, 32 + n);
         V y(n), z(n);
         old_mult_generic(A, x0, y);
-        mult(A, x0, z);
-        require_identical(z, y);
+        {
+            // detail::mult_generic carries the column-sweep dispatch in every
+            // configuration; the public mult hands a dense2D<float/double> to
+            // BLAS or the SIMD gemv where those are built in.
+            INFO("mult_generic");
+            detail::mult_generic(A, x0, z);
+            require_identical(z, y);
+        }
+#if !defined(MTL5_HAS_BLAS) && !defined(MTL5_HAS_HIGHWAY) && !defined(MTL5_NATIVE_FAST_GEMM)
+        // The public trmv and forward substitution reach the sweep dispatch
+        // only where no BLAS, Highway or native-fast path takes them first:
+        // those don't promise the one-row loop's bits.
         for (bool upper : {false, true}) {
+            INFO((upper ? "trmv upper" : "trmv lower"));
             V x = x0, w = x0;
             trmv(A, x, upper, false);
             old_trmv(A, w, upper, false);
@@ -598,10 +609,15 @@ TEMPLATE_TEST_CASE("the public column-major kernels are bit-identical on both si
         V s(n), t(n);
         lower_trisolve(A, s, x0, false);
         old_lower_trisolve(A, t, x0, false);
-        require_identical(s, t);
+        {
+            INFO("lower_trisolve");
+            require_identical(s, t);
+        }
         V u = x0;
         lower_trisolve(A, u, false);
+        INFO("lower_trisolve in place");
         require_identical(u, t);
+#endif
     }
     // gemv on short, wide A: m on both sides of column_sweep_gemv_row_kernel_rows.
     for (std::size_t m : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{16},
@@ -613,7 +629,7 @@ TEMPLATE_TEST_CASE("the public column-major kernels are bit-identical on both si
         const V x = filled<T>(300, 42);
         V y(m), z(m);
         old_mult_generic(A, x, y);
-        mult(A, x, z);
+        detail::mult_generic(A, x, z);
         require_identical(z, y);
     }
 }
