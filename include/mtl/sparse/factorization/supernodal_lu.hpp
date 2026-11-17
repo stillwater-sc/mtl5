@@ -26,6 +26,7 @@
 // Methods for Sparse Linear Systems", SIAM 2006.
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -58,6 +59,13 @@ struct supernodal_lu_symbolic {
     std::vector<std::size_t> col_pinv;     // inverse
     std::vector<std::size_t> col_super;    // col(final space) -> relaxed supernode id (cap)
 };
+
+/// The default `panel` of supernodal_lu_numeric (#195): the columns whose
+/// updates from the supernodes closed before them are applied together, so
+/// each supernode block is read once per panel instead of once per column.
+/// 1 is the column-at-a-time update; at most 64.
+inline constexpr std::size_t supernodal_lu_default_panel = 16;
+
 
 /// Result of numeric supernodal LU factorization (same factor layout as
 /// lu_numeric, plus the dynamic L-supernode boundaries).
@@ -229,7 +237,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     Value threshold = Value{1},
     std::size_t max_super = 64,
     bool scale = false,
-    Value pivot_perturb = Value{0})
+    Value pivot_perturb = Value{0},
+    std::size_t panel = supernodal_lu_default_panel)
 {
     // void (the default) accumulates in Value, as the former `Accumulator = Value` did.
     using Acc = std::conditional_t<std::is_void_v<Accumulator>, Value, Accumulator>;
@@ -248,6 +257,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     // from sparse_lu); fail safely rather than silently overflow on huge inputs.
     if (n > static_cast<size_type>(std::numeric_limits<std::int32_t>::max()))
         throw std::invalid_argument("supernodal_lu_numeric: dimension exceeds 32-bit index range");
+    if (panel < 1 || panel > 64)
+        throw std::invalid_argument("supernodal_lu_numeric: panel must be in [1, 64]");
 
     auto C = util::crs_to_csc(util::column_permute(A, sym.col_perm));
 
@@ -332,14 +343,12 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         lsuper_first.push_back(sf);
     };
 
-    for (size_type k = 0; k < n; ++k) {
-        Lp[k] = Li.size();
-        Up[k] = Ui.size();
-
-        // --- reach(C(:,k)) in L: iterative DFS, topological order in xi[top..n) ---
+    // reach(C(:,col)) in L: iterative DFS, topological order in xi[top..n);
+    // returns top. The caller unmarks reach_nodes.
+    auto dfs_reach = [&](size_type col) -> size_type {
         reach_nodes.clear();
         size_type top = n;
-        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) {
+        for (size_type p = C.col_ptr[col]; p < C.col_ptr[col + 1]; ++p) {
             std::ptrdiff_t start = static_cast<std::ptrdiff_t>(C.row_ind[p]);
             if (marked[start]) continue;
             std::ptrdiff_t head = 0; xi[0] = start;
@@ -360,11 +369,159 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
                 if (done) { --head; xi[--top] = node; }
             }
         }
+        return top;
+    };
 
-        // --- scatter C(:,k) ---
-        for (size_type p = top; p < n; ++p) AT::clear(x[xi[p]]);
-        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
-            AT::assign(x[C.row_ind[p]], C.values[p]);
+    // Panel state (#195). For the panel [panel_k0, panel_k1), panel_x holds
+    // each column's accumulator (column t at t * n), with C(:,col) scattered
+    // and the updates from every supernode closed before the panel (those
+    // with sf < panel_open_sf) applied. Paths in L go only to later columns,
+    // so the part of a panel column's reach before the panel is known before
+    // any panel column is factored, and is the reach a DFS finds now.
+    const size_type W = panel;
+    std::vector<Acc> panel_x(panel > 1 ? n * W : 0);
+    for (auto& v : panel_x) AT::clear(v);
+    std::vector<std::uint64_t> super_mask;          // per closed supernode: panel columns it updates
+    std::vector<idx32> panel_super;
+    std::vector<Acc> panel_tmp;                     // gathered off-diagonal rows, column t at t * mo
+    std::vector<Acc> panel_seg;                     // TRSV state, column t at t * w
+    std::vector<Value> panel_segval;
+    size_type panel_k0 = 0, panel_k1 = 0, panel_open_sf = 0;
+    // Panels pay only when the block reads they save outweigh the pre-pass:
+    // a second DFS per column and the panel scatter. On the
+    // convection-diffusion grids, with small supernodes and short reaches,
+    // they made the factorization 15-20% slower (#195). So each pre-pass
+    // compares the block entries it saved, sum (columns - 1) * w * m over its
+    // supernodes, with its reach, sum of the panel columns' reach sizes; when
+    // the saving is below panel_min_gain times the reach, the next panel_skip
+    // panels run column at a time, then it probes again. Either way a column's
+    // factor is the same. Measured on the i7-12700K: 128 and 16 kept the gains
+    // on wang3, wang4 and raefsky3 and cut the grids' cost to 3-5% (the probes);
+    // 1024 lost wang3's gain, and probing every 32 panels lost raefsky3's.
+    constexpr double panel_min_gain = 128;
+    constexpr size_type panel_skip = 16;
+    double panel_saved = 0.0, panel_reach = 0.0;   // the last pre-pass's
+    size_type panels_off = 0;        // panels left to run column at a time
+    bool panel_active = false;
+    auto panel_prepass = [&](size_type k0) {
+        panel_k0 = k0; panel_k1 = std::min(n, k0 + W); panel_open_sf = open_sf;
+        panel_saved = 0.0; panel_reach = 0.0;
+        super_mask.resize(snodes.size(), 0);
+        panel_super.clear();
+        for (size_type t = 0; t < panel_k1 - panel_k0; ++t) {
+            const size_type col = panel_k0 + t;
+            const size_type top = dfs_reach(col);
+            panel_reach += double(n - top);
+            for (size_type px = top; px < n; ++px) {
+                const std::ptrdiff_t jcol = pinv[xi[px]];
+                if (jcol < 0 || static_cast<size_type>(jcol) >= panel_open_sf) continue;
+                const idx32 sid = col_csuper[jcol];
+                if (super_mask[sid] == 0) panel_super.push_back(sid);
+                super_mask[sid] |= std::uint64_t{1} << t;
+            }
+            for (std::ptrdiff_t node : reach_nodes) marked[node] = 0;
+            Acc* xt = panel_x.data() + t * n;
+            for (size_type p = C.col_ptr[col]; p < C.col_ptr[col + 1]; ++p)
+                AT::assign(xt[C.row_ind[p]], C.values[p]);
+        }
+        // Each supernode in ascending sf, as the column-at-a-time update takes
+        // them; per column the same TRSV, and a GEMV fused over the panel
+        // columns it updates, so each block element is read once per panel.
+        // Every accumulator takes the same terms in the same order as before.
+        std::sort(panel_super.begin(), panel_super.end(),
+                  [&](idx32 a, idx32 b) { return snodes[a].sf < snodes[b].sf; });
+        std::size_t cols[64];
+        for (idx32 sid : panel_super) {
+            const auto& S = snodes[sid];
+            const size_type w = S.w, m = S.m, mo = m - w;
+            size_type nt = 0;
+            for (std::uint64_t mask = super_mask[sid]; mask; mask &= mask - 1)
+                cols[nt++] = static_cast<std::size_t>(std::countr_zero(mask));
+            panel_saved += double(nt - 1) * double(w) * double(m);
+            super_mask[sid] = 0;
+            panel_seg.resize(nt * w); panel_segval.resize(nt * w); panel_tmp.resize(nt * mo);
+            for (size_type q = 0; q < nt; ++q) {
+                Acc* xt = panel_x.data() + cols[q] * n;
+                Acc* sa = panel_seg.data() + q * w;
+                Value* sv = panel_segval.data() + q * w;
+                for (size_type c = 0; c < w; ++c) sa[c] = xt[S.rows[c]];
+                for (size_type c = 0; c < w; ++c) {
+                    sv[c] = AT::template value<Value>(sa[c]);
+                    for (size_type r = c + 1; r < w; ++r)
+                        AT::add_product(sa[r], S.block[c * m + r], -sv[c]);
+                }
+                for (size_type c = 0; c < w; ++c) xt[S.rows[c]] = sa[c];
+                Acc* tq = panel_tmp.data() + q * mo;
+                for (size_type r = 0; r < mo; ++r) tq[r] = xt[S.rows[w + r]];
+            }
+            // tmp(:, q) -= block(w:m, :) * segval(:, q), 8 rows of a column at a
+            // time held across all w terms and stored once, as a GEMM tile does:
+            // the accumulators were loaded and stored once per block column.
+            // Each accumulator still adds its terms in ascending c.
+            constexpr size_type R = 8;
+            const Value* blk = S.block.data() + w;
+            size_type r0 = 0;
+            for (; r0 + R <= mo; r0 += R)
+                for (size_type q = 0; q < nt; ++q) {
+                    Acc* tq = panel_tmp.data() + q * mo + r0;
+                    const Value* sv = panel_segval.data() + q * w;
+                    Acc acc[R];
+                    for (size_type i = 0; i < R; ++i) acc[i] = tq[i];
+                    for (size_type c = 0; c < w; ++c) {
+                        const Value sc = sv[c];
+                        const Value* col = blk + c * m + r0;
+                        for (size_type i = 0; i < R; ++i) AT::add_product(acc[i], -col[i], sc);
+                    }
+                    for (size_type i = 0; i < R; ++i) tq[i] = acc[i];
+                }
+            for (; r0 < mo; ++r0)
+                for (size_type q = 0; q < nt; ++q) {
+                    Acc a = panel_tmp[q * mo + r0];
+                    const Value* sv = panel_segval.data() + q * w;
+                    for (size_type c = 0; c < w; ++c) AT::add_product(a, -blk[c * m + r0], sv[c]);
+                    panel_tmp[q * mo + r0] = a;
+                }
+            for (size_type q = 0; q < nt; ++q) {
+                Acc* xt = panel_x.data() + cols[q] * n;
+                const Acc* tq = panel_tmp.data() + q * mo;
+                for (size_type r = 0; r < mo; ++r) xt[S.rows[w + r]] = tq[r];
+            }
+        }
+    };
+
+    for (size_type k = 0; k < n; ++k) {
+        Lp[k] = Li.size();
+        Up[k] = Ui.size();
+        if (W > 1 && k == panel_k1) {
+            if (panels_off == 0) {
+                panel_prepass(k);
+                panel_active = true;
+                if (panel_saved < panel_min_gain * panel_reach) panels_off = panel_skip;
+            } else {
+                --panels_off;
+                panel_active = false;
+                panel_k0 = k; panel_k1 = std::min(n, k + W);
+            }
+        }
+        const bool in_panel = W > 1 && panel_active;
+
+        // --- reach(C(:,k)) in L: iterative DFS, topological order in xi[top..n) ---
+        const size_type top = dfs_reach(k);
+
+        // --- scatter C(:,k) --- or, in a panel, take the panel's accumulator,
+        // C(:,k) with the pre-panel supernodes applied, and clear it there.
+        if (in_panel) {
+            Acc* xt = panel_x.data() + (k - panel_k0) * n;
+            for (size_type p = top; p < n; ++p) {
+                const auto i = static_cast<size_type>(xi[p]);
+                x[i] = xt[i];
+                AT::clear(xt[i]);
+            }
+        } else {
+            for (size_type p = top; p < n; ++p) AT::clear(x[xi[p]]);
+            for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
+                AT::assign(x[C.row_ind[p]], C.values[p]);
+        }
 
         // --- supernodal solve x = L \ C(:,k) ---
         // (a) closed supernodes (cols < open_sf): dense block update, in increasing
@@ -375,6 +532,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
             std::ptrdiff_t jcol = pinv[j];
             if (jcol < 0) continue;
             idx32 sid = col_csuper[jcol];
+            if (in_panel && static_cast<size_type>(jcol) < panel_open_sf) continue;   // applied in the pre-pass
             if (sid >= 0 && !super_seen[sid]) { super_seen[sid] = 1; contrib_super.push_back(sid); }
         }
         std::sort(contrib_super.begin(), contrib_super.end(),
