@@ -1,0 +1,12 @@
+host=sw-21
+cpu=12th Gen Intel(R) Core(TM) i7-12700K
+cpu_part=
+kernel=Linux 7.0.0-43-generic
+bench_cpu=0
+clock_policy=governor performance on policy0 (was powersave)
+commit=2f39701
+flags=-std=c++20 -O3 -DNDEBUG; native: -march=native
+compiler_g++=g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+compiler_clang++=Ubuntu clang version 21.1.8 (6ubuntu1)
+compiler=Ubuntu clang version 21.1.8 (6ubuntu1)
+build_flags=-std=c++20 -O3 -DNDEBUG -march=native
