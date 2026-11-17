@@ -13,7 +13,8 @@
 // randsvd(5, 1e3, 3, 42) bound randsvd(m = 5, n = 1000, kappa = 3, mode = 42)
 // and threw on mode 42). An integral kappa, as in randsvd(5, 1000, 3, 42), is
 // read equally well both ways, so it doesn't compile: write 1000.0. A
-// non-integral dimension or mode doesn't bind either form.
+// floating second argument is the square seeded form's kappa, and a
+// non-integral mode binds neither form.
 // randsvd(n, n, kappa, mode, seed) still gives the square seeded matrix.
 #include <algorithm>
 #include <concepts>
