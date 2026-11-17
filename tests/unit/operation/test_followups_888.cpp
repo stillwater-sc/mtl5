@@ -7,8 +7,7 @@
 //   - mtl::min/max over an ndarray with NaN;
 //   - randsvd(n, kappa, mode, seed), the square seeded form (it bound the
 //     rectangular randsvd(m, n, kappa, mode) and threw on mode = seed);
-//   - eigen() with clustered eigenvalues: each vector pairs with its value
-//     (the pairing of eigenvalue()'s values with the Schur run's);
+//   - eigen() with clustered eigenvalues: each vector pairs with its value;
 //   - ldlt_bk_factor with a 2x2 pivot whose determinant is NaN, and the
 //     Accumulator path;
 //   - lu_iterative_refine with a Working-precision copy that is singular
@@ -114,9 +113,10 @@ TEST_CASE("randsvd(n, kappa, mode, seed): the square seeded form (issue 888)", "
 }
 
 TEST_CASE("eigen() pairs clustered eigenvalues with their own vectors (issue 888)", "[operation][eigen][888]") {
-    // A near-Jordan 3x3, eigenvalues 1 +- 1e-4 and 2. eigen() pairs
-    // eigenvalue()'s values with the Schur run's by nearest distance; a swap
-    // in the cluster would give each of the pair the other's vector. (Closer, 1 +- 1e-8 from a
+    // A near-Jordan 3x3, eigenvalues 1 +- 1e-4 and 2. eigen() used to pair
+    // eigenvalue()'s values with the Schur run's by nearest distance, where a
+    // swap in the cluster would give each of the pair the other's vector;
+    // since #894 each vector is its own eigenvalue's. (Closer, 1 +- 1e-8 from a
     // 1e-16 subdiagonal, deflates at tol = 1e-10 to a double eigenvalue.)
     mat::dense2D<double> A = {{1.0, 1.0, 0.5}, {1e-8, 1.0, 0.25}, {0.0, 0.0, 2.0}};
     const auto [eigs, V] = eigen(A);

@@ -227,7 +227,11 @@ TEST_CASE("General eigen: Forsythe eigenpairs (strongly non-normal)", "[operatio
     }
 }
 
-TEST_CASE("General eigen: eigenvalues match eigenvalue()", "[operation][eigen]") {
+TEST_CASE("General eigen: eigenvalues match eigenvalue() as a set", "[operation][eigen][894]") {
+    // eigen() takes its eigenvalues from its own Schur run, which may order
+    // them differently from eigenvalue() (#894): on this matrix the two runs
+    // differ index by index by 1.18. Each eigen() value must match a distinct
+    // eigenvalue() value.
     mat::dense2D<double> A(3, 3);
     A(0,0) = 4; A(0,1) = 1; A(0,2) = -1;
     A(1,0) = 2; A(1,1) = 3; A(1,2) =  0;
@@ -236,6 +240,12 @@ TEST_CASE("General eigen: eigenvalues match eigenvalue()", "[operation][eigen]")
     auto vals_only = eigenvalue(A);
     auto [eigs, V] = eigen(A);
     REQUIRE(eigs.size() == vals_only.size());
-    for (std::size_t k = 0; k < eigs.size(); ++k)
-        REQUIRE(std::abs(eigs(k) - vals_only(k)) < 1e-12);
+    std::vector<bool> used(vals_only.size(), false);
+    for (std::size_t k = 0; k < eigs.size(); ++k) {
+        bool found = false;
+        for (std::size_t j = 0; j < vals_only.size() && !found; ++j)
+            if (!used[j] && std::abs(eigs(k) - vals_only(j)) < 1e-12) { used[j] = true; found = true; }
+        INFO("eigen() value " << k << " = " << eigs(k));
+        REQUIRE(found);
+    }
 }

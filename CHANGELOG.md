@@ -95,6 +95,8 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`eigen()` runs one eigenvalue computation, not two** (#894). It returned `eigenvalue()`'s values, which meant scaling A, reducing it to Hessenberg form and running the Francis QR a second time after its own Schur run, and then pairing those values with the Schur form's by nearest distance. In a tight cluster that pairing could give an eigenvalue the vector of its neighbour. The eigenvalues are now the Schur run's, each with its own vector: one Hessenberg reduction (the accumulator test counts it), no pairing. **Behaviour change:** the order can differ from `eigenvalue()`'s (on `test_eigen_general.cpp`'s 3x3 it does), so code that indexes the two results together must match them by value. The LAPACK `geev` path is unchanged.
+
 - **Follow-ups: iteration reuse, overflow-safe slices, exact view overlap, the square seeded `randsvd`** (issue 888, from QA sweep #872).
   - **`basic_iteration::reset(r0)` and `reset(norm_r0)`:** an iteration object reused for a second solve kept counting toward `max_iter` and measured the relative tolerance against the first r0's norm. `reset` clears the count, residual, error and finished state and takes the new reference norm. `cyclic_iteration` (and `noisy_iteration`) also print the summary again. Solvers never reset the object, because what r0 is belongs to the caller; without `reset`, reuse keeps the old behaviour.
   - **`array::range::extent()`** wrapped for a huge step: `range(0, 3, SIZE_MAX)` had extent 0, not 1. A one-element slice also no longer multiplies the stride by the step.

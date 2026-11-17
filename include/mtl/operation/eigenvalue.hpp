@@ -285,9 +285,10 @@ auto eigenvalue(const M& A, typename M::value_type tol = 1e-10,
 /// O(n^3) in all. It used to factor a fresh complex n x n matrix A - lambda I
 /// for every eigenvalue, O(n^4): 0.38 s at n = 160 (#853). Eigenvectors are
 /// unit 2-norm with a canonical phase (largest entry made real-positive), and
-/// pair with the eigenvalues by column. The eigenvalues are eigenvalue()'s, in
-/// its order; each vector is the one of T's matching eigenvalue, which agrees
-/// with it to rounding at the given tol. A repeated eigenvalue of a diagonalizable A gives independent
+/// pair with the eigenvalues by column. The eigenvalues are T's, from the same
+/// Francis run: they agree with eigenvalue()'s to rounding at the given tol,
+/// but not necessarily in the same order (#894; compare them as a set). A
+/// repeated eigenvalue of a diagonalizable A gives independent
 /// vectors; for a defective A they are as ill-conditioned as the problem.
 ///
 /// Throws std::invalid_argument for a non-square A or a NaN or infinite
@@ -356,32 +357,20 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     for (size_type i = 2; i < n; ++i)
         for (size_type j = 0; j + 1 < i; ++j) T(i, j) = value_type(0);
 
-    // The eigenvalues returned are eigenvalue()'s, in its order, as they have
-    // always been: the Schur-form iteration may place them differently. Each
-    // is paired with the nearest unused eigenvalue of T, whose vector it gets.
-    vec::dense_vector<complex_type> eigs = eigenvalue<Accumulator>(A, tol, max_iter);
+    // The eigenvalues are the Schur run's, unscaled, in its order (#894):
+    // eigen() used to run eigenvalue() as well -- the scaling, the Hessenberg
+    // reduction and the Francis iteration a second time -- only to return its
+    // order, and paired those values with T's by nearest distance, which in a
+    // tight cluster could hand a vector to the wrong eigenvalue. Each vector
+    // is now the one of its own eigenvalue of T.
+    auto up = [unscale](const value_type& x) { return math::pow2_scaling<value_type>::scale(x, unscale); };
+    vec::dense_vector<complex_type> eigs(n);
+    for (size_type k = 0; k < n; ++k) eigs(k) = complex_type(up(wr[k]), up(wi[k]));
 
     mat::dense2D<complex_type> V(n, n);
     if (n == 1) {
         V(0, 0) = complex_type(value_type(1));
         return EigenResult{eigs, V};
-    }
-    std::vector<size_type> at(static_cast<std::size_t>(n));   // eigs(k) is T's eigenvalue at(k)
-    {
-        std::vector<bool> used(static_cast<std::size_t>(n), false);
-        for (size_type k = 0; k < n; ++k) {
-            size_type best = 0;
-            value_type dbest = value_type(-1);
-            for (size_type j = 0; j < n; ++j) {
-                if (used[static_cast<std::size_t>(j)]) continue;
-                const complex_type scaled_k(math::pow2_scaling<value_type>::scale(eigs(k).real(), -unscale),
-                                            math::pow2_scaling<value_type>::scale(eigs(k).imag(), -unscale));
-                const value_type d = abs(scaled_k - complex_type(wr[j], wi[j]));
-                if (dbest < value_type(0) || d < dbest) { dbest = d; best = j; }
-            }
-            used[static_cast<std::size_t>(best)] = true;
-            at[static_cast<std::size_t>(k)] = best;
-        }
     }
 
     // T's scale is about 1, so eps * max|t_ij| is the perturbation floor for a
@@ -397,7 +386,7 @@ auto eigen(const M& A, typename M::value_type tol = 1e-10,
     const std::size_t nn = static_cast<std::size_t>(n);
     std::vector<complex_type> x(nn);
     for (size_type k = 0; k < n; ++k) {
-        const size_type j = at[static_cast<std::size_t>(k)];
+        const size_type j = k;
         const std::vector<complex_type> y = detail::quasi_triangular_eigenvector(
             T, static_cast<std::size_t>(j), complex_type(wr[j], wi[j]), smin, limit);
         // y is zero below lambda's block: x = Q(:, 0..bot) y(0..bot).
