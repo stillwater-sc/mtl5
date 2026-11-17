@@ -105,10 +105,13 @@ void lower_trisolve_column_sweep(const M& L, VecX& x, const VecB& b, bool unit_d
     const auto x_at = [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); };
     const auto add = [](const value_type& t, const auto& lij, const auto& xj) -> value_type { return t + lij * xj; };
     // Columns [cb, ce) into the strip rows [i0, i0 + ni), which s[i0 - r0 ..]
-    // holds: C > 1 takes strip_columns, C = 1 one column at a time (#777).
+    // holds: strip_columns, or one column at a time as #777 did for C = 1 or
+    // a wide column stride.
     const auto cols = [&](std::size_t r0, std::size_t i0, std::size_t ni, std::size_t cb, std::size_t ce) {
-        if constexpr (C == 1) detail::sweep_columns<1>(s + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
-        else                  detail::strip_columns<C>(s + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+        if (detail::column_sweep_unrolled<C, std::remove_cvref_t<decltype(*a)>>(n))
+            detail::strip_columns<C>(s + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+        else
+            detail::sweep_columns<1>(s + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
     };
     for (std::size_t r0 = 0; r0 < n; r0 += S) {
         const std::size_t r1 = std::min(n, r0 + S);
@@ -165,7 +168,11 @@ void lower_trisolve(const M& L, VecX& x, const VecB& b, bool unit_diag = false) 
     // sweep (#777, #884), anything else the row kernels. The same bits.
     if constexpr (detail::column_sweep_v<value_type, M>) {
         if (static_cast<std::size_t>(n) > detail::column_sweep_trsv_row_kernel_n) {
-            detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, b, unit_diag);   // #777
+            // A wide column stride takes the C = 1 instantiation, #777's loop.
+            if (detail::column_sweep_unrolled<detail::column_sweep_columns, typename M::value_type>(n))
+                detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, b, unit_diag);   // #777
+            else
+                detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>, 1>(L, x, b, unit_diag);
             return;
         }
     }
@@ -201,7 +208,11 @@ void lower_trisolve(const M& L, VecX& x, bool unit_diag = false) {
 
     if constexpr (detail::column_sweep_v<value_type, M>) {
         if (static_cast<std::size_t>(n) > detail::column_sweep_trsv_row_kernel_n) {
-            detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, x, unit_diag);   // #777
+            // A wide column stride takes the C = 1 instantiation, #777's loop.
+            if (detail::column_sweep_unrolled<detail::column_sweep_columns, typename M::value_type>(n))
+                detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, x, unit_diag);   // #777
+            else
+                detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>, 1>(L, x, x, unit_diag);
             return;
         }
     }

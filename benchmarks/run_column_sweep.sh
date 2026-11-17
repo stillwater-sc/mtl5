@@ -24,6 +24,9 @@ CPU="${CPU:-0}"
 OUT="${OUT:-$ROOT/build-platform/column-sweep/$(hostname -s)-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$OUT"
 NATIVE="${NATIVE_FLAGS:--march=native}"
+# One core: the public mult would otherwise thread over a pool of every CPU,
+# all pinned to the one measured.
+export MTL5_NUM_THREADS=1
 
 restore=()
 cleanup() { for ((i = ${#restore[@]} - 1; i >= 0; --i)); do eval "${restore[$i]}" || true; done; }

@@ -207,11 +207,13 @@ void trmv_column_sweep(const M& A, VX& x, bool upper, bool unit_diag) {
     const auto x_at = [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); };
     const auto add = [](const acc_type& t, const auto& aij, const auto& xj) -> acc_type { return t + aij * xj; };
     // Columns [cb, ce) into the strip rows [i0, i0 + ni), which acc[i0 - r0 ..]
-    // holds: C > 1 takes strip_columns (C at a time, short strips in
-    // registers), C = 1 one column at a time as #777 did.
+    // holds: strip_columns (C at a time, short strips in registers), or one
+    // column at a time as #777 did for C = 1 or a wide column stride.
     const auto cols = [&](std::size_t r0, std::size_t i0, std::size_t ni, std::size_t cb, std::size_t ce) {
-        if constexpr (C == 1) sweep_columns<1>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
-        else                  strip_columns<C>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+        if (column_sweep_unrolled<C, std::remove_cvref_t<decltype(*a)>>(n))
+            strip_columns<C>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+        else
+            sweep_columns<1>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
     };
     if (upper) {
         // Row i adds j = i+1 .. n-1 in ascending j. In the strip [r0, r1), the
@@ -336,8 +338,12 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
     using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
     if constexpr (detail::column_sweep_v<acc_type, M>) {
         // Up to column_sweep_trmv_row_kernel_n, the row kernels below (#884).
+        // A wide column stride takes the C = 1 instantiation, #777's loop.
         if (static_cast<std::size_t>(n) > detail::column_sweep_trmv_row_kernel_n) {
-            detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
+            if (detail::column_sweep_unrolled<detail::column_sweep_columns, typename M::value_type>(n))
+                detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
+            else
+                detail::trmv_column_sweep<detail::column_strip_rows<acc_type>, 1>(A, x, upper, unit_diag);
             return;
         }
     }

@@ -21,6 +21,9 @@
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $cpu = if ($env:CPU) { [int]$env:CPU } else { 0 }
+# One core: the public mult would otherwise thread over a pool of every CPU,
+# all pinned to the one measured.
+$env:MTL5_NUM_THREADS = '1'
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $out = if ($env:OUT) { $env:OUT } else { Join-Path $root "build-platform\column-sweep\$env:COMPUTERNAME-$stamp" }
 New-Item -ItemType Directory -Force -Path $out | Out-Null

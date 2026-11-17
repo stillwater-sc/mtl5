@@ -84,6 +84,13 @@ inline constexpr std::size_t column_sweep_columns = 8;
 /// 4096. Below it the eight-column pass won on every machine.
 inline constexpr std::size_t column_sweep_unrolled_stride = 8192;
 
+/// Whether a sweep with C columns per pass over columns ld elements of T apart
+/// takes the unrolled path (strip_columns<C>) rather than sweep_columns<1>.
+template <std::size_t C, typename T>
+constexpr bool column_sweep_unrolled(std::size_t ld) {
+    return C > 1 && ld * sizeof(T) < column_sweep_unrolled_stride;
+}
+
 /// The shapes the row kernels take although A is column-major (#884): where
 /// the sweep's per-strip fixed cost isn't amortized. Measured across the five
 /// machines above, a size up to these minimized the geometric mean of the time
@@ -113,7 +120,16 @@ inline constexpr std::size_t column_sweep_fixed_rows = 16;
 /// On a 4-row strip that measured 1.5-4.8x faster than the run-time strip
 /// (i7-12700K, GCC and Clang, generic and -march=native). The same terms in
 /// the same order, so the same bits.
+///
+/// GCC's loop vectorizer is off for it: with AVX it vectorized the column
+/// loop, eight columns per iteration put back together with shuffles, where
+/// the SLP form (the R accumulators in one register, x broadcast per column)
+/// is what this loop wants. On a Xeon E5-2420 v2 the f32 4-row strip ran at
+/// half the speed of one column per pass (#884). The SLP vectorizer stays on.
 template <std::size_t R, typename Acc, typename T, typename XAt, typename Op>
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("no-tree-loop-vectorize")))
+#endif
 void sweep_fixed_rows(Acc* acc, const T* a, std::size_t ld, std::size_t r0,
                       std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
     [&]<std::size_t... K>(std::index_sequence<K...>) {
@@ -128,17 +144,14 @@ void sweep_fixed_rows(Acc* acc, const T* a, std::size_t ld, std::size_t r0,
 }
 
 /// Columns [cb, ce) into a strip of rr rows: sweep_fixed_rows for a short
-/// strip, sweep_columns<C> otherwise, or one column per pass when the columns
-/// are column_sweep_unrolled_stride bytes apart or more. Bit-identical every
-/// way.
+/// strip, sweep_columns<C> otherwise. Bit-identical either way. The callers
+/// take sweep_columns<1> themselves at a wide column stride
+/// (column_sweep_unrolled<T>): behind this extra call, the same one-column loop
+/// measured 25-35% slower than called directly (#884).
 template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
 void strip_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
                    std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
     if (rr == 0 || cb >= ce) return;
-    if (rr > column_sweep_fixed_rows && ld * sizeof(T) >= column_sweep_unrolled_stride) {
-        sweep_columns<1>(acc, a, ld, r0, rr, cb, ce, x_at, op);
-        return;
-    }
     if (rr <= column_sweep_fixed_rows) {
         [&]<std::size_t... R>(std::index_sequence<R...>) {
             (void)((rr == R + 1 ? (sweep_fixed_rows<R + 1>(acc, a, ld, r0, cb, ce, x_at, op), true) : false) || ...);

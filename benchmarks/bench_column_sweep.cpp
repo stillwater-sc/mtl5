@@ -26,6 +26,10 @@
 //
 //   kernel,type,m,n,sweep_ns,sweep1_ns,rows_ns,public_ns,rows_over_sweep,rows_over_sweep1,sweep1_over_public
 //
+// The public calls thread over row bands when the pool has more than one
+// thread; run with MTL5_NUM_THREADS=1 (run_column_sweep.sh/.ps1 do) to time
+// one core.
+//
 // Usage:
 //   bench_column_sweep [--reps 11] [--min-us 2000] [--quick]
 
@@ -57,6 +61,15 @@ void consume(const V& v) {
     double s = 0;
     for (std::size_t i = 0; i < v.size(); ++i) s += static_cast<double>(v(i));
     g_sink = g_sink + s;
+}
+
+/// Every kernel of an entry runs once before any is timed (warm_up): the
+/// first one timed otherwise paid for faulting in and warming A, which read
+/// as the sweep 25-35% slower than one column per pass at n = 1024-4096 when
+/// the two run the same loop (#884).
+template <typename... F>
+void warm_up(F&&... f) {
+    (f(), ...);
 }
 
 /// Nanoseconds per call: the median of reps samples, each a batch of calls
@@ -112,6 +125,9 @@ void gemv(std::size_t m, std::size_t n, int reps, double min_us) {
     mtl::vec::dense_vector<T> x(n), y(m);
     for (std::size_t i = 0; i < n; ++i) x(i) = static_cast<T>(static_cast<double>(i % 17) / 17.0);
     const auto none = [] {};
+    warm_up([&] { mtl::detail::mult_rows_column_sweep<S>(A, x, y, 0, m); },
+            [&] { mtl::detail::mult_rows_column_sweep<S, 1>(A, x, y, 0, m); },
+            [&] { mtl::detail::mult_rows_interleaved<W>(A, x, y, 0, m); }, [&] { mtl::mult(A, x, y); });
     const double s = ns_per_call(none, [&] { mtl::detail::mult_rows_column_sweep<S>(A, x, y, 0, m); }, reps, min_us);
     consume(y);
     const double s1 = ns_per_call(none, [&] { mtl::detail::mult_rows_column_sweep<S, 1>(A, x, y, 0, m); }, reps, min_us);
@@ -133,6 +149,10 @@ void trmv(std::size_t n, int reps, double min_us) {
     for (std::size_t i = 0; i < n; ++i) x0(i) = static_cast<T>(static_cast<double>(i % 17) / 17.0);
     const auto restore = [&] { for (std::size_t i = 0; i < n; ++i) x(i) = x0(i); };
     // The restore is in both timings; it is O(n) against the kernels' O(n^2).
+    warm_up([&] { restore(); mtl::detail::trmv_column_sweep<S>(A, x, false, false); },
+            [&] { restore(); mtl::detail::trmv_column_sweep<S, 1>(A, x, false, false); },
+            [&] { restore(); mtl::detail::trmv_lower_rows<W>(A, x, n, false); },
+            [&] { restore(); mtl::trmv(A, x, false, false); });
     const double s = ns_per_call(restore, [&] { mtl::detail::trmv_column_sweep<S>(A, x, false, false); }, reps, min_us);
     consume(x);
     const double s1 = ns_per_call(restore, [&] { mtl::detail::trmv_column_sweep<S, 1>(A, x, false, false); }, reps, min_us);
@@ -153,6 +173,10 @@ void trisolve(std::size_t n, int reps, double min_us) {
     mtl::vec::dense_vector<T> b(n), x(n);
     for (std::size_t i = 0; i < n; ++i) b(i) = static_cast<T>(static_cast<double>(i % 17) / 17.0);
     const auto none = [] {};
+    warm_up([&] { mtl::detail::lower_trisolve_column_sweep<S>(A, x, b, false); },
+            [&] { mtl::detail::lower_trisolve_column_sweep<S, 1>(A, x, b, false); },
+            [&] { mtl::detail::lower_trisolve_rows<W>(A, x, b, false); },
+            [&] { mtl::lower_trisolve(A, x, b, false); });
     const double s = ns_per_call(none, [&] { mtl::detail::lower_trisolve_column_sweep<S>(A, x, b, false); }, reps, min_us);
     consume(x);
     const double s1 = ns_per_call(none, [&] { mtl::detail::lower_trisolve_column_sweep<S, 1>(A, x, b, false); }, reps, min_us);
