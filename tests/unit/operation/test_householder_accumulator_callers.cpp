@@ -247,8 +247,9 @@ TEST_CASE("the eigensolvers forward the accumulator and skip LAPACK",
     auto e3 = eigenvalue<counting_acc>(A);
     REQUIRE(counting_acc::products == hessenberg_products(n));
 
-    // eigen: eigenvalue()'s reduction, then its own reduction and Q for the
-    // Schur vectors (#853: it was inverse iteration, with no Q).
+    // eigen: one reduction and its Q, for the Schur vectors and the
+    // eigenvalues both (#894: it also ran eigenvalue()'s reduction; #853: it
+    // was inverse iteration, with no Q).
     counting_acc::products = 0;
     {
         auto W = A;
@@ -259,7 +260,7 @@ TEST_CASE("the eigensolvers forward the accumulator and skip LAPACK",
     const auto schur_vectors = counting_acc::products;
     counting_acc::products = 0;
     auto r2 = eigen<counting_acc>(A);
-    REQUIRE(counting_acc::products == hessenberg_products(n) + schur_vectors);
+    REQUIRE(counting_acc::products == schur_vectors);
 
     // The accumulated results are still eigenvalues: same spectrum as the
     // default path, to rounding.
