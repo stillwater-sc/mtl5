@@ -16,7 +16,9 @@
 # holds <variant>.csv and sysinfo.txt.
 #
 # Usage: powershell -File benchmarks\run_column_sweep.ps1 [bench args]
-$ErrorActionPreference = 'Stop'
+# 'Continue', not 'Stop': under Windows PowerShell 5.1 a native command's
+# stderr (CMake's) would otherwise end the script; exit codes are checked.
+$ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $cpu = if ($env:CPU) { [int]$env:CPU } else { 0 }
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
