@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <functional>
 #include <limits>
@@ -544,4 +545,84 @@ TEST_CASE("the true-residual check: limit and converged x0 (issue 873)", "[itl][
         CHECK(s.solve(I, x, b, M, iter) == 0);
         CHECK(iter.resid() == 0.0);
     }
+}
+
+// -- reset (issue 888) --------------------------------------------------------
+
+TEST_CASE("reset prepares an iteration object for another solve (issue 888)", "[itl][iteration][888]") {
+    const csr A = tridiagonal(20);
+    const vec_t b = ramp(20);
+    const pc_id M(A);
+    SECTION("a tight max_iter: without reset the budget is shared, with it each solve has it") {
+        iter_t iter(b, 15, 1e-10);
+        vec_t x(20, 0.0);
+        REQUIRE(itl::cg(A, x, b, M, iter) == 0);
+        REQUIRE(iter.iterations() > 5);   // so the second solve could not fit in what is left
+        vec_t y(20, 0.0);
+        iter.reset(b);
+        CHECK(iter.iterations() == 0);
+        CHECK(itl::cg(A, y, b, M, iter) == 0);
+        CHECK(true_residual(A, y, b) <= 1.5e-10 * norm(b));
+    }
+    SECTION("a different b: the tolerance is relative to the new one") {
+        for (const double scale : {1e6, 1e-6}) {
+            INFO("||b2|| = " << scale << " ||b||");
+            iter_t iter(b, 1000, 1e-8);
+            vec_t x(20, 0.0);
+            REQUIRE(itl::cg(A, x, b, M, iter) == 0);
+            vec_t b2(20), y(20, 0.0);
+            for (std::size_t i = 0; i < 20; ++i) b2(i) = scale * b(i);
+            iter.reset(b2);
+            REQUIRE(itl::cg(A, y, b2, M, iter) == 0);
+            // rtol * ||b2||: with the old reference norm, a small b2 stopped
+            // at 1e-8 * ||b||, a relative error of 1e-2.
+            CHECK(true_residual(A, y, b2) <= 1.5e-8 * norm(b2));
+        }
+    }
+    SECTION("reset(norm) as the second constructor takes it") {
+        iter_t iter(b, 1000, 1e-10);
+        iter.finished(1.0);
+        iter.fail(3, "an earlier solve");
+        iter.reset(norm(b));
+        CHECK(iter.error_code() == 0);
+        CHECK(iter.iterations() == 0);
+        CHECK(iter.resid() == norm(b));
+        CHECK(!iter.is_finished());
+    }
+    SECTION("cyclic_iteration prints a summary for each solve after reset") {
+        std::ostringstream out;
+        itl::cyclic_iteration<double> iter(b, 1000, 1e-10, 100, 0.0, out);
+        vec_t x(20, 0.0), y(20, 0.0);
+        REQUIRE(itl::cg(A, x, b, M, iter) == 0);
+        iter.reset(b);
+        REQUIRE(itl::cg(A, y, b, M, iter) == 0);
+        const std::string text = out.str();
+        std::size_t count = 0;
+        for (std::size_t p = text.find("converged in"); p != std::string::npos; p = text.find("converged in", p + 1)) ++count;
+        CHECK(count == 2);
+    }
+}
+
+TEST_CASE("minres on a complex Hermitian system (issue 888)", "[itl][minres][888]") {
+    // m_norm's abs(dot) for a complex value type.
+    using C = std::complex<double>;
+    using ccsr = mat::compressed2D<C>;
+    const std::size_t n = 16;
+    ccsr A(n, n);
+    {
+        mat::inserter<ccsr> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << C(4.0 + double(i % 3), 0.0);
+            if (i + 1 < n) { ins[i][i + 1] << C(-1.0, 0.5); ins[i + 1][i] << C(-1.0, -0.5); }
+        }
+    }
+    vec::dense_vector<C> b(n), x(n, C(0.0, 0.0));
+    for (std::size_t i = 0; i < n; ++i) b(i) = C(1.0 + double(i % 2), double(i % 3) - 1.0);
+    const itl::pc::diagonal<ccsr> M(A);
+    itl::basic_iteration<double> iter(b, 500, 1e-12);
+    REQUIRE(itl::minres(A, x, b, M, iter) == 0);
+    vec::dense_vector<C> Ax = A * x;
+    double r = 0, nb = 0;
+    for (std::size_t i = 0; i < n; ++i) { r += std::norm(b(i) - Ax(i)); nb += std::norm(b(i)); }
+    CHECK(std::sqrt(r / nb) <= 1.5e-12);
 }

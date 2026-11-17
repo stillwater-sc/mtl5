@@ -26,6 +26,25 @@ public:
           my_norm_r0_{norm_r0}, resid_{norm_r0},
           error_{0}, is_finished_{false} {}
 
+    /// Prepare the object for another solve (issue 888): the iteration count
+    /// back to 0, the tolerance's reference norm to ||r0||, the residual,
+    /// error and finished state cleared. Without reset, an object reused for
+    /// a second solve keeps counting toward max_iter (a budget over all the
+    /// solves) and measures the relative tolerance against the first r0's
+    /// norm (#866 made reuse work, and pins that behaviour); a solver can't
+    /// reset it, because what r0 means (b, b - A x0, ...) is the caller's.
+    template <Vector V>
+    void reset(const V& r0) { reset(Real(mtl::two_norm(r0))); }
+
+    /// reset from a precomputed norm of r0, as the second constructor takes.
+    void reset(Real norm_r0) {
+        i_ = 0;
+        my_norm_r0_ = norm_r0;
+        resid_ = norm_r0;
+        error_ = 0;
+        is_finished_ = false;
+    }
+
     /// Test convergence given residual vector r
     template <Vector V>
     bool finished(const V& r) {

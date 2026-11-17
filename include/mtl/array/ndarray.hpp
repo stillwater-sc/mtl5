@@ -478,13 +478,40 @@ private:
             if (shape_[i] > 1 && strides_[i] < below) return true;   // self-overlapping layout
             below += (shape_[i] - 1) * strides_[i];
         }
-        for (size_type k = 0; k < N; ++k) {
+        // Signed coefficients (issue 888): the greedy pass took each stride a
+        // nonnegative number of times, so strides {5, 1}, extents {2, 2} and
+        // d = 4 = 5 - 1 (A(1,0) and B(0,1) at offset 5) read as no overlap,
+        // and assign_to_view skipped its temporary. Largest stride first,
+        // each coefficient k_i is within |k_i| < extent_i and leaves a rest
+        // the smaller dimensions can reach (|rest| <= their span); with the
+        // strides dominating as checked above, at most two values of k_i
+        // qualify per dimension.
+        std::array<long long, N + 1> span_after{};   // span of dims[k+1 ..]
+        for (size_type k = N; k-- > 0;) {
             const size_type i = dims[k];
-            if (strides_[i] == 0) continue;
-            const size_type step = std::min<size_type>(d / strides_[i], shape_[i] - 1);
-            d -= step * strides_[i];
+            span_after[k] = span_after[k + 1] +
+                            static_cast<long long>(shape_[i] - 1) * static_cast<long long>(strides_[i]);
         }
-        return d == 0;
+        // span_after[k] holds dims[k..]; shift so index k means dims[k+1..].
+        auto rest_span = [&](size_type k) { return span_after[k + 1]; };
+        auto reach = [&](auto&& self, long long r, size_type k) -> bool {
+            if (k == N) return r == 0;
+            const size_type i = dims[k];
+            const long long st = static_cast<long long>(strides_[i]);
+            const long long e = static_cast<long long>(shape_[i]);
+            if (st == 0 || e <= 1) return self(self, r, k + 1);
+            const long long rs = rest_span(k);
+            // k_i in [ceil((r - rs) / st), floor((r + rs) / st)], clamped.
+            auto floor_div = [](long long a, long long b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
+            long long lo = -floor_div(-(r - rs), st);   // ceil
+            long long hi = floor_div(r + rs, st);
+            lo = std::max(lo, -(e - 1));
+            hi = std::min(hi, e - 1);
+            for (long long c = lo; c <= hi; ++c)
+                if (self(self, r - c * st, k + 1)) return true;
+            return false;
+        };
+        return reach(reach, static_cast<long long>(d), 0);
     }
 
     /// Write other's elements into this view, of the same shape. A source

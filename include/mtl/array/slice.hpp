@@ -34,8 +34,11 @@ struct range {
     constexpr range(std::size_t s, std::size_t e, std::size_t st = 1)
         : start(s), stop(e), step(st) {}
 
+    /// ceil((stop - start) / step), formed without stop - start + step - 1,
+    /// which wrapped for a huge step: range(0, 3, SIZE_MAX) gave 0, not 1
+    /// (issue 888). Step 0 has no extent (slice() rejects it).
     constexpr std::size_t extent() const {
-        return (stop > start) ? (stop - start + step - 1) / step : 0;
+        return (stop > start && step > 0) ? (stop - start - 1) / step + 1 : 0;
     }
 };
 
@@ -91,7 +94,9 @@ void slice_layout(const shape<N>& ext, const std::array<std::size_t, N>& strides
                 ::mtl::detail::throw_or_abort(std::invalid_argument("slice: range step 0"));
             const range r(std::min(arg.start, n), std::min(arg.stop, n), arg.step);
             new_shape[out_dim]   = r.extent();
-            new_strides[out_dim] = strides[dim] * r.step;
+            // With one element the stride is never stepped, and strides * step
+            // could wrap for a huge step; with two or more, step < n bounds it.
+            new_strides[out_dim] = r.extent() > 1 ? strides[dim] * r.step : strides[dim];
             if (r.extent() != 0) base_offset += r.start * strides[dim];
             ++out_dim;
         } else {

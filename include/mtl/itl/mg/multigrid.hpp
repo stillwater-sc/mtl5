@@ -35,6 +35,12 @@ namespace mtl::itl::mg {
 /// Multigrid solver/preconditioner.
 /// Smoother must have operator()(VecX&, const VecB&) -> VecX& interface.
 /// CoarseSolver must have operator()(VecX&, const VecB&) interface.
+///
+/// Not thread-safe, although vcycle, wcycle, solve and operator() are const:
+/// the smoothers and the coarse solver keep scratch (Jacobi's x_new, say)
+/// that every cycle writes through std::function. Two threads must not cycle
+/// one multigrid object at the same time; give each thread its own (issue
+/// 888).
 template <typename Value = double, typename Accumulator = void>
 class multigrid {
     using matrix_type = mat::compressed2D<Value>;

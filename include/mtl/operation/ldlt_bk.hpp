@@ -368,6 +368,14 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
     // Bunch-Kaufman threshold: alpha = (1 + sqrt(17)) / 8
     const value_type alpha = value_type((1.0 + std::sqrt(17.0)) / 8.0);
 
+    // The row-major updates' scratch rows, allocated once for the whole
+    // factorization: they were allocated at every pivot step (issue 888).
+    std::vector<value_type> w_row, t0_row, t1_row;
+    if constexpr (detail::row_major_contiguous_v<M>) {
+        w_row.resize(n);
+        t0_row.resize(n);
+        t1_row.resize(n);
+    }
     std::size_t k = 0;
     while (k < n) {
         if (k == n - 1) {
@@ -458,7 +466,7 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
             // columns, the row-major dense2D was walked at stride n, 3.1x
             // slower than ldlt_factor at n = 1200.
             if constexpr (detail::row_major_contiguous_v<M>) {
-                std::vector<value_type> w(n);
+                std::vector<value_type>& w = w_row;
                 for (std::size_t j = k + 1; j < n; ++j) w[j] = A(j, k) / dkk;
                 for (std::size_t i = k + 1; i < n; ++i) {
                     const value_type aik = A(i, k);
@@ -505,7 +513,8 @@ int ldlt_bk_factor(M& A, bk_pivot_info& pivots) {
             // Must use original A(:,k) and A(:,k+1) before overwriting with L.
             // The loop order follows the storage, as for the 1x1 update.
             if constexpr (detail::row_major_contiguous_v<M>) {
-                std::vector<value_type> t0(n), t1(n);
+                std::vector<value_type>& t0 = t0_row;
+                std::vector<value_type>& t1 = t1_row;
                 for (std::size_t j = k + 2; j < n; ++j) {
                     const value_type ajk0 = A(j, k), ajk1 = A(j, k + 1);
                     t0[j] = di00 * ajk0 + di01 * ajk1;   // D^{-1} [ajk0, ajk1]^T
