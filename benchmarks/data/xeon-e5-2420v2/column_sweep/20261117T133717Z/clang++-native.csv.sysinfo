@@ -1,0 +1,10 @@
+host=sw-13
+cpu=Intel(R) Xeon(R) CPU E5-2420 v2 @ 2.20GHz
+cpu_part=
+kernel=Linux 7.0.0-43-generic
+bench_cpu=0
+clock_policy=governor performance on policy0 (was ondemand)
+commit=c93ee00
+flags=-std=c++20 -O3 -DNDEBUG; native: -march=native
+compiler=Ubuntu clang version 21.1.8 (6ubuntu1)
+build_flags=-std=c++20 -O3 -DNDEBUG -march=native

@@ -1,0 +1,11 @@
+host=ventunoq-01
+model=Qualcomm Technologies, Inc. Monaco Monza addons
+cpu=
+cpu_part=0xd4b
+kernel=Linux 6.8.0-1089-qcom
+bench_cpu=0
+clock_policy=governor performance on policy0 (was schedutil)
+commit=c93ee00
+flags=-std=c++20 -O3 -DNDEBUG; native: -march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c
+compiler=Ubuntu clang version 18.1.3 (1ubuntu1)
+build_flags=-std=c++20 -O3 -DNDEBUG -march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c

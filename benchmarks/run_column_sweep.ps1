@@ -13,7 +13,7 @@
 # The active power plan is recorded, not changed.
 #
 # Output: $env:OUT (default build-platform\column-sweep\<host>-<UTC time>)
-# holds <variant>.csv and sysinfo.txt.
+# holds <variant>.csv, each with its .csv.sysinfo sidecar, and sysinfo.txt.
 #
 # Usage: powershell -File benchmarks\run_column_sweep.ps1 [bench args]
 # 'Continue', not 'Stop': under Windows PowerShell 5.1 a native command's
@@ -69,6 +69,10 @@ foreach ($v in $variants) {
     $p.ProcessorAffinity = [IntPtr](1 -shl $cpu)
     $p.PriorityClass = 'High'
     $p.WaitForExit()
+    # The CSV's sidecar (benchmarks/check_sidecars.sh): the session's record,
+    # and this build's compiler and flags.
+    @((Get-Content (Join-Path $out 'sysinfo.txt')) + "compiler=$compiler" + "build_flags=$($v.flags)") |
+        Set-Content "$csv.sysinfo"
     Remove-Item -Recurse -Force $dir
 }
 Write-Host "results: $out"

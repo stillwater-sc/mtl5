@@ -97,6 +97,7 @@ export default defineConfig({
                 { slug: 'benchmarks/cache-blocking-ab' },
                 { slug: 'benchmarks/register-tile-sweep' },
                 { slug: 'benchmarks/interleave-width' },
+                { slug: 'benchmarks/column-sweep' },
                 { slug: 'benchmarks/direct-solver-references' },
               ],
             },

@@ -15,7 +15,8 @@
 # without root they are recorded as not applied.
 #
 # Output: OUT (default build-platform/column-sweep/<host>-<UTC time>) holds
-# <compiler>-<variant>.csv and sysinfo.txt.
+# <compiler>-<variant>.csv, each with its .csv.sysinfo sidecar, and the
+# session's sysinfo.txt.
 #
 # Usage: CPU=0 NATIVE_FLAGS='-march=...' benchmarks/run_column_sweep.sh [bench args]
 set -euo pipefail
@@ -80,6 +81,10 @@ for cxx in g++ clang++; do
         echo "running $cxx $variant on cpu $CPU" >&2
         taskset -c "$CPU" "$bin" "$@" > "$OUT/$cxx-$variant.csv"
         rm -f "$bin"
+        # The CSV's sidecar (benchmarks/check_sidecars.sh): the session's
+        # record, and this build's compiler and flags.
+        { cat "$OUT/sysinfo.txt"; echo "compiler=$($cxx --version | head -1)"; echo "build_flags=${flags[*]}"; } \
+            > "$OUT/$cxx-$variant.csv.sysinfo"
     done
 done
 echo "results: $OUT" >&2

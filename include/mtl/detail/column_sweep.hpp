@@ -22,6 +22,13 @@
 // column-major A went from 26.5 to 2.2 ms (about 78% of the bandwidth
 // roofline; 1.9 ms under -march=native), and f64 from 26.3 to 4.7 ms.
 //
+// #884 made it faster on small and short, wide matrices, where it had lost to
+// the row kernels: eight columns per pass, a strip of at most 16 rows in
+// registers, the triangular diagonal blocks eight columns at a time, and the
+// row kernels for the smallest shapes. The constants below say where each
+// applies and what it was measured against; docs/benchmarks/column-sweep.md
+// has the five machines' results.
+//
 // It applies to a contiguous column-major A (dense2D) with an arithmetic
 // accumulator: float, double, long double and the integers. Other types keep
 // the row kernels, which a user's number type may well prefer; a row-major A
