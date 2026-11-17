@@ -1,0 +1,10 @@
+host=Branes-Jetson
+model=NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super
+cpu=ARMv8 Processor rev 1 (v8l)
+cpu_part=0xd42
+kernel=Linux 5.15.148-tegra
+bench_cpu=0
+clock_policy=governor performance on policy0 (was schedutil); jetson_clocks (25W)
+commit=c93ee00
+flags=-std=c++20 -O3 -DNDEBUG; native: -mcpu=native
+compiler_g++=g++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0

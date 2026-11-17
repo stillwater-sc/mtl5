@@ -22,6 +22,13 @@
 // column-major A went from 26.5 to 2.2 ms (about 78% of the bandwidth
 // roofline; 1.9 ms under -march=native), and f64 from 26.3 to 4.7 ms.
 //
+// #884 made it faster on small and short, wide matrices, where it had lost to
+// the row kernels: eight columns per pass, a strip of at most 16 rows in
+// registers, the triangular diagonal blocks eight columns at a time, and the
+// row kernels for the smallest shapes. The constants below say where each
+// applies and what it was measured against; docs/benchmarks/column-sweep.md
+// has the five machines' results.
+//
 // It applies to a contiguous column-major A (dense2D) with an arithmetic
 // accumulator: float, double, long double and the integers. Other types keep
 // the row kernels, which a user's number type may well prefer; a row-major A
@@ -31,6 +38,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <type_traits>
+#include <utility>
 
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/tag/orientation.hpp>
@@ -57,5 +65,141 @@ inline constexpr bool column_sweep_v =
 /// Rows per strip: 16 KB of accumulators, at least one.
 template <typename T>
 inline constexpr std::size_t column_strip_rows = std::max<std::size_t>(1, 16384 / sizeof(T));
+
+/// Columns per pass over a strip (#884). One column per pass loads and stores
+/// every accumulator of the strip for each column, so on a short strip the
+/// loop is bound by that traffic, not by A: a 4 x 1000 gemv ran at half the
+/// row kernel's speed. Eight columns per pass keep each accumulator in a
+/// register across eight terms.
+///
+/// Measured with bench_column_sweep on five machines (i7-12700K, Xeon
+/// E5-2420 v2, Ryzen 7 8845HS, Jetson Orin, Arduino Ventuno Q), GCC and Clang,
+/// generic and native: gemv 1.15-2.2x faster than one column per pass in
+/// geometric mean over the shapes. MSVC is the exception: its code for the
+/// eight-column pass ran at 0.23-0.89 of the one-column loop from 48 rows up,
+/// so under MSVC the sweep stays as #777 wrote it.
+#if defined(_MSC_VER) && !defined(__clang__)
+inline constexpr std::size_t column_sweep_columns = 1;
+#else
+inline constexpr std::size_t column_sweep_columns = 8;
+#endif
+
+/// A run-time strip goes one column per pass when A's columns are this many
+/// bytes apart or more (#884): eight columns per pass then read eight streams
+/// that far apart, and on the Jetson Orin and the Ventuno that ran at 0.46-0.75
+/// of one column per pass at n = 2048-4096 (8 KB and up), as on the Xeon at
+/// 4096. Below it the eight-column pass won on every machine.
+inline constexpr std::size_t column_sweep_unrolled_stride = 8192;
+
+/// Whether a sweep with C columns per pass over columns ld elements of T apart
+/// takes the unrolled path (strip_columns<C>) rather than sweep_columns<1>.
+template <std::size_t C, typename T>
+constexpr bool column_sweep_unrolled(std::size_t ld) {
+    return C > 1 && ld * sizeof(T) < column_sweep_unrolled_stride;
+}
+
+/// The shapes the row kernels take although A is column-major (#884): where
+/// the sweep's per-strip fixed cost isn't amortized. Measured across the five
+/// machines above, a size up to these minimized the geometric mean of the time
+/// over the best of the sweep and the row kernel. Larger cutoffs run into
+/// GCC's -O3 -march=native code for the row kernels on a column-major A on
+/// x86, 2-5x slower than its generic code from about 32 rows.
+inline constexpr std::size_t column_sweep_gemv_row_kernel_rows = 2;   // gemv: m <= 2
+inline constexpr std::size_t column_sweep_trmv_row_kernel_n = 32;     // trmv: n <= 32
+inline constexpr std::size_t column_sweep_trsv_row_kernel_n = 64;     // forward substitution: n <= 64
+
+/// Columns [cb, ce) of the column-major a (leading dimension ld) into the
+/// strip's accumulators: acc[l] = op(acc[l], a[c * ld + r0 + l], x(c)) for
+/// l < rr and c ascending. C columns per pass, then 4, then 1 for the rest.
+/// Every accumulator takes the same terms in the same order with the same
+/// expression as one column per pass, so the result is bit-identical to it
+/// (and so to the one-row loop the sweep matches).
+template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
+void sweep_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
+                   std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op);
+
+/// Strips of at most this many rows take sweep_fixed_rows (#884).
+inline constexpr std::size_t column_sweep_fixed_rows = 16;
+
+/// sweep_columns for a strip of exactly R rows, R known at compile time: the R
+/// accumulators are indexed only by a pack, so they stay in registers across
+/// all the columns, where the run-time strip loads and stores them every pass.
+/// On a 4-row strip that measured 1.5-4.8x faster than the run-time strip
+/// (i7-12700K, GCC and Clang, generic and -march=native). The same terms in
+/// the same order, so the same bits.
+///
+/// GCC's loop vectorizer is off for it: with AVX it vectorized the column
+/// loop, eight columns per iteration put back together with shuffles, where
+/// the SLP form (the R accumulators in one register, x broadcast per column)
+/// is what this loop wants. On a Xeon E5-2420 v2 the f32 4-row strip ran at
+/// half the speed of one column per pass (#884). The SLP vectorizer stays on.
+template <std::size_t R, typename Acc, typename T, typename XAt, typename Op>
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("no-tree-loop-vectorize")))
+#endif
+void sweep_fixed_rows(Acc* acc, const T* a, std::size_t ld, std::size_t r0,
+                      std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
+    [&]<std::size_t... K>(std::index_sequence<K...>) {
+        Acc t[R] = {acc[K]...};
+        for (std::size_t c = cb; c < ce; ++c) {
+            const T* col = a + c * ld + r0;
+            const auto& xc = x_at(c);
+            ((t[K] = op(t[K], col[K], xc)), ...);
+        }
+        ((acc[K] = t[K]), ...);
+    }(std::make_index_sequence<R>{});
+}
+
+/// Columns [cb, ce) into a strip of rr rows: sweep_fixed_rows for a short
+/// strip, sweep_columns<C> otherwise. Bit-identical either way. The callers
+/// take sweep_columns<1> themselves at a wide column stride
+/// (column_sweep_unrolled<T>): behind this extra call, the same one-column loop
+/// measured 25-35% slower than called directly (#884).
+template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
+void strip_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
+                   std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
+    if (rr == 0 || cb >= ce) return;
+    if (rr <= column_sweep_fixed_rows) {
+        [&]<std::size_t... R>(std::index_sequence<R...>) {
+            (void)((rr == R + 1 ? (sweep_fixed_rows<R + 1>(acc, a, ld, r0, cb, ce, x_at, op), true) : false) || ...);
+        }(std::make_index_sequence<column_sweep_fixed_rows>{});
+        return;
+    }
+    sweep_columns<C>(acc, a, ld, r0, rr, cb, ce, x_at, op);
+}
+
+template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
+void sweep_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
+                   std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
+    std::size_t c = cb;
+    if constexpr (C > 1) {
+        using XV = std::remove_cvref_t<decltype(x_at(cb))>;
+        for (; ce - c >= C; c += C) {
+            const T* col[C];
+            XV xs[C];
+            for (std::size_t k = 0; k < C; ++k) {
+                col[k] = a + (c + k) * ld + r0;
+                xs[k] = x_at(c + k);
+            }
+            for (std::size_t l = 0; l < rr; ++l) {
+                Acc t = acc[l];
+                [&]<std::size_t... K>(std::index_sequence<K...>) {
+                    ((t = op(t, col[K][l], xs[K])), ...);
+                }(std::make_index_sequence<C>{});
+                acc[l] = t;
+            }
+        }
+        if constexpr (C > 4)
+            sweep_columns<4>(acc, a, ld, r0, rr, c, ce, x_at, op);
+        else
+            sweep_columns<1>(acc, a, ld, r0, rr, c, ce, x_at, op);
+    } else {
+        for (; c < ce; ++c) {
+            const auto& xc = x_at(c);
+            const T* col = a + c * ld + r0;
+            for (std::size_t l = 0; l < rr; ++l) acc[l] = op(acc[l], col[l], xc);
+        }
+    }
+}
 
 } // namespace mtl::detail

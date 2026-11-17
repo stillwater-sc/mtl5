@@ -545,6 +545,25 @@ authoritative list is always `bench_all --help`.
 would change every machine's committed CSV and break comparison with the
 existing baselines. Ask for it by name.
 
+## The column sweep against the row kernel (#884)
+
+`bench_column_sweep` times, on a column-major A, #777's column sweep, the
+sweep as it is now, the row kernel, and the public `mult`, `trmv` and
+`lower_trisolve`, over square, short-wide and tall shapes. It prints CSV. One
+command builds and runs it on a machine:
+
+```bash
+CPU=0 benchmarks/run_column_sweep.sh                 # GCC and Clang, generic and native
+powershell -File benchmarks\run_column_sweep.ps1    # MSVC and clang-cl
+```
+
+The runner compiles the one file at CMake Release's flags, pins it to `CPU`
+with one thread, applies the governor (and `jetson_clocks`) through `sudo -n`
+and writes each CSV with its `.csv.sysinfo`. Published sessions go to
+`benchmarks/data/<machine>/column_sweep/<session>/`, and
+`column_sweep_table.py` writes the tables on
+`docs/benchmarks/column-sweep.md`.
+
 ## Sparse direct-solver scoreboards
 
 Three binaries measure the sparse side. Each runs a built-in synthetic suite

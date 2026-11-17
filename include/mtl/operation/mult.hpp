@@ -83,7 +83,12 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
 /// A, S rows per strip (#777; see detail/column_sweep.hpp). Row r sums
 /// generic_fma<Result>(acc, A(r, c), x(c)) for c ascending from zero, as the
 /// one-row loop does, so y is bit-identical to it.
-template <std::size_t S, typename M, typename VIn, typename VOut>
+///
+/// C columns per pass (#884, see column_sweep_columns), and a strip of at most
+/// column_sweep_fixed_rows rows in registers (strip_columns). C = 1 is the
+/// sweep as #777 wrote it, kept for bench_column_sweep: one column per pass,
+/// every strip at run time. The bits are the same for any C.
+template <std::size_t S, std::size_t C = column_sweep_columns, typename M, typename VIn, typename VOut>
 void mult_rows_column_sweep(const M& A, const VIn& x, VOut& y,
                             std::size_t rb, std::size_t re) {
     static_assert(S >= 1);
@@ -100,11 +105,12 @@ void mult_rows_column_sweep(const M& A, const VIn& x, VOut& y,
     for (std::size_t r0 = rb; r0 < re; r0 += S) {
         const std::size_t rr = std::min(S, re - r0);
         for (std::size_t l = 0; l < rr; ++l) acc[l] = math::zero<Result>();
-        for (size_type c = 0; c < ncols; ++c) {
-            const auto& xc = x(c);
-            const auto* col = a + static_cast<std::size_t>(c) * m + r0;
-            for (std::size_t l = 0; l < rr; ++l) acc[l] = generic_fma<Result>(acc[l], col[l], xc);
-        }
+        const auto x_at = [&](std::size_t c) -> decltype(auto) { return x(static_cast<size_type>(c)); };
+        const auto fma = [](const Result& t, const auto& aij, const auto& xc) { return generic_fma<Result>(t, aij, xc); };
+        if (column_sweep_unrolled<C, std::remove_cvref_t<decltype(*a)>>(m))
+            strip_columns<C>(acc, a, m, r0, rr, 0, static_cast<std::size_t>(ncols), x_at, fma);
+        else
+            sweep_columns<1>(acc, a, m, r0, rr, 0, static_cast<std::size_t>(ncols), x_at, fma);
         for (std::size_t l = 0; l < rr; ++l) y(static_cast<y_size>(r0 + l)) = acc[l];
     }
 }
@@ -135,7 +141,21 @@ void mult_generic_rows(const M& A, const VIn& x, VOut& y,
     using Result = typename VOut::value_type;
     using size_type = typename M::size_type;
     if constexpr (std::is_void_v<Accumulator> && column_sweep_v<Result, M>) {
-        mult_rows_column_sweep<column_strip_rows<Result>>(A, x, y, rb, re);   // #777
+        // #777; at most column_sweep_gemv_row_kernel_rows rows, the row
+        // kernel (#884). The same bits either way.
+        // A wide column stride takes the C = 1 instantiation, #777's loop
+        // itself: run through the C = 8 one, the same loop measured 20-25%
+        // slower at n = 1024-4096 where GCC kept it out of line.
+        const std::size_t m = static_cast<std::size_t>(A.num_rows());
+        if (m > column_sweep_gemv_row_kernel_rows &&
+            column_sweep_unrolled<column_sweep_columns, typename M::value_type>(m))
+            mult_rows_column_sweep<column_strip_rows<Result>>(A, x, y, rb, re);
+        else if (m > column_sweep_gemv_row_kernel_rows)
+            mult_rows_column_sweep<column_strip_rows<Result>, 1>(A, x, y, rb, re);
+        else
+            interface::with_interleave_rows<Result, interface::kernel::gemv>([&](auto w) {
+                mult_rows_interleaved<decltype(w)::value>(A, x, y, rb, re);
+            });
     } else if constexpr (std::is_void_v<Accumulator>) {
         interface::with_interleave_rows<Result, interface::kernel::gemv>([&](auto w) {
             mult_rows_interleaved<decltype(w)::value>(A, x, y, rb, re);

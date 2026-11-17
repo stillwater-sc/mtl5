@@ -110,6 +110,9 @@ const FILE_MAP = {
   // The interleave width across the machines (#780), its tables written by
   // benchmarks/interleave_table.py.
   'benchmarks/interleave-width.md':             'benchmarks/interleave-width.md',
+  // The column sweep against the row kernel across the machines (#884), its
+  // tables written by benchmarks/column_sweep_table.py.
+  'benchmarks/column-sweep.md':                 'benchmarks/column-sweep.md',
   // The direct solvers against CHOLMOD and PARDISO (#810).
   'benchmarks/direct-solver-references.md':     'benchmarks/direct-solver-references.md',
   // Analyses moved out of systems.md (#799).

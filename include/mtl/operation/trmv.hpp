@@ -181,7 +181,12 @@ void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag
 /// it writes any of its entries, and the strips go in the overwrite-safe order
 /// (top-down for upper, bottom-up for lower), so every x(j) read still holds
 /// its original value.
-template <std::size_t S, typename M, typename VX>
+///
+/// The columns go C at a time (#884, see column_sweep_columns), the diagonal
+/// block's too: a group of C columns feeds the strip rows that take all of
+/// them unrolled, and the few rows inside the group term by term. Each row
+/// still adds its terms in ascending j. C = 1 is the sweep as #777 wrote it.
+template <std::size_t S, std::size_t C = column_sweep_columns, typename M, typename VX>
 void trmv_column_sweep(const M& A, VX& x, bool upper, bool unit_diag) {
     static_assert(S >= 1);
     using size_type = typename M::size_type;
@@ -199,29 +204,48 @@ void trmv_column_sweep(const M& A, VX& x, bool upper, bool unit_diag) {
     const auto finish = [&](std::size_t r0, std::size_t rr) {
         for (std::size_t l = 0; l < rr; ++l) x(static_cast<size_type>(r0 + l)) = acc[l];
     };
+    const auto x_at = [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); };
+    const auto add = [](const acc_type& t, const auto& aij, const auto& xj) -> acc_type { return t + aij * xj; };
+    // Columns [cb, ce) into the strip rows [i0, i0 + ni), which acc[i0 - r0 ..]
+    // holds: strip_columns (C at a time, short strips in registers), or one
+    // column at a time as #777 did for C = 1 or a wide column stride.
+    const auto cols = [&](std::size_t r0, std::size_t i0, std::size_t ni, std::size_t cb, std::size_t ce) {
+        if (column_sweep_unrolled<C, std::remove_cvref_t<decltype(*a)>>(n))
+            strip_columns<C>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+        else
+            sweep_columns<1>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+    };
     if (upper) {
-        // Row i adds j = i+1 .. n-1: column j feeds the strip's rows i < j.
+        // Row i adds j = i+1 .. n-1 in ascending j. In the strip [r0, r1), the
+        // diagonal block's columns go C at a time (#884): group [j0, je) feeds
+        // all of the rows i < j0, and row i in [j0, je) its columns i+1 .. je-1.
+        // Then every column j >= r1 feeds all of the strip.
         for (std::size_t r0 = 0; r0 < n; r0 += S) {
-            const std::size_t rr = std::min(S, n - r0);
+            const std::size_t rr = std::min(S, n - r0), r1 = r0 + rr;
             start(r0, rr);
-            for (std::size_t j = r0 + 1; j < n; ++j) {
-                const auto& xj = x(static_cast<size_type>(j));
-                const std::size_t hi = std::min(j, r0 + rr);
-                const auto* col = &at(0, j);
-                for (std::size_t i = r0; i < hi; ++i) acc[i - r0] += col[i] * xj;
+            for (std::size_t j0 = r0 + 1; j0 < r1; j0 += C) {
+                const std::size_t je = std::min(j0 + C, r1);
+                cols(r0, r0, j0 - r0, j0, je);
+                for (std::size_t i = j0; i + 1 < je; ++i)
+                    for (std::size_t j = i + 1; j < je; ++j) acc[i - r0] += at(i, j) * x(static_cast<size_type>(j));
             }
+            cols(r0, r0, rr, r1, n);
             finish(r0, rr);
         }
     } else {
-        // Row i adds j = 0 .. i-1: column j feeds the strip's rows i > j.
+        // Row i adds j = 0 .. i-1 in ascending j. Every column j < r0 feeds all
+        // of the strip [r0, r1); then the diagonal block's columns go C at a
+        // time (#884): row i in (j0, je) takes columns j0 .. i-1 of group
+        // [j0, je), and the rows i >= je all of them.
         for (std::size_t r1 = n; r1 > 0;) {
             const std::size_t r0 = r1 > S ? r1 - S : 0, rr = r1 - r0;
             start(r0, rr);
-            for (std::size_t j = 0; j + 1 < r1; ++j) {
-                const auto& xj = x(static_cast<size_type>(j));
-                const std::size_t lo = std::max(j + 1, r0);
-                const auto* col = &at(0, j);
-                for (std::size_t i = lo; i < r1; ++i) acc[i - r0] += col[i] * xj;
+            cols(r0, r0, rr, 0, r0);
+            for (std::size_t j0 = r0; j0 + 1 < r1; j0 += C) {
+                const std::size_t je = std::min(j0 + C, r1);
+                for (std::size_t i = j0 + 1; i < je; ++i)
+                    for (std::size_t j = j0; j < i; ++j) acc[i - r0] += at(i, j) * x(static_cast<size_type>(j));
+                cols(r0, je, r1 - je, j0, je);
             }
             finish(r0, rr);
             r1 = r0;
@@ -313,8 +337,15 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
     // one-row loop's bits; the accumulator's type is the one-row loop's.
     using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
     if constexpr (detail::column_sweep_v<acc_type, M>) {
-        detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
-        return;
+        // Up to column_sweep_trmv_row_kernel_n, the row kernels below (#884).
+        // A wide column stride takes the C = 1 instantiation, #777's loop.
+        if (static_cast<std::size_t>(n) > detail::column_sweep_trmv_row_kernel_n) {
+            if (detail::column_sweep_unrolled<detail::column_sweep_columns, typename M::value_type>(n))
+                detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
+            else
+                detail::trmv_column_sweep<detail::column_strip_rows<acc_type>, 1>(A, x, upper, unit_diag);
+            return;
+        }
     }
     interface::with_interleave_rows<acc_type, interface::kernel::trmv>([&](auto w) {
         constexpr std::size_t W = decltype(w)::value;

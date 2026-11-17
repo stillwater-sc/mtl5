@@ -490,13 +490,14 @@ TEST_CASE("keep_scalar applies to row-major float at W >= 4 under GCC only", "[o
 
 namespace {
 
-/// The column sweeps with S rows per strip against the one-row loops.
-template <std::size_t S, typename M>
+/// The column sweeps with S rows per strip and C columns per pass (#884)
+/// against the one-row loops.
+template <std::size_t S, typename M, std::size_t C = detail::column_sweep_columns>
 void check_strip() {
     using T = typename M::value_type;
     using V = vec::dense_vector<T>;
     for (std::size_t n : sizes) {
-        INFO("S = " << S << ", n = " << n);
+        INFO("S = " << S << ", C = " << C << ", n = " << n);
         const M A = triangular<M>(n, 21 + n);
         const V x0 = filled<T>(n, 22 + n);
         for (bool unit : {false, true}) {
@@ -504,26 +505,26 @@ void check_strip() {
             for (bool upper : {false, true}) {
                 INFO((upper ? "upper" : "lower"));
                 V x = x0, y = x0;
-                detail::trmv_column_sweep<S>(A, x, upper, unit);
+                detail::trmv_column_sweep<S, C>(A, x, upper, unit);
                 old_trmv(A, y, upper, unit);
                 require_identical(x, y);
             }
             V x(n), y(n);
-            detail::lower_trisolve_column_sweep<S>(A, x, x0, unit);
+            detail::lower_trisolve_column_sweep<S, C>(A, x, x0, unit);
             old_lower_trisolve(A, y, x0, unit);
             require_identical(x, y);
             V u = x0;
-            detail::lower_trisolve_column_sweep<S>(A, u, u, unit);
+            detail::lower_trisolve_column_sweep<S, C>(A, u, u, unit);
             require_identical(u, y);
         }
         V y(n), z(n);
         old_mult_generic(A, x0, y);
-        detail::mult_rows_column_sweep<S>(A, x0, z, 0, n);
+        detail::mult_rows_column_sweep<S, C>(A, x0, z, 0, n);
         require_identical(z, y);
         if (n >= 3) {   // a band starting and ending off a strip
             V u = y;
             for (std::size_t i = 1; i + 1 < n; ++i) u(i) = T(0);
-            detail::mult_rows_column_sweep<S>(A, x0, u, 1, n - 1);
+            detail::mult_rows_column_sweep<S, C>(A, x0, u, 1, n - 1);
             require_identical(u, y);
         }
     }
@@ -539,6 +540,98 @@ void check_strips(std::index_sequence<S...>) {
 TEMPLATE_TEST_CASE("the column sweeps are bit-identical to the one-row loops at every strip size", "[operation][777]",
                    cm<float>, cm<double>, cm<long double>) {
     check_strips<TestType>(std::index_sequence<1, 2, 3, 5, 8, 16>{});
+}
+
+TEMPLATE_TEST_CASE("the column sweeps are bit-identical at every number of columns per pass", "[operation][884]",
+                   cm<float>, cm<double>, cm<long double>) {
+    // C columns per pass, then 4, then 1 for the rest: every accumulator takes
+    // the same terms in the same order (#884). C = 1 is #777's sweep.
+    check_strip<5, TestType, 1>();
+    check_strip<5, TestType, 2>();
+    check_strip<5, TestType, 3>();
+    check_strip<5, TestType, 8>();
+    check_strip<16, TestType, 8>();
+    check_strip<64, TestType, 8>();
+}
+
+TEST_CASE("the column-sweep dispatch cutoffs (#884)", "[operation][884]") {
+    // Measured on five machines (bench_column_sweep): the row kernels for the
+    // smallest shapes, the sweep above them; one column per pass at 8 KB
+    // between columns; MSVC keeps #777's sweep.
+    STATIC_REQUIRE(detail::column_sweep_gemv_row_kernel_rows == 2);
+    STATIC_REQUIRE(detail::column_sweep_trmv_row_kernel_n == 32);
+    STATIC_REQUIRE(detail::column_sweep_trsv_row_kernel_n == 64);
+    STATIC_REQUIRE(detail::column_sweep_unrolled_stride == 8192);
+    STATIC_REQUIRE(detail::column_sweep_fixed_rows == 16);
+#if defined(_MSC_VER) && !defined(__clang__)
+    STATIC_REQUIRE(detail::column_sweep_columns == 1);
+#else
+    STATIC_REQUIRE(detail::column_sweep_columns == 8);
+#endif
+}
+
+TEMPLATE_TEST_CASE("the column-major dispatch is bit-identical on both sides of each cutoff",
+                   "[operation][884]", cm<float>, cm<double>) {
+    // Both sides of the gemv, trmv and forward-substitution cutoffs, a strip
+    // tail in the fixed-row kernel, and (1100 x 1100 double, 8.6 KB between
+    // columns) the one-column pass past column_sweep_unrolled_stride.
+    using M = TestType;
+    using T = typename M::value_type;
+    using V = vec::dense_vector<T>;
+    for (std::size_t n : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{17}, std::size_t{31},
+                          std::size_t{32}, std::size_t{33}, std::size_t{63}, std::size_t{64}, std::size_t{65},
+                          std::size_t{100}, std::size_t{1100}}) {
+        if (n == 1100 && sizeof(T) != 8) continue;
+        INFO("n = " << n);
+        const M A = triangular<M>(n, 31 + n);
+        const V x0 = filled<T>(n, 32 + n);
+        V y(n), z(n);
+        old_mult_generic(A, x0, y);
+        {
+            // detail::mult_generic carries the column-sweep dispatch in every
+            // configuration; the public mult hands a dense2D<float/double> to
+            // BLAS or the SIMD gemv where those are built in.
+            INFO("mult_generic");
+            detail::mult_generic(A, x0, z);
+            require_identical(z, y);
+        }
+#if !defined(MTL5_HAS_BLAS) && !defined(MTL5_HAS_HIGHWAY) && !defined(MTL5_NATIVE_FAST_GEMM)
+        // The public trmv and forward substitution reach the sweep dispatch
+        // only where no BLAS, Highway or native-fast path takes them first:
+        // those don't promise the one-row loop's bits.
+        for (bool upper : {false, true}) {
+            INFO((upper ? "trmv upper" : "trmv lower"));
+            V x = x0, w = x0;
+            trmv(A, x, upper, false);
+            old_trmv(A, w, upper, false);
+            require_identical(x, w);
+        }
+        V s(n), t(n);
+        lower_trisolve(A, s, x0, false);
+        old_lower_trisolve(A, t, x0, false);
+        {
+            INFO("lower_trisolve");
+            require_identical(s, t);
+        }
+        V u = x0;
+        lower_trisolve(A, u, false);
+        INFO("lower_trisolve in place");
+        require_identical(u, t);
+#endif
+    }
+    // gemv on short, wide A: m on both sides of column_sweep_gemv_row_kernel_rows.
+    for (std::size_t m : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{16},
+                          std::size_t{17}}) {
+        INFO("m = " << m);
+        M A(m, 300);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < 300; ++j) A(i, j) = static_cast<T>(val(41 + m, i, j));
+        const V x = filled<T>(300, 42);
+        V y(m), z(m);
+        old_mult_generic(A, x, y);
+        detail::mult_generic(A, x, z);
+        require_identical(z, y);
+    }
 }
 
 TEST_CASE("the column-major mat*vec keeps wrapping integers and mixed types bit for bit", "[operation][777]") {

@@ -1,0 +1,7 @@
+host=SW-NUC-AMD-A8-1
+cpu=AMD Ryzen 7 8845HS w/ Radeon 780M Graphics
+os=Microsoft Windows 11 Pro
+bench_cpu=0
+clock_policy=not changed; Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)
+commit=c93ee00
+compiler=Clang 22.1.3 with MSVC-like command-line; flags=/clang:-march=native
