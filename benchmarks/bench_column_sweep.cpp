@@ -12,7 +12,10 @@
 //   sweep1 the same with C = 1, the sweep as #777 wrote it;
 //   rows   detail::mult_rows_interleaved / trmv_lower_rows /
 //          lower_trisolve_rows at this build's default width
-//          (interface::interleave_rows_v<T, kernel>).
+//          (interface::interleave_rows_v<T, kernel>);
+//   public mtl::mult / mtl::trmv / mtl::lower_trisolve, with the dispatch
+//          #884 settled on (the row kernels for the smallest shapes, the
+//          sweep above them, one column per pass at wide column strides).
 //
 // All give the one-row loop's bits, so only the speed differs. A ratio
 // rows / sweep above 1 means the sweep is faster.
@@ -21,7 +24,7 @@
 // microseconds, and an entry is the median of --reps samples per call.
 // Output is CSV on stdout:
 //
-//   kernel,type,m,n,sweep_ns,sweep1_ns,rows_ns,rows_over_sweep,rows_over_sweep1
+//   kernel,type,m,n,sweep_ns,sweep1_ns,rows_ns,public_ns,rows_over_sweep,rows_over_sweep1,sweep1_over_public
 //
 // Usage:
 //   bench_column_sweep [--reps 11] [--min-us 2000] [--quick]
@@ -94,9 +97,9 @@ cmat<T> make_matrix(std::size_t m, std::size_t n) {
 }
 
 void print(const char* kernel, const char* type, std::size_t m, std::size_t n, double sweep, double sweep1,
-           double rows) {
-    std::printf("%s,%s,%zu,%zu,%.1f,%.1f,%.1f,%.3f,%.3f\n", kernel, type, m, n, sweep, sweep1, rows, rows / sweep,
-                rows / sweep1);
+           double rows, double pub) {
+    std::printf("%s,%s,%zu,%zu,%.1f,%.1f,%.1f,%.1f,%.3f,%.3f,%.3f\n", kernel, type, m, n, sweep, sweep1, rows, pub,
+                rows / sweep, rows / sweep1, sweep1 / pub);
     std::fflush(stdout);
 }
 
@@ -115,7 +118,9 @@ void gemv(std::size_t m, std::size_t n, int reps, double min_us) {
     consume(y);
     const double r = ns_per_call(none, [&] { mtl::detail::mult_rows_interleaved<W>(A, x, y, 0, m); }, reps, min_us);
     consume(y);
-    print("gemv", type_name<T>(), m, n, s, s1, r);
+    const double p = ns_per_call(none, [&] { mtl::mult(A, x, y); }, reps, min_us);
+    consume(y);
+    print("gemv", type_name<T>(), m, n, s, s1, r, p);
 }
 
 template <typename T>
@@ -134,7 +139,9 @@ void trmv(std::size_t n, int reps, double min_us) {
     consume(x);
     const double r = ns_per_call(restore, [&] { mtl::detail::trmv_lower_rows<W>(A, x, n, false); }, reps, min_us);
     consume(x);
-    print("trmv_lower", type_name<T>(), n, n, s, s1, r);
+    const double p = ns_per_call(restore, [&] { mtl::trmv(A, x, false, false); }, reps, min_us);
+    consume(x);
+    print("trmv_lower", type_name<T>(), n, n, s, s1, r, p);
 }
 
 template <typename T>
@@ -152,7 +159,9 @@ void trisolve(std::size_t n, int reps, double min_us) {
     consume(x);
     const double r = ns_per_call(none, [&] { mtl::detail::lower_trisolve_rows<W>(A, x, b, false); }, reps, min_us);
     consume(x);
-    print("lower_trisolve", type_name<T>(), n, n, s, s1, r);
+    const double p = ns_per_call(none, [&] { mtl::lower_trisolve(A, x, b, false); }, reps, min_us);
+    consume(x);
+    print("lower_trisolve", type_name<T>(), n, n, s, s1, r, p);
 }
 
 template <typename T>
@@ -201,7 +210,8 @@ int main(int argc, char** argv) {
                 iface::interleave_rows_v<float, iface::kernel::trmv>,
                 iface::interleave_rows_v<float, iface::kernel::lower_trisolve>);
     std::printf("# columns per pass %zu\n", mtl::detail::column_sweep_columns);
-    std::printf("kernel,type,m,n,sweep_ns,sweep1_ns,rows_ns,rows_over_sweep,rows_over_sweep1\n");
+    std::printf("kernel,type,m,n,sweep_ns,sweep1_ns,rows_ns,public_ns,rows_over_sweep,rows_over_sweep1,"
+                "sweep1_over_public\n");
     run_type<double>(quick, reps, min_us);
     run_type<float>(quick, reps, min_us);
     return g_sink == 12345.678 ? 1 : 0;

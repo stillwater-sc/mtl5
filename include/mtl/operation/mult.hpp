@@ -141,7 +141,14 @@ void mult_generic_rows(const M& A, const VIn& x, VOut& y,
     using Result = typename VOut::value_type;
     using size_type = typename M::size_type;
     if constexpr (std::is_void_v<Accumulator> && column_sweep_v<Result, M>) {
-        mult_rows_column_sweep<column_strip_rows<Result>>(A, x, y, rb, re);   // #777
+        // #777; at most column_sweep_gemv_row_kernel_rows rows, the row
+        // kernel (#884). The same bits either way.
+        if (static_cast<std::size_t>(A.num_rows()) > column_sweep_gemv_row_kernel_rows)
+            mult_rows_column_sweep<column_strip_rows<Result>>(A, x, y, rb, re);
+        else
+            interface::with_interleave_rows<Result, interface::kernel::gemv>([&](auto w) {
+                mult_rows_interleaved<decltype(w)::value>(A, x, y, rb, re);
+            });
     } else if constexpr (std::is_void_v<Accumulator>) {
         interface::with_interleave_rows<Result, interface::kernel::gemv>([&](auto w) {
             mult_rows_interleaved<decltype(w)::value>(A, x, y, rb, re);

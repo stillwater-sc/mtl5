@@ -63,9 +63,36 @@ inline constexpr std::size_t column_strip_rows = std::max<std::size_t>(1, 16384 
 /// every accumulator of the strip for each column, so on a short strip the
 /// loop is bound by that traffic, not by A: a 4 x 1000 gemv ran at half the
 /// row kernel's speed. Eight columns per pass keep each accumulator in a
-/// register across eight terms, measured 1.3-2x faster at every shape on an
-/// i7-12700K, generic and -march=native.
+/// register across eight terms.
+///
+/// Measured with bench_column_sweep on five machines (i7-12700K, Xeon
+/// E5-2420 v2, Ryzen 7 8845HS, Jetson Orin, Arduino Ventuno Q), GCC and Clang,
+/// generic and native: gemv 1.15-2.2x faster than one column per pass in
+/// geometric mean over the shapes. MSVC is the exception: its code for the
+/// eight-column pass ran at 0.23-0.89 of the one-column loop from 48 rows up,
+/// so under MSVC the sweep stays as #777 wrote it.
+#if defined(_MSC_VER) && !defined(__clang__)
+inline constexpr std::size_t column_sweep_columns = 1;
+#else
 inline constexpr std::size_t column_sweep_columns = 8;
+#endif
+
+/// A run-time strip goes one column per pass when A's columns are this many
+/// bytes apart or more (#884): eight columns per pass then read eight streams
+/// that far apart, and on the Jetson Orin and the Ventuno that ran at 0.46-0.75
+/// of one column per pass at n = 2048-4096 (8 KB and up), as on the Xeon at
+/// 4096. Below it the eight-column pass won on every machine.
+inline constexpr std::size_t column_sweep_unrolled_stride = 8192;
+
+/// The shapes the row kernels take although A is column-major (#884): where
+/// the sweep's per-strip fixed cost isn't amortized. Measured across the five
+/// machines above, a size up to these minimized the geometric mean of the time
+/// over the best of the sweep and the row kernel. Larger cutoffs run into
+/// GCC's -O3 -march=native code for the row kernels on a column-major A on
+/// x86, 2-5x slower than its generic code from about 32 rows.
+inline constexpr std::size_t column_sweep_gemv_row_kernel_rows = 2;   // gemv: m <= 2
+inline constexpr std::size_t column_sweep_trmv_row_kernel_n = 32;     // trmv: n <= 32
+inline constexpr std::size_t column_sweep_trsv_row_kernel_n = 64;     // forward substitution: n <= 64
 
 /// Columns [cb, ce) of the column-major a (leading dimension ld) into the
 /// strip's accumulators: acc[l] = op(acc[l], a[c * ld + r0 + l], x(c)) for
@@ -101,11 +128,17 @@ void sweep_fixed_rows(Acc* acc, const T* a, std::size_t ld, std::size_t r0,
 }
 
 /// Columns [cb, ce) into a strip of rr rows: sweep_fixed_rows for a short
-/// strip, sweep_columns<C> otherwise. Bit-identical either way.
+/// strip, sweep_columns<C> otherwise, or one column per pass when the columns
+/// are column_sweep_unrolled_stride bytes apart or more. Bit-identical every
+/// way.
 template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
 void strip_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
                    std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
     if (rr == 0 || cb >= ce) return;
+    if (rr > column_sweep_fixed_rows && ld * sizeof(T) >= column_sweep_unrolled_stride) {
+        sweep_columns<1>(acc, a, ld, r0, rr, cb, ce, x_at, op);
+        return;
+    }
     if (rr <= column_sweep_fixed_rows) {
         [&]<std::size_t... R>(std::index_sequence<R...>) {
             (void)((rr == R + 1 ? (sweep_fixed_rows<R + 1>(acc, a, ld, r0, cb, ce, x_at, op), true) : false) || ...);

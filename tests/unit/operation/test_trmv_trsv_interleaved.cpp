@@ -554,6 +554,70 @@ TEMPLATE_TEST_CASE("the column sweeps are bit-identical at every number of colum
     check_strip<64, TestType, 8>();
 }
 
+TEST_CASE("the column-sweep dispatch cutoffs (#884)", "[operation][884]") {
+    // Measured on five machines (bench_column_sweep): the row kernels for the
+    // smallest shapes, the sweep above them; one column per pass at 8 KB
+    // between columns; MSVC keeps #777's sweep.
+    STATIC_REQUIRE(detail::column_sweep_gemv_row_kernel_rows == 2);
+    STATIC_REQUIRE(detail::column_sweep_trmv_row_kernel_n == 32);
+    STATIC_REQUIRE(detail::column_sweep_trsv_row_kernel_n == 64);
+    STATIC_REQUIRE(detail::column_sweep_unrolled_stride == 8192);
+    STATIC_REQUIRE(detail::column_sweep_fixed_rows == 16);
+#if defined(_MSC_VER) && !defined(__clang__)
+    STATIC_REQUIRE(detail::column_sweep_columns == 1);
+#else
+    STATIC_REQUIRE(detail::column_sweep_columns == 8);
+#endif
+}
+
+TEMPLATE_TEST_CASE("the public column-major kernels are bit-identical on both sides of each cutoff",
+                   "[operation][884]", cm<float>, cm<double>) {
+    // Both sides of the gemv, trmv and forward-substitution cutoffs, a strip
+    // tail in the fixed-row kernel, and (1100 x 1100 double, 8.6 KB between
+    // columns) the one-column pass past column_sweep_unrolled_stride.
+    using M = TestType;
+    using T = typename M::value_type;
+    using V = vec::dense_vector<T>;
+    for (std::size_t n : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{17}, std::size_t{31},
+                          std::size_t{32}, std::size_t{33}, std::size_t{63}, std::size_t{64}, std::size_t{65},
+                          std::size_t{100}, std::size_t{1100}}) {
+        if (n == 1100 && sizeof(T) != 8) continue;
+        INFO("n = " << n);
+        const M A = triangular<M>(n, 31 + n);
+        const V x0 = filled<T>(n, 32 + n);
+        V y(n), z(n);
+        old_mult_generic(A, x0, y);
+        mult(A, x0, z);
+        require_identical(z, y);
+        for (bool upper : {false, true}) {
+            V x = x0, w = x0;
+            trmv(A, x, upper, false);
+            old_trmv(A, w, upper, false);
+            require_identical(x, w);
+        }
+        V s(n), t(n);
+        lower_trisolve(A, s, x0, false);
+        old_lower_trisolve(A, t, x0, false);
+        require_identical(s, t);
+        V u = x0;
+        lower_trisolve(A, u, false);
+        require_identical(u, t);
+    }
+    // gemv on short, wide A: m on both sides of column_sweep_gemv_row_kernel_rows.
+    for (std::size_t m : {std::size_t{1}, std::size_t{2}, std::size_t{3}, std::size_t{4}, std::size_t{16},
+                          std::size_t{17}}) {
+        INFO("m = " << m);
+        M A(m, 300);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < 300; ++j) A(i, j) = static_cast<T>(val(41 + m, i, j));
+        const V x = filled<T>(300, 42);
+        V y(m), z(m);
+        old_mult_generic(A, x, y);
+        mult(A, x, z);
+        require_identical(z, y);
+    }
+}
+
 TEST_CASE("the column-major mat*vec keeps wrapping integers and mixed types bit for bit", "[operation][777]") {
     // int32 on a column-major A: the public path is the column sweep.
     {

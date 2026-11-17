@@ -335,8 +335,11 @@ void trmv(const M& A, VX& x, bool upper, bool unit_diag = false) {
     // one-row loop's bits; the accumulator's type is the one-row loop's.
     using acc_type = std::remove_cvref_t<decltype(unit_diag ? x(0) : A(0, 0) * x(0))>;
     if constexpr (detail::column_sweep_v<acc_type, M>) {
-        detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
-        return;
+        // Up to column_sweep_trmv_row_kernel_n, the row kernels below (#884).
+        if (static_cast<std::size_t>(n) > detail::column_sweep_trmv_row_kernel_n) {
+            detail::trmv_column_sweep<detail::column_strip_rows<acc_type>>(A, x, upper, unit_diag);   // #777
+            return;
+        }
     }
     interface::with_interleave_rows<acc_type, interface::kernel::trmv>([&](auto w) {
         constexpr std::size_t W = decltype(w)::value;

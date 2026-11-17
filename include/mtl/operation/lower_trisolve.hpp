@@ -161,12 +161,17 @@ void lower_trisolve(const M& L, VecX& x, const VecB& b, bool unit_diag = false) 
         return;
     }
 
-    if constexpr (detail::column_sweep_v<value_type, M>)
-        detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, b, unit_diag);   // #777
-    else
-        interface::with_interleave_rows<value_type, interface::kernel::lower_trisolve>([&](auto w) {
-            detail::lower_trisolve_rows<decltype(w)::value>(L, x, b, unit_diag);
-        });
+    // A column-major L above column_sweep_trsv_row_kernel_n takes the column
+    // sweep (#777, #884), anything else the row kernels. The same bits.
+    if constexpr (detail::column_sweep_v<value_type, M>) {
+        if (static_cast<std::size_t>(n) > detail::column_sweep_trsv_row_kernel_n) {
+            detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, b, unit_diag);   // #777
+            return;
+        }
+    }
+    interface::with_interleave_rows<value_type, interface::kernel::lower_trisolve>([&](auto w) {
+        detail::lower_trisolve_rows<decltype(w)::value>(L, x, b, unit_diag);
+    });
 }
 
 /// In-place variant: solve L*x = x (b is x on input)
@@ -194,12 +199,15 @@ void lower_trisolve(const M& L, VecX& x, bool unit_diag = false) {
         return;
     }
 
-    if constexpr (detail::column_sweep_v<value_type, M>)
-        detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, x, unit_diag);   // #777
-    else
-        interface::with_interleave_rows<value_type, interface::kernel::lower_trisolve>([&](auto w) {
-            detail::lower_trisolve_rows<decltype(w)::value>(L, x, x, unit_diag);
-        });
+    if constexpr (detail::column_sweep_v<value_type, M>) {
+        if (static_cast<std::size_t>(n) > detail::column_sweep_trsv_row_kernel_n) {
+            detail::lower_trisolve_column_sweep<detail::column_strip_rows<value_type>>(L, x, x, unit_diag);   // #777
+            return;
+        }
+    }
+    interface::with_interleave_rows<value_type, interface::kernel::lower_trisolve>([&](auto w) {
+        detail::lower_trisolve_rows<decltype(w)::value>(L, x, x, unit_diag);
+    });
 }
 
 } // namespace mtl
