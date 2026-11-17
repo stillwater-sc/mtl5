@@ -21,9 +21,12 @@
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $cpu = if ($env:CPU) { [int]$env:CPU } else { 0 }
-# ProcessorAffinity is one 64-bit mask, of the process's processor group.
-if ($cpu -lt 0 -or $cpu -ge [Math]::Min(64, [Environment]::ProcessorCount)) {
-    Write-Host "CPU=$cpu is outside 0..$([Math]::Min(64, [Environment]::ProcessorCount) - 1)"; exit 2
+# ProcessorAffinity is one pointer-width mask, of the process's processor
+# group, and the bit at the sign position doesn't convert to an IntPtr: bits
+# 0..62 in a 64-bit PowerShell, 0..30 in a 32-bit one.
+$cpuLimit = [Math]::Min([IntPtr]::Size * 8 - 1, [Environment]::ProcessorCount)
+if ($cpu -lt 0 -or $cpu -ge $cpuLimit) {
+    Write-Host "CPU=$cpu is outside 0..$($cpuLimit - 1)"; exit 2
 }
 # One core: the public mult would otherwise thread over a pool of every CPU,
 # all pinned to the one measured.
@@ -78,13 +81,22 @@ foreach ($v in $variants) {
     # Read the handle now: without it, ExitCode is $null once the process ends.
     $null = $p.Handle
     # A 64-bit 1: an Int32's shift count wraps at 32, so 1 -shl 32 was CPU 0.
-    $p.ProcessorAffinity = [IntPtr]([long]1 -shl $cpu)
-    $p.PriorityClass = 'High'
+    # A run that could not be pinned is stopped and kept as failed: its
+    # sidecar would claim bench_cpu for an unpinned run.
+    $pinned = $true
+    try {
+        $p.ProcessorAffinity = [IntPtr]([long]1 -shl $cpu)
+        $p.PriorityClass = 'High'
+    } catch {
+        $pinned = $false
+        Write-Host "  $($v.name): could not pin to cpu ${cpu}: $($_.Exception.Message)"
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    }
     $p.WaitForExit()
-    if ($p.ExitCode -ne 0) {
+    if (-not $pinned -or $p.ExitCode -ne 0) {
         # A partial CSV is kept under another name, with no sidecar, so
         # column_sweep_table.py never reads it as a run.
-        Write-Host "  $($v.name): bench_column_sweep exited with $($p.ExitCode); its CSV is $($v.name).failed.csv"
+        Write-Host "  $($v.name): failed (pinned $pinned, exit $($p.ExitCode)); its CSV is $($v.name).failed.csv"
         Move-Item -Force $csv (Join-Path $out "$($v.name).failed.csv")
         Remove-Item -Recurse -Force $dir
         continue
