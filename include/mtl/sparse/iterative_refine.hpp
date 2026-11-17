@@ -51,6 +51,8 @@ struct refine_result {
     int    iters        = 0;      ///< correction steps actually applied
     double rel_residual = 0.0;    ///< best ||r||inf/||b||inf reached (double, for reporting)
     bool   converged    = false;  ///< rel_tol was met
+    std::size_t num_perturbed = 0; ///< pivots the factorization perturbed (#185); set by the
+                                   ///< drivers that factor (supernodal_lu_solve_refined), 0 here
 };
 
 /// Refine x in-place so that A x = b, using factorization `fac`. `x` is the

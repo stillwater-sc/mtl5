@@ -329,6 +329,48 @@ TEST_CASE("Supernodal LU mixed-precision iterative refinement",
     REQUIRE(rel_residual(A, x, b) < 1e-9);
 }
 
+// Issue #185: the perturbation through the mixed-precision refined solve,
+// where it matters. [[1, 1], [1, 1 + 1e-9]] is nonsingular in double
+// (det 1e-9), but 1 + 1e-9 is 1 in float, so the float factor's second pivot
+// cancels exactly to zero.
+TEST_CASE("Supernodal LU refined solve with zero-pivot perturbation (#185)",
+          "[sparse][lu][supernodal][perturb][iterative_refine]") {
+    mat::compressed2D<double> A(2, 2);
+    { mat::inserter<mat::compressed2D<double>> ins(A);
+      ins[0][0] << 1.0; ins[0][1] << 1.0;
+      ins[1][0] << 1.0; ins[1][1] << 1.0 + 1e-9; }
+    REQUIRE(static_cast<float>(1.0 + 1e-9) == 1.0f);   // the premise: the float copy is singular
+    vec::dense_vector<double> b = {2.0, 3.0};
+    refine_options opt; opt.max_iter = 5;
+
+    SECTION("off (default): the float factor's zero pivot throws, as before") {
+        vec::dense_vector<double> x(2, 0.0);
+        REQUIRE_THROWS_AS((factorization::supernodal_lu_solve_refined<float, double>(A, x, b, ordering::colamd{}, opt)),
+                          std::runtime_error);
+    }
+    SECTION("on: the solve completes and reports the perturbation") {
+        vec::dense_vector<double> x(2, 0.0);
+        auto rr = factorization::supernodal_lu_solve_refined<float, double>(A, x, b, ordering::colamd{}, opt, 1e-6f);
+        REQUIRE(rr.num_perturbed >= 1);
+        REQUIRE(std::isfinite(x(0)));
+        REQUIRE(std::isfinite(x(1)));
+        REQUIRE(std::isfinite(rr.rel_residual));
+    }
+    SECTION("on, well-conditioned: it never fires and the accuracy is unchanged") {
+        auto C = convdiff(7);
+        const std::size_t n = C.num_rows();
+        vec::dense_vector<double> c(n), x(n, 0.0), y(n, 0.0);
+        for (std::size_t i = 0; i < n; ++i) c(static_cast<int>(i)) = 1.0 + 0.05 * static_cast<double>(i);
+        refine_options o2; o2.max_iter = 50; o2.rel_tol = 1e-12;
+        auto off = factorization::supernodal_lu_solve_refined<float, double>(C, x, c, ordering::colamd{}, o2);
+        auto on  = factorization::supernodal_lu_solve_refined<float, double>(C, y, c, ordering::colamd{}, o2, 1e-6f);
+        REQUIRE(off.num_perturbed == 0);
+        REQUIRE(on.num_perturbed == 0);
+        REQUIRE(on.rel_residual == off.rel_residual);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(x(static_cast<int>(i)) == y(static_cast<int>(i)));
+    }
+}
+
 // ---- edge cases -----------------------------------------------------------
 TEST_CASE("Supernodal LU edge cases", "[sparse][lu][supernodal]") {
     SECTION("1x1") {

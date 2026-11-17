@@ -7,6 +7,8 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Zero-pivot perturbation through the mixed-precision supernodal LU solve** (#185). `supernodal_lu_solve_refined<FactorValue>(A, x, b, ordering, opt, pivot_perturb)` takes the opt-in `pivot_perturb` that `supernodal_lu_numeric` gained in #198, and `refine_result::num_perturbed` reports how many pivots it replaced. This is the path where a pivot cancels to zero: a matrix nonsingular in the residual precision can have an exact zero pivot in its low-precision factor ([[1, 1], [1, 1 + 1e-9]] in float). With perturbation off (the default) the refined solve throws as before; on, it completes. A pivot cancelled exactly to zero in precision u means a condition number of order 1/u or more, so full accuracy is not promised then. `rel_residual` says what the refinement reached. Tests: `test_supernodal_lu.cpp`.
+
 - **Zero-copy overlay examples** (#834). `examples/zero_copy/` shows MTL5 vectors and matrices laid over buffers the application owns, so MTL5 algorithms run on the buffer in place. The walkthrough is `docs/examples/zero-copy-overlay.md`.
   - **`ode_rhs_callback.cpp`:** a C-style RK4 integrator calls `rhs(t, const double* y, double* dydt, ...)`. The callback computes `dydt = L y` with `vec::const_view` and `mult` into the integrator's buffer, checks the heat-equation solution, and times copy-in/copy-out against it: 3.2× slower on an i7-12700K at n = 2·10⁶.
   - **`shared_frame_pipeline.cpp`:** a producer and a processing thread share double-buffered frames, corrected in place through a `dense2D` over each frame and `ndarray` slices over its tiles.
