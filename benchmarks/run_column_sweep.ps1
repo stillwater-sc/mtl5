@@ -59,8 +59,10 @@ foreach ($v in $variants) {
     Add-Content (Join-Path $out 'sysinfo.txt') "compiler_$($v.name)=$compiler; flags=$($v.flags)"
     Write-Host "running $($v.name) on cpu $cpu"
     $csv = Join-Path $out "$($v.name).csv"
-    $p = Start-Process -FilePath $exe.FullName -ArgumentList $args -NoNewWindow -PassThru `
-                       -RedirectStandardOutput $csv
+    # Start-Process rejects an empty -ArgumentList, so pass it only with arguments.
+    $sp = @{ FilePath = $exe.FullName; NoNewWindow = $true; PassThru = $true; RedirectStandardOutput = $csv }
+    if ($args.Count -gt 0) { $sp.ArgumentList = $args }
+    $p = Start-Process @sp
     $p.ProcessorAffinity = [IntPtr](1 -shl $cpu)
     $p.PriorityClass = 'High'
     $p.WaitForExit()
