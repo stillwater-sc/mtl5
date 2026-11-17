@@ -724,6 +724,16 @@ void supernodal_lu_solve(const mat::compressed2D<Value, Parameters>& A,
 /// (e.g. float) with accumulation in `Accumulator`, then refine the residual in
 /// `Residual` (e.g. double) through the low-precision factor. `FactorValue` is
 /// the only required template argument.
+///
+/// `pivot_perturb` (default 0 = off, a hard throw as before) is forwarded to
+/// supernodal_lu_numeric: a pivot that cancellation in `FactorValue` drives
+/// below `pivot_perturb * ||column||_inf` is replaced by that floor instead of
+/// throwing, and `refine_result::num_perturbed` counts them (#185). This is the
+/// path where it matters: a matrix nonsingular in `Residual` can have an exact
+/// zero pivot in a low-precision factor. The solve then completes, and the
+/// refinement does what it can. A pivot cancelled exactly to zero in precision
+/// u means a condition number of order 1/u or more, so full `Residual` accuracy
+/// is not promised then; check `rel_residual`.
 template <typename FactorValue, typename Accumulator = FactorValue,
           typename Residual, typename Parameters, typename Ordering>
 refine_result supernodal_lu_solve_refined(
@@ -731,7 +741,8 @@ refine_result supernodal_lu_solve_refined(
     vec::dense_vector<Residual>& x,
     const vec::dense_vector<Residual>& b,
     const Ordering& ordering,
-    const refine_options& opt = {})
+    const refine_options& opt = {},
+    FactorValue pivot_perturb = FactorValue{0})
 {
     using size_type = typename mat::compressed2D<Residual, Parameters>::size_type;
     // Re-type the sparse matrix into the factor precision, preserving sparsity
@@ -746,10 +757,12 @@ refine_result supernodal_lu_solve_refined(
                                                   starts.data(), idx.data(), dat.data());
 
     auto sym = supernodal_lu_symbolic_analyze(Af, ordering);
-    auto fac = supernodal_lu_numeric<Accumulator>(Af, sym);
+    auto fac = supernodal_lu_numeric<Accumulator>(Af, sym, FactorValue{1}, 64, false, pivot_perturb);
     for (std::size_t i = 0; i < static_cast<std::size_t>(x.size()); ++i)
         x(static_cast<int>(i)) = Residual{0};
-    return iterative_refine(A, fac, b, x, opt);
+    refine_result res = iterative_refine(A, fac, b, x, opt);
+    res.num_perturbed = fac.num_perturbed;
+    return res;
 }
 
 } // namespace mtl::sparse::factorization

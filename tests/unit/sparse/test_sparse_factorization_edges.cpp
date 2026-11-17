@@ -149,6 +149,27 @@ TEST_CASE("iterative_refine: rel_tol stops at the first evaluation that meets it
     CHECK(res.iters == 1);              // one correction from x = 0 solves it
 }
 
+TEST_CASE("iterative_refine: a NaN correction is not a converged residual 0", "[sparse][refine][185]") {
+    // A correction solve that overflowed left NaN in the next residual, which
+    // norm_inf measured 0 (std::max keeps its first argument against NaN): the
+    // NaN iterate became the best, converged = true, rel_residual = 0.
+    struct nan_solve {
+        void solve(Vec& dx, const Vec&) const {
+            for (std::size_t i = 0; i < dx.size(); ++i) dx(i) = std::numeric_limits<double>::quiet_NaN();
+        }
+    };
+    const M A = tridiagonal(3);
+    const Vec b = ones(3);
+    Vec x(3, 0.0);
+    sparse::refine_options opt;
+    opt.max_iter = 3;
+    opt.rel_tol = 1e-12;
+    const auto res = sparse::iterative_refine(A, nan_solve{}, b, x, opt);
+    CHECK_FALSE(res.converged);
+    CHECK(res.rel_residual == 1.0);   // the best iterate is the starting x = 0
+    for (std::size_t i = 0; i < 3; ++i) CHECK(x(i) == 0.0);
+}
+
 // --- threshold ---------------------------------------------------------------
 
 TEST_CASE("sparse_lu_numeric and native_klu_factor reject a threshold outside (0, 1]", "[sparse][lu][864]") {

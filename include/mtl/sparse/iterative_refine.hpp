@@ -51,6 +51,8 @@ struct refine_result {
     int    iters        = 0;      ///< correction steps actually applied
     double rel_residual = 0.0;    ///< best ||r||inf/||b||inf reached (double, for reporting)
     bool   converged    = false;  ///< rel_tol was met
+    std::size_t num_perturbed = 0; ///< pivots the factorization perturbed (#185); set by the
+                                   ///< drivers that factor (supernodal_lu_solve_refined), 0 here
 };
 
 /// Refine x in-place so that A x = b, using factorization `fac`. `x` is the
@@ -80,10 +82,17 @@ refine_result iterative_refine(
     const auto& ci  = A.ref_minor();
     const auto& dat = A.ref_data();
 
+    // A non-finite entry makes the norm infinite: std::max(m, NaN) keeps m, so
+    // a NaN residual measured 0, and a correction solve that overflowed (a
+    // perturbed low-precision factor, #185) was taken as the best iterate and
+    // reported converged with rel_residual 0.
     auto norm_inf = [&](const vec::dense_vector<Residual>& v) {
         double m = 0.0;
-        for (std::size_t i = 0; i < n; ++i)
-            m = std::max(m, static_cast<double>(abs(v(static_cast<int>(i)))));
+        for (std::size_t i = 0; i < n; ++i) {
+            const double a = static_cast<double>(abs(v(static_cast<int>(i))));
+            if (!std::isfinite(a)) return std::numeric_limits<double>::infinity();
+            m = std::max(m, a);
+        }
         return m;
     };
     const double bnorm = norm_inf(b);
