@@ -260,9 +260,32 @@ TEST_CASE("symm and gemmt with C aliasing an operand (issue 886)", "[operation][
         for (std::size_t i = 0; i < 4; ++i)
             for (std::size_t j = 0; j < 4; ++j) At(j, i) = A(i, j);
         mult(A, At, ref);
-        syrk(1.0, C, 0.0, C);
+        syrk(1.0, C, 0.0, C);   // right natively, wrong under BLAS's ?syrk
         for (std::size_t i = 0; i < 4; ++i)
             for (std::size_t j = 0; j <= i; ++j) CHECK(std::abs(C(i, j) - ref(i, j)) <= 1e-13);
+    }
+    {
+        // syr2k with C as A, and with beta != 0.
+        rm C = S, A = C, B = filled<rm>(4, 4), ref(4, 4), t(4, 4), At(4, 4), Bt(4, 4);
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t j = 0; j < 4; ++j) { At(j, i) = A(i, j); Bt(j, i) = B(i, j); }
+        mult(A, Bt, ref);
+        mult(B, At, t);
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t j = 0; j < 4; ++j) ref(i, j) += t(i, j) + 3.0 * A(i, j);
+        syr2k(1.0, C, B, 3.0, C);
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t j = 0; j <= i; ++j) CHECK(std::abs(C(i, j) - ref(i, j)) <= 1e-12);
+    }
+    {
+        // trmm(1, B, B, upper): A is B.
+        rm U = filled<rm>(4, 4);
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t j = 0; j < i; ++j) U(i, j) = 0.0;
+        rm B = U, ref(4, 4);
+        mult(U, U, ref);
+        trmm(1.0, B, B, true);
+        CHECK(max_diff(B, ref) <= 1e-13);
     }
 }
 

@@ -31,6 +31,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/operation/mult.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -69,6 +70,18 @@ void syrk(const S& alpha, const MA& A, const S& beta, MC& C) {
     const size_type m = A.num_rows();
     const size_type k = A.num_cols();
     assert(C.num_rows() == m && C.num_cols() == m);
+    // A C that shares storage with A is formed in a copy of C (which keeps
+    // beta*C's old values) and copied back, as mult does (#855): ?syrk writes
+    // C while it reads A, so syrk(1, C, 0, C) was wrong under BLAS (issue 886).
+    if constexpr (detail::mult_mat_temporary_ok_v<MC>) {
+        if (detail::storage_overlaps(C, A)) {
+            MC tmp(C.num_rows(), C.num_cols());
+            tmp = C;
+            syrk<Accumulator>(alpha, A, beta, tmp);
+            C = tmp;
+            return;
+        }
+    }
     const bool alpha_zero = (alpha == math::zero<S>());
     const bool beta_zero  = (beta == math::zero<S>());
 
