@@ -75,6 +75,8 @@ foreach ($v in $variants) {
     $sp = @{ FilePath = $exe.FullName; NoNewWindow = $true; PassThru = $true; RedirectStandardOutput = $csv }
     if ($args.Count -gt 0) { $sp.ArgumentList = $args }
     $p = Start-Process @sp
+    # Read the handle now: without it, ExitCode is $null once the process ends.
+    $null = $p.Handle
     # A 64-bit 1: an Int32's shift count wraps at 32, so 1 -shl 32 was CPU 0.
     $p.ProcessorAffinity = [IntPtr]([long]1 -shl $cpu)
     $p.PriorityClass = 'High'
