@@ -147,10 +147,17 @@ up to 256:
 
 | machine | build | gemv | trmv |
 |---|---|---|---|
-| i7-12700K | g++-generic | 2.01 | 1.65 |
-| i7-12700K | g++-native | 4.00 | 2.36 |
-| Xeon E5-2420 v2 | g++-generic | 2.01 | 1.63 |
-| Xeon E5-2420 v2 | g++-native | 3.12 | 2.13 |
+| i7-12700K | g++-generic | 1.96 | 1.58 |
+| i7-12700K | g++-native | 3.86 | 2.08 |
+| Xeon E5-2420 v2 | g++-generic | 1.96 | 1.44 |
+| Xeon E5-2420 v2 | g++-native | 2.99 | 1.78 |
+
+Clang, whose code is unchanged, measured 0.97-1.00 on both machines.
+Through the public calls, which use the row kernels only below the cutoffs,
+`trmv` is 4-6% faster with the n <= 64 cutoff, and `gemv` and the forward
+substitution are unchanged (0.98-1.04). The Xeon's load rose from 0.4 to 2.4
+during its run (it is also a Kubernetes node), and its worst shapes moved as
+much under the unchanged #777 sweep as under the public calls.
 
 With those times, the cutoff simulation over every build moves `trmv` from
 n <= 32 to n <= 64: the time over the best of the two kernels goes from
