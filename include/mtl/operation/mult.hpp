@@ -84,8 +84,10 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
 /// generic_fma<Result>(acc, A(r, c), x(c)) for c ascending from zero, as the
 /// one-row loop does, so y is bit-identical to it.
 ///
-/// C columns per pass (#884, see column_sweep_columns); C = 1 is the sweep as
-/// #777 wrote it, kept for bench_column_sweep. The bits are the same for any C.
+/// C columns per pass (#884, see column_sweep_columns), and a strip of at most
+/// column_sweep_fixed_rows rows in registers (strip_columns). C = 1 is the
+/// sweep as #777 wrote it, kept for bench_column_sweep: one column per pass,
+/// every strip at run time. The bits are the same for any C.
 template <std::size_t S, std::size_t C = column_sweep_columns, typename M, typename VIn, typename VOut>
 void mult_rows_column_sweep(const M& A, const VIn& x, VOut& y,
                             std::size_t rb, std::size_t re) {
@@ -103,9 +105,12 @@ void mult_rows_column_sweep(const M& A, const VIn& x, VOut& y,
     for (std::size_t r0 = rb; r0 < re; r0 += S) {
         const std::size_t rr = std::min(S, re - r0);
         for (std::size_t l = 0; l < rr; ++l) acc[l] = math::zero<Result>();
-        sweep_columns<C>(acc, a, m, r0, rr, 0, static_cast<std::size_t>(ncols),
-                         [&](std::size_t c) -> decltype(auto) { return x(static_cast<size_type>(c)); },
-                         [](const Result& t, const auto& aij, const auto& xc) { return generic_fma<Result>(t, aij, xc); });
+        const auto x_at = [&](std::size_t c) -> decltype(auto) { return x(static_cast<size_type>(c)); };
+        const auto fma = [](const Result& t, const auto& aij, const auto& xc) { return generic_fma<Result>(t, aij, xc); };
+        if constexpr (C == 1)
+            sweep_columns<1>(acc, a, m, r0, rr, 0, static_cast<std::size_t>(ncols), x_at, fma);
+        else
+            strip_columns<C>(acc, a, m, r0, rr, 0, static_cast<std::size_t>(ncols), x_at, fma);
         for (std::size_t l = 0; l < rr; ++l) y(static_cast<y_size>(r0 + l)) = acc[l];
     }
 }

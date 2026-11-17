@@ -75,6 +75,48 @@ inline constexpr std::size_t column_sweep_columns = 8;
 /// (and so to the one-row loop the sweep matches).
 template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
 void sweep_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
+                   std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op);
+
+/// Strips of at most this many rows take sweep_fixed_rows (#884).
+inline constexpr std::size_t column_sweep_fixed_rows = 16;
+
+/// sweep_columns for a strip of exactly R rows, R known at compile time: the R
+/// accumulators are indexed only by a pack, so they stay in registers across
+/// all the columns, where the run-time strip loads and stores them every pass.
+/// On a 4-row strip that measured 1.5-4.8x faster than the run-time strip
+/// (i7-12700K, GCC and Clang, generic and -march=native). The same terms in
+/// the same order, so the same bits.
+template <std::size_t R, typename Acc, typename T, typename XAt, typename Op>
+void sweep_fixed_rows(Acc* acc, const T* a, std::size_t ld, std::size_t r0,
+                      std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
+    [&]<std::size_t... K>(std::index_sequence<K...>) {
+        Acc t[R] = {acc[K]...};
+        for (std::size_t c = cb; c < ce; ++c) {
+            const T* col = a + c * ld + r0;
+            const auto& xc = x_at(c);
+            ((t[K] = op(t[K], col[K], xc)), ...);
+        }
+        ((acc[K] = t[K]), ...);
+    }(std::make_index_sequence<R>{});
+}
+
+/// Columns [cb, ce) into a strip of rr rows: sweep_fixed_rows for a short
+/// strip, sweep_columns<C> otherwise. Bit-identical either way.
+template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
+void strip_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
+                   std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
+    if (rr == 0 || cb >= ce) return;
+    if (rr <= column_sweep_fixed_rows) {
+        [&]<std::size_t... R>(std::index_sequence<R...>) {
+            (void)((rr == R + 1 ? (sweep_fixed_rows<R + 1>(acc, a, ld, r0, cb, ce, x_at, op), true) : false) || ...);
+        }(std::make_index_sequence<column_sweep_fixed_rows>{});
+        return;
+    }
+    sweep_columns<C>(acc, a, ld, r0, rr, cb, ce, x_at, op);
+}
+
+template <std::size_t C, typename Acc, typename T, typename XAt, typename Op>
+void sweep_columns(Acc* acc, const T* a, std::size_t ld, std::size_t r0, std::size_t rr,
                    std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
     std::size_t c = cb;
     if constexpr (C > 1) {

@@ -182,9 +182,10 @@ void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag
 /// (top-down for upper, bottom-up for lower), so every x(j) read still holds
 /// its original value.
 ///
-/// The columns that feed every row of a strip go C at a time (#884, see
-/// column_sweep_columns); the ones that meet the strip's diagonal block one
-/// at a time, as before. C = 1 is the sweep as #777 wrote it.
+/// The columns go C at a time (#884, see column_sweep_columns), the diagonal
+/// block's too: a group of C columns feeds the strip rows that take all of
+/// them unrolled, and the few rows inside the group term by term. Each row
+/// still adds its terms in ascending j. C = 1 is the sweep as #777 wrote it.
 template <std::size_t S, std::size_t C = column_sweep_columns, typename M, typename VX>
 void trmv_column_sweep(const M& A, VX& x, bool upper, bool unit_diag) {
     static_assert(S >= 1);
@@ -205,31 +206,44 @@ void trmv_column_sweep(const M& A, VX& x, bool upper, bool unit_diag) {
     };
     const auto x_at = [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); };
     const auto add = [](const acc_type& t, const auto& aij, const auto& xj) -> acc_type { return t + aij * xj; };
+    // Columns [cb, ce) into the strip rows [i0, i0 + ni), which acc[i0 - r0 ..]
+    // holds: C > 1 takes strip_columns (C at a time, short strips in
+    // registers), C = 1 one column at a time as #777 did.
+    const auto cols = [&](std::size_t r0, std::size_t i0, std::size_t ni, std::size_t cb, std::size_t ce) {
+        if constexpr (C == 1) sweep_columns<1>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+        else                  strip_columns<C>(acc + (i0 - r0), a, n, i0, ni, cb, ce, x_at, add);
+    };
     if (upper) {
-        // Row i adds j = i+1 .. n-1: column j feeds the strip's rows i < j,
-        // all of them once j >= r0 + rr.
+        // Row i adds j = i+1 .. n-1 in ascending j. In the strip [r0, r1), the
+        // diagonal block's columns go C at a time (#884): group [j0, je) feeds
+        // all of the rows i < j0, and row i in [j0, je) its columns i+1 .. je-1.
+        // Then every column j >= r1 feeds all of the strip.
         for (std::size_t r0 = 0; r0 < n; r0 += S) {
-            const std::size_t rr = std::min(S, n - r0);
+            const std::size_t rr = std::min(S, n - r0), r1 = r0 + rr;
             start(r0, rr);
-            for (std::size_t j = r0 + 1; j < r0 + rr; ++j) {
-                const auto& xj = x(static_cast<size_type>(j));
-                const auto* col = &at(0, j);
-                for (std::size_t i = r0; i < j; ++i) acc[i - r0] += col[i] * xj;
+            for (std::size_t j0 = r0 + 1; j0 < r1; j0 += C) {
+                const std::size_t je = std::min(j0 + C, r1);
+                cols(r0, r0, j0 - r0, j0, je);
+                for (std::size_t i = j0; i + 1 < je; ++i)
+                    for (std::size_t j = i + 1; j < je; ++j) acc[i - r0] += at(i, j) * x(static_cast<size_type>(j));
             }
-            sweep_columns<C>(acc, a, n, r0, rr, r0 + rr, n, x_at, add);
+            cols(r0, r0, rr, r1, n);
             finish(r0, rr);
         }
     } else {
-        // Row i adds j = 0 .. i-1: column j feeds the strip's rows i > j,
-        // all of them while j < r0.
+        // Row i adds j = 0 .. i-1 in ascending j. Every column j < r0 feeds all
+        // of the strip [r0, r1); then the diagonal block's columns go C at a
+        // time (#884): row i in (j0, je) takes columns j0 .. i-1 of group
+        // [j0, je), and the rows i >= je all of them.
         for (std::size_t r1 = n; r1 > 0;) {
             const std::size_t r0 = r1 > S ? r1 - S : 0, rr = r1 - r0;
             start(r0, rr);
-            sweep_columns<C>(acc, a, n, r0, rr, 0, r0, x_at, add);
-            for (std::size_t j = r0; j + 1 < r1; ++j) {
-                const auto& xj = x(static_cast<size_type>(j));
-                const auto* col = &at(0, j);
-                for (std::size_t i = j + 1; i < r1; ++i) acc[i - r0] += col[i] * xj;
+            cols(r0, r0, rr, 0, r0);
+            for (std::size_t j0 = r0; j0 + 1 < r1; j0 += C) {
+                const std::size_t je = std::min(j0 + C, r1);
+                for (std::size_t i = j0 + 1; i < je; ++i)
+                    for (std::size_t j = j0; j < i; ++j) acc[i - r0] += at(i, j) * x(static_cast<size_type>(j));
+                cols(r0, je, r1 - je, j0, je);
             }
             finish(r0, rr);
             r1 = r0;
