@@ -98,10 +98,19 @@ TEST_CASE("randsvd(n, kappa, mode, seed): the square seeded form (issue 888)", "
     const auto B = generators::randsvd<double>(5, 5, 1e3, 3, std::uint64_t(42));
     for (std::size_t i = 0; i < 5; ++i)
         for (std::size_t j = 0; j < 5; ++j) CHECK(A(i, j) == B(i, j));
-    // The deduced form takes it too.
+    // The deduced form takes it too, and is the same matrix.
     const auto C = generators::randsvd(5, 1e3, 3, 42);
-    CHECK(C.num_rows() == 5);
-    CHECK(C.num_cols() == 5);
+    REQUIRE(C.num_rows() == 5);
+    REQUIRE(C.num_cols() == 5);
+    for (std::size_t i = 0; i < 5; ++i)
+        for (std::size_t j = 0; j < 5; ++j) CHECK(C(i, j) == A(i, j));
+    // A floating kappa in third place is the rectangular form, explicit T or
+    // not. (An integral kappa doesn't compile: compile_fail/randsvd_integral_kappa.)
+    const auto R = generators::randsvd(5, 4, 1e3, 3);
+    CHECK(R.num_rows() == 5);
+    CHECK(R.num_cols() == 4);
+    const auto R2 = generators::randsvd<double>(5, 4, 1e3, 3);
+    CHECK(R2.num_cols() == 4);
 }
 
 TEST_CASE("eigen() pairs clustered eigenvalues with their own vectors (issue 888)", "[operation][eigen][888]") {

@@ -7,10 +7,14 @@
 // a std::uint64_t seed, and a form drawing from a caller's std::mt19937_64.
 // The seeded forms draw portably (operation/random.hpp), so a seed gives the
 // same U, V and mode-5 sigma with every compiler and standard library (#844).
-// The rectangular kappa forms take integral m and n, so the square seeded
-// randsvd(n, kappa, mode, seed) is unambiguous: randsvd(5, 1e3, 3, 42) bound
-// randsvd(m = 5, n = 1000, kappa = 3, mode = 42) and threw on mode 42 (issue
-// 888). randsvd(n, n, kappa, mode, seed) still works.
+// The four-argument kappa forms, rectangular randsvd(m, n, kappa, mode) and
+// square seeded randsvd(n, kappa, mode, seed), are told apart by the types:
+// the dimensions, mode and seed are integral and kappa is not (issue 888;
+// randsvd(5, 1e3, 3, 42) bound randsvd(m = 5, n = 1000, kappa = 3, mode = 42)
+// and threw on mode 42). An integral kappa, as in randsvd(5, 1000, 3, 42), is
+// read equally well both ways, so it doesn't compile: write 1000.0. A
+// non-integral dimension or mode doesn't bind either form.
+// randsvd(n, n, kappa, mode, seed) still gives the square seeded matrix.
 #include <algorithm>
 #include <concepts>
 #include <cmath>
@@ -186,6 +190,7 @@ auto randsvd(Mi mi, Ni ni, T kappa, int mode, std::uint64_t seed) {
 /// A rectangular matrix with condition number kappa, non-deterministically.
 /// cond(A) = kappa up to rounding. See make_sigma for the modes (1-5).
 template <typename T = double, std::integral Mi, std::integral Ni>
+    requires (!std::integral<T>)
 auto randsvd(Mi mi, Ni ni, T kappa, int mode = 3) {
     const auto m = static_cast<std::size_t>(mi);
     const auto n = static_cast<std::size_t>(ni);
@@ -194,10 +199,14 @@ auto randsvd(Mi mi, Ni ni, T kappa, int mode = 3) {
 }
 
 /// A square matrix with condition number kappa, reproducibly from `seed`.
-template <typename T = double>
-auto randsvd(std::size_t n, T kappa, int mode, std::uint64_t seed) {
-    std::mt19937_64 gen(seed);
-    return randsvd<T>(n, n, kappa, mode, gen);
+/// kappa must not be integral, nor n, mode and seed anything else (see the
+/// header comment): the call has the rectangular form's shape.
+template <typename T = double, std::integral Ni, std::integral Mode, std::integral Seed>
+    requires (!std::integral<T>)
+auto randsvd(Ni ni, T kappa, Mode mode, Seed seed) {
+    std::mt19937_64 gen(static_cast<std::uint64_t>(seed));
+    return randsvd<T>(static_cast<std::size_t>(ni), static_cast<std::size_t>(ni), kappa,
+                      static_cast<int>(mode), gen);
 }
 
 /// A square matrix with condition number kappa, drawing from `gen`.
