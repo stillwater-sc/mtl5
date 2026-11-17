@@ -60,6 +60,7 @@
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/detail/wrapping_arithmetic.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/traits/is_expression.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
 #include <mtl/mat/compressed2D.hpp>
@@ -406,6 +407,32 @@ void gemmt(const S& alpha_in, const MA& A, const MB& B, const S& beta_in, MC& C,
     assert(static_cast<std::size_t>(B.num_rows()) == k);
     if (n == 0)
         return;
+    // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
+    // evaluated once into a dense matrix of its own element type first:
+    // storage_overlaps can't see the storage behind it, so
+    // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
+    // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
+    // each element of the expression many times.
+    if constexpr (detail::holds_expression_v<MA>) {
+        const auto Am = detail::dense_copy(A);
+        return gemmt<Accumulator>(alpha_in, Am, B, beta_in, C, t, fill);
+    }
+    if constexpr (detail::holds_expression_v<MB>) {
+        const auto Bm = detail::dense_copy(B);
+        return gemmt<Accumulator>(alpha_in, A, Bm, beta_in, C, t, fill);
+    }
+    // A C that shares storage with A or B is formed in a copy of C (which
+    // keeps beta*C's old values) and copied back, as mult does (#855):
+    // gemmt(1, A, C, 1, C) read C as B while writing it (issue 886).
+    if constexpr (detail::mult_mat_temporary_ok_v<MC>) {
+        if (detail::storage_overlaps(C, A) || detail::storage_overlaps(C, B)) {
+            MC tmp(C.num_rows(), C.num_cols());
+            tmp = C;
+            gemmt<Accumulator>(alpha_in, A, B, beta_in, tmp, t, fill);
+            C = tmp;
+            return;
+        }
+    }
 
     auto finish = [&] {
         if (fill == gemmt_fill::mirror)

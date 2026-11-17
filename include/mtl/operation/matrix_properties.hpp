@@ -20,8 +20,31 @@
 #include <mtl/concepts/magnitude.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/interface/dispatch_traits.hpp>
 
 namespace mtl {
+
+namespace detail {
+
+/// Calls f(r, c, v) for each stored entry of a compressed2D, row by row. The
+/// predicates below loop over every (i, j) through operator(), which on a
+/// compressed2D is a binary search: O(m n log nnz) for an answer the stored
+/// entries decide in O(nnz) -- is_diagonal on a 5000 x 5000 diagonal matrix
+/// took 37 ms (issue 886). An entry that isn't stored is zero, and every
+/// predicate below holds for a zero wherever it sits.
+template <typename M, typename F>
+bool all_stored(const M& A, F&& f) {
+    const auto& starts = A.ref_major();
+    const auto& cols = A.ref_minor();
+    const auto& vals = A.ref_data();
+    using size_type = typename M::size_type;
+    for (size_type r = 0; r < A.num_rows(); ++r)
+        for (auto k = starts[r]; k < starts[r + 1]; ++k)
+            if (!f(r, static_cast<size_type>(cols[k]), vals[k])) return false;
+    return true;
+}
+
+} // namespace detail
 
 /// A.num_rows() == A.num_cols().
 template <Matrix M>
@@ -37,6 +60,13 @@ bool is_symmetric(const M& A, magnitude_t<typename M::value_type> tol = magnitud
     using std::abs;
     using size_type = typename M::size_type;
     if (A.num_rows() != A.num_cols()) return false;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        // Each stored entry against its transpose: also covers an entry
+        // whose transpose isn't stored (that one reads 0).
+        return detail::all_stored(A, [&](size_type i, size_type j, const auto& v) {
+            return i == j || abs(v - A(j, i)) <= tol;
+        });
+    }
     const size_type n = A.num_rows();
     for (size_type i = 0; i < n; ++i)
         for (size_type j = i + 1; j < n; ++j)
@@ -52,6 +82,11 @@ bool is_hermitian(const M& A, magnitude_t<typename M::value_type> tol = magnitud
     using T = typename M::value_type;
     using size_type = typename M::size_type;
     if (A.num_rows() != A.num_cols()) return false;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        return detail::all_stored(A, [&](size_type i, size_type j, const auto& v) {
+            return abs(v - functor::scalar::conj<T>::apply(A(j, i))) <= tol;
+        });
+    }
     const size_type n = A.num_rows();
     for (size_type i = 0; i < n; ++i)
         for (size_type j = i; j < n; ++j)   // include the diagonal: Im(A(i,i)) ~ 0
@@ -64,6 +99,11 @@ template <Matrix M>
 bool is_upper_triangular(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        return detail::all_stored(A, [&](size_type i, size_type j, const auto& v) {
+            return !(j < i) || abs(v) <= tol;
+        });
+    }
     const size_type m = A.num_rows(), n = A.num_cols();
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < i && j < n; ++j)
@@ -76,6 +116,11 @@ template <Matrix M>
 bool is_lower_triangular(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        return detail::all_stored(A, [&](size_type i, size_type j, const auto& v) {
+            return !(j > i) || abs(v) <= tol;
+        });
+    }
     const size_type m = A.num_rows(), n = A.num_cols();
     for (size_type i = 0; i < m; ++i)
         for (size_type j = i + 1; j < n; ++j)
@@ -94,6 +139,11 @@ template <Matrix M>
 bool is_diagonal(const M& A, magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        return detail::all_stored(A, [&](size_type i, size_type j, const auto& v) {
+            return i == j || abs(v) <= tol;
+        });
+    }
     const size_type m = A.num_rows(), n = A.num_cols();
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < n; ++j)
@@ -108,6 +158,13 @@ bool is_banded(const M& A, std::size_t kl, std::size_t ku,
                magnitude_t<typename M::value_type> tol = magnitude_t<typename M::value_type>(0)) {
     using std::abs;
     using size_type = typename M::size_type;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        return detail::all_stored(A, [&](size_type i, size_type j, const auto& v) {
+            const bool below = (i > j) && (static_cast<std::size_t>(i - j) > kl);
+            const bool above = (j > i) && (static_cast<std::size_t>(j - i) > ku);
+            return !(below || above) || abs(v) <= tol;
+        });
+    }
     const size_type m = A.num_rows(), n = A.num_cols();
     for (size_type i = 0; i < m; ++i)
         for (size_type j = 0; j < n; ++j) {
@@ -126,6 +183,21 @@ bool is_diagonally_dominant(const M& A, bool strict = false) {
     using mag_t = magnitude_t<typename M::value_type>;
     using size_type = typename M::size_type;
     if (A.num_rows() != A.num_cols()) return false;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        // Each row's off-diagonal stored entries, in the column order of the
+        // dense loop (a skipped zero adds 0).
+        const auto& starts = A.ref_major();
+        const auto& cols = A.ref_minor();
+        const auto& vals = A.ref_data();
+        for (size_type i = 0; i < A.num_rows(); ++i) {
+            mag_t off = mag_t(0);
+            for (auto k = starts[i]; k < starts[i + 1]; ++k)
+                if (static_cast<size_type>(cols[k]) != i) off += abs(vals[k]);
+            const mag_t d = abs(A(i, i));
+            if (strict ? !(d > off) : !(d >= off)) return false;
+        }
+        return true;
+    }
     const size_type n = A.num_rows();
     for (size_type i = 0; i < n; ++i) {
         mag_t off = mag_t(0);
@@ -152,9 +224,13 @@ magnitude_t<typename M::value_type> product_tol(const M& A,
     using size_type = typename M::size_type;
     const size_type m = A.num_rows(), n = A.num_cols();
     mag_t scale = mag_t(0);
-    for (size_type i = 0; i < m; ++i)
-        for (size_type j = 0; j < n; ++j)
-            scale = std::max(scale, abs(A(i, j)));
+    if constexpr (interface::is_compressed2D_v<M>) {
+        all_stored(A, [&](size_type, size_type, const auto& v) { scale = std::max(scale, abs(v)); return true; });
+    } else {
+        for (size_type i = 0; i < m; ++i)
+            for (size_type j = 0; j < n; ++j)
+                scale = std::max(scale, abs(A(i, j)));
+    }
     const mag_t nn = static_cast<mag_t>(std::max(m, n));
     return mag_t(128) * std::numeric_limits<mag_t>::epsilon() * nn * scale * scale;
 }

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 #include <utility>
 #include <mtl/concepts/matrix.hpp>
@@ -15,6 +16,8 @@
 #include <mtl/detail/scalar_chain.hpp>
 #include <mtl/detail/column_sweep.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/traits/is_expression.hpp>
+#include <mtl/mat/dense2D.hpp>
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/view/transposed_view.hpp>
@@ -318,6 +321,44 @@ void mult_sparse_crs_dense_rows(const mat::compressed2D<V, P>& A, const MB& B, M
             const auto* brow = &B(static_cast<typename MB::size_type>(indices[k]), 0);
             for (size_type c = 0; c < ncols; ++c)
                 crow[c] = generic_fma<Result>(crow[c], v, brow[c]);
+        }
+    }
+}
+
+/// Sparse (CRS) A times any B into any dense C (issue 886): column-major
+/// dense B or C, a compressed B, and mult<Accumulator>. For each C(r, c), the
+/// stored entries (k, v) of A's row r in ascending k, so the terms and their
+/// order are mult_generic_rows' with A's unstored zeros left out (exactly
+/// the dense result when those terms are exact zeros, as for
+/// mult_sparse_crs_dense_rows). mult_generic_rows read A(r, k) by binary
+/// search for every (r, c, k): O(m n K log nnz).
+template <typename Accumulator, typename V, typename P, typename MB, typename MC>
+void mult_sparse_crs_any(const mat::compressed2D<V, P>& A, const MB& B, MC& C) {
+    using Result = typename MC::value_type;
+    using size_type = typename MC::size_type;
+    const size_type ncols = C.num_cols();
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    for (size_type r = 0; r < C.num_rows(); ++r) {
+        for (size_type c = 0; c < ncols; ++c) {
+            if constexpr (std::is_void_v<Accumulator>) {
+                auto acc = math::zero<Result>();
+                for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                    acc = generic_fma<Result>(acc, data[k], B(static_cast<typename MB::size_type>(indices[k]),
+                                                              static_cast<typename MB::size_type>(c)));
+                C(r, c) = acc;
+            } else {
+                using Value = std::common_type_t<V, typename MB::value_type>;
+                using AT = math::accumulator_traits<Accumulator, Value>;
+                Accumulator acc{};
+                AT::clear(acc);
+                for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                    AT::add_product(acc, static_cast<Value>(data[k]),
+                                    static_cast<Value>(B(static_cast<typename MB::size_type>(indices[k]),
+                                                         static_cast<typename MB::size_type>(c))));
+                C(r, c) = AT::template value<Result>(acc);
+            }
         }
     }
 }
@@ -748,6 +789,10 @@ void mult(const M& A, const VIn& x, VOut& y) {
                   interface::BlasDenseVector<VIn> &&
                   interface::BlasDenseVector<VOut>) {
         using T = typename M::value_type;
+        // BLAS takes int dimensions: a larger matrix takes the paths below,
+        // as symv, syrk, symm, ger and trmv do (issue 886); the cast truncated.
+        const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        if (static_cast<std::size_t>(A.num_rows()) <= imax && static_cast<std::size_t>(A.num_cols()) <= imax) {
         int m = static_cast<int>(A.num_rows());
         int n = static_cast<int>(A.num_cols());
         T alpha = math::one<T>();
@@ -772,6 +817,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
                                   beta, y.data(), 1);
         }
         return;
+        }
     }
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM
@@ -864,6 +910,35 @@ void mult_mat_via_temporary(MC& C, F&& compute) {
     C = t;
 }
 
+/// Whether an operand is, or views, a lazy expression: an expression type, or a
+/// view (anything with base(): trans, hermitian, the triangular and banded
+/// views) whose base is one. storage_overlaps finds no storage behind an
+/// expression, so such an operand that reads C is not seen to alias it
+/// (issue 886): auto E = C + C; gemmt(1, S, trans(E), 0, C).
+template <typename T>
+constexpr bool holds_expression() {
+    if constexpr (traits::is_expression_v<T>) {
+        return true;
+    } else if constexpr (requires(const T& t) { t.base(); }) {
+        return holds_expression<std::remove_cvref_t<decltype(std::declval<const T&>().base())>>();
+    } else {
+        return false;
+    }
+}
+template <typename T>
+inline constexpr bool holds_expression_v = holds_expression<std::remove_cvref_t<T>>();
+
+/// An owning dense copy of a matrix operand, in its own element type: what an
+/// expression operand is evaluated into before a kernel that writes C runs.
+template <typename M>
+mat::dense2D<typename M::value_type> dense_copy(const M& A) {
+    mat::dense2D<typename M::value_type> D(A.num_rows(), A.num_cols());
+    for (typename M::size_type r = 0; r < A.num_rows(); ++r)
+        for (typename M::size_type c = 0; c < A.num_cols(); ++c)
+            D(r, c) = A(r, c);
+    return D;
+}
+
 /// Whether mult can route an aliased C through mult_mat_via_temporary: C's
 /// type can be made at C's size and copy-assigned. Every matrix mult writes
 /// can (dense2D, compressed2D).
@@ -887,6 +962,23 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
+    // Nothing to write: before an expression operand is evaluated (a 200000 x
+    // 200000 S + S with a 200000 x 0 C would build 320 GB, issue 886).
+    if (C.num_rows() == 0 || C.num_cols() == 0) return;
+    // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
+    // evaluated once into a dense matrix of its own element type first:
+    // storage_overlaps can't see the storage behind it, so
+    // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
+    // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
+    // each element of the expression many times.
+    if constexpr (detail::holds_expression_v<MA>) {
+        const auto Am = detail::dense_copy(A);
+        return mult<Accumulator>(Am, B, C);
+    }
+    if constexpr (detail::holds_expression_v<MB>) {
+        const auto Bm = detail::dense_copy(B);
+        return mult<Accumulator>(A, Bm, C);
+    }
     // Every kernel writes C while it still reads A and B, so a C that shares
     // storage with either -- the same matrix, as in mult(A, B, A), or a matrix
     // over part of the same buffer -- is computed through a temporary, in every
@@ -907,6 +999,12 @@ void mult(const MA& A, const MB& B, MC& C) {
     if constexpr (std::is_void_v<Accumulator> && interface::is_compressed2D_v<MA> &&
                   detail::row_major_contiguous_v<MB> && detail::row_major_contiguous_v<MC>) {
         detail::mult_sparse_crs_dense_par(A, B, C);
+        return;
+    }
+    // Sparse (CRS) A with any other B, or an Accumulator, into a dense C
+    // (issue 886): still walk A's stored entries.
+    if constexpr (interface::is_compressed2D_v<MA> && !interface::is_compressed2D_v<MC>) {
+        detail::mult_sparse_crs_any<Accumulator>(A, B, C);
         return;
     }
 
@@ -1016,6 +1114,11 @@ void mult(const MA& A, const MB& B, MC& C) {
     // them, so it is only named once the operands are known dense.
     if constexpr (detail::gemm_dispatches_blas_v<Accumulator, MA, MB, MC>) {
         using T = typename MC::value_type;
+        // BLAS takes int dimensions: a larger product takes the paths below
+        // (issue 886); the casts truncated.
+        const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        if (static_cast<std::size_t>(A.num_rows()) <= imax && static_cast<std::size_t>(B.num_cols()) <= imax &&
+            static_cast<std::size_t>(A.num_cols()) <= imax) {
         int m = static_cast<int>(A.num_rows());
         int n = static_cast<int>(B.num_cols());
         int k = static_cast<int>(A.num_cols());
@@ -1045,6 +1148,7 @@ void mult(const MA& A, const MB& B, MC& C) {
                                   beta, C.data(), ld(m));
         }
         return;
+        }
     }
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM

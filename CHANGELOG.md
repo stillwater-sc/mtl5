@@ -95,6 +95,23 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Kernels: layout-aware and O(nnz) matrix norms and predicates, sparse `mult` with any B, aliased `symm` and `gemmt`, guarded BLAS `int` dimensions** (issue 886, from QA sweep #872).
+  - **Matrix norms follow the storage layout.** `one_norm` on a row-major matrix and `infinity_norm` on a column-major one accumulate into a column (row) sum buffer, in the order the old loop used, so the results keep their bits. `frobenius_norm` walks a column-major matrix by columns. On a 4000² `dense2D<double>`, `one_norm` (row-major) went from 72.8 ms to 6.2 ms, and `infinity_norm` (column-major) from 72.7 ms to 6.0 ms.
+  - **On a `compressed2D`, the norms and the structural predicates walk the stored entries.** That is `is_symmetric`, `is_hermitian`, `is_upper/lower_triangular`, `is_diagonal`, `is_banded`, `is_diagonally_dominant`, and the tolerance of `is_unitary`/`is_normal`. They looped over every (i, j) through a binary search. On a 5000 x 5000 diagonal, `frobenius_norm` took 26.9 ms and `is_diagonal` 25.5 ms; both are now under 0.01 ms. `is_unitary` and `is_normal` themselves stay O(n³).
+  - **`mult(A, B, C)` with a `compressed2D` A walks its stored entries for any B**: column-major dense, compressed, or with an `Accumulator`, into any dense C. Only CRS × row-major dense did before. Into a column-major 2000x16 C, it went from 72.7 ms to 0.05 ms.
+  - **`symm` and `gemmt` with C sharing storage with A or B** go through a temporary, as `mult` does (#855). `symm(1, S, C, 0, C)` was wrong in every entry, and so was `gemmt(1, A, C, 1, C)`.
+  - **BLAS gemv and gemm check their dimensions against `INT_MAX`** and take the generic path above it, as `symv`, `syrk`, `symm`, `ger` and `trmv` do. They truncated.
+  - **Not changed:** the sweep's `two_norm` item. A zero vector costs one extra pass, not two: `rescaled_two_norm` stops after its max scan, which is what tells a zero vector from underflowed squares.
+  - **Tests:** a new `test_kernels_followups.cpp` covers:
+    - norms equal on both layouts and on sparse storage, with NaN;
+    - a 200000² diagonal that only an O(nnz) path finishes;
+    - the sparse predicates against the dense ones;
+    - sparse `mult` with column-major, compressed and `Accumulator` cases;
+    - the aliased `symm` and `gemmt`;
+    - `kron` 2x3 ⊗ 3x2;
+    - non-square and 1x1 shapes for `syrk`, `syr2k`, `gemmt`, `symm`, `trmm` and `ger`;
+    - `ger`'s mixed alpha staying generic, empty gemv and gemm shapes, and all eight gemm orientations.
+
 - **Element-wise and conversion helpers: `min`/`max` on infinite, NaN and empty input; `fused_assign` aliasing; unsigned `signum`; `condition_number` without infinity; saturating unscaled `project_onto`** (issue 887, from QA sweep #872).
   - **`min` and `max` are seeded from the first element.** They were seeded with `numeric_limits<T>::max()` and `lowest()`, so `min({+inf})` returned 1.79769e+308 and `max({-inf})` returned -1.79769e+308. A NaN anywhere now makes the result NaN, as `infinity_norm` does since #690; a plain comparison skipped it, so the result depended on the NaN's position. **Behaviour change:** an empty collection throws `std::invalid_argument`; it used to return the sentinel silently.
   - **`fused_assign` and `fused_plus_assign` on matrices test for aliasing,** as `dense2D::operator=` does (#824). An expression that reads the target anywhere but the element being written goes through a temporary. Without the test, `fused_assign(A, 1.0 * trans(A))` on [[1,2],[3,4]] gave [[1,3],[3,4]]. The expression is also read before the target is resized, so a reallocation no longer leaves it dangling. The vector forms take only element-wise expressions, so they stay in place.

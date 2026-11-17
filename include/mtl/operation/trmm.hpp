@@ -19,6 +19,8 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/operation/mult.hpp>
+#include <mtl/traits/is_expression.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -189,6 +191,20 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
         for (size_type r = 0; r < m; ++r)
             for (size_type c = 0; c < n; ++c)
                 B(r, c) = math::zero<value_type>();
+        return;
+    }
+
+    // B is updated in place by design, but an A that shares storage with B
+    // -- trmm(1, B, B, upper) -- is read after B overwrote it; ?trmm does not
+    // allow the overlap either. A is copied first (issue 886).
+    // After the alpha == 0 return, which needs no copy (issue 886).
+    // An expression A, or a view of one, is copied too (storage_overlaps
+    // can't see into it). The copy keeps A's element type: a copy in B's type
+    // turned a double 1.5 into an int 1 for an integer B (issue 886).
+    if (m == 0 || n == 0) return;
+    if (detail::holds_expression_v<MA> || detail::storage_overlaps(A, B)) {
+        const auto Acopy = detail::dense_copy(A);
+        trmm<Accumulator>(alpha, Acopy, B, upper, unit_diag);
         return;
     }
 

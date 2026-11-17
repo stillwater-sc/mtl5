@@ -27,6 +27,8 @@
 #include <mtl/interface/dispatch_traits.hpp>
 #include <type_traits>
 #include <mtl/simd/algorithm.hpp>
+#include <mtl/tag/orientation.hpp>
+#include <vector>
 
 namespace mtl {
 
@@ -206,6 +208,10 @@ auto two_norm(const V& v) {
             v.size(), /*grain=*/std::size_t{65536},
             [&](std::size_t lo, std::size_t hi) { return simd::reduce_sum_squares<T>(d + lo, hi - lo); });
         if (detail::sum_squares_needs_rescan(ss)) {   // #690
+            // A zero vector costs one extra pass here, not two:
+            // rescaled_two_norm returns after its max scan when every |v(i)|
+            // is 0, and that scan is what tells a zero vector from squares
+            // that underflowed (issue 886).
             return detail::rescaled_two_norm<T>([&](auto&& f) {
                 for (std::size_t i = 0; i < v.size(); ++i) f(T(std::abs(d[i])));
             });
@@ -254,6 +260,56 @@ auto infinity_norm(const V& v) {
 
 // -- Matrix norms --------------------------------------------------------
 
+namespace detail {
+
+/// The loop order of a matrix norm follows the storage (issue 886): one_norm
+/// walked a row-major 6000^2 dense2D by columns, 6x slower than
+/// infinity_norm, and the other two were the mirror image on column-major.
+template <typename M>
+inline constexpr bool norm_col_major_v = [] {
+    if constexpr (requires { typename M::orientation; })
+        return std::is_same_v<typename M::orientation, tag::col_major>;
+    else
+        return false;
+}();
+
+template <typename M>
+inline constexpr bool norm_row_major_v = [] {
+    if constexpr (requires { typename M::orientation; })
+        return std::is_same_v<typename M::orientation, tag::row_major>;
+    else
+        return false;
+}();
+
+/// Calls f(r, c, a) for every element a = m(r, c) that can be nonzero, in an
+/// order that suits the storage: a compressed2D's stored entries row by row
+/// (its operator() is a binary search, so the full m x n loop was O(m n log
+/// nnz) for an O(nnz) answer); a column-major matrix column by column; any
+/// other matrix row by row. Within a row (column) the order is by column
+/// (row), as the m x n loop has it.
+template <typename M, typename F>
+void for_each_entry(const M& m, F&& f) {
+    using size_type = typename M::size_type;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        const auto& starts = m.ref_major();
+        const auto& cols = m.ref_minor();
+        const auto& vals = m.ref_data();
+        for (size_type r = 0; r < m.num_rows(); ++r)
+            for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                f(r, static_cast<size_type>(cols[k]), vals[k]);
+    } else if constexpr (norm_col_major_v<M>) {
+        for (size_type c = 0; c < m.num_cols(); ++c)
+            for (size_type r = 0; r < m.num_rows(); ++r)
+                f(r, c, m(r, c));
+    } else {
+        for (size_type r = 0; r < m.num_rows(); ++r)
+            for (size_type c = 0; c < m.num_cols(); ++c)
+                f(r, c, m(r, c));
+    }
+}
+
+} // namespace detail
+
 /// frobenius_norm(m) = sqrt(sum(|m[i,j]|^2)).
 ///
 /// Mixed precision: pass an explicit `Accumulator` to sum the squares in a wider
@@ -281,10 +337,23 @@ auto frobenius_norm(const M& m) {
                                                    interface::ThreadableDenseMatrix<M>>(
             m.num_rows(), row_grain,
             [&](Accumulator& part, std::size_t lo, std::size_t hi) {
-                for (std::size_t r = lo; r < hi; ++r) {
-                    for (std::size_t c = 0; c < ncols; ++c) {
-                        mag_t a = detail::generic_abs(m(r, c));
-                        AT::add_product(part, a, a);
+                if constexpr (interface::is_compressed2D_v<M>) {
+                    // A compressed2D's stored entries, row by row (serial: it
+                    // is not ThreadableDenseMatrix). The m x n loop was a binary
+                    // search per element (issue 886).
+                    const auto& starts = m.ref_major();
+                    const auto& vals = m.ref_data();
+                    for (std::size_t r = lo; r < hi; ++r)
+                        for (auto k = starts[r]; k < starts[r + 1]; ++k) {
+                            mag_t a = detail::generic_abs(vals[k]);
+                            AT::add_product(part, a, a);
+                        }
+                } else {
+                    for (std::size_t r = lo; r < hi; ++r) {
+                        for (std::size_t c = 0; c < ncols; ++c) {
+                            mag_t a = detail::generic_abs(m(r, c));
+                            AT::add_product(part, a, a);
+                        }
                     }
                 }
             });
@@ -296,22 +365,23 @@ auto frobenius_norm(const M& m) {
         using round_t = math::accumulator_round_type_t<Accumulator, out_t>;
         return static_cast<out_t>(sqrt(AT::template value<round_t>(acc)));
     } else {
+        // In storage order (detail::for_each_entry, issue 886): the same sum
+        // as before on row-major and sparse storage (a skipped zero adds
+        // +0), column by column on column-major.
         auto acc = math::zero<mag_t>();
-        for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
-            for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-                auto a = detail::generic_abs(m(r, c));
-                acc = detail::generic_fma<mag_t>(acc, a, a);
-            }
-        }
+        detail::for_each_entry(m, [&](auto, auto, const auto& x) {
+            auto a = detail::generic_abs(x);
+            acc = detail::generic_fma<mag_t>(acc, a, a);
+        });
         if constexpr (detail::rescalable_sum_squares_v<mag_t>) {
             if (detail::sum_squares_needs_rescan(acc)) {   // #690
                 // As in two_norm: the type of sqrt(acc) below (issue 865).
                 using std::sqrt;
                 using result_t = decltype(sqrt(acc));
                 return static_cast<result_t>(detail::rescaled_two_norm<mag_t>([&](auto&& f) {
-                    for (typename M::size_type r = 0; r < m.num_rows(); ++r)
-                        for (typename M::size_type c = 0; c < m.num_cols(); ++c)
-                            f(static_cast<mag_t>(detail::generic_abs(m(r, c))));
+                    detail::for_each_entry(m, [&](auto, auto, const auto& x) {
+                        f(static_cast<mag_t>(detail::generic_abs(x)));
+                    });
                 }));
             }
         }
@@ -321,31 +391,98 @@ auto frobenius_norm(const M& m) {
 }
 
 /// one_norm(m) = max column sum of |m[i,j]|
+///
+/// On row-major and sparse storage the column sums accumulate in a buffer,
+/// in the row order the column loop used, so the result keeps its bits; the
+/// column loop walked a row-major matrix against its layout (issue 886).
 template <Matrix M>
 auto one_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
     auto result = math::zero<mag_t>();
-    for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-        auto col_sum = math::zero<mag_t>();
-        for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
-            col_sum = detail::generic_add<mag_t>(col_sum, detail::generic_abs(m(r, c)));
+    // An empty matrix: 0, before any buffer (a row-major 0 x 1e8 one_norm
+    // allocated 800 MB, issue 886).
+    if (m.num_rows() == 0 || m.num_cols() == 0) return result;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        const std::size_t nnz = m.ref_data().size();
+        if (static_cast<std::size_t>(m.num_cols()) <= 4 * nnz + 4096) {
+            std::vector<mag_t> sums(m.num_cols(), math::zero<mag_t>());
+            detail::for_each_entry(m, [&](auto, auto c, const auto& x) {
+                sums[c] = detail::generic_add<mag_t>(sums[c], detail::generic_abs(x));
+            });
+            for (const auto& s : sums) detail::max_propagating_nan(result, s);   // #690
+        } else {
+            // Far wider than it is full (a 1 x 1e8 matrix with one entry):
+            // the stored entries sorted by column, O(nnz) space, not a
+            // num_cols() buffer. A stable sort keeps each column's row order,
+            // so its sum is the same.
+            struct entry { std::size_t col; mag_t a; };
+            std::vector<entry> es;
+            es.reserve(nnz);
+            detail::for_each_entry(m, [&](auto, auto c, const auto& x) {
+                es.push_back({static_cast<std::size_t>(c), static_cast<mag_t>(detail::generic_abs(x))});
+            });
+            std::stable_sort(es.begin(), es.end(), [](const entry& a, const entry& b) { return a.col < b.col; });
+            for (std::size_t i = 0; i < es.size();) {
+                auto sum = math::zero<mag_t>();
+                const std::size_t col = es[i].col;
+                for (; i < es.size() && es[i].col == col; ++i) sum = detail::generic_add<mag_t>(sum, es[i].a);
+                detail::max_propagating_nan(result, sum);   // #690
+            }
         }
-        detail::max_propagating_nan(result, col_sum);   // #690
+    } else if constexpr (detail::norm_row_major_v<M>) {
+        std::vector<mag_t> sums(m.num_cols(), math::zero<mag_t>());
+        detail::for_each_entry(m, [&](auto, auto c, const auto& x) {
+            sums[c] = detail::generic_add<mag_t>(sums[c], detail::generic_abs(x));
+        });
+        for (const auto& s : sums) detail::max_propagating_nan(result, s);   // #690
+    } else {
+        for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
+            auto col_sum = math::zero<mag_t>();
+            for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
+                col_sum = detail::generic_add<mag_t>(col_sum, detail::generic_abs(m(r, c)));
+            }
+            detail::max_propagating_nan(result, col_sum);   // #690
+        }
     }
     return result;
 }
 
 /// infinity_norm(m) = max row sum of |m[i,j]|
+///
+/// On column-major storage the row sums accumulate in a buffer (in the
+/// column order the row loop used, so the bits stay); a compressed2D sums
+/// each row's stored entries (issue 886).
 template <Matrix M>
 auto infinity_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
     auto result = math::zero<mag_t>();
-    for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
-        auto row_sum = math::zero<mag_t>();
-        for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
-            row_sum = detail::generic_add<mag_t>(row_sum, detail::generic_abs(m(r, c)));
+    // An empty matrix: 0, before any buffer (a row-major 0 x 1e8 one_norm
+    // allocated 800 MB, issue 886).
+    if (m.num_rows() == 0 || m.num_cols() == 0) return result;
+    if constexpr (interface::is_compressed2D_v<M>) {
+        // Row by row over the stored entries: no buffer.
+        const auto& starts = m.ref_major();
+        const auto& vals = m.ref_data();
+        for (std::size_t r = 0; r < static_cast<std::size_t>(m.num_rows()); ++r) {
+            auto row_sum = math::zero<mag_t>();
+            for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                row_sum = detail::generic_add<mag_t>(row_sum, detail::generic_abs(vals[k]));
+            detail::max_propagating_nan(result, row_sum);   // #690
         }
-        detail::max_propagating_nan(result, row_sum);   // #690
+    } else if constexpr (detail::norm_col_major_v<M>) {
+        std::vector<mag_t> sums(m.num_rows(), math::zero<mag_t>());
+        detail::for_each_entry(m, [&](auto r, auto, const auto& x) {
+            sums[r] = detail::generic_add<mag_t>(sums[r], detail::generic_abs(x));
+        });
+        for (const auto& s : sums) detail::max_propagating_nan(result, s);   // #690
+    } else {
+        for (typename M::size_type r = 0; r < m.num_rows(); ++r) {
+            auto row_sum = math::zero<mag_t>();
+            for (typename M::size_type c = 0; c < m.num_cols(); ++c) {
+                row_sum = detail::generic_add<mag_t>(row_sum, detail::generic_abs(m(r, c)));
+            }
+            detail::max_propagating_nan(result, row_sum);   // #690
+        }
     }
     return result;
 }

@@ -35,6 +35,9 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/traits/is_expression.hpp>
+#include <mtl/mat/dense2D.hpp>
+#include <mtl/operation/mult.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -95,6 +98,41 @@ void symm(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
     const size_type m = A.num_rows();
     const size_type n = B.num_cols();
     assert(A.num_cols() == m && B.num_rows() == m && C.num_rows() == m && C.num_cols() == n);
+    // Nothing to write: before an expression operand is evaluated (a 200000 x
+    // 200000 S + S with a 200000 x 0 C would build 320 GB, issue 886).
+    if (C.num_rows() == 0 || C.num_cols() == 0) return;
+    // A lazy expression operand (C + C, 2 * A, ...), or a view of one, is
+    // evaluated once into a dense matrix of its own element type first:
+    // storage_overlaps can't see the storage behind it, so
+    // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
+    // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
+    // each element of the expression many times.
+    if constexpr (detail::holds_expression_v<MA>) {
+        // Only the lower triangle is read, so only it is evaluated: an upper
+        // entry of an integer expression (U + U at INT_MAX) would overflow
+        // for nothing (issue 886).
+        mat::dense2D<typename MA::value_type> Am(A.num_rows(), A.num_cols());
+        for (size_type i = 0; i < A.num_rows(); ++i)
+            for (size_type k = 0; k <= i; ++k) Am(i, k) = A(i, k);
+        return symm<Accumulator>(alpha, Am, B, beta, C);
+    }
+    if constexpr (detail::holds_expression_v<MB>) {
+        const auto Bm = detail::dense_copy(B);
+        return symm<Accumulator>(alpha, A, Bm, beta, C);
+    }
+    // A C that shares storage with A or B -- symm(1, S, C, 0, C) -- is formed
+    // in a copy of C (which keeps beta*C's old values) and copied back, as
+    // mult does (#855): every loop below writes C while it reads A and B, and
+    // symm(1, S, C, 0, C) was wrong in every entry (issue 886).
+    if constexpr (detail::mult_mat_temporary_ok_v<MC>) {
+        if (detail::storage_overlaps(C, A) || detail::storage_overlaps(C, B)) {
+            MC tmp(C.num_rows(), C.num_cols());
+            tmp = C;
+            symm<Accumulator>(alpha, A, B, beta, tmp);
+            C = tmp;
+            return;
+        }
+    }
     const bool alpha_zero = (alpha == math::zero<S>());
     const bool beta_zero  = (beta == math::zero<S>());
     // The lower triangle, read as a symmetric matrix.
