@@ -7,10 +7,14 @@ read a column-major A at a stride of m elements, which on large matrices was
 short, wide matrices: 4 x 1000 at half its speed. This page records what was
 measured on the five benchmark machines and what the dispatch is now.
 
-The results are bit-identical whichever path runs: each row sums the same
-terms in ascending column order with the same expression as the one-row loop.
-`tests/unit/operation/test_trmv_trsv_interleaved.cpp` holds every path to it,
-built with `-ffp-contract=off`.
+Whichever of these paths runs, each row sums the same terms in ascending
+column order with the same expression as the one-row loop. With contraction
+off the bits are the same: `tests/unit/operation/test_trmv_trsv_interleaved.cpp`
+holds every path to it, built with `-ffp-contract=off`. A build that
+contracts may fuse a multiply and an add in one path and not in another, as
+for the row kernels (#749), so it can differ in the last bit. BLAS and the
+native-fast blocked kernels, where a build has them, take these calls first
+and sum in their own order.
 
 ## What changed
 
@@ -98,19 +102,25 @@ the row kernel. Above 1, the public call is faster.
 
 ## Where it is slower
 
-`column_sweep_table.py` also lists every shape where the public call is more
-than 15% slower than #777's sweep kernel. Most are the smallest shapes (2 x 2
-to 16 x 16), where the public call's own checks add 5-90 ns to a kernel
-called directly. The cases that cost more than 0.1 us:
+`column_sweep_table.py` also lists every shape where the public call takes
+more than 1.15 times as long as #777's sweep kernel. Most are the smallest
+shapes (2 x 2 to 16 x 16), where the public call's own checks add 5-90 ns to
+a kernel called directly. The cases that cost more than 0.1 us:
 
-- **The forward substitution under Clang at n = 96-192:** 0.74-0.84 of the
-  old sweep (0.1-0.5 us) on the Xeon, the Ryzen (clang-cl) and the Ventuno.
+- **The forward substitution under Clang at n = 96-256:** 0.74-0.87 of the
+  old sweep (0.2-0.5 us) on the Xeon, the Ryzen (clang-cl) and the Ventuno.
   The blocked diagonal compiles less well there than the one-column loop.
-- **`trmv` on the Xeon at n = 32-48:** 0.61-0.84 (0.1-0.3 us), under GCC
+- **`trmv` on the Xeon at n = 32-96:** 0.61-0.84 (0.2-0.3 us), under GCC
   with `-march=native` at the `n <= 32` cutoff, and under Clang above it.
-- **Single shapes, 0.82-0.85:** clang-cl `gemv` at 12 x 1000 and 12 x 4096,
-  and 4096 x 8; the Jetson's f32 64 x 4096 under GCC; clang-cl's f64 2048 x
-  2048, which runs the same one-column loop as the old sweep.
+- **`gemv` with 48-64 rows and 4096 columns on the Jetson and the Ventuno
+  under GCC:** 0.83-0.87 (4-19 us), on the eight-column pass. Shorter rows
+  of the same shapes gain on both.
+- **clang-cl `gemv` at 12 x 1000, 12 x 4096 and 4096 x 8:** 0.82-0.85
+  (0.6-2.2 us).
+- **n = 1024-2048 on the Xeon and under clang-cl:** 0.83-0.87 (13-267 us).
+  At these strides the public calls run #777's own one-column instantiation,
+  so this is the run-to-run spread of a memory-bound loop, not a different
+  kernel.
 
 ## Reproducing
 

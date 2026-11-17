@@ -58,7 +58,7 @@ def main():
             rows = [float(r["rows_ns"]) / float(r["public_ns"]) for r in rs]
             cells.append(f"{geo(old):.2f} ({min(old):.2f}) / {geo(rows):.2f}")
             for r, q in zip(rs, old):
-                if q < 0.85:
+                if float(r["public_ns"]) > 1.15 * float(r["sweep1_ns"]):   # more than 15% slower
                     losses.append((machine, build, key, r["type"], f"{r['m']}x{r['n']}", q,
                                    float(r["public_ns"]) - float(r["sweep1_ns"])))
         print(f"| {machine} | {build} | " + " | ".join(cells) + " |")

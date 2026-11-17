@@ -21,6 +21,10 @@
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $cpu = if ($env:CPU) { [int]$env:CPU } else { 0 }
+# ProcessorAffinity is one 64-bit mask, of the process's processor group.
+if ($cpu -lt 0 -or $cpu -ge [Math]::Min(64, [Environment]::ProcessorCount)) {
+    Write-Host "CPU=$cpu is outside 0..$([Math]::Min(64, [Environment]::ProcessorCount) - 1)"; exit 2
+}
 # One core: the public mult would otherwise thread over a pool of every CPU,
 # all pinned to the one measured.
 $env:MTL5_NUM_THREADS = '1'
@@ -28,7 +32,12 @@ $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 $out = if ($env:OUT) { $env:OUT } else { Join-Path $root "build-platform\column-sweep\$env:COMPUTERNAME-$stamp" }
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-$commit = if (Test-Path (Join-Path $root 'COMMIT')) { (Get-Content (Join-Path $root 'COMMIT')).Trim() } else { 'unknown' }
+# The checkout's revision, as the Linux runner records it; a COMMIT file for
+# an exported tree with no .git.
+$commit = (& git -C $root rev-parse --short HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $commit) {
+    $commit = if (Test-Path (Join-Path $root 'COMMIT')) { (Get-Content (Join-Path $root 'COMMIT')).Trim() } else { 'unknown' }
+}
 $plan = (powercfg /getactivescheme) -join ' '
 @(
     "host=$env:COMPUTERNAME"
@@ -66,9 +75,18 @@ foreach ($v in $variants) {
     $sp = @{ FilePath = $exe.FullName; NoNewWindow = $true; PassThru = $true; RedirectStandardOutput = $csv }
     if ($args.Count -gt 0) { $sp.ArgumentList = $args }
     $p = Start-Process @sp
-    $p.ProcessorAffinity = [IntPtr](1 -shl $cpu)
+    # A 64-bit 1: an Int32's shift count wraps at 32, so 1 -shl 32 was CPU 0.
+    $p.ProcessorAffinity = [IntPtr]([long]1 -shl $cpu)
     $p.PriorityClass = 'High'
     $p.WaitForExit()
+    if ($p.ExitCode -ne 0) {
+        # A partial CSV is kept under another name, with no sidecar, so
+        # column_sweep_table.py never reads it as a run.
+        Write-Host "  $($v.name): bench_column_sweep exited with $($p.ExitCode); its CSV is $($v.name).failed.csv"
+        Move-Item -Force $csv (Join-Path $out "$($v.name).failed.csv")
+        Remove-Item -Recurse -Force $dir
+        continue
+    }
     # The CSV's sidecar (benchmarks/check_sidecars.sh): the session's record,
     # and this build's compiler and flags.
     @((Get-Content (Join-Path $out 'sysinfo.txt')) + "compiler=$compiler" + "build_flags=$($v.flags)") |

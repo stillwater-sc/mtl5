@@ -39,7 +39,7 @@ if [ -r "$gov" ]; then
     old=$(cat "$gov")
     pol=$(readlink -f "/sys/devices/system/cpu/cpu$CPU/cpufreq")
     if echo performance | sudo -n tee "$pol/scaling_governor" > /dev/null 2>&1; then
-        restore+=("echo $old | sudo -n tee $pol/scaling_governor > /dev/null")
+        restore+=("echo $(printf '%q' "$old") | sudo -n tee $(printf '%q' "$pol/scaling_governor") > /dev/null")
         clock_policy="governor performance on $(basename "$pol") (was $old)"
     else
         clock_policy="governor $old (sudo -n refused; not changed)"
@@ -48,7 +48,8 @@ fi
 if command -v jetson_clocks > /dev/null 2>&1; then
     store="$OUT/jetson_clocks.store"
     if sudo -n jetson_clocks --store "$store" > /dev/null 2>&1 && sudo -n jetson_clocks > /dev/null 2>&1; then
-        restore+=("sudo -n jetson_clocks --restore $store > /dev/null")
+        # %q keeps a path with spaces one argument when cleanup evals it.
+        restore+=("sudo -n jetson_clocks --restore $(printf '%q' "$store") > /dev/null")
         clock_policy="$clock_policy; jetson_clocks"
         if command -v nvpmodel > /dev/null 2>&1; then
             clock_policy="$clock_policy ($(nvpmodel -q 2>/dev/null | sed -n 's/^NV Power Mode:[[:space:]]*//p' | head -1))"
