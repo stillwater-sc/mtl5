@@ -274,6 +274,15 @@ signal: convdiff 256^2 has 2.62, wang3 4.83, raefsky3 9.11, and no threshold
 on it kept both. With the gate, the grids cost 3-5% (the probes), and the
 SuiteSparse gains stay.
 
+Through `bench_superlu` (`benchmarks/data/i7-12700k/superlu/20261117T221848Z/`,
+one thread, CPU 0) the supernodal LU is now 1.88-2.39x SuperLU's time on wang3,
+wang4 and raefsky3 (from 2.57-3.45x) and 1.99x on bbmat (from 2.80x), at the
+same fill. The grids read 1.70-2.88x (from 1.69-2.52x). The machine had a
+load average of 4-6 from other users during that session, and KLU, whose code
+is unchanged, ran 11% slower on the grids than in the baseline. Two pinned
+reruns gave 2.26-2.76x, about 6% over the baseline on 256^2; the isolated
+numeric runs above gave 3-5%.
+
 **Next**, from the profile with panels: the pre-panel TRSVs and the
 gathers/scatters of each panel column's rows (about a quarter of wang3), the
 per-column pivot search and L/U emission (about 10%), and the reach DFS
