@@ -1,5 +1,6 @@
 #pragma once
 // MTL5 -- Element-wise signum (sign function)
+#include <limits>
 #include <mtl/concepts/vector.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -8,9 +9,15 @@
 namespace mtl {
 
 namespace detail {
+    /// +1, 0 or -1; an unsigned type has no -1, so 1 or 0 (`T{-1}` narrowed
+    /// and did not compile, issue 887).
     template <typename T>
     constexpr T signum_scalar(const T& x) {
-        return (x > T{0}) ? T{1} : (x < T{0}) ? T{-1} : T{0};
+        if constexpr (std::numeric_limits<T>::is_specialized && !std::numeric_limits<T>::is_signed) {
+            return (x > T{0}) ? T{1} : T{0};
+        } else {
+            return (x > T{0}) ? T{1} : (x < T{0}) ? T(-1) : T{0};
+        }
     }
 } // namespace detail
 

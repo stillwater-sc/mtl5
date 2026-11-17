@@ -68,7 +68,15 @@ magnitude_t<typename M::value_type> condition_number(const M& A) {
     if (sv.empty()) return mag_t(1);
     mag_t smax = sv[0], smin = sv[0];
     for (mag_t s : sv) { if (s > smax) smax = s; if (s < smin) smin = s; }
-    if (!(smin > mag_t(0))) return std::numeric_limits<mag_t>::infinity();
+    // Singular: infinite, or for a type without infinity (a posit, say,
+    // whose infinity() is 0 -- the opposite of infinite) its largest finite
+    // value (issue 887).
+    if (!(smin > mag_t(0))) {
+        if constexpr (std::numeric_limits<mag_t>::has_infinity)
+            return std::numeric_limits<mag_t>::infinity();
+        else
+            return std::numeric_limits<mag_t>::max();
+    }
     return smax / smin;
 }
 

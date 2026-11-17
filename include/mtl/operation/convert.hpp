@@ -25,8 +25,9 @@ template <Vector VSrc, Vector VDst>
 void convert(const VSrc& src, VDst& dst) {
     assert(static_cast<std::size_t>(src.size()) == static_cast<std::size_t>(dst.size()));
     using D = typename VDst::value_type;
+    // Indexed by size_type: an int index truncated past 2^31 (issue 887).
     for (typename VSrc::size_type i = 0; i < src.size(); ++i)
-        dst(static_cast<int>(i)) = static_cast<D>(src(static_cast<int>(i)));
+        dst(static_cast<typename VDst::size_type>(i)) = static_cast<D>(src(i));
 }
 
 /// Convert a matrix into a pre-allocated destination of (possibly) another type.

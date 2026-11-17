@@ -95,6 +95,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Element-wise and conversion helpers: `min`/`max` on infinite, NaN and empty input; `fused_assign` aliasing; unsigned `signum`; `condition_number` without infinity; saturating unscaled `project_onto`** (issue 887, from QA sweep #872).
+  - **`min` and `max` are seeded from the first element.** They were seeded with `numeric_limits<T>::max()` and `lowest()`, so `min({+inf})` returned 1.79769e+308 and `max({-inf})` returned -1.79769e+308. A NaN anywhere now makes the result NaN, as `infinity_norm` does since #690; a plain comparison skipped it, so the result depended on the NaN's position. **Behaviour change:** an empty collection throws `std::invalid_argument`; it used to return the sentinel silently.
+  - **`fused_assign` and `fused_plus_assign` on matrices test for aliasing,** as `dense2D::operator=` does (#824). An expression that reads the target anywhere but the element being written goes through a temporary. Without the test, `fused_assign(A, 1.0 * trans(A))` on [[1,2],[3,4]] gave [[1,3],[3,4]]. The expression is also read before the target is resized, so a reallocation no longer leaves it dangling. The vector forms take only element-wise expressions, so they stay in place.
+  - **`signum` compiles for unsigned element types,** giving 0 or 1. `T{-1}` narrowed.
+  - **`condition_number` of a singular matrix is `max()` for a type without infinity.** That type's `infinity()` is 0 (a posit's, say), so the function returned 0, the opposite of infinite.
+  - **Unscaled `project_onto` to an integer type saturates, with NaN going to 0,** as the scaled overloads do. A bare `static_cast` of NaN or an out-of-range float is undefined. `saturating_cast` now clamps any non-integer source with `numeric_limits`, not only `std::is_floating_point` ones, so bfloat16 and posit sources are clamped too.
+  - **`convert(vector)` indexes by `size_type`;** an `int` index truncated past 2^31.
+  - **Tests:** a new `test_elementwise_followups.cpp` covers these cases with a test type without infinity, plus `normwise_backward_error`'s argument checks.
+
 - **SIMD and the dense kernels: sizes in the blocking override, and the tests the sweep found missing** (issue 878, from QA sweep #783).
   - **`MTL5_BLOCKING_KC`, `_MC` and `_NC` are parsed as a whole positive `std::size_t`.** These are the diagnostic overrides, live only with `MTL5_ENABLE_BLOCKING_OVERRIDE`. They went through `std::atol` into a `long`, which is 32 bits on Windows and breaks the `std::size_t` rule. It also read "96x" as 96. Anything but digits, 0 and overflow now leave the derived value.
   - **Tests:**
