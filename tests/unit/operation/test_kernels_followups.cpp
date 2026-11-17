@@ -30,6 +30,7 @@
 #include <mtl/operation/matrix_properties.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/norms.hpp>
+#include <mtl/operation/operators.hpp>
 #include <mtl/operation/symm.hpp>
 #include <mtl/operation/syr2k.hpp>
 #include <mtl/operation/syrk.hpp>
@@ -55,7 +56,7 @@ M filled(std::size_t m, std::size_t n) {
 
 /// A sparse matrix from the entries of `pattern(i, j)` (nonzero where true).
 template <typename P>
-crs sparse(std::size_t m, std::size_t n, P pattern) {
+crs make_sparse(std::size_t m, std::size_t n, P pattern) {
     crs S(m, n);
     {
         mat::inserter<crs> ins(S);
@@ -94,11 +95,17 @@ double inf_norm_ref(const rm& A) {
     return r;
 }
 
+/// The largest |A - B|; infinity if any difference is NaN (std::max kept
+/// the previous value, so an all-NaN result read as 0).
 template <typename MA, typename MB>
 double max_diff(const MA& A, const MB& B) {
     double d = 0;
     for (std::size_t i = 0; i < A.num_rows(); ++i)
-        for (std::size_t j = 0; j < A.num_cols(); ++j) d = std::max(d, std::abs(double(A(i, j)) - double(B(i, j))));
+        for (std::size_t j = 0; j < A.num_cols(); ++j) {
+            const double e = std::abs(double(A(i, j)) - double(B(i, j)));
+            if (std::isnan(e)) return std::numeric_limits<double>::infinity();
+            d = std::max(d, e);
+        }
     return d;
 }
 
@@ -119,7 +126,7 @@ TEST_CASE("matrix norms are the same on every layout and on sparse storage (issu
     // frobenius_norm on column-major sums in another order: close.
     CHECK(std::abs(frobenius_norm(C) - frobenius_norm(R)) <= 1e-14 * frobenius_norm(R));
 
-    const crs S = sparse(m, n, [](std::size_t i, std::size_t j) { return (i + 2 * j) % 5 == 0 || i == j; });
+    const crs S = make_sparse(m, n, [](std::size_t i, std::size_t j) { return (i + 2 * j) % 5 == 0 || i == j; });
     const rm D = dense_of(S);
     CHECK(one_norm(S) == one_norm(D));
     CHECK(infinity_norm(S) == infinity_norm(D));
@@ -153,6 +160,24 @@ TEST_CASE("sparse norms and predicates are O(nnz) (issue 886)", "[operation][nor
     CHECK(is_lower_triangular(D));
     CHECK(is_banded(D, 0, 0));
     CHECK(is_diagonally_dominant(D));
+    // The explicit-Accumulator frobenius_norm walks the stored entries too.
+    CHECK(double(frobenius_norm<long double>(D)) == std::sqrt(4.0 * double(n)));
+    // A 1 x 1e8 row with one entry: a num_cols() column-sum buffer would be
+    // 800 MB; the wide-matrix path sorts the stored entries instead.
+    crs W(1, 100000000);
+    {
+        mat::inserter<crs> ins(W);
+        ins[0][99999999] << -3.5;
+    }
+    CHECK(one_norm(W) == 3.5);
+    CHECK(infinity_norm(W) == 3.5);
+    // The sorted path, also on a wide matrix with several entries per column.
+    crs V(3, 50000000);
+    {
+        mat::inserter<crs> ins(V);
+        ins[0][7] << 1.0; ins[1][7] << -2.0; ins[2][7] << 0.5; ins[1][40000000] << 4.0;
+    }
+    CHECK(one_norm(V) == 4.0);
 }
 
 TEST_CASE("structural predicates on a compressed2D agree with the dense loops (issue 886)", "[operation][properties][886]") {
@@ -168,11 +193,11 @@ TEST_CASE("structural predicates on a compressed2D agree with the dense loops (i
         CHECK(is_diagonally_dominant(S) == is_diagonally_dominant(D));
         CHECK(is_diagonally_dominant(S, true) == is_diagonally_dominant(D, true));
     };
-    check_same(sparse(n, n, [](std::size_t i, std::size_t j) { return i == j; }));
-    check_same(sparse(n, n, [](std::size_t i, std::size_t j) { return j >= i && j - i <= 2; }));       // upper banded
-    check_same(sparse(n, n, [](std::size_t i, std::size_t j) { return i >= j && i - j <= 1; }));       // lower banded
-    check_same(sparse(n, n, [](std::size_t i, std::size_t j) { return (i + j) % 3 == 0; }));           // symmetric pattern
-    check_same(sparse(n, n, [](std::size_t i, std::size_t j) { return i == j || j == i + 3; }));       // an unmatched transpose
+    check_same(make_sparse(n, n, [](std::size_t i, std::size_t j) { return i == j; }));
+    check_same(make_sparse(n, n, [](std::size_t i, std::size_t j) { return j >= i && j - i <= 2; }));       // upper banded
+    check_same(make_sparse(n, n, [](std::size_t i, std::size_t j) { return i >= j && i - j <= 1; }));       // lower banded
+    check_same(make_sparse(n, n, [](std::size_t i, std::size_t j) { return (i + j) % 3 == 0; }));           // symmetric pattern
+    check_same(make_sparse(n, n, [](std::size_t i, std::size_t j) { return i == j || j == i + 3; }));       // an unmatched transpose
     // Symmetric values, and one entry whose transpose is not stored.
     crs Y(3, 3);
     {
@@ -194,10 +219,10 @@ TEST_CASE("structural predicates on a compressed2D agree with the dense loops (i
 
 TEST_CASE("mult with a compressed2D A and any B, and mult<Accumulator> (issue 886)", "[operation][mult][886]") {
     const std::size_t m = 17, k = 13, n = 5;
-    const crs A = sparse(m, k, [](std::size_t i, std::size_t j) { return (i * 3 + j) % 4 == 0; });
+    const crs A = make_sparse(m, k, [](std::size_t i, std::size_t j) { return (i * 3 + j) % 4 == 0; });
     const rm Ad = dense_of(A);
     const cm Bc = filled<cm>(k, n);
-    const crs Bs = sparse(k, n, [](std::size_t i, std::size_t j) { return (i + j) % 2 == 0; });
+    const crs Bs = make_sparse(k, n, [](std::size_t i, std::size_t j) { return (i + j) % 2 == 0; });
     rm ref(m, n);
     {
         rm Bd(k, n);
@@ -278,6 +303,36 @@ TEST_CASE("symm and gemmt with C aliasing an operand (issue 886)", "[operation][
             for (std::size_t j = 0; j <= i; ++j) CHECK(std::abs(C(i, j) - ref(i, j)) <= 1e-12);
     }
     {
+        // Lazy expression operands that read C: storage_overlaps can't see
+        // into them (mult(S, C + C, C) gave [[8,12],[22,32]], mult(C + C, S, C)
+        // gave zeros).
+        const rm S2 = {{1, 1}, {1, 1}};
+        rm C = {{1, 2}, {3, 4}};
+        mult(S2, C + C, C);
+        CHECK(C(1, 0) == 8.0); CHECK(C(1, 1) == 12.0);
+        C = rm{{1, 2}, {3, 4}};
+        mult(C + C, S2, C);
+        CHECK(C(0, 0) == 6.0); CHECK(C(1, 1) == 14.0);
+        C = rm{{1, 2}, {3, 4}};
+        symm(1.0, S2, C + C, 0.0, C);
+        CHECK(C(1, 0) == 8.0); CHECK(C(1, 1) == 12.0);
+        C = rm{{1, 2}, {3, 4}};
+        gemmt(1.0, S2, C + C, 0.0, C);
+        CHECK(C(1, 0) == 8.0); CHECK(C(1, 1) == 12.0);
+        rm D = {{1, 2}, {3, 4}};
+        syrk(1.0, D * 2.0, 0.0, D);   // (2D)(2D)^T: [[20, 44], [44, 100]]
+        CHECK(D(1, 0) == 44.0); CHECK(D(1, 1) == 100.0);
+        rm E = {{1, 2}, {3, 4}};
+        syr2k(1.0, E + E, S2, 0.0, E);   // 2E S2^T + S2 2E^T
+        CHECK(E(1, 0) == 20.0); CHECK(E(1, 1) == 28.0);
+    }
+    {
+        // trmm(0, B, B): zero-filled, without copying A first.
+        rm B = filled<rm>(3, 3);
+        trmm(0.0, B, B, true);
+        CHECK(max_diff(B, rm(3, 3)) == 0.0);
+    }
+    {
         // trmm(1, B, B, upper): A is B.
         rm U = filled<rm>(4, 4);
         for (std::size_t i = 0; i < 4; ++i)
@@ -290,6 +345,13 @@ TEST_CASE("symm and gemmt with C aliasing an operand (issue 886)", "[operation][
 }
 
 // -- shapes ------------------------------------------------------------------------
+
+TEST_CASE("max_diff reports a NaN difference", "[operation][886]") {
+    rm A = {{1, 2}}, B = {{1, 2}};
+    CHECK(max_diff(A, B) == 0.0);
+    A(0, 1) = std::numeric_limits<double>::quiet_NaN();
+    CHECK(max_diff(A, B) == std::numeric_limits<double>::infinity());
+}
 
 TEST_CASE("kron with non-square operands (issue 886)", "[operation][kron][886]") {
     // 2x3 (x) 3x2: a swap of rb/cb or ra/ca passed every square case.

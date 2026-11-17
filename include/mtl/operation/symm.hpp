@@ -35,6 +35,8 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/traits/is_expression.hpp>
+#include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/mult.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -96,6 +98,19 @@ void symm(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
     const size_type m = A.num_rows();
     const size_type n = B.num_cols();
     assert(A.num_cols() == m && B.num_rows() == m && C.num_rows() == m && C.num_cols() == n);
+    // A lazy expression operand (C + C, 2 * A, ...) is evaluated once into a
+    // dense matrix first: storage_overlaps can't see the storage behind it, so
+    // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
+    // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
+    // each element of the expression many times.
+    if constexpr (traits::is_expression_v<MA>) {
+        const mat::dense2D<typename MA::value_type> Am(A);
+        return symm<Accumulator>(alpha, Am, B, beta, C);
+    }
+    if constexpr (traits::is_expression_v<MB>) {
+        const mat::dense2D<typename MB::value_type> Bm(B);
+        return symm<Accumulator>(alpha, A, Bm, beta, C);
+    }
     // A C that shares storage with A or B -- symm(1, S, C, 0, C) -- is formed
     // in a copy of C (which keeps beta*C's old values) and copied back, as
     // mult does (#855): every loop below writes C while it reads A and B, and

@@ -20,6 +20,7 @@
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/operation/mult.hpp>
+#include <mtl/traits/is_expression.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -186,11 +187,19 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
     const size_type m = A.num_rows();
     const size_type n = B.num_cols();
     assert(A.num_cols() == m && B.num_rows() == m);
+    if (alpha == math::zero<S>()) {
+        for (size_type r = 0; r < m; ++r)
+            for (size_type c = 0; c < n; ++c)
+                B(r, c) = math::zero<value_type>();
+        return;
+    }
+
     // B is updated in place by design, but an A that shares storage with B
     // -- trmm(1, B, B, upper) -- is read after B overwrote it; ?trmm does not
     // allow the overlap either. A is copied first (issue 886).
+    // After the alpha == 0 return, which needs no copy (issue 886).
     if constexpr (std::is_constructible_v<MB, typename MB::size_type, typename MB::size_type>) {
-        if (detail::storage_overlaps(A, B)) {
+        if (traits::is_expression_v<MA> || detail::storage_overlaps(A, B)) {
             MB Acopy(static_cast<typename MB::size_type>(m), static_cast<typename MB::size_type>(m));
             for (size_type i = 0; i < m; ++i)
                 for (size_type j = 0; j < m; ++j)
@@ -198,12 +207,6 @@ void trmm(const S& alpha, const MA& A, MB& B, bool upper, bool unit_diag = false
             trmm<Accumulator>(alpha, Acopy, B, upper, unit_diag);
             return;
         }
-    }
-    if (alpha == math::zero<S>()) {
-        for (size_type r = 0; r < m; ++r)
-            for (size_type c = 0; c < n; ++c)
-                B(r, c) = math::zero<value_type>();
-        return;
     }
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {

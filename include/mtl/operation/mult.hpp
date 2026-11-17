@@ -16,6 +16,8 @@
 #include <mtl/detail/scalar_chain.hpp>
 #include <mtl/detail/column_sweep.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/traits/is_expression.hpp>
+#include <mtl/mat/dense2D.hpp>
 #include <mtl/interface/interleave_rows.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/view/transposed_view.hpp>
@@ -931,6 +933,19 @@ void mult(const MA& A, const MB& B, MC& C) {
     assert(A.num_cols() == B.num_rows());
     assert(A.num_rows() == C.num_rows());
     assert(B.num_cols() == C.num_cols());
+    // A lazy expression operand (C + C, 2 * A, ...) is evaluated once into a
+    // dense matrix first: storage_overlaps can't see the storage behind it, so
+    // f(S, C + C, ..., C) read C while writing it -- mult(S, C + C, C) gave
+    // [[8,12],[22,32]] for [[8,12],[8,12]] (issue 886) -- and a product read
+    // each element of the expression many times.
+    if constexpr (traits::is_expression_v<MA>) {
+        const mat::dense2D<typename MA::value_type> Am(A);
+        return mult<Accumulator>(Am, B, C);
+    }
+    if constexpr (traits::is_expression_v<MB>) {
+        const mat::dense2D<typename MB::value_type> Bm(B);
+        return mult<Accumulator>(A, Bm, C);
+    }
     // Every kernel writes C while it still reads A and B, so a C that shares
     // storage with either -- the same matrix, as in mult(A, B, A), or a matrix
     // over part of the same buffer -- is computed through a temporary, in every

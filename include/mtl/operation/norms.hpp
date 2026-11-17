@@ -337,10 +337,23 @@ auto frobenius_norm(const M& m) {
                                                    interface::ThreadableDenseMatrix<M>>(
             m.num_rows(), row_grain,
             [&](Accumulator& part, std::size_t lo, std::size_t hi) {
-                for (std::size_t r = lo; r < hi; ++r) {
-                    for (std::size_t c = 0; c < ncols; ++c) {
-                        mag_t a = detail::generic_abs(m(r, c));
-                        AT::add_product(part, a, a);
+                if constexpr (interface::is_compressed2D_v<M>) {
+                    // A compressed2D's stored entries, row by row (serial: it
+                    // is not ThreadableDenseMatrix). The m x n loop was a binary
+                    // search per element (issue 886).
+                    const auto& starts = m.ref_major();
+                    const auto& vals = m.ref_data();
+                    for (std::size_t r = lo; r < hi; ++r)
+                        for (auto k = starts[r]; k < starts[r + 1]; ++k) {
+                            mag_t a = detail::generic_abs(vals[k]);
+                            AT::add_product(part, a, a);
+                        }
+                } else {
+                    for (std::size_t r = lo; r < hi; ++r) {
+                        for (std::size_t c = 0; c < ncols; ++c) {
+                            mag_t a = detail::generic_abs(m(r, c));
+                            AT::add_product(part, a, a);
+                        }
                     }
                 }
             });
@@ -386,7 +399,34 @@ template <Matrix M>
 auto one_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
     auto result = math::zero<mag_t>();
-    if constexpr (interface::is_compressed2D_v<M> || detail::norm_row_major_v<M>) {
+    if constexpr (interface::is_compressed2D_v<M>) {
+        const std::size_t nnz = m.ref_data().size();
+        if (static_cast<std::size_t>(m.num_cols()) <= 4 * nnz + 4096) {
+            std::vector<mag_t> sums(m.num_cols(), math::zero<mag_t>());
+            detail::for_each_entry(m, [&](auto, auto c, const auto& x) {
+                sums[c] = detail::generic_add<mag_t>(sums[c], detail::generic_abs(x));
+            });
+            for (const auto& s : sums) detail::max_propagating_nan(result, s);   // #690
+        } else {
+            // Far wider than it is full (a 1 x 1e8 matrix with one entry):
+            // the stored entries sorted by column, O(nnz) space, not a
+            // num_cols() buffer. A stable sort keeps each column's row order,
+            // so its sum is the same.
+            struct entry { std::size_t col; mag_t a; };
+            std::vector<entry> es;
+            es.reserve(nnz);
+            detail::for_each_entry(m, [&](auto, auto c, const auto& x) {
+                es.push_back({static_cast<std::size_t>(c), static_cast<mag_t>(detail::generic_abs(x))});
+            });
+            std::stable_sort(es.begin(), es.end(), [](const entry& a, const entry& b) { return a.col < b.col; });
+            for (std::size_t i = 0; i < es.size();) {
+                auto sum = math::zero<mag_t>();
+                const std::size_t col = es[i].col;
+                for (; i < es.size() && es[i].col == col; ++i) sum = detail::generic_add<mag_t>(sum, es[i].a);
+                detail::max_propagating_nan(result, sum);   // #690
+            }
+        }
+    } else if constexpr (detail::norm_row_major_v<M>) {
         std::vector<mag_t> sums(m.num_cols(), math::zero<mag_t>());
         detail::for_each_entry(m, [&](auto, auto c, const auto& x) {
             sums[c] = detail::generic_add<mag_t>(sums[c], detail::generic_abs(x));
@@ -413,7 +453,17 @@ template <Matrix M>
 auto infinity_norm(const M& m) {
     using mag_t = magnitude_t<typename M::value_type>;
     auto result = math::zero<mag_t>();
-    if constexpr (interface::is_compressed2D_v<M> || detail::norm_col_major_v<M>) {
+    if constexpr (interface::is_compressed2D_v<M>) {
+        // Row by row over the stored entries: no buffer.
+        const auto& starts = m.ref_major();
+        const auto& vals = m.ref_data();
+        for (std::size_t r = 0; r < static_cast<std::size_t>(m.num_rows()); ++r) {
+            auto row_sum = math::zero<mag_t>();
+            for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                row_sum = detail::generic_add<mag_t>(row_sum, detail::generic_abs(vals[k]));
+            detail::max_propagating_nan(result, row_sum);   // #690
+        }
+    } else if constexpr (detail::norm_col_major_v<M>) {
         std::vector<mag_t> sums(m.num_rows(), math::zero<mag_t>());
         detail::for_each_entry(m, [&](auto r, auto, const auto& x) {
             sums[r] = detail::generic_add<mag_t>(sums[r], detail::generic_abs(x));
