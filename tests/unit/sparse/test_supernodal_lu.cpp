@@ -376,7 +376,10 @@ TEST_CASE("Supernodal LU refined solve with zero-pivot perturbation (#185)",
 
 // #195: the panel update applies the supernodes closed before a panel to all
 // of its columns at once. Each accumulator takes the same terms in the same
-// order as the column-at-a-time update, so L and U are the same bits.
+// order as the column-at-a-time update, so L and U are the same bits. This
+// target is built with -ffp-contract=off (tests/unit/CMakeLists.txt): with
+// contraction the compiler may fuse one of the two GEMV forms and not the
+// other, and the factors then differ in the last ulp.
 TEST_CASE("Supernodal LU panel update gives the column-at-a-time factors (#195)",
           "[sparse][lu][supernodal][panel]") {
     auto same_bits = [](const auto& a, const auto& b) {

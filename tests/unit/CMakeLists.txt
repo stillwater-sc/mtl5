@@ -189,6 +189,12 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # -march=x86-64-v3, idr_s's two instantiations differed in 25 of 40 entries
 # while the stored matrix run twice was identical (#753).
 #
+# sparse_test_supernodal_lu asserts that the panel update (#195) gives the
+# column-at-a-time factors bit for bit: the same terms in the same order, but
+# the pre-pass's fused, register-tiled GEMV and the column GEMV are two loop
+# nests, which contraction can fuse differently. Under GCC -ffp-contract=fast
+# with -march=x86-64-v3 the convection-diffusion grid's L differed at panel 2.
+#
 # math_test_pow2_scaling asserts that inside the old band the power-of-two
 # scaled Givens rotation (#671) gives the unscaled formula's bits: scaling by
 # 2^-e is exact and commutes with every rounding. Contraction can fuse a*a or
@@ -196,6 +202,7 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 if(NOT MSVC)
     foreach(mt_target sparse_test_supernodal_ldlt_mt
                       sparse_test_supernodal_lu_mt
+                      sparse_test_supernodal_lu
                       sparse_test_trisolve_level_schedule_mt
                       op_test_mult_ikj
                       op_test_blas_row_loops

@@ -249,8 +249,10 @@ reach. Paths in L only go to later columns, so that part is complete before
 any panel column is factored. Every supernode closed before the panel is then
 applied to all the panel columns that reach it: the TRSV per column, and the
 GEMV fused across them with an 8-row register tile held over the w terms.
-Each accumulator takes the same terms in the same order, so L and U are
-bit-identical for every panel width (the test pins 1, 2, 7, 16 and 64). The
+Each accumulator takes the same terms in the same order, so with contraction
+off L and U are bit-identical for every panel width (the test pins 1, 2, 7, 16
+and 64, built with `-ffp-contract=off`; under GCC's default contraction the
+two GEMV forms can fuse differently and differ in the last ulp). The
 register tile mattered: with the accumulators loaded and stored once per
 block column, the fused GEMV gained only on wang3 (1.20x).
 
