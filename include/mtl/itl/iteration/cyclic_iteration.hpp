@@ -59,6 +59,19 @@ public:
 
     operator int() const { return error_code(); }
 
+    /// basic_iteration::reset, and the summary is printed again for the next
+    /// solve (it printed only for the first, issue 888). noisy_iteration
+    /// inherits it.
+    template <Vector V>
+    void reset(const V& r0) {
+        base::reset(r0);
+        reported_ = false;
+    }
+    void reset(Real norm_r0) {
+        base::reset(norm_r0);
+        reported_ = false;
+    }
+
 protected:
     static int checked_cycle(int cycle) {
         // i_ % 0 is undefined (issue 866).

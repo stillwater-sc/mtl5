@@ -7,10 +7,12 @@
 // a std::uint64_t seed, and a form drawing from a caller's std::mt19937_64.
 // The seeded forms draw portably (operation/random.hpp), so a seed gives the
 // same U, V and mode-5 sigma with every compiler and standard library (#844).
-// For the square kappa form, pass the seed as randsvd(n, n, kappa, mode, seed):
-// a randsvd(n, kappa, mode, seed) overload would be ambiguous with the
-// rectangular randsvd(m, n, kappa, mode).
+// The rectangular kappa forms take integral m and n, so the square seeded
+// randsvd(n, kappa, mode, seed) is unambiguous: randsvd(5, 1e3, 3, 42) bound
+// randsvd(m = 5, n = 1000, kappa = 3, mode = 42) and threw on mode 42 (issue
+// 888). randsvd(n, n, kappa, mode, seed) still works.
 #include <algorithm>
+#include <concepts>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -163,26 +165,39 @@ auto randsvd(std::size_t m, std::size_t n, const std::vector<T>& sigma) {
 
 /// A rectangular matrix with condition number kappa, singular values from mode
 /// (see make_sigma), drawing from `gen`.
-template <typename T = double>
-auto randsvd(std::size_t m, std::size_t n, T kappa, int mode, std::mt19937_64& gen) {
+template <typename T = double, std::integral Mi, std::integral Ni>
+auto randsvd(Mi mi, Ni ni, T kappa, int mode, std::mt19937_64& gen) {
+    const auto m = static_cast<std::size_t>(mi);
+    const auto n = static_cast<std::size_t>(ni);
     auto sigma = detail::make_sigma(std::min(m, n), kappa, mode, gen);
     return randsvd<T>(m, n, sigma, gen);
 }
 
 /// A rectangular matrix with condition number kappa, reproducibly from `seed`.
 /// Also the seeded form of the square matrix: randsvd(n, n, kappa, mode, seed).
-template <typename T = double>
-auto randsvd(std::size_t m, std::size_t n, T kappa, int mode, std::uint64_t seed) {
+template <typename T = double, std::integral Mi, std::integral Ni>
+auto randsvd(Mi mi, Ni ni, T kappa, int mode, std::uint64_t seed) {
+    const auto m = static_cast<std::size_t>(mi);
+    const auto n = static_cast<std::size_t>(ni);
     std::mt19937_64 gen(seed);
     return randsvd<T>(m, n, kappa, mode, gen);
 }
 
 /// A rectangular matrix with condition number kappa, non-deterministically.
 /// cond(A) = kappa up to rounding. See make_sigma for the modes (1-5).
-template <typename T = double>
-auto randsvd(std::size_t m, std::size_t n, T kappa, int mode = 3) {
+template <typename T = double, std::integral Mi, std::integral Ni>
+auto randsvd(Mi mi, Ni ni, T kappa, int mode = 3) {
+    const auto m = static_cast<std::size_t>(mi);
+    const auto n = static_cast<std::size_t>(ni);
     auto gen = mtl::detail::random_engine();
     return randsvd<T>(m, n, kappa, mode, gen);
+}
+
+/// A square matrix with condition number kappa, reproducibly from `seed`.
+template <typename T = double>
+auto randsvd(std::size_t n, T kappa, int mode, std::uint64_t seed) {
+    std::mt19937_64 gen(seed);
+    return randsvd<T>(n, n, kappa, mode, gen);
 }
 
 /// A square matrix with condition number kappa, drawing from `gen`.

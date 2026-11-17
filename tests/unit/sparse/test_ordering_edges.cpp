@@ -154,6 +154,14 @@ TEST_CASE("colamd reduces fill on short, wide matrices", "[sparse][ordering][col
     // Tall: 6x2 has nothing to drop either way.
     const csr C = make(6, 2, {{0, 0, 1.0}, {1, 1, 1.0}, {2, 0, 1.0}, {3, 1, 1.0}, {4, 0, 1.0}, {5, 1, 1.0}});
     CHECK(is_permutation_of(od::colamd{}(C), 2));
+    // Tall with n = 1 and n = 3 columns, dense_threshold(n) of -1 and 1 (issue
+    // 888): every row may count as dense; the result must still be a
+    // permutation of the columns, as CSparse's.
+    const csr D = make(5, 1, {{0, 0, 1.0}, {2, 0, 1.0}, {4, 0, 1.0}});
+    CHECK(is_permutation_of(od::colamd{}(D), 1));
+    const csr E = make(6, 3, {{0, 0, 1.0}, {0, 1, 1.0}, {0, 2, 1.0}, {1, 1, 1.0}, {2, 2, 1.0},
+                              {3, 0, 1.0}, {4, 1, 1.0}, {4, 2, 1.0}, {5, 0, 1.0}});
+    CHECK(is_permutation_of(od::colamd{}(E), 3));
 }
 
 // --- non-square input ---------------------------------------------------------------------
