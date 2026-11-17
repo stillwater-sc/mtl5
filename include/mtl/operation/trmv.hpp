@@ -133,10 +133,21 @@ void trmv_upper_rows(const M& A, VX& x, typename M::size_type i, bool unit_diag)
             ([&] {
                 for (size_type j = i0 + K + 1; j < i0 + W; ++j) acc[K] += A(i0 + K, j) * x(j);
             }(), ...);
-            for (size_type j = i0 + W; j < n; ++j) {
-                const auto& xj = x(j);
-                ((acc[K] += A(i0 + K, j) * xj), ...);
-                (keep_scalar<keep_scalar_triangular_v<acc_type, M, W>>(acc[K]), ...);   // #776, #795
+            if constexpr (column_sweep_v<acc_type, M>) {
+                // A contiguous column-major A: sweep_fixed_rows<W>, as in
+                // mult_rows_interleaved (#898). A row-major A keeps the loop.
+                sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(n), static_cast<std::size_t>(i0),
+                                    static_cast<std::size_t>(i0 + W), static_cast<std::size_t>(n),
+                                    [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); },
+                                    [](const acc_type& t, const auto& aij, const auto& xj) -> acc_type {
+                                        return t + aij * xj;
+                                    });
+            } else {
+                for (size_type j = i0 + W; j < n; ++j) {
+                    const auto& xj = x(j);
+                    ((acc[K] += A(i0 + K, j) * xj), ...);
+                    (keep_scalar<keep_scalar_triangular_v<acc_type, M, W>>(acc[K]), ...);   // #776, #795
+                }
             }
             ((x(i0 + K) = acc[K]), ...);
         }
@@ -158,10 +169,20 @@ void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag
         for (; ii >= W; ii -= W) {
             const size_type r0 = ii - W;
             acc_type acc[W] = {(unit_diag ? x(r0 + K) : A(r0 + K, r0 + K) * x(r0 + K))...};
-            for (size_type j = 0; j < r0; ++j) {
-                const auto& xj = x(j);
-                ((acc[K] += A(r0 + K, j) * xj), ...);
-                (keep_scalar<keep_scalar_triangular_v<acc_type, M, W>>(acc[K]), ...);   // #776, #795
+            if constexpr (column_sweep_v<acc_type, M>) {
+                // A contiguous column-major A: sweep_fixed_rows<W> (#898).
+                sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(A.num_rows()),
+                                    static_cast<std::size_t>(r0), 0, static_cast<std::size_t>(r0),
+                                    [&](std::size_t j) -> decltype(auto) { return x(static_cast<size_type>(j)); },
+                                    [](const acc_type& t, const auto& aij, const auto& xj) -> acc_type {
+                                        return t + aij * xj;
+                                    });
+            } else {
+                for (size_type j = 0; j < r0; ++j) {
+                    const auto& xj = x(j);
+                    ((acc[K] += A(r0 + K, j) * xj), ...);
+                    (keep_scalar<keep_scalar_triangular_v<acc_type, M, W>>(acc[K]), ...);   // #776, #795
+                }
             }
             ([&] {
                 for (size_type j = r0; j < r0 + K; ++j) acc[K] += A(r0 + K, j) * x(j);

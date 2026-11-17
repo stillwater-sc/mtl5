@@ -66,10 +66,24 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
     [&]<std::size_t... K>(std::index_sequence<K...>) {
         for (; re - r >= W; r += W) {
             Result acc[W] = {(static_cast<void>(K), math::zero<Result>())...};
-            for (size_type c = 0; c < ncols; ++c) {
-                const auto& xc = x(c);
-                ((acc[K] = generic_fma<Result>(acc[K], A(static_cast<size_type>(r + K), c), xc)), ...);
-                (keep_scalar<keep_scalar_v<Result, M, W>>(acc[K]), ...);   // #776
+            if constexpr (column_sweep_v<Result, M>) {
+                // A contiguous column-major A: the block's column loop is
+                // sweep_fixed_rows<W>, the same terms in the same order, with
+                // GCC's loop vectorizer off. GCC could otherwise vectorize this
+                // loop across the columns as an in-order reduction, 2.6-9x
+                // slower (#898). A row-major A keeps the loop below unchanged.
+                sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(A.num_rows()), r, 0,
+                                    static_cast<std::size_t>(ncols),
+                                    [&](std::size_t c) -> decltype(auto) { return x(static_cast<size_type>(c)); },
+                                    [](const Result& t, const auto& aij, const auto& xc) {
+                                        return generic_fma<Result>(t, aij, xc);
+                                    });
+            } else {
+                for (size_type c = 0; c < ncols; ++c) {
+                    const auto& xc = x(c);
+                    ((acc[K] = generic_fma<Result>(acc[K], A(static_cast<size_type>(r + K), c), xc)), ...);
+                    (keep_scalar<keep_scalar_v<Result, M, W>>(acc[K]), ...);   // #776
+                }
             }
             ((y(static_cast<y_size>(r + K)) = acc[K]), ...);
         }

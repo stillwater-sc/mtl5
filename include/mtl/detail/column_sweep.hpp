@@ -43,6 +43,21 @@
 #include <mtl/interface/dispatch_traits.hpp>
 #include <mtl/tag/orientation.hpp>
 
+/// GCC's loop vectorizer off for one function, the SLP vectorizer on (#884,
+/// #898). In the row kernels and the fixed-row strip, the R accumulators are
+/// R independent chains over the columns. GCC's SLP vectorizer packs them into
+/// registers, which is what these loops want. With AVX its loop vectorizer can
+/// instead vectorize the column loop itself, as an in-order reduction: R x 4
+/// columns loaded, then each chain rebuilt with shuffles and scalar merges.
+/// Which one it picks depends on the calling context, so the same
+/// instantiation ran at 0.35 us in one binary and 2.2 us in another (64 x 64
+/// f64 gemv, i7-12700K, -O3 -march=native). Clang and MSVC don't do it.
+#if defined(__GNUC__) && !defined(__clang__)
+#define MTL5_NO_LOOP_VECTORIZE __attribute__((optimize("no-tree-loop-vectorize")))
+#else
+#define MTL5_NO_LOOP_VECTORIZE
+#endif
+
 namespace mtl::detail {
 
 /// Whether M is a dense matrix whose data() is column-major with leading
@@ -134,9 +149,7 @@ inline constexpr std::size_t column_sweep_fixed_rows = 16;
 /// is what this loop wants. On a Xeon E5-2420 v2 the f32 4-row strip ran at
 /// half the speed of one column per pass (#884). The SLP vectorizer stays on.
 template <std::size_t R, typename Acc, typename T, typename XAt, typename Op>
-#if defined(__GNUC__) && !defined(__clang__)
-__attribute__((optimize("no-tree-loop-vectorize")))
-#endif
+MTL5_NO_LOOP_VECTORIZE
 void sweep_fixed_rows(Acc* acc, const T* a, std::size_t ld, std::size_t r0,
                       std::size_t cb, std::size_t ce, const XAt& x_at, const Op& op) {
     [&]<std::size_t... K>(std::index_sequence<K...>) {
