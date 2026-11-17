@@ -406,6 +406,18 @@ void gemmt(const S& alpha_in, const MA& A, const MB& B, const S& beta_in, MC& C,
     assert(static_cast<std::size_t>(B.num_rows()) == k);
     if (n == 0)
         return;
+    // A C that shares storage with A or B is formed in a copy of C (which
+    // keeps beta*C's old values) and copied back, as mult does (#855):
+    // gemmt(1, A, C, 1, C) read C as B while writing it (issue 886).
+    if constexpr (detail::mult_mat_temporary_ok_v<MC>) {
+        if (detail::storage_overlaps(C, A) || detail::storage_overlaps(C, B)) {
+            MC tmp(C.num_rows(), C.num_cols());
+            tmp = C;
+            gemmt<Accumulator>(alpha_in, A, B, beta_in, tmp, t, fill);
+            C = tmp;
+            return;
+        }
+    }
 
     auto finish = [&] {
         if (fill == gemmt_fill::mirror)

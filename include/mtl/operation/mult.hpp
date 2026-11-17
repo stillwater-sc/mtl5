@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <limits>
 #include <type_traits>
 #include <utility>
 #include <mtl/concepts/matrix.hpp>
@@ -318,6 +319,44 @@ void mult_sparse_crs_dense_rows(const mat::compressed2D<V, P>& A, const MB& B, M
             const auto* brow = &B(static_cast<typename MB::size_type>(indices[k]), 0);
             for (size_type c = 0; c < ncols; ++c)
                 crow[c] = generic_fma<Result>(crow[c], v, brow[c]);
+        }
+    }
+}
+
+/// Sparse (CRS) A times any B into any dense C (issue 886): column-major
+/// dense B or C, a compressed B, and mult<Accumulator>. For each C(r, c), the
+/// stored entries (k, v) of A's row r in ascending k, so the terms and their
+/// order are mult_generic_rows' with A's unstored zeros left out (exactly
+/// the dense result when those terms are exact zeros, as for
+/// mult_sparse_crs_dense_rows). mult_generic_rows read A(r, k) by binary
+/// search for every (r, c, k): O(m n K log nnz).
+template <typename Accumulator, typename V, typename P, typename MB, typename MC>
+void mult_sparse_crs_any(const mat::compressed2D<V, P>& A, const MB& B, MC& C) {
+    using Result = typename MC::value_type;
+    using size_type = typename MC::size_type;
+    const size_type ncols = C.num_cols();
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    for (size_type r = 0; r < C.num_rows(); ++r) {
+        for (size_type c = 0; c < ncols; ++c) {
+            if constexpr (std::is_void_v<Accumulator>) {
+                auto acc = math::zero<Result>();
+                for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                    acc = generic_fma<Result>(acc, data[k], B(static_cast<typename MB::size_type>(indices[k]),
+                                                              static_cast<typename MB::size_type>(c)));
+                C(r, c) = acc;
+            } else {
+                using Value = std::common_type_t<V, typename MB::value_type>;
+                using AT = math::accumulator_traits<Accumulator, Value>;
+                Accumulator acc{};
+                AT::clear(acc);
+                for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                    AT::add_product(acc, static_cast<Value>(data[k]),
+                                    static_cast<Value>(B(static_cast<typename MB::size_type>(indices[k]),
+                                                         static_cast<typename MB::size_type>(c))));
+                C(r, c) = AT::template value<Result>(acc);
+            }
         }
     }
 }
@@ -748,6 +787,10 @@ void mult(const M& A, const VIn& x, VOut& y) {
                   interface::BlasDenseVector<VIn> &&
                   interface::BlasDenseVector<VOut>) {
         using T = typename M::value_type;
+        // BLAS takes int dimensions: a larger matrix takes the paths below,
+        // as symv, syrk, symm, ger and trmv do (issue 886); the cast truncated.
+        const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        if (static_cast<std::size_t>(A.num_rows()) <= imax && static_cast<std::size_t>(A.num_cols()) <= imax) {
         int m = static_cast<int>(A.num_rows());
         int n = static_cast<int>(A.num_cols());
         T alpha = math::one<T>();
@@ -772,6 +815,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
                                   beta, y.data(), 1);
         }
         return;
+        }
     }
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM
@@ -909,6 +953,12 @@ void mult(const MA& A, const MB& B, MC& C) {
         detail::mult_sparse_crs_dense_par(A, B, C);
         return;
     }
+    // Sparse (CRS) A with any other B, or an Accumulator, into a dense C
+    // (issue 886): still walk A's stored entries.
+    if constexpr (interface::is_compressed2D_v<MA> && !interface::is_compressed2D_v<MC>) {
+        detail::mult_sparse_crs_any<Accumulator>(A, B, C);
+        return;
+    }
 
     if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
 #ifdef MTL5_NATIVE_FAST_GEMM
@@ -1016,6 +1066,11 @@ void mult(const MA& A, const MB& B, MC& C) {
     // them, so it is only named once the operands are known dense.
     if constexpr (detail::gemm_dispatches_blas_v<Accumulator, MA, MB, MC>) {
         using T = typename MC::value_type;
+        // BLAS takes int dimensions: a larger product takes the paths below
+        // (issue 886); the casts truncated.
+        const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        if (static_cast<std::size_t>(A.num_rows()) <= imax && static_cast<std::size_t>(B.num_cols()) <= imax &&
+            static_cast<std::size_t>(A.num_cols()) <= imax) {
         int m = static_cast<int>(A.num_rows());
         int n = static_cast<int>(B.num_cols());
         int k = static_cast<int>(A.num_cols());
@@ -1045,6 +1100,7 @@ void mult(const MA& A, const MB& B, MC& C) {
                                   beta, C.data(), ld(m));
         }
         return;
+        }
     }
 #endif
 #ifdef MTL5_NATIVE_FAST_GEMM

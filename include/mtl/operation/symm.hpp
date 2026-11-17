@@ -35,6 +35,7 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/operation/mult.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -95,6 +96,19 @@ void symm(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
     const size_type m = A.num_rows();
     const size_type n = B.num_cols();
     assert(A.num_cols() == m && B.num_rows() == m && C.num_rows() == m && C.num_cols() == n);
+    // A C that shares storage with A or B -- symm(1, S, C, 0, C) -- is formed
+    // in a copy of C (which keeps beta*C's old values) and copied back, as
+    // mult does (#855): every loop below writes C while it reads A and B, and
+    // symm(1, S, C, 0, C) was wrong in every entry (issue 886).
+    if constexpr (detail::mult_mat_temporary_ok_v<MC>) {
+        if (detail::storage_overlaps(C, A) || detail::storage_overlaps(C, B)) {
+            MC tmp(C.num_rows(), C.num_cols());
+            tmp = C;
+            symm<Accumulator>(alpha, A, B, beta, tmp);
+            C = tmp;
+            return;
+        }
+    }
     const bool alpha_zero = (alpha == math::zero<S>());
     const bool beta_zero  = (beta == math::zero<S>());
     // The lower triangle, read as a symmetric matrix.
