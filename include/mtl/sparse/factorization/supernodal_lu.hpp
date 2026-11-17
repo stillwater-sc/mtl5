@@ -294,6 +294,8 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     std::vector<idx32> contrib_super;              // closed supernodes hitting column k (dedup)
     std::vector<char>  super_seen;                 // marker per closed supernode
     std::vector<Acc> segacc;               // supernode segment, accumulator precision
+    std::vector<Acc> gemv_tmp;             // a supernode's off-diagonal rows, gathered (#195)
+    std::vector<idx32> row_local(n, -1);   // orig row -> its index in the supernode being closed
     std::vector<Value>       segval;               // pivots rounded to Value (multipliers)
 
     // Close the open supernode [open_sf, sl): build its dense block from the CSC
@@ -309,17 +311,20 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         for (size_type r : offdiag) S.rows.push_back(r);                   // shared off-diagonal rows
         S.m = S.rows.size();
         S.block.assign(S.m * w, Value{0});
-        // Local orig-row -> local index for this supernode.
-        // (m is small per supernode; a flat scan keeps it allocation-free.)
+        // Local orig-row -> local index for this supernode, through row_local
+        // (#195): it searched S.rows linearly for every entry, O(w * nnz * m)
+        // per supernode, 17-18% of the factorization of wang3 and raefsky3.
+        // The rows of a supernode are distinct; an entry lands at its row's
+        // index when that is at or below its column's diagonal, as before.
+        for (size_type r = 0; r < S.m; ++r) row_local[S.rows[r]] = static_cast<idx32>(r);
         for (size_type c = 0; c < w; ++c) {
             const size_type col = sf + c;
             for (size_type p = Lp[col]; p < Lp[col + 1]; ++p) {
-                const size_type orig = static_cast<size_type>(Li[p]);
-                // find orig in S.rows (rows >= this column's diagonal only)
-                for (size_type r = c; r < S.m; ++r)
-                    if (S.rows[r] == orig) { S.block[c * S.m + r] = Lx[p]; break; }
+                const idx32 r = row_local[static_cast<size_type>(Li[p])];
+                if (r >= 0 && static_cast<size_type>(r) >= c) S.block[c * S.m + static_cast<size_type>(r)] = Lx[p];
             }
         }
+        for (size_type r = 0; r < S.m; ++r) row_local[S.rows[r]] = -1;
         const idx32 id = static_cast<idx32>(snodes.size());
         for (size_type c = sf; c < sl; ++c) col_csuper[c] = id;
         snodes.push_back(std::move(S));
@@ -389,11 +394,20 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
             }
             for (size_type c = 0; c < w; ++c) x[S.rows[c]] = segacc[c];   // write back (still Acc)
             // GEMV: off-diagonal rows (the dominant work, accumulated in Accumulator).
-            for (size_type r = w; r < m; ++r) {
-                Acc& dst = x[S.rows[r]];
-                for (size_type c = 0; c < w; ++c)
-                    AT::add_product(dst, -S.block[c * m + r], segval[c]);
+            // Gather the m - w destination rows into a dense temporary, sweep the
+            // column-major block one column at a time (contiguous, vectorizable),
+            // and scatter back (#195). It walked the block a row at a time, w
+            // terms at stride m, a cache line per term. Each row still adds its
+            // terms in ascending c, so the result is the same.
+            const size_type mo = m - w;
+            gemv_tmp.resize(mo);
+            for (size_type r = 0; r < mo; ++r) gemv_tmp[r] = x[S.rows[w + r]];
+            for (size_type c = 0; c < w; ++c) {
+                const Value sc = segval[c];
+                const Value* col = S.block.data() + c * m + w;
+                for (size_type r = 0; r < mo; ++r) AT::add_product(gemv_tmp[r], -col[r], sc);
             }
+            for (size_type r = 0; r < mo; ++r) x[S.rows[w + r]] = gemv_tmp[r];
             super_seen[sid] = 0;
         }
         // (b) open supernode columns [open_sf, k): proven scalar SAXPY, reach order.
@@ -535,21 +549,36 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         result.row_pinv[i] = pos; result.row_perm[pos] = i;
     }
 
-    std::vector<size_type> ord;
+    // The columns of L and U, in reach order, into CSC with ascending rows: a
+    // transpose to row-major and back, O(nnz) (#195). It sorted each column
+    // through an index array, 10-21% of the factorization of wang3 and
+    // raefsky3. A column's rows are distinct, so the order is the same.
+    std::vector<size_type> tp, tcol, cnt;
+    std::vector<Value> tval;
     auto to_csc = [&](const std::vector<size_type>& Mp, const std::vector<idx32>& Mi,
                       const std::vector<Value>& Mx) -> util::csc_matrix<Value> {
-        util::csc_matrix<Value> M; M.nrows = n; M.ncols = n; M.col_ptr = Mp;
-        M.row_ind.resize(Mi.size()); M.values.resize(Mx.size());
-        for (size_type c = 0; c < n; ++c) {
-            size_type b = Mp[c], e = Mp[c + 1];
-            ord.resize(e - b);
-            for (size_type t = 0; t < e - b; ++t) ord[t] = b + t;
-            std::sort(ord.begin(), ord.end(), [&](size_type p, size_type q) { return Mi[p] < Mi[q]; });
-            for (size_type t = 0; t < e - b; ++t) {
-                M.row_ind[b + t] = static_cast<size_type>(Mi[ord[t]]);
-                M.values[b + t]  = Mx[ord[t]];
+        const size_type nz = Mi.size();
+        // Column-major (Mp, Mi) -> row-major (tp, tcol, tval): row r's entries in
+        // ascending column order.
+        tp.assign(n + 1, 0);
+        for (size_type q = 0; q < nz; ++q) ++tp[static_cast<size_type>(Mi[q]) + 1];
+        for (size_type r = 0; r < n; ++r) tp[r + 1] += tp[r];
+        tcol.resize(nz); tval.resize(nz);
+        cnt.assign(tp.begin(), tp.end() - 1);
+        for (size_type c = 0; c < n; ++c)
+            for (size_type q = Mp[c]; q < Mp[c + 1]; ++q) {
+                const size_type dst = cnt[static_cast<size_type>(Mi[q])]++;
+                tcol[dst] = c; tval[dst] = Mx[q];
             }
-        }
+        // And back: column c's entries in ascending row order.
+        util::csc_matrix<Value> M; M.nrows = n; M.ncols = n; M.col_ptr = Mp;
+        M.row_ind.resize(nz); M.values.resize(nz);
+        cnt.assign(Mp.begin(), Mp.end() - 1);
+        for (size_type r = 0; r < n; ++r)
+            for (size_type q = tp[r]; q < tp[r + 1]; ++q) {
+                const size_type dst = cnt[tcol[q]]++;
+                M.row_ind[dst] = r; M.values[dst] = tval[q];
+            }
         return M;
     };
     // Install L and U and build the coupled solve schedules atomically.
