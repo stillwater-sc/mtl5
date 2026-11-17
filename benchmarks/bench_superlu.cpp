@@ -18,6 +18,12 @@
 // structure -- that kernel-class gap is exactly what this scoreboard quantifies
 // and what the native supernodal LU (Phases 1-3) must close.
 //
+// Since #195 it also times the native supernodal LU itself
+// (supernodal_lu_symbolic_analyze with COLAMD + supernodal_lu_numeric +
+// solve, threshold 1: the settings the SuperLU column uses), the solver whose
+// parity #195 tracks. Its columns are appended to the CSV (snode_*), so a
+// scoreboard written before keeps its column positions.
+//
 // Matrices: built-in 2D convection-diffusion grids (unsymmetric) by default,
 // plus any Matrix Market files passed on the command line (e.g. SuiteSparse
 // unsymmetric matrices fetched via benchmarks/fetch_superlu_matrices.sh).
@@ -45,6 +51,8 @@
 #include <mtl/io/matrix_market.hpp>
 #include <mtl/sparse/ordering/dulmage_mendelsohn.hpp>
 #include <mtl/sparse/factorization/native_klu.hpp>
+#include <mtl/sparse/factorization/supernodal_lu.hpp>
+#include <mtl/sparse/ordering/colamd.hpp>
 
 #ifdef MTL5_HAS_SUPERLU
 #include <mtl/interface/superlu.hpp>
@@ -114,6 +122,9 @@ struct Score {
     std::size_t native_fill = 0;
     bool native_ok = false;
     bool native_skipped = false;   // external-only matrix (native too slow to run)
+    double snode_s = 0.0, snode_resid = 0.0;   // native supernodal LU (#195)
+    std::size_t snode_fill = 0;
+    bool snode_ok = false;
 #ifdef MTL5_HAS_SUPERLU
     double ext_s = 0.0, ext_resid = 0.0;
     std::size_t ext_fill = 0;
@@ -174,6 +185,26 @@ Score score_matrix(const std::string& name,
         }
     }
 
+    // Native supernodal LU (#195): analyze (COLAMD) + numeric + solve, timed
+    // together as the other two columns are.
+    if (run_native) {
+        try {
+            namespace sf = mtl::sparse::factorization;
+            mtl::vec::dense_vector<double> x(n, 0.0);
+            sf::supernodal_lu_factor<double> fac;
+            s.snode_s = seconds([&] {
+                auto sym = sf::supernodal_lu_symbolic_analyze(A, mtl::sparse::ordering::colamd{});
+                fac = sf::supernodal_lu_numeric(A, sym);
+                fac.solve(x, b);
+            });
+            s.snode_fill = fac.factorL().nnz() + fac.factorU().nnz();
+            s.snode_resid = rel_residual(A, x, b);
+            s.snode_ok = true;
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "  [native supernodal LU failed on %s: %s]\n", name.c_str(), e.what());
+        }
+    }
+
 #ifdef MTL5_HAS_SUPERLU
     try {
         mtl::vec::dense_vector<double> x(n, 0.0);
@@ -197,10 +228,12 @@ void print_header() {
     std::printf("\n%-22s %9s %11s %8s %11s  %10s %12s",
                 "matrix", "n", "nnz", "blocks", "maxblock",
                 "native(s)", "native_fill");
+    std::printf("  %10s %12s", "snodal(s)", "snodal_fill");
 #ifdef MTL5_HAS_SUPERLU
-    std::printf("  %10s %12s %8s %8s", "SuperLU(s)", "SuperLU_fill", "t_ratio", "f_ratio");
+    std::printf("  %10s %12s %8s %8s %8s %8s", "SuperLU(s)", "SuperLU_fill", "t_ratio", "f_ratio",
+                "snode_t", "snode_f");
 #endif
-    std::printf("\n%s\n", std::string(132, '-').c_str());
+    std::printf("\n%s\n", std::string(176, '-').c_str());
 }
 
 void print_row(const Score& s) {
@@ -209,6 +242,9 @@ void print_row(const Score& s) {
     if (s.native_ok)            std::printf("%10.3f %12zu", s.native_s, s.native_fill);
     else if (s.native_skipped)  std::printf("%10s %12s", "skip", "-");
     else                        std::printf("%10s %12s", "FAIL", "-");
+    if (s.snode_ok)             std::printf("  %10.3f %12zu", s.snode_s, s.snode_fill);
+    else if (s.native_skipped)  std::printf("  %10s %12s", "skip", "-");
+    else                        std::printf("  %10s %12s", "FAIL", "-");
 #ifdef MTL5_HAS_SUPERLU
     if (s.ext_ok) {
         std::printf("  %10.3f %12zu", s.ext_s, s.ext_fill);
@@ -217,8 +253,13 @@ void print_row(const Score& s) {
         if (s.native_ok && s.ext_fill > 0)        std::printf(" %7.1fx",
                                                       double(s.native_fill) / double(s.ext_fill));
         else                                      std::printf(" %8s", "-");
+        if (s.snode_ok && s.ext_s > 0.0)          std::printf(" %7.2fx", s.snode_s / s.ext_s);
+        else                                      std::printf(" %8s", "-");
+        if (s.snode_ok && s.ext_fill > 0)         std::printf(" %7.2fx",
+                                                      double(s.snode_fill) / double(s.ext_fill));
+        else                                      std::printf(" %8s", "-");
     } else {
-        std::printf("  %10s %12s %8s %8s", "FAIL", "-", "-", "-");
+        std::printf("  %10s %12s %8s %8s %8s %8s", "FAIL", "-", "-", "-", "-", "-");
     }
 #endif
     std::printf("\n");
@@ -238,6 +279,10 @@ bool write_csv(const std::string& path, const std::vector<Score>& rows) {
 #ifdef MTL5_HAS_SUPERLU
     out << ",ext_status,ext_s,ext_fill,ext_resid,time_ratio,fill_ratio";
 #endif
+    out << ",snode_status,snode_s,snode_fill,snode_resid";
+#ifdef MTL5_HAS_SUPERLU
+    out << ",snode_time_ratio,snode_fill_ratio";
+#endif
     out << "\n";
     for (const auto& s : rows) {
         const char* nstatus = s.native_ok ? "ok" : (s.native_skipped ? "skip" : "fail");
@@ -255,6 +300,15 @@ bool write_csv(const std::string& path, const std::vector<Score>& rows) {
         if (s.native_ok && s.ext_ok && s.ext_fill > 0)
             out << (double(s.native_fill) / double(s.ext_fill));
         // else: empty ratios
+#endif
+        out << ',' << (s.snode_ok ? "ok" : (s.native_skipped ? "skip" : "fail")) << ',';
+        if (s.snode_ok) out << s.snode_s << ',' << s.snode_fill << ',' << s.snode_resid;
+        else            out << ",,";
+#ifdef MTL5_HAS_SUPERLU
+        out << ',';
+        if (s.snode_ok && s.ext_ok && s.ext_s > 0.0) out << (s.snode_s / s.ext_s);
+        out << ',';
+        if (s.snode_ok && s.ext_ok && s.ext_fill > 0) out << (double(s.snode_fill) / double(s.ext_fill));
 #endif
         out << "\n";
     }

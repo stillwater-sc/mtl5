@@ -160,6 +160,75 @@ the value. Phase 4 (analyze/refactor split) is highest leverage for the SPICE /
 mp-spice workload. The mixed-precision mode (Phases 2 and 5) is the unique
 capability native SuperLU has that the external library never will.
 
+## Measured baseline for #195 (2026-11-17)
+
+Until #195, `bench_superlu` timed native **KLU** against SuperLU, never the
+supernodal LU. Its committed scoreboard, and the "about 4x" in #195, did not
+measure the solver this plan is about. The June profile (dense 400 x 400,
+temporary phase timers) didn't either. `bench_superlu` now has a native
+supernodal column: COLAMD, `supernodal_lu_numeric` at threshold 1 and the
+solve, timed together as SuperLU's column is.
+
+**Single thread, i7-12700K P-core, factor + solve:**
+
+| matrix | n | supernodal / SuperLU, time | fill | before #195's first PR | native KLU / SuperLU |
+|---|---|---|---|---|---|
+| add32 | 4,960 | 2.92x (8 ms against 3 ms) | 0.63x | | 1.7x |
+| wang3 | 26,064 | 3.45x | 1.04x | 4.41x | 2.3x |
+| wang4 | 26,068 | 2.74x | 0.93x | 3.62x | 2.1x |
+| raefsky3 | 21,200 | 2.57x | 0.74x | 3.45x | 7.4x |
+| bbmat | 38,744 | 2.80x (13.0 s against 4.7 s) | 1.04x | | 19.4x |
+| convdiff 32^2 - 256^2 | 1,024 - 65,536 | 1.69 - 2.52x | 0.83 - 0.92x | | 1.0 - 1.8x |
+
+Fill already meets the 1.2x target. Time is what's left: 2.6-3.5x on the
+SuiteSparse matrices, against 1.5x. KLU is still faster than the supernodal LU
+on wang3, wang4 and the convection-diffusion grids, where supernodes are
+narrow. On raefsky3 and bbmat, where they are not, KLU takes 2.9-6.9x as long
+as the supernodal LU (6.73 s against 2.35 s, and 90.3 s against 13.0 s). The
+session is `benchmarks/data/i7-12700k/superlu/20261117T202641Z/` (the
+"before" column is an unpinned scratch run of main).
+
+**Where the numeric factorization spends its time**, by `rdtsc` phase timers
+in a scratch copy of the kernel, before the first PR:
+
+| phase | wang3 | raefsky3 |
+|---|---|---|
+| closed-supernode TRSV + GEMV, one column at a time | 56% | 50% |
+| supernode detect / close | 18% | 17% |
+| finalize: per-column sorts into CSC, solve schedules | 8% | 14% |
+| reach DFS | 8% | 7% |
+| emit L, sort the candidate rows | 5% | 5% |
+
+**The first PR** (bit-identical factors):
+- The GEMV gathers a supernode's off-diagonal rows and sweeps its block a
+  column at a time. It had walked the block a row at a time, at stride m.
+- Closing a supernode looks rows up through a position map. It had searched
+  the supernode's row list once per entry.
+- The finalize transposes into sorted CSC, O(nnz), instead of sorting each
+  column.
+
+The numeric factorization is 1.3-1.55x faster. After it, the closed-supernode
+update is 68% of wang3 and 48% of raefsky3, the reach DFS 10-12%, and the
+finalize 9-20%.
+
+**What that leaves.** wang3 has 10,834 supernodes for 26,064 columns, 2.4
+columns each; raefsky3 has 20.6. With supernodes that narrow, each update is
+a tiny BLAS-2 call dominated by its gather and scatter. SuperLU relaxes
+supernodes (it stores explicit zeros to make them wider) and updates a panel
+of columns at once, which turns the GEMVs into GEMMs. In order of leverage:
+
+1. **Relaxed supernodes:** amalgamate narrow supernodes, storing the zeros,
+   up to a width cap and a fill cap. Measure the time and the fill (the 1.2x
+   fill target allows some).
+2. **Panel updates:** apply each supernode to a panel of W columns at once
+   (TRSM + GEMM). #192's groundwork, on closed PR #192
+   (`perf/superlu-block-kernel`, 571 commits behind main), has a version of
+   this. It measured no gain in June, on the narrow supernodes; it needs (1)
+   first.
+3. **The reach DFS and the finalize**, each about 10% now: a single
+   symbolic pass per panel (June's step 3), and building the solve schedules
+   from the supernode structure.
+
 ## References
 
 - Demmel, Eisenstat, Gilbert, Li, Liu, "A Supernodal Approach to Sparse Partial
