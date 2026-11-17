@@ -183,7 +183,8 @@ solve, timed together as SuperLU's column is.
 Fill already meets the 1.2x target. Time is what's left: 2.6-3.5x on the
 SuiteSparse matrices, against 1.5x. KLU is still faster than the supernodal LU
 on wang3, wang4 and the convection-diffusion grids, where supernodes are
-narrow, and 7-19x slower on raefsky3 and bbmat, where they are not. The
+narrow. On raefsky3 and bbmat, where they are not, KLU takes 2.9-6.9x as long
+as the supernodal LU (6.73 s against 2.35 s, and 90.3 s against 13.0 s). The
 session is `benchmarks/data/i7-12700k/superlu/20261117T202641Z/` (the
 "before" column is an unpinned scratch run of main).
 
