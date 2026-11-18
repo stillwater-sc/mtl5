@@ -2,6 +2,8 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cstddef>
+#include <stdexcept>
+#include <vector>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
 #include <mtl/sparse/util/csc.hpp>
@@ -10,6 +12,7 @@
 #include <mtl/sparse/analysis/elimination_tree.hpp>
 #include <mtl/sparse/analysis/postorder.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
+#include <mtl/sparse/factorization/level_schedule.hpp>
 
 using namespace mtl;
 using namespace mtl::sparse;
@@ -258,4 +261,94 @@ TEST_CASE("Upper triangular solve with diagonal matrix", "[sparse][trisolve][edg
     REQUIRE_THAT(x[0], Catch::Matchers::WithinAbs(3.0, 1e-12));
     REQUIRE_THAT(x[1], Catch::Matchers::WithinAbs(4.0, 1e-12));
     REQUIRE_THAT(x[2], Catch::Matchers::WithinAbs(5.0, 1e-12));
+}
+
+// Empty columns and misplaced or zero diagonals (issue 907). dense_upper_solve
+// formed its diagonal's position as col_ptr[col + 1] - 1 first, which wrapped
+// to SIZE_MAX for an empty leading column and read row_ind[SIZE_MAX] (an ASan
+// heap overflow); the other solves skipped an empty column, solving as if its
+// diagonal were 1 (U = {col_ptr {0,0,1}, row 1, 2}, b = {3, 8} gave {3, 4}).
+// A diagonal that is not where the solve expects it, or is zero, was only
+// asserted: under NDEBUG it read the wrong entry or divided by zero. All of
+// these throw in every build, and the level schedules reject the same
+// structures when they are built.
+TEST_CASE("Triangular solves: empty columns, misplaced and zero diagonals", "[sparse][trisolve][edge][907]") {
+    using factorization::dense_upper_solve;
+    using factorization::dense_lower_solve;
+    using factorization::dense_lower_transpose_solve;
+    SECTION("an empty column has no diagonal: std::invalid_argument") {
+        util::csc_matrix<double> U;
+        U.nrows = U.ncols = 2;
+        U.col_ptr = {0, 0, 1};
+        U.row_ind = {1};
+        U.values  = {2.0};
+        std::vector<double> x = {3.0, 8.0};
+        REQUIRE_THROWS_AS(dense_upper_solve(U, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_upper_solve_schedule(U), std::invalid_argument);
+        util::csc_matrix<double> E = U;   // as lower: column 0 empty
+        REQUIRE_THROWS_AS(dense_lower_solve(E, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(dense_lower_transpose_solve(E, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_solve_schedule(E), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_transpose_solve_schedule(E), std::invalid_argument);
+
+        // sparse_lower_solve on a 1x1 factor with nothing stored: the bounds
+        // test alone (there is no row entry for the next check to read).
+        util::csc_matrix<double> Z;
+        Z.nrows = Z.ncols = 1;
+        Z.col_ptr = {0, 0};
+        std::vector<double> z = {5.0};
+        std::vector<std::size_t> xi = {0};
+        REQUIRE_THROWS_AS(factorization::sparse_lower_solve(Z, z, xi, 0), std::invalid_argument);
+    }
+    SECTION("a zero diagonal installed after the schedule was built: std::runtime_error") {
+        util::csc_matrix<double> D;
+        D.nrows = D.ncols = 1;
+        D.col_ptr = {0, 1};
+        D.row_ind = {0};
+        D.values  = {2.0};
+        const auto ls = factorization::build_lower_solve_schedule(D);
+        const auto lt = factorization::build_lower_transpose_solve_schedule(D);
+        const auto us = factorization::build_upper_solve_schedule(D);
+        std::vector<double> y = {6.0};
+        factorization::level_scheduled_lower_solve(D, ls, y);
+        REQUIRE(y[0] == 3.0);
+        D.values[0] = 0.0;   // same pattern, new value
+        REQUIRE_THROWS_AS(factorization::level_scheduled_lower_solve(D, ls, y), std::runtime_error);
+        REQUIRE_THROWS_AS(factorization::level_scheduled_lower_transpose_solve(D, lt, y), std::runtime_error);
+        REQUIRE_THROWS_AS(factorization::level_scheduled_upper_solve(D, us, y), std::runtime_error);
+    }
+    util::csc_matrix<double> L;   // 2x2 lower: col 0 = rows {0, 1}, col 1 = row {1}
+    L.nrows = L.ncols = 2;
+    L.col_ptr = {0, 2, 3};
+    L.row_ind = {0, 1, 1};
+    L.values  = {2.0, 1.0, 4.0};
+    SECTION("a misplaced diagonal throws std::invalid_argument") {
+        auto bad = L;
+        bad.row_ind = {1, 0, 1};   // column 0 starts with row 1
+        std::vector<double> x = {1.0, 1.0};
+        REQUIRE_THROWS_AS(dense_lower_solve(bad, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(dense_lower_transpose_solve(bad, x), std::invalid_argument);
+        util::csc_matrix<double> U = L;   // as upper: column 0's last entry is row 1, not 0
+        REQUIRE_THROWS_AS(dense_upper_solve(U, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_upper_solve_schedule(U), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_solve_schedule(bad), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_transpose_solve_schedule(bad), std::invalid_argument);
+        std::vector<std::size_t> xi = {0, 1};
+        REQUIRE_THROWS_AS(factorization::sparse_lower_solve(bad, x, xi, 0), std::invalid_argument);
+    }
+    SECTION("a zero diagonal throws std::runtime_error") {
+        auto zero = L;
+        zero.values = {0.0, 1.0, 4.0};
+        std::vector<double> x = {1.0, 1.0};
+        REQUIRE_THROWS_AS(dense_lower_solve(zero, x), std::runtime_error);
+        REQUIRE_THROWS_AS(dense_lower_transpose_solve(zero, x), std::runtime_error);
+        std::vector<std::size_t> xi = {0, 1};
+        REQUIRE_THROWS_AS(factorization::sparse_lower_solve(zero, x, xi, 0), std::runtime_error);
+        util::csc_matrix<double> U;
+        U.nrows = U.ncols = 2;
+        U.col_ptr = {0, 1, 3};
+        U.row_ind = {0, 0, 1};
+        U.values  = {2.0, 1.0, 0.0};
+        REQUIRE_THROWS_AS(dense_upper_solve(U, x), std::runtime_error);
+    }
 }

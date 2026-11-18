@@ -380,3 +380,46 @@ TEST_CASE("reach() and sparse_lower_solve", "[sparse][triangular][865]") {
     CHECK(pos(1) < pos(3));
     CHECK(pos(3) < pos(4));
 }
+
+// A node with many children (issue 907): reach() rescanned the node's column
+// from the start each time a child returned, O(d^2) for d children; it now
+// resumes where it stopped. A star: column 0 holds rows 1..d, and each child
+// has one child of its own, d + i. Checked against a dense forward
+// substitution, through the public sparse_lower_solve.
+TEST_CASE("reach() and sparse_lower_solve on a node with many children", "[sparse][triangular][907]") {
+    const std::size_t d = 3000, n = 2 * d + 1;
+    ut::csc_matrix<double> L;
+    L.nrows = L.ncols = n;
+    L.col_ptr.push_back(0);
+    L.row_ind.push_back(0); L.values.push_back(2.0);
+    for (std::size_t i = 1; i <= d; ++i) { L.row_ind.push_back(i); L.values.push_back(-1.0 / double(i)); }
+    L.col_ptr.push_back(L.row_ind.size());
+    for (std::size_t j = 1; j < n; ++j) {
+        L.row_ind.push_back(j); L.values.push_back(1.5);
+        if (j <= d) { L.row_ind.push_back(d + j); L.values.push_back(0.25); }
+        L.col_ptr.push_back(L.row_ind.size());
+    }
+    std::vector<std::size_t> xi(n), stack(n), pos(n);
+    std::vector<bool> marked(n, false);
+    const std::size_t top = sparse::factorization::reach(L.col_ptr, L.row_ind, n, {0}, xi, stack, pos, marked);
+    REQUIRE(n - top == n);   // everything is reachable from 0
+    REQUIRE(xi[top] == 0);
+    std::vector<std::size_t> where(n);
+    for (std::size_t q = top; q < n; ++q) where[xi[q]] = q;
+    for (std::size_t i = 1; i <= d; ++i) {   // topological: parent before child
+        REQUIRE(where[0] < where[i]);
+        REQUIRE(where[i] < where[d + i]);
+    }
+    std::vector<double> x(n, 0.0), y(n, 0.0);
+    x[0] = y[0] = 6.0;
+    sparse::factorization::sparse_lower_solve(L, x, xi, top);
+    sparse::factorization::dense_lower_solve(L, y);
+    REQUIRE(x == y);
+
+    // The overload without a position workspace gives the same order.
+    std::vector<std::size_t> xi2(n);
+    std::fill(marked.begin(), marked.end(), false);
+    const std::size_t top2 = sparse::factorization::reach(L.col_ptr, L.row_ind, n, {0}, xi2, stack, marked);
+    REQUIRE(top2 == top);
+    REQUIRE(xi2 == xi);
+}

@@ -56,9 +56,35 @@ mat::compressed2D<Value> shift_diagonal(const mat::compressed2D<Value, Parameter
     std::vector<size_type> starts(n + 1, 0);
     std::vector<size_type> indices;
     std::vector<Value> data;
+    indices.reserve(dat.size() + n);
+    data.reserve(dat.size() + n);
     for (size_type r = 0; r < n; ++r) {
         starts[r] = indices.size();
-        std::map<size_type, Value> row;               // keeps columns sorted
+        bool sorted = true;   // strictly increasing columns: no duplicates to combine
+        for (size_type k = rp[r] + 1; k < rp[r + 1]; ++k)
+            if (ci[k] <= ci[k - 1]) { sorted = false; break; }
+        if (sorted) {
+            // One pass, the diagonal merged in where it falls (issue 907: a
+            // std::map per row did this before). Each value is formed as the
+            // map formed it: zero, plus the entry, minus sigma on the diagonal.
+            bool diag_done = false;
+            for (size_type k = rp[r]; k < rp[r + 1]; ++k) {
+                const size_type c = ci[k];
+                if (!diag_done && c > r) {   // no stored diagonal: insert it here
+                    indices.push_back(r);
+                    data.push_back(Value{} - sigma);
+                    diag_done = true;
+                }
+                Value v{};
+                v += dat[k];
+                if (c == r) { v -= sigma; diag_done = true; }
+                indices.push_back(c);
+                data.push_back(v);
+            }
+            if (!diag_done) { indices.push_back(r); data.push_back(Value{} - sigma); }
+            continue;
+        }
+        std::map<size_type, Value> row;               // keeps columns sorted, sums duplicates
         for (size_type k = rp[r]; k < rp[r + 1]; ++k)
             row[ci[k]] += dat[k];
         row[r] -= sigma;                              // subtract on the diagonal
@@ -83,14 +109,13 @@ public:
         auto B = shift_diagonal(A, sigma);
 
         // Guard against an (near-)exactly singular shift: perturb tiny pivots
-        // rather than throwing, scaled to the magnitude of B.
-        using std::abs;    // ADL: a custom number type's own abs and sqrt
-        using std::sqrt;
-        Value maxabs = Value(0);
-        for (Value v : B.ref_data()) { Value a = abs(v); if (a > maxabs) maxabs = a; }
-        if (maxabs == Value(0)) maxabs = Value(1);
-        const Value perturb =
-            sqrt(std::numeric_limits<Value>::epsilon()) * maxabs;
+        // rather than throwing, relative to each pivot column's norm.
+        using std::sqrt;   // ADL: a custom number type's own sqrt
+        // Relative: sparse_lu_numeric multiplies pivot_perturb by the column's
+        // norm itself, so a floor of sqrt(eps) * maxabs here scaled as the
+        // magnitude squared and replaced real pivots once |A| was large (s =
+        // 1e6 * tridiag gave 1.00106e6 for the eigenvalue s, issue 907).
+        const Value perturb = sqrt(std::numeric_limits<Value>::epsilon());
 
         auto sym = factorization::sparse_lu_symbolic(B);
         num_ = factorization::sparse_lu_numeric<Accumulator>(B, sym, Value(1), perturb);

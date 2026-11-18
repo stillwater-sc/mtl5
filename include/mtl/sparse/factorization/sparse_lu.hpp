@@ -33,6 +33,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -290,6 +291,13 @@ lu_numeric<Value> sparse_lu_numeric(
     if (!(threshold > Value{0} && threshold <= Value{1})) {
         throw std::invalid_argument("sparse_lu_numeric: threshold must be in (0, 1]");
     }
+    // Row and node indices are stored as int32 below (pinv, xi): a larger n
+    // would wrap them. Rejected up front, as supernodal_lu_numeric does
+    // (issue 907).
+    if (n > static_cast<size_type>(std::numeric_limits<std::int32_t>::max()))
+        throw std::invalid_argument(
+            "sparse_lu_numeric: n = " + std::to_string(n)
+            + " exceeds the int32 index range of the factorization");
 
     // Column-permute A (apply the fill-reducing ordering) and convert to CSC.
     auto AQ = util::column_permute(A, sym.col_perm);

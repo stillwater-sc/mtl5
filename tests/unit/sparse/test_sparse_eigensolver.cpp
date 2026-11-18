@@ -232,3 +232,50 @@ TEST_CASE("sparse eigensolvers: an accumulated run finds the same eigenvalues (#
     for (std::size_t i = 0; i < 3; ++i)
         CHECK_THAT(top[i], Catch::Matchers::WithinAbs(expected[n - 3 + i], 1e-7));
 }
+
+// The perturbation floor is relative to each pivot column (issue 907). It was
+// passed in already multiplied by max|A - sigma I|, and sparse_lu_numeric
+// multiplies by the column norm again, so it grew as the magnitude squared:
+// at s = 1e6 the eigenvalue s of s * tridiag(-1, 2, -1) came out 1.00106e6,
+// at 1e10 complex, both reported converged. With n = 20, s itself is an
+// eigenvalue (2 - 2 cos(7 pi / 21) = 1), so A - s I is exactly singular and
+// the perturbation is what the factorization runs on.
+TEST_CASE("sparse shift-invert: the perturbation floor does not depend on the scale",
+          "[sparse][eigen][shift-invert][907]") {
+    const std::size_t n = 20;
+    for (const double s : {1e-6, 1.0, 1e3, 1e6, 1e10}) {
+        CAPTURE(s);
+        auto A = laplacian1d(n);
+        for (auto& v : A.ref_data()) v *= s;
+        auto r = sparse::sparse_eigs_shift_invert(A, s, 1);
+        REQUIRE(r.values.size() == 1);
+        REQUIRE(r.converged);
+        REQUIRE(std::abs(r.values(0).imag()) <= 1e-8 * s);
+        REQUIRE(std::abs(r.values(0).real() - s) <= 1e-8 * s);
+    }
+}
+
+// shift_diagonal merges -sigma into each row in one pass (issue 907): rows
+// with the diagonal first, last, in the middle and missing.
+TEST_CASE("shift_diagonal: the diagonal wherever it falls, or missing", "[sparse][eigen][907]") {
+    mat::compressed2D<double> A(4, 4);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][0] << 1.0; ins[0][2] << 2.0;   // diagonal first
+        ins[1][0] << 3.0; ins[1][3] << 4.0;   // diagonal missing, between columns
+        ins[2][0] << 5.0; ins[2][2] << 6.0; ins[2][3] << 7.0;   // middle
+        ins[3][1] << 8.0;                     // missing, past the last column
+    }
+    const auto B = sparse::shift_diagonal(A, 0.5);
+    const double want[4][4] = {{0.5, 0, 2, 0}, {3, -0.5, 0, 4}, {5, 0, 5.5, 7}, {0, 8, 0, -0.5}};
+    const auto& rp = B.ref_major(); const auto& ci = B.ref_minor(); const auto& d = B.ref_data();
+    REQUIRE(d.size() == 10);
+    for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t k = rp[i] + 1; k < rp[i + 1]; ++k) REQUIRE(ci[k] > ci[k - 1]);   // sorted
+        double row[4] = {0, 0, 0, 0};
+        bool diag = false;
+        for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) { row[ci[k]] = d[k]; diag = diag || ci[k] == i; }
+        REQUIRE(diag);
+        for (std::size_t j = 0; j < 4; ++j) REQUIRE(row[j] == want[i][j]);
+    }
+}

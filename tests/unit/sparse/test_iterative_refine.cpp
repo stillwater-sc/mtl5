@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
@@ -141,4 +142,61 @@ TEST_CASE("iterative_refine patience never degrades the result",
     REQUIRE(forward_error(x1) < 1e-10);
     REQUIRE(forward_error(x5) < 1e-10);
     REQUIRE(r5.rel_residual <= r1.rel_residual);   // more patience never worse
+}
+
+namespace {
+// A factorization whose correction solve returns NaN (an overflowed
+// low-precision factor, say).
+struct nan_factor {
+    template <typename X, typename R>
+    void solve(X& dx, const R&) const {
+        for (std::size_t i = 0; i < dx.size(); ++i) dx(static_cast<int>(i)) = std::numeric_limits<double>::quiet_NaN();
+    }
+};
+// The identity: x = r, a correction that is exact for A = I.
+struct identity_factor {
+    template <typename X, typename R>
+    void solve(X& dx, const R& r) const {
+        for (std::size_t i = 0; i < dx.size(); ++i) dx(static_cast<int>(i)) = r(static_cast<int>(i));
+    }
+};
+mat::compressed2D<double> identity(std::size_t n) {
+    mat::compressed2D<double> A(n, n);
+    {   // the inserter commits its entries in its destructor, before the return
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) ins[i][i] << 1.0;
+    }
+    return A;
+}
+} // namespace
+
+// A non-finite residual is never a converged one (#901 fixed norm_inf, whose
+// std::max(m, NaN) kept m, so a NaN residual measured 0; issue 907 asked for
+// this direct test).
+TEST_CASE("iterative_refine: NaN in the residual, x or b is not converged", "[sparse][iterative_refine][907]") {
+    const std::size_t n = 4;
+    const auto A = identity(n);
+    sparse::refine_options opt;
+    opt.rel_tol = 1e-10;
+    REQUIRE(A.nnz() == n);   // the fixture is the identity
+    SECTION("a correction that returns NaN") {
+        vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
+        const auto res = sparse::iterative_refine<double>(A, nan_factor{}, b, x, opt);
+        REQUIRE_FALSE(res.converged);
+        REQUIRE_FALSE(res.rel_residual == 0.0);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(x(static_cast<int>(i)) == 0.0);   // the best iterate: the start
+    }
+    SECTION("NaN in x") {
+        vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
+        x(1) = std::numeric_limits<double>::quiet_NaN();
+        opt.max_iter = 0;
+        const auto res = sparse::iterative_refine<double>(A, identity_factor{}, b, x, opt);
+        REQUIRE_FALSE(res.converged);
+    }
+    SECTION("NaN in b") {
+        vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
+        b(2) = std::numeric_limits<double>::quiet_NaN();
+        const auto res = sparse::iterative_refine<double>(A, identity_factor{}, b, x, opt);
+        REQUIRE_FALSE(res.converged);
+    }
 }

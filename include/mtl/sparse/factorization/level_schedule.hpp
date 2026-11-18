@@ -52,6 +52,7 @@
 
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/sparse/util/csc.hpp>
+#include <mtl/sparse/factorization/triangular_solve.hpp>
 #include <mtl/detail/thread_pool.hpp>
 
 namespace mtl::sparse::factorization {
@@ -93,7 +94,12 @@ lower_solve_schedule build_lower_solve_schedule(
     std::size_t nnz_off = 0;
     for (std::size_t j = 0; j < n; ++j) {
         SizeType p = L.col_ptr[j];
-        if (p < L.col_ptr[j + 1]) s.diag_pos[j] = static_cast<std::size_t>(p);   // first entry is the diagonal
+        // The diagonal must be stored first (issue 907): an empty column, or
+        // another row first, is rejected here, once per factor, rather than
+        // solved as if the diagonal were 1.
+        if (p >= L.col_ptr[j + 1] || static_cast<std::size_t>(L.row_ind[p]) != j)
+            detail::misplaced_diagonal("build_lower_solve_schedule", j);
+        s.diag_pos[j] = static_cast<std::size_t>(p);   // first entry is the diagonal
         for (SizeType q = p + 1; q < L.col_ptr[j + 1]; ++q) {
             const std::size_t i = static_cast<std::size_t>(L.row_ind[q]);   // i > j
             ++s.row_ptr[i + 1];
@@ -159,6 +165,13 @@ void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
            s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
            "schedule does not match L (rebuild after a pattern change)");
     assert(x.size() >= s.n && "solution vector shorter than the system");
+    // A zero diagonal, checked on every solve and before any worker starts
+    // (issue 907): the schedule fixes the pattern, but values installed later
+    // with the same pattern (set_factor_values) can put a zero there, and
+    // the division would give inf, where the serial solve throws.
+    for (std::size_t j = 0; j < s.n; ++j)
+        if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
+            detail::zero_diagonal("level_scheduled_lower_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -233,6 +246,10 @@ lower_transpose_solve_schedule build_lower_transpose_solve_schedule(
     std::size_t nlevels = 0, nnz_off = 0;
     for (std::size_t col = n; col-- > 0; ) {
         const SizeType diag = L.col_ptr[col];
+        // The diagonal must be stored first (issue 907), as in
+        // build_lower_solve_schedule.
+        if (diag >= L.col_ptr[col + 1] || static_cast<std::size_t>(L.row_ind[diag]) != col)
+            detail::misplaced_diagonal("build_lower_transpose_solve_schedule", col);
         std::size_t lv = 0;
         for (SizeType p = diag + 1; p < L.col_ptr[col + 1]; ++p) {
             const std::size_t i = static_cast<std::size_t>(L.row_ind[p]);   // i > col
@@ -269,6 +286,13 @@ void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeTyp
            s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
            "schedule does not match L (rebuild after a pattern change)");
     assert(x.size() >= s.n && "solution vector shorter than the system");
+    // A zero diagonal, checked on every solve and before any worker starts
+    // (issue 907): the schedule fixes the pattern, but values installed later
+    // with the same pattern (set_factor_values) can put a zero there, and
+    // the division would give inf, where the serial solve throws.
+    for (std::size_t j = 0; j < s.n; ++j)
+        if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
+            detail::zero_diagonal("level_scheduled_lower_transpose_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -281,7 +305,7 @@ void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeTyp
                 for (std::size_t t = cb; t < ce; ++t) {
                     const std::size_t col = s.order[lb + t];
                     const SizeType diag = L.col_ptr[col];
-                    if (diag >= L.col_ptr[col + 1]) continue;   // empty column: skip (as serial)
+                    if (diag >= L.col_ptr[col + 1]) continue;   // empty column: rejected when the schedule is built (issue 907)
                     if constexpr (std::is_void_v<Accumulator>) {
                         Value acc = x[col];
                         for (SizeType p = diag + 1; p < L.col_ptr[col + 1]; ++p)
@@ -347,6 +371,11 @@ upper_solve_schedule build_upper_solve_schedule(
     // entries per row (rows i < col, i.e. all but the last entry of the column).
     std::size_t nnz_off = 0;
     for (std::size_t j = 0; j < n; ++j) {
+        // The diagonal must be stored last (issue 907): an empty column, or
+        // another row last, is rejected here, once per factor.
+        if (U.col_ptr[j] >= U.col_ptr[j + 1] ||
+            static_cast<std::size_t>(U.row_ind[U.col_ptr[j + 1] - 1]) != j)
+            detail::misplaced_diagonal("build_upper_solve_schedule", j);
         if (U.col_ptr[j] < U.col_ptr[j + 1]) {
             s.diag_pos[j] = static_cast<std::size_t>(U.col_ptr[j + 1] - 1);   // diagonal last
             for (SizeType q = U.col_ptr[j]; q + 1 < U.col_ptr[j + 1]; ++q) {  // above-diagonal
@@ -412,6 +441,13 @@ void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
            s.built_nnz == static_cast<std::size_t>(U.nnz()) &&
            "schedule does not match U (rebuild after a pattern change)");
     assert(x.size() >= s.n && "solution vector shorter than the system");
+    // A zero diagonal, checked on every solve and before any worker starts
+    // (issue 907): the schedule fixes the pattern, but values installed later
+    // with the same pattern (set_factor_values) can put a zero there, and
+    // the division would give inf, where the serial solve throws.
+    for (std::size_t j = 0; j < s.n; ++j)
+        if (U.values[static_cast<std::size_t>(U.col_ptr[j + 1] - 1)] == Value{0})
+            detail::zero_diagonal("level_scheduled_upper_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -423,7 +459,7 @@ void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
             [&](std::size_t cb, std::size_t ce) {
                 for (std::size_t t = cb; t < ce; ++t) {
                     const std::size_t i = s.order[lb + t];
-                    if (U.col_ptr[i] >= U.col_ptr[i + 1]) continue;   // empty column: skip (as serial)
+                    if (U.col_ptr[i] >= U.col_ptr[i + 1]) continue;   // empty column: rejected when the schedule is built (issue 907)
                     if constexpr (std::is_void_v<Accumulator>) {
                         Value acc = x[i];
                         for (std::size_t p = s.row_ptr[i]; p < s.row_ptr[i + 1]; ++p)
