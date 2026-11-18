@@ -20,9 +20,11 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <type_traits>
 #include <utility>
 
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/operators.hpp>
 #include <mtl/mat/parameter.hpp>
 #include <mtl/operation/gemmt.hpp>
 #include <mtl/operation/symm.hpp>
@@ -54,6 +56,10 @@ static_assert(!detail::syrk_uses_gemmt_v<void, rm<float>, rm<double>>);         
 static_assert(!detail::syrk_uses_gemmt_v<void, rm<long double>, rm<long double>>);
 static_assert(detail::syr2k_uses_gemmt_v<void, rm<double>, cm<double>, cm<double>>);
 static_assert(!detail::syr2k_uses_gemmt_v<void, rm<double>, rm<float>, rm<double>>);   // mixed types
+// An expression operand is copied to a dense matrix before the dispatch; the
+// trait must still be well-formed for it (named after the copy's early return).
+static_assert(!detail::syrk_uses_gemmt_v<void, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() * 2.0)>, rm<double>>);
+static_assert(!detail::syr2k_uses_gemmt_v<void, rm<double>, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() + std::declval<const rm<double>&>())>, rm<double>>);
 #endif
 
 double val(std::size_t seed, std::size_t i, std::size_t j) {

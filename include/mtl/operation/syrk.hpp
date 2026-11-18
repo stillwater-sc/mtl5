@@ -74,7 +74,12 @@ inline constexpr bool syrk_uses_row_loop_v = row_major_contiguous_v<MA>;
 template <typename Accumulator, typename MA, typename MC>
 inline constexpr bool syrk_uses_gemmt_v = [] {
 #if defined(MTL5_NATIVE_FAST_GEMM) && !defined(MTL5_HAS_BLAS)
-    return gemmt_uses_blocked_v<Accumulator, MA, mat::view::transposed_view<MA>, MC>;
+    // Dense A first: transposed_view<MA> can't be named for an expression MA,
+    // and syrk's body still names this trait after it copies one.
+    if constexpr (gemmt_strided_dense_v<MA>)
+        return gemmt_uses_blocked_v<Accumulator, MA, mat::view::transposed_view<MA>, MC>;
+    else
+        return false;
 #else
     return false;
 #endif
