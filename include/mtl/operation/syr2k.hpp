@@ -34,6 +34,11 @@
 #include <mtl/traits/is_expression.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/mult.hpp>
+#if defined(MTL5_NATIVE_FAST_GEMM) && !defined(MTL5_HAS_BLAS)
+#include <mtl/operation/gemmt.hpp>
+#include <mtl/operation/trans.hpp>
+#include <mtl/mat/view/transposed_view.hpp>
+#endif
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -63,6 +68,28 @@ inline constexpr bool syr2k_dispatches_blas_v = [] {
 /// transposed copies of row-major A and B (#724).
 template <typename MA, typename MB>
 inline constexpr bool syr2k_uses_row_loop_v = row_major_contiguous_v<MA> && row_major_contiguous_v<MB>;
+
+/// Whether syr2k<Accumulator>(alpha, A, B, beta, C) is two gemmt calls,
+/// C = alpha A B^T + beta C and then C += alpha B A^T, above
+/// detail::gemmt_block rows (#236): the MTL5_NATIVE_FAST_GEMM build without
+/// BLAS, where gemmt takes its blocked path over gemm_blocked. A BLAS build
+/// calls ?syr2k instead. alpha and beta must be of C's element type, as in
+/// syrk_uses_gemmt_v.
+template <typename Accumulator, typename S, typename MA, typename MB, typename MC>
+inline constexpr bool syr2k_uses_gemmt_v = [] {
+#if defined(MTL5_NATIVE_FAST_GEMM) && !defined(MTL5_HAS_BLAS)
+    // Dense A and B first: transposed_view can't be named for an expression,
+    // and syr2k's body still names this trait after it copies one.
+    if constexpr (gemmt_strided_dense_v<MA> && gemmt_strided_dense_v<MB>)
+        return std::is_same_v<S, typename MC::value_type> &&
+               gemmt_uses_blocked_v<Accumulator, MA, mat::view::transposed_view<MB>, MC> &&
+               gemmt_uses_blocked_v<Accumulator, MB, mat::view::transposed_view<MA>, MC>;
+    else
+        return false;
+#else
+    return false;
+#endif
+}();
 
 } // namespace detail
 
@@ -146,6 +173,26 @@ void syr2k(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
             for (size_type i = 0; i < m; ++i)
                 for (size_type j = 0; j < i; ++j)
                     C(j, i) = C(i, j);
+            return;
+        }
+    }
+#endif
+#if defined(MTL5_NATIVE_FAST_GEMM) && !defined(MTL5_HAS_BLAS)
+    if constexpr (detail::syr2k_uses_gemmt_v<Accumulator, S, MA, MB, MC>) {
+        // Two of gemmt's triangular products (#236): A B^T into the lower
+        // triangle with beta, then B A^T added onto it, mirrored. Each is
+        // gemmt's blocked path over gemm_blocked, so the rounding is the
+        // blocked GEMM's, as for mult on this build, with C rounded once
+        // between the two halves; beta == 0 does not read C. One gemmt over
+        // [A B] [B A]^T took 1.4x longer at 512^3: the two m x 2k copies cost
+        // more to allocate and first touch than the product saves. Below
+        // gemmt_block rows gemmt would take its own loops, so syr2k's stay in
+        // use there.
+        const auto imax = static_cast<std::size_t>(std::numeric_limits<int>::max());
+        const std::size_t ms = static_cast<std::size_t>(m), ks = static_cast<std::size_t>(k);
+        if (!alpha_zero && ms > detail::gemmt_block && ks > 0 && ms <= imax && ks <= imax) {
+            gemmt<Accumulator>(alpha, A, trans(B), beta, C, uplo::lower, gemmt_fill::keep);
+            gemmt<Accumulator>(alpha, B, trans(A), math::one<S>(), C);   // lower triangle, mirrored
             return;
         }
     }

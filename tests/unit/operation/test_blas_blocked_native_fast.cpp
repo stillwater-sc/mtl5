@@ -20,11 +20,16 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <type_traits>
 #include <utility>
 
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/mat/operators.hpp>
 #include <mtl/mat/parameter.hpp>
+#include <mtl/operation/gemmt.hpp>
 #include <mtl/operation/symm.hpp>
+#include <mtl/operation/syr2k.hpp>
+#include <mtl/operation/syrk.hpp>
 #include <mtl/operation/trmm.hpp>
 #include <mtl/operation/trsm.hpp>
 #include <mtl/tag/orientation.hpp>
@@ -44,6 +49,20 @@ static_assert(detail::trmm_uses_blocked_v<rm<double>, rm<double>>);
 static_assert(!detail::trmm_uses_blocked_v<rm<float>, rm<double>>);
 static_assert(detail::symm_uses_blocked_v<rm<double>, cm<double>, rm<double>>);
 static_assert(!detail::symm_uses_blocked_v<rm<double>, rm<double>, cm<double>>); // col-major C: not blocked
+#ifndef MTL5_HAS_BLAS   // a BLAS build calls ?syrk / ?syr2k instead
+static_assert(detail::syrk_uses_gemmt_v<void, double, rm<double>, rm<double>>);
+static_assert(detail::syrk_uses_gemmt_v<void, float, cm<float>, cm<float>>);
+static_assert(!detail::syrk_uses_gemmt_v<void, float, rm<float>, rm<double>>);              // mixed types
+static_assert(!detail::syrk_uses_gemmt_v<void, long double, rm<long double>, rm<long double>>);
+//MUT                 // double alpha/beta
+static_assert(!detail::syr2k_uses_gemmt_v<void, double, rm<float>, rm<float>, rm<float>>);
+static_assert(detail::syr2k_uses_gemmt_v<void, double, rm<double>, cm<double>, cm<double>>);
+static_assert(!detail::syr2k_uses_gemmt_v<void, double, rm<double>, rm<float>, rm<double>>);   // mixed types
+// An expression operand is copied to a dense matrix before the dispatch; the
+// trait must still be well-formed for it (named after the copy's early return).
+static_assert(!detail::syrk_uses_gemmt_v<void, double, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() * 2.0)>, rm<double>>);
+static_assert(!detail::syr2k_uses_gemmt_v<void, double, rm<double>, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() + std::declval<const rm<double>&>())>, rm<double>>);
+#endif
 
 double val(std::size_t seed, std::size_t i, std::size_t j) {
     std::size_t h = seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + j * 0x94D049BB133111EBull;
@@ -182,4 +201,100 @@ TEMPLATE_TEST_CASE("blocked symm matches the reference", "[operation][724]",
     symm(T(0), A, B, T(2), C);
     for (std::size_t i = 0; i < m; ++i)
         for (std::size_t j = 0; j < n; ++j) REQUIRE(C(i, j) == T(2) * C0(i, j));
+}
+
+// syrk and syr2k on the native-fast build are gemmt's blocked triangle above
+// detail::gemmt_block rows (#236): syrk with B = A^T, syr2k as one gemmt over
+// [A B] [B A]^T. Sizes on each side of the block size, a k that is not a
+// multiple of any register tile, and every orientation pair; checked against
+// a long-double reference, as symm above, with both triangles set.
+TEMPLATE_TEST_CASE("blocked syrk and syr2k match the reference", "[operation][236]",
+                   (std::pair<rm<double>, rm<double>>), (std::pair<cm<double>, rm<double>>),
+                   (std::pair<rm<double>, cm<double>>), (std::pair<rm<float>, cm<float>>),
+                   (std::pair<cm<float>, rm<float>>)) {
+    using MA = typename TestType::first_type;   // A and B
+    using MC = typename TestType::second_type;
+    using T = typename MA::value_type;
+    static_assert(detail::gemmt_block == 64);
+    const std::size_t k = 37;
+    for (const std::size_t m : {std::size_t{64}, std::size_t{65}, std::size_t{150}}) {
+        CAPTURE(m);
+        const MA A = filled<MA>(m, k, 11);
+        const MA B = filled<MA>(m, k, 12);
+        for (const T beta : {T(0), T(0.5)}) {
+            CAPTURE(static_cast<double>(beta));
+            MC C0(m, m);   // symmetric, as syrk's C is
+            for (std::size_t i = 0; i < m; ++i)
+                for (std::size_t j = 0; j <= i; ++j) C0(i, j) = C0(j, i) = T(val(13, i, j));
+            MC C1 = C0, C2 = C0;
+            if (beta == T(0))   // beta == 0 must not read C
+                for (std::size_t i = 0; i < m; ++i)
+                    for (std::size_t j = 0; j < m; ++j)
+                        C1(i, j) = C2(i, j) = std::numeric_limits<T>::quiet_NaN();
+            syrk(T(1.5), A, beta, C1);
+            syr2k(T(1.5), A, B, beta, C2);
+            for (std::size_t i = 0; i < m; ++i)
+                for (std::size_t j = 0; j < m; ++j) {
+                    long double s1 = 0, a1 = 0, s2 = 0, a2 = 0;
+                    for (std::size_t l = 0; l < k; ++l) {
+                        const long double t1 = at(A, i, l) * at(A, j, l);
+                        const long double t2 = at(A, i, l) * at(B, j, l) + at(B, i, l) * at(A, j, l);
+                        s1 += t1; a1 += std::fabs(t1);
+                        s2 += t2; a2 += std::fabs(at(A, i, l) * at(B, j, l)) + std::fabs(at(B, i, l) * at(A, j, l));
+                    }
+                    const long double c = beta == T(0) ? 0.0L : static_cast<long double>(beta) * at(C0, i, j);
+                    INFO("(" << i << ", " << j << ")");
+                    check<T>(at(C1, i, j), 1.5L * s1 + c, 1.5L * a1 + std::fabs(c), k);
+                    check<T>(at(C2, i, j), 1.5L * s2 + c, 1.5L * a2 + std::fabs(c), 2 * k);
+                    REQUIRE(C1(i, j) == C1(j, i));   // the full result is exactly symmetric
+                    REQUIRE(C2(i, j) == C2(j, i));
+                }
+        }
+    }
+
+    // alpha == 0: C = beta C, A and B unread.
+    const std::size_t m = 150;
+    const MA A = filled<MA>(m, k, 14);
+    MC C(m, m);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j <= i; ++j) C(i, j) = C(j, i) = T(val(15, i, j));
+    const MC C0 = C;
+    MC D = C;
+    syrk(T(0), A, T(2), C);
+    syr2k(T(0), A, A, T(2), D);
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = 0; j < m; ++j) {
+            REQUIRE(C(i, j) == T(2) * C0(i, j));
+            REQUIRE(D(i, j) == T(2) * C0(i, j));
+        }
+}
+
+// alpha and beta of another type than the matrices keep syrk's and syr2k's
+// own loops (#906 review): gemmt converts them to the element type, so a
+// double beta of 1e-50 on float matrices became 0, C was not read, and the
+// result was 0 where beta * C(i, j) in double is about 1e-20. A BLAS build
+// calls ?syrk / ?syr2k, which take float coefficients for float matrices, so
+// the case is checked where they are not called.
+TEST_CASE("syrk and syr2k with double coefficients on float matrices", "[operation][236]") {
+    if constexpr (detail::syrk_dispatches_blas_v<void, rm<float>, rm<float>> ||
+                  detail::syr2k_dispatches_blas_v<void, rm<float>, rm<float>, rm<float>>) {
+        SKIP("BLAS build: ?syrk / ?syr2k take the coefficients in the matrices' precision");
+    }
+    const std::size_t m = 65, k = 1;
+    auto fill = [](std::size_t r, std::size_t c, float v) {
+        rm<float> X(r, c);
+        for (std::size_t i = 0; i < r; ++i)
+            for (std::size_t j = 0; j < c; ++j) X(i, j) = v;
+        return X;
+    };
+    const rm<float> A = fill(m, k, 0.0f), B = fill(m, k, 0.0f);
+    for (int op = 0; op < 2; ++op) {
+        CAPTURE(op);
+        rm<float> C = fill(m, m, 1e30f);
+        if (op == 0) syrk(1.0, A, 1e-50, C);
+        else         syr2k(1.0, A, B, 1e-50, C);
+        const float want = static_cast<float>(1e-50 * static_cast<double>(1e30f));
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < m; ++j) REQUIRE(C(i, j) == want);
+    }
 }
