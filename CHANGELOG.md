@@ -95,7 +95,123 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - The elementwise transcendentals sit far under the slope, because the model counts one flop per element.
   - **Pages:** the Jetson Orin, Ventuno Q, i7-12700K and Ryzen 9 8945HS analyses, under a new Roofline section, with the command under Reproducing.
 
+- **CI checks that `mtl5_bench` covers all of MTL5, and matrix results are checked on every entry** (#721, milestone M7).
+  - **Coverage manifest:** `benchmarks/platform/coverage.txt` maps each of the 150 public headers in the operation, solver, preconditioner, factorization, ordering and eigensolver directories to one of four things: the entry that measures it, the entry it runs inside, an entry of the same kernel class, or a written exemption. 23 headers are exempt, all of them queries, predicates, I/O, umbrella includes or plumbing.
+  - **`benchmarks/check_coverage.sh`** fails in the benchmarks CI lane on any of these:
+    - a header with no line;
+    - a line for a header that is gone;
+    - an entry name that `mtl5_bench --list` doesn't have;
+    - an exemption with no reason.
+  - **DotK:** a new entry, `blas1/dot_k3`, brings the catalogue to 107. It runs `dot_k<3>` on an integer dot product built to cancel, so the exact answer is an int64 sum, and checks it against the Ogita–Rump–Oishi bound. A plain dot misses that bound by a factor of about 10⁷.
+  - **Freivalds' check for matrix results:** level-3 BLAS (gemm, gemmt, symm, syrk, syr2k, trmm, trsm, kron), `inv`, Schur, SVD, `expm`, `sylvester` and the f32→f64 GEMM keep their 64-sample check and add Freivalds' check. It compares C·x with the product applied factor by factor, such as A·(B·x), for two probe vectors, so it covers every entry in O(n²). For residuals (A·X − I, Q·T·Qᵀ − A, ...) it checks the normwise bound in the matching norm. Both checks must pass.
+    - **What the samples missed:** in mutation tests, the 64 samples missed a single wrong GEMM entry, one wrong entry in GEMMT's mirrored triangle, a partial SYRK row and one Kronecker entry. Freivalds caught all four, and every other mutation tried.
+    - **Platforms:** the tolerances hold with `long double` the same as `double` (tested with `g++ -mlong-double-64`), as on MSVC and Apple ARM64.
+- **`mtl5_bench` covers mixed precision, integer kernels and thread scaling** (#721, milestone M6). There are 12 new entries, bringing the catalogue to 106:
+  - **Mixed precision:** f32→f64 dot and GEMM, checked at the f64 bound so that a kernel accumulating in f32 fails; and the block-scaled int8 dot (Q8_0), with each block checked on its own.
+  - **Integer:** dot and GEMM at i32, i16→i32, i8→i32 and u8×i8→i32, plus `mult_quad`. These are exact, with GEMM checked by Freivalds' C·x = A·(B·x) in int64. They report GOP/s and no %roof.
+
+  **Thread scaling:** `mtl5_bench --baseline FILE` reports each entry's speedup and parallel efficiency against a run at fewer threads, and refuses a baseline from another size class. The card adds a scaling column and a per-area median efficiency. `platform.sh` and `platform.ps1` pass each variant's 1-thread JSON as the baseline for its other runs.
+
+  The mutation runs found two blind spots, both fixed:
+  - **Integer GEMM checks sampled 64 entries.** Corrupting every third diagonal entry passed. They now use Freivalds, which sees every entry.
+  - **The block-scaled total is bound by f32 summation.** It now also checks every block against `γ_32`.
+
+  All 106 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double`, and on aarch64 under QEMU.
+
+  Findings, not addressed here (i7-12700K):
+  - **Plain `mult(A, B, C)` with f32 A and B and an f64 C is only f32-product accurate** (about 1e-8), because C++ promotion rounds each product in f32. `mult<double>` is accurate to 1e-16, and the entry uses it.
+  - **`mult<double>` on f32 operands runs at 4.3 GFLOP/s,** against about 20 for f64 GEMM. It doesn't reach the blocked kernel.
+  - **The 4-thread median parallel efficiency of the BLAS level-3 entries is 25%,** because most of them run serially. The cause is the same as #724.
+
+- **`mtl5_bench` covers Krylov solvers, preconditioners, smoothers, multigrid and the sparse eigensolvers** (#721, milestone M5). There are 28 new entries, bringing the catalogue to 94, and each has a check that a wrong result can't pass:
+  - **Krylov solvers (`cg`, `minres`, `bicg`, `bicgstab`, `bicgstab_ell`, `cgs`, `gmres`, `qmr`, `tfqmr`, and `idr_s` at s = 1, 2, 4 and 8):** the solver reports convergence, and the *true* residual is ≤ 1e-6.
+  - **Preconditioner setups (`diagonal`, `ilu_0`, `ilut`, `ic_0`, `ildl`, `ssor`, `block_diagonal`):** each must cut the Krylov iteration count to at most ¾, and the diagonal one must also match b_i/a_ii exactly.
+  - **Smoothers (`jacobi`, `gauss_seidel`, `sor`):** each sweep satisfies its defining splitting row by row, within `γ_k`.
+  - **Multigrid:** a 2D Poisson V(1,1) hierarchy with tensor-product transfers and Galerkin coarse operators must reach 1e-6 in 10 cycles.
+  - **Shift-invert:** convergence, and the *analytic* smallest eigenvalues to 1e-10. The generated Laplacian and convection–diffusion matrices have closed-form spectra.
+  - **Lanczos, Arnoldi and power iteration:** a Bauer–Fike enclosure of every returned pair, plus rigorous upper bounds (Cauchy interlacing, and the numerical range for Arnoldi) and an accuracy floor.
+
+  The mutation runs found three checks too weak (a near-correct diagonal preconditioner, and eigenvalues shifted together with their error bars), and those checks were strengthened. All checks then fail on corrupted results. All 94 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double` (as on MSVC and Apple ARM64) and on aarch64 under QEMU. Run time on an i7-12700K with one thread: about 11 s / 70 s / 7.5 min.
+
+  The run found these problems, which aren't addressed here:
+  - **TFQMR fails on unsymmetric systems.** On convection–diffusion it stalls at a 6–9% residual after thousands of iterations with any preconditioner, where BiCGSTAB converges in 13–52. Its unit tests use only symmetric matrices (the "non-symmetric" 3×3 case is symmetric). On the SPD Poisson matrix it converges, but needs 10× BiCGSTAB's iterations; the entry runs there.
+  - **The `pc::ic_0` and `pc::ildl` applies are quadratic in n:** 131 ms and 57 ms per apply at n = 16384, against 0.14 ms for `ilu_0`. CG is therefore paired with ILU(0), the same incomplete factor on an SPD matrix, and the `ic_0`/`ildl` setup entries are capped at a 64² grid.
+  - **The `pc::ilu_0` and `pc::ilut` setups are quadratic in n:** 0.4 ms, 82 ms and 1.3 s at n = 1024, 16384 and 65536.
+
+- **`mtl5_bench` covers sparse kernels, sparse direct solvers and orderings** (#721, milestone M4). There are 16 new entries, bringing the catalogue to 66. Every input is generated (2D Poisson, unsymmetric convection–diffusion, scrambled copies, a planted block-triangular matrix), so nothing is downloaded. Each check is one a wrong result can't pass:
+  - **SpMV, transposed SpMV on an unsymmetric matrix, CRS×dense:** per-row error against `γ_k·|A||x|`.
+  - **SpGEMM:** C·x against A·(A·x).
+  - **Level-scheduled lower solve:** the componentwise backward error of each row.
+  - **Direct solvers (`sparse_cholesky`, `sparse_ldlt`, `supernodal_ldlt`, `sparse_lu`, `supernodal_lu`, `native_klu`, `sparse_qr`):** the backward error of the solve.
+  - **AMD and COLAMD:** a valid permutation, with at most half the Cholesky fill of the scrambled natural order (of A, and of AᵀA).
+  - **RCM:** a bandwidth within 4× of the grid side.
+  - **Block-triangular form:** valid permutations, a zero-free diagonal, no entry below its block, and at least the planted number of blocks.
+
+  Every check was confirmed to fail when its result is corrupted. That process caught an `amd` check that measured a fresh AMD call instead of the permutation under test. Timing-only entries now show `n/a` instead of 0%. All 66 pass at every class with GCC 15, and at `small` with Clang 18 and on aarch64 (NEON) under QEMU. Run time on an i7-12700K with one thread: `small` about 10 s, `medium` about 55 s, `large` about 5.5 minutes.
+
+  These findings aren't addressed here (medium class, generic build, 96² grid):
+  - **`sparse_qr`:** 4.1 s per solve, more than 50× any other solver on the same matrix (`native_klu` 17 ms, `supernodal_ldlt` 9 ms). The entry runs QR on half the grid side until this is fixed.
+  - **`sparse_cholesky`:** 73 ms, slower than `sparse_ldlt` (27 ms) and 8× slower than `supernodal_ldlt`. At the large grid the gap is 17× (900 ms against 52 ms).
+  - **`supernodal_lu`:** 56 ms, slower than the non-supernodal `sparse_lu` (41 ms).
+
+- **`mtl5_bench` covers dense factorizations, eigensolvers, SVD, matrix functions and element-wise kernels** (#721, milestone M3). There are 25 new entries, bringing the catalogue to 50, and each has a check that a wrong result can't pass:
+  - **Factorizations (`lu`, `cholesky`, `ldlt`, `ldlt_bk`, `qr`):** the backward error of a solve.
+  - **`lq`:** L·Lᵀ against A·Aᵀ.
+  - **`hessenberg`:** its structure, plus the trace and Frobenius invariants.
+  - **`inv`:** A·X = I.
+  - **`lu_iterative_refine`:** the f64 backward error it reaches.
+  - **Eigenvalues (symmetric and general):** traces of the powers of A.
+  - **Eigenvectors:** A·v = λ·v and Vᵀ·V = I.
+  - **`schur`:** Q·T·Qᵀ = A, orthogonality, and quasi-triangular structure.
+  - **`svd`:** U·S·Vᵀ = A, orthogonality, and the ordering of S.
+  - **`expm`:** expm(A)·expm(−A) = I.
+  - **`sylvester`:** its residual.
+  - **Householder:** H·x = β·e₁.
+  - **Element-wise functions:** `std::` per element.
+
+  Every factorization and eigen check was confirmed to fail when its result is corrupted. All 50 pass at every class (`small`, `medium`, `large`) with GCC 15, and at `small` with Clang 18 and on aarch64 (NEON and SVE_256) under QEMU. Run time on an i7-12700K with one thread: `small` about 9 s, `medium` about 45 s, `large` about 4 minutes. Rates use the conventional LAPACK operation counts. The shared check helpers moved to `benchmarks/platform/common.hpp`.
+
+  The first run found these gaps, which aren't addressed here (medium class, generic build):
+  - **`qr_factor` is 10× slower than `lq_factor` for the same work:** 217 ms against 22 ms at n = 512.
+  - **Bunch–Kaufman `ldlt_bk` is 7× slower than `ldlt`.**
+  - **`eigenvalue()` defaults to a deflation tolerance of 1e-10.** It therefore stops short of full accuracy, while `schur()` runs the same iteration at machine epsilon. The benchmark calls `eigenvalue` with `tol = eps`.
+
+- **`benchmarks/platform.sh` and `platform.ps1`: characterize a machine with one command** (#721, milestone M2). After a `git clone`, `benchmarks/platform.sh` does the whole job:
+  - **gates the session** with `preflight`, before the builds and again after them;
+  - **builds `mtl5_bench`** for the `native`, `native-fast` and (if a system BLAS is found) `blas` variants, all before any measurement;
+  - **runs each variant** at 1 thread and at all CPUs, with every vendor library's thread pool pinned to the same count;
+  - **writes per-run JSON**, with `.sysinfo` sidecars that carry the machine state, plus markdown capability cards and a `summary.md`.
+
+  `native-fast` doesn't use `-march=native` on SVE hardware, because of #720, or on macOS. A new CI job runs the script at `--class small` on Linux x64, Linux ARM64, macOS and Windows.
+
+  `mtl5_bench` gains `--card FILE` and `--machine NAME`.
+  - **The FMA ceiling is now the machine's, not the build's.** M1 measured it over `simd::batch`, which is scalar in a build without Highway, so the `native` and `blas` variants reported GEMM at 2,300% and 39,000% of "peak". A hardware probe now picks the widest ISA the CPU and OS support at run time (AVX-512F, AVX2+FMA or SSE2, checking CPUID and XCR0; NEON on AArch64), and the roofline uses the higher of the two peaks.
+  - **`mtl5_bench` is now built in CI.** The `benchmarks` job's target list didn't include it, although the M1 PR said it did.
+
+- **`mtl5_bench`, the platform benchmark: milestone M1** (#721). One binary that characterizes a machine the same way every time.
+  - **Probes first:** it measures the FMA peak (f64 and f32) with the build's own SIMD target. It measures memory bandwidth with three-stream read, update (`a += s*b`) and STREAM triad, and takes the best as the ceiling.
+  - **Then the registry:** it runs every registered operation at a fixed size for `--class small|medium|large`. Each result is checked against a long-double reference using the `gamma_k` error bound, so a fast wrong answer is a failure. Each rate is reported as a percentage of the roofline for its arithmetic intensity, and a bandwidth-bound result that fits in the last-level cache is flagged.
+  - **Output:** a console table, plus `--json FILE` with a `FILE.sysinfo` provenance sidecar. `benchmarks/check_sidecars.sh` now also requires sidecars for committed JSON results.
+  - **Coverage so far:** 25 entries across BLAS levels 1–3 (`dot`, `axpy`, `scale`, the norms, `sum`, `gemv`, `symv`, `trmv`, `trsv`, `ger`, `gemm`, `gemmt`, `symm`, `syrk`, `syr2k`, `trmm`, `trsm`, `kron`), in f64 and, for the key kernels, f32.
+  - **Run time on an i7-12700K with one thread:** `small` about 5 s, `medium` about 20 s, `large` about 85 s.
+  - **First findings:** in the generic build, `symm`, `trmm` and `trsm` reach 1–2% of the roofline at n = 512, against 25% for `gemm`. `symv` reaches 5% against 46% for `gemv`.
+  - The remaining areas follow in later milestones of #721.
+
+- **Fixed-length SVE support in `simd::batch`** (#717). `batch` previously compiled for no SVE target at all, because Highway's SVE vectors are sizeless ACLE types (`svfloat32_t`, ...) and a sizeless type cannot be a class member. On the fixed-length targets (`-msve-vector-bits=N`, Highway's `SVE2_128` and `SVE_256`), `batch` now stores the register as a fixed-length ACLE type (`arm_sve_vector_bits(N)`). NEON and x86 builds are unchanged. A build with `-mcpu=neoverse-n2 -msve-vector-bits=128` gets real SVE2 code with `batch<float>::size == 4`. Such a binary is correct only on a machine whose SVE vector length is 128 bits. The scalable targets (no `-msve-vector-bits`) are still demoted to the scalar `batch` (#427).
+
+
 ### Fixed
+
+- **Sparse direct solvers: shift-invert's pivot floor, triangular-solve bounds and diagonals, QR's ordering and cost** (issue 907, from QA sweep #893).
+  - **Shift-invert:** `shift_invert_operator` passed `sqrt(eps) * max|A - sigma I|` as the pivot perturbation, and `sparse_lu_numeric` multiplies it by the column norm again. The floor grew as the magnitude squared and replaced real pivots: the eigenvalue s of `s * tridiag(-1, 2, -1)` came out 1.00106e6 at s = 1e6, and complex at 1e10, both reported converged. It now passes `sqrt(eps)`.
+  - **Out-of-bounds read:** `dense_upper_solve` formed its diagonal position as `col_ptr[col+1] - 1` before testing for an empty column. That wrapped, and it read `row_ind[SIZE_MAX]`. `qr_numeric::solve` had the same pattern.
+  - **Behaviour change, triangular solves:** an empty column, a misplaced diagonal or a zero diagonal now throws in the non-unit serial triangular solves (`dense_lower_solve`, `dense_upper_solve` and `dense_lower_transpose_solve` over every column, `sparse_lower_solve` over the columns in its reach): `std::invalid_argument`, or `std::runtime_error` for a zero. Before, there was only an assert, and an empty column was skipped as if its diagonal were 1. The unit-diagonal solves still take the diagonal as 1 and need none stored. The level-scheduled solves reject the same structures when the schedule is built, and a zero diagonal on each solve, before any worker starts.
+  - **Behaviour change, QR ordering:** `sparse_qr_symbolic` gave a tall A (m > n) the identity ordering without a word. Square and tall matrices now both go to the ordering: COLAMD orders a tall one, and AMD or RCM, which need a square matrix, throw. Wide matrices (m < n) are still rejected before the ordering is called. `sparse_qr_numeric` and `sparse_qr_solve` now require `OrderedField`.
+  - **`sparse_lu_numeric`** rejects n above `INT32_MAX`, as `supernodal_lu_numeric` does: it stores int32 indices.
+- **IDR(s) redraws and `frobenius_norm`'s walk** (issue 909, from QA sweep #893).
+  - **IDR(s):** the three redraws of the shadow space were meant for consecutive first-step breakdowns. The count reset only on a breakdown at a later step, so breakdowns separated by successful steps added up, and the fourth failed with code 2. The count now resets after every successful step, and each draw takes its own seed.
+  - **`frobenius_norm<Accumulator>`** walked a column-major matrix by rows. It now goes by columns, except where the matrix has fewer columns than the pool has threads, and an empty matrix submits no work.
+  - **The dense copy of an expression operand stays** (decision (a)). `mult(S + S, B, C)` with a large `compressed2D` S densifies the operand, because the copy is what lets `storage_overlaps` see it (issue 886). The comment says so, and how to avoid it: form the sparse matrix first.
 
 - **`eigen()` runs one eigenvalue computation, not two** (#894). It returned `eigenvalue()`'s values, which meant scaling A, reducing it to Hessenberg form and running the Francis QR a second time after its own Schur run, and then pairing those values with the Schur form's by nearest distance. In a tight cluster that pairing could give an eigenvalue the vector of its neighbour. The eigenvalues are now the Schur run's, each with its own vector: one Hessenberg reduction (the accumulator test counts it), no pairing. **Behaviour change:** the order can differ from `eigenvalue()`'s (on `test_eigen_general.cpp`'s 3x3 it does), so code that indexes the two results together must match them by value. The LAPACK `geev` path is unchanged.
 
@@ -581,6 +697,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Performance
 
+- **Native-fast `syrk` and `syr2k`, and the row-major `symv`** (#236). Figures are f64 on the i7-12700K, one thread.
+  - **`syrk` and `syr2k`:** in the `MTL5_NATIVE_FAST_GEMM` build without BLAS, above 64 rows, `syrk` is `gemmt(A, trans(A))` and `syr2k` is two gemmt calls, both on gemmt's blocked path. At 512³, `syrk` goes from 12.7 to 52.0 GFLOP/s and `syr2k` from 12.1 to 53.8 (OpenBLAS: 52.7 and 56.6). The rounding is the blocked GEMM's, as for `mult` on that build. Coefficients of a different type from C keep the loops.
+  - **`symv`:** the row-major loop takes strips of 8 rows from n = 128, bit-identical in every build. At n = 4096 it goes from 5.06 to 10.2 GFLOP/s (native) and from 5.36 to 11.4 (native-fast); OpenBLAS reaches 17.5.
+- **Sparse direct solvers' per-block and permutation costs** (issue 908, from QA sweep #893), bit-identical to main.
+  - **`native_klu`:** one workspace across its blocks (`lu_numeric::solve` gains an overload taking the caller's buffer), and 1x1 blocks solved and refactored directly. Five solves of a 50000 bidiagonal system go from 22.9 to 6.2 ms, and its refactor from 29.5 to 19.7 ms.
+  - **Permutations:** `symmetric_permute`, `column_permute`, `row_permute` and `native_klu`'s B are written row by row. The default inserter sent rows of more than 5 entries to its `std::map`. A refactor with 7-entry rows goes from 33.7 to 9.4 ms.
+  - **Supernodal LDL^T:** the block update puts a source supernode's columns outermost from width 2, reading the panel contiguously. A 28³ grid goes from 788 to 567 ms; a 160² grid is unchanged.
+  - **Sparse QR** touches only each column's pattern and the reflectors that meet it (issue 907). Tridiagonal n = 4000 goes from 27.9 to 1.04 ms, and the cost is now linear in n.
+
 - **Native supernodal LU, panel updates (#195):** `supernodal_lu_numeric` applies the supernodes closed before a panel of 16 columns (`panel`, 1 = column at a time) to all the panel's columns at once. The TRSV runs per column; the GEMV is fused across the columns, with an 8-row register tile held over the supernode's columns. Each accumulator takes the same terms in the same order, so with contraction off (as the tests build) the factors are bit-identical at every panel width; a contracting build can differ in the last bit. The numeric factorization is 1.42x faster on wang3, 1.45x on wang4 and 1.14x on raefsky3. Where panels don't pay (small supernodes, short reaches) the pre-pass's second DFS made the convection-diffusion grids 15-20% slower, so a panel whose saved block reads fall below 128 times its reach turns panels off for the next 16, then probes again; the grids now cost 3-5% in an isolated run (6% in pinned reruns under load). Through `bench_superlu` the supernodal LU is now 1.88-2.39x SuperLU's time on wang3, wang4 and raefsky3 (from 2.57-3.45x) and 1.99x on bbmat (from 2.80x); the session is under `benchmarks/data/i7-12700k/superlu/`. SuperLU-style relaxed supernodes were also measured: they widened wang3's supernodes from 2.4 to 10.1 columns but gave no speedup, alone or with panels, and are not included. The details are in `docs/plans/native-superlu-performance.md`.
 - **Native supernodal LU, first step of #195:** the numeric factorization is 1.3-1.55x faster on wang3, wang4 and raefsky3, with bit-identical factors. `bench_superlu` now times the supernodal LU itself. It had timed native KLU, so its scoreboard and #195's "about 4x" never measured the solver #195 is about. Measured against SuiteSparse SuperLU (single thread, i7-12700K), the supernodal LU is now 2.6-3.5x in time on wang3, wang4, raefsky3 and bbmat (from 3.45-4.41x) and 0.74-1.04x in fill, against #195's 1.5x / 1.2x targets; the session is under `benchmarks/data/i7-12700k/superlu/`.
   - **The closed-supernode GEMV** gathers the supernode's off-diagonal rows and sweeps its block a column at a time. It walked the block a row at a time, at stride m.
@@ -823,112 +948,6 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **The fix:** when the larger magnitude lies in an interval where `a*a + b*b` can neither overflow nor lose a term to underflow, about (2^-483, 2^510) for double, the rotation is `r = sqrt(a*a + b*b)`, `c = a/r`, `s = b/r`. Outside it, the scaled path is unchanged.
   - **Who gets it:** any type whose `std::numeric_limits` declares a binary IEEE format (`is_iec559`, radix 2), including a user-defined one. Tapered types such as posit and takum don't declare it, and keep the scaled path, which keeps their arithmetic near 1, where they are most precise.
   - **Results:** in the interval, the same r as before, and the same c and s except where one of them is subnormal, where the new value is the correctly rounded quotient. `bench_givens`, 20M calls on values in [1, 2): double 0.258 s → 0.062 s, float 0.297 s → 0.044 s.
-
-### Added
-
-- **CI checks that `mtl5_bench` covers all of MTL5, and matrix results are checked on every entry** (#721, milestone M7).
-  - **Coverage manifest:** `benchmarks/platform/coverage.txt` maps each of the 150 public headers in the operation, solver, preconditioner, factorization, ordering and eigensolver directories to one of four things: the entry that measures it, the entry it runs inside, an entry of the same kernel class, or a written exemption. 23 headers are exempt, all of them queries, predicates, I/O, umbrella includes or plumbing.
-  - **`benchmarks/check_coverage.sh`** fails in the benchmarks CI lane on any of these:
-    - a header with no line;
-    - a line for a header that is gone;
-    - an entry name that `mtl5_bench --list` doesn't have;
-    - an exemption with no reason.
-  - **DotK:** a new entry, `blas1/dot_k3`, brings the catalogue to 107. It runs `dot_k<3>` on an integer dot product built to cancel, so the exact answer is an int64 sum, and checks it against the Ogita–Rump–Oishi bound. A plain dot misses that bound by a factor of about 10⁷.
-  - **Freivalds' check for matrix results:** level-3 BLAS (gemm, gemmt, symm, syrk, syr2k, trmm, trsm, kron), `inv`, Schur, SVD, `expm`, `sylvester` and the f32→f64 GEMM keep their 64-sample check and add Freivalds' check. It compares C·x with the product applied factor by factor, such as A·(B·x), for two probe vectors, so it covers every entry in O(n²). For residuals (A·X − I, Q·T·Qᵀ − A, ...) it checks the normwise bound in the matching norm. Both checks must pass.
-    - **What the samples missed:** in mutation tests, the 64 samples missed a single wrong GEMM entry, one wrong entry in GEMMT's mirrored triangle, a partial SYRK row and one Kronecker entry. Freivalds caught all four, and every other mutation tried.
-    - **Platforms:** the tolerances hold with `long double` the same as `double` (tested with `g++ -mlong-double-64`), as on MSVC and Apple ARM64.
-- **`mtl5_bench` covers mixed precision, integer kernels and thread scaling** (#721, milestone M6). There are 12 new entries, bringing the catalogue to 106:
-  - **Mixed precision:** f32→f64 dot and GEMM, checked at the f64 bound so that a kernel accumulating in f32 fails; and the block-scaled int8 dot (Q8_0), with each block checked on its own.
-  - **Integer:** dot and GEMM at i32, i16→i32, i8→i32 and u8×i8→i32, plus `mult_quad`. These are exact, with GEMM checked by Freivalds' C·x = A·(B·x) in int64. They report GOP/s and no %roof.
-
-  **Thread scaling:** `mtl5_bench --baseline FILE` reports each entry's speedup and parallel efficiency against a run at fewer threads, and refuses a baseline from another size class. The card adds a scaling column and a per-area median efficiency. `platform.sh` and `platform.ps1` pass each variant's 1-thread JSON as the baseline for its other runs.
-
-  The mutation runs found two blind spots, both fixed:
-  - **Integer GEMM checks sampled 64 entries.** Corrupting every third diagonal entry passed. They now use Freivalds, which sees every entry.
-  - **The block-scaled total is bound by f32 summation.** It now also checks every block against `γ_32`.
-
-  All 106 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double`, and on aarch64 under QEMU.
-
-  Findings, not addressed here (i7-12700K):
-  - **Plain `mult(A, B, C)` with f32 A and B and an f64 C is only f32-product accurate** (about 1e-8), because C++ promotion rounds each product in f32. `mult<double>` is accurate to 1e-16, and the entry uses it.
-  - **`mult<double>` on f32 operands runs at 4.3 GFLOP/s,** against about 20 for f64 GEMM. It doesn't reach the blocked kernel.
-  - **The 4-thread median parallel efficiency of the BLAS level-3 entries is 25%,** because most of them run serially. The cause is the same as #724.
-
-- **`mtl5_bench` covers Krylov solvers, preconditioners, smoothers, multigrid and the sparse eigensolvers** (#721, milestone M5). There are 28 new entries, bringing the catalogue to 94, and each has a check that a wrong result can't pass:
-  - **Krylov solvers (`cg`, `minres`, `bicg`, `bicgstab`, `bicgstab_ell`, `cgs`, `gmres`, `qmr`, `tfqmr`, and `idr_s` at s = 1, 2, 4 and 8):** the solver reports convergence, and the *true* residual is ≤ 1e-6.
-  - **Preconditioner setups (`diagonal`, `ilu_0`, `ilut`, `ic_0`, `ildl`, `ssor`, `block_diagonal`):** each must cut the Krylov iteration count to at most ¾, and the diagonal one must also match b_i/a_ii exactly.
-  - **Smoothers (`jacobi`, `gauss_seidel`, `sor`):** each sweep satisfies its defining splitting row by row, within `γ_k`.
-  - **Multigrid:** a 2D Poisson V(1,1) hierarchy with tensor-product transfers and Galerkin coarse operators must reach 1e-6 in 10 cycles.
-  - **Shift-invert:** convergence, and the *analytic* smallest eigenvalues to 1e-10. The generated Laplacian and convection–diffusion matrices have closed-form spectra.
-  - **Lanczos, Arnoldi and power iteration:** a Bauer–Fike enclosure of every returned pair, plus rigorous upper bounds (Cauchy interlacing, and the numerical range for Arnoldi) and an accuracy floor.
-
-  The mutation runs found three checks too weak (a near-correct diagonal preconditioner, and eigenvalues shifted together with their error bars), and those checks were strengthened. All checks then fail on corrupted results. All 94 pass at every class with GCC 15, and at `small` with Clang 18, with a 64-bit `long double` (as on MSVC and Apple ARM64) and on aarch64 under QEMU. Run time on an i7-12700K with one thread: about 11 s / 70 s / 7.5 min.
-
-  The run found these problems, which aren't addressed here:
-  - **TFQMR fails on unsymmetric systems.** On convection–diffusion it stalls at a 6–9% residual after thousands of iterations with any preconditioner, where BiCGSTAB converges in 13–52. Its unit tests use only symmetric matrices (the "non-symmetric" 3×3 case is symmetric). On the SPD Poisson matrix it converges, but needs 10× BiCGSTAB's iterations; the entry runs there.
-  - **The `pc::ic_0` and `pc::ildl` applies are quadratic in n:** 131 ms and 57 ms per apply at n = 16384, against 0.14 ms for `ilu_0`. CG is therefore paired with ILU(0), the same incomplete factor on an SPD matrix, and the `ic_0`/`ildl` setup entries are capped at a 64² grid.
-  - **The `pc::ilu_0` and `pc::ilut` setups are quadratic in n:** 0.4 ms, 82 ms and 1.3 s at n = 1024, 16384 and 65536.
-
-- **`mtl5_bench` covers sparse kernels, sparse direct solvers and orderings** (#721, milestone M4). There are 16 new entries, bringing the catalogue to 66. Every input is generated (2D Poisson, unsymmetric convection–diffusion, scrambled copies, a planted block-triangular matrix), so nothing is downloaded. Each check is one a wrong result can't pass:
-  - **SpMV, transposed SpMV on an unsymmetric matrix, CRS×dense:** per-row error against `γ_k·|A||x|`.
-  - **SpGEMM:** C·x against A·(A·x).
-  - **Level-scheduled lower solve:** the componentwise backward error of each row.
-  - **Direct solvers (`sparse_cholesky`, `sparse_ldlt`, `supernodal_ldlt`, `sparse_lu`, `supernodal_lu`, `native_klu`, `sparse_qr`):** the backward error of the solve.
-  - **AMD and COLAMD:** a valid permutation, with at most half the Cholesky fill of the scrambled natural order (of A, and of AᵀA).
-  - **RCM:** a bandwidth within 4× of the grid side.
-  - **Block-triangular form:** valid permutations, a zero-free diagonal, no entry below its block, and at least the planted number of blocks.
-
-  Every check was confirmed to fail when its result is corrupted. That process caught an `amd` check that measured a fresh AMD call instead of the permutation under test. Timing-only entries now show `n/a` instead of 0%. All 66 pass at every class with GCC 15, and at `small` with Clang 18 and on aarch64 (NEON) under QEMU. Run time on an i7-12700K with one thread: `small` about 10 s, `medium` about 55 s, `large` about 5.5 minutes.
-
-  These findings aren't addressed here (medium class, generic build, 96² grid):
-  - **`sparse_qr`:** 4.1 s per solve, more than 50× any other solver on the same matrix (`native_klu` 17 ms, `supernodal_ldlt` 9 ms). The entry runs QR on half the grid side until this is fixed.
-  - **`sparse_cholesky`:** 73 ms, slower than `sparse_ldlt` (27 ms) and 8× slower than `supernodal_ldlt`. At the large grid the gap is 17× (900 ms against 52 ms).
-  - **`supernodal_lu`:** 56 ms, slower than the non-supernodal `sparse_lu` (41 ms).
-
-- **`mtl5_bench` covers dense factorizations, eigensolvers, SVD, matrix functions and element-wise kernels** (#721, milestone M3). There are 25 new entries, bringing the catalogue to 50, and each has a check that a wrong result can't pass:
-  - **Factorizations (`lu`, `cholesky`, `ldlt`, `ldlt_bk`, `qr`):** the backward error of a solve.
-  - **`lq`:** L·Lᵀ against A·Aᵀ.
-  - **`hessenberg`:** its structure, plus the trace and Frobenius invariants.
-  - **`inv`:** A·X = I.
-  - **`lu_iterative_refine`:** the f64 backward error it reaches.
-  - **Eigenvalues (symmetric and general):** traces of the powers of A.
-  - **Eigenvectors:** A·v = λ·v and Vᵀ·V = I.
-  - **`schur`:** Q·T·Qᵀ = A, orthogonality, and quasi-triangular structure.
-  - **`svd`:** U·S·Vᵀ = A, orthogonality, and the ordering of S.
-  - **`expm`:** expm(A)·expm(−A) = I.
-  - **`sylvester`:** its residual.
-  - **Householder:** H·x = β·e₁.
-  - **Element-wise functions:** `std::` per element.
-
-  Every factorization and eigen check was confirmed to fail when its result is corrupted. All 50 pass at every class (`small`, `medium`, `large`) with GCC 15, and at `small` with Clang 18 and on aarch64 (NEON and SVE_256) under QEMU. Run time on an i7-12700K with one thread: `small` about 9 s, `medium` about 45 s, `large` about 4 minutes. Rates use the conventional LAPACK operation counts. The shared check helpers moved to `benchmarks/platform/common.hpp`.
-
-  The first run found these gaps, which aren't addressed here (medium class, generic build):
-  - **`qr_factor` is 10× slower than `lq_factor` for the same work:** 217 ms against 22 ms at n = 512.
-  - **Bunch–Kaufman `ldlt_bk` is 7× slower than `ldlt`.**
-  - **`eigenvalue()` defaults to a deflation tolerance of 1e-10.** It therefore stops short of full accuracy, while `schur()` runs the same iteration at machine epsilon. The benchmark calls `eigenvalue` with `tol = eps`.
-
-- **`benchmarks/platform.sh` and `platform.ps1`: characterize a machine with one command** (#721, milestone M2). After a `git clone`, `benchmarks/platform.sh` does the whole job:
-  - **gates the session** with `preflight`, before the builds and again after them;
-  - **builds `mtl5_bench`** for the `native`, `native-fast` and (if a system BLAS is found) `blas` variants, all before any measurement;
-  - **runs each variant** at 1 thread and at all CPUs, with every vendor library's thread pool pinned to the same count;
-  - **writes per-run JSON**, with `.sysinfo` sidecars that carry the machine state, plus markdown capability cards and a `summary.md`.
-
-  `native-fast` doesn't use `-march=native` on SVE hardware, because of #720, or on macOS. A new CI job runs the script at `--class small` on Linux x64, Linux ARM64, macOS and Windows.
-
-  `mtl5_bench` gains `--card FILE` and `--machine NAME`.
-  - **The FMA ceiling is now the machine's, not the build's.** M1 measured it over `simd::batch`, which is scalar in a build without Highway, so the `native` and `blas` variants reported GEMM at 2,300% and 39,000% of "peak". A hardware probe now picks the widest ISA the CPU and OS support at run time (AVX-512F, AVX2+FMA or SSE2, checking CPUID and XCR0; NEON on AArch64), and the roofline uses the higher of the two peaks.
-  - **`mtl5_bench` is now built in CI.** The `benchmarks` job's target list didn't include it, although the M1 PR said it did.
-
-- **`mtl5_bench`, the platform benchmark: milestone M1** (#721). One binary that characterizes a machine the same way every time.
-  - **Probes first:** it measures the FMA peak (f64 and f32) with the build's own SIMD target. It measures memory bandwidth with three-stream read, update (`a += s*b`) and STREAM triad, and takes the best as the ceiling.
-  - **Then the registry:** it runs every registered operation at a fixed size for `--class small|medium|large`. Each result is checked against a long-double reference using the `gamma_k` error bound, so a fast wrong answer is a failure. Each rate is reported as a percentage of the roofline for its arithmetic intensity, and a bandwidth-bound result that fits in the last-level cache is flagged.
-  - **Output:** a console table, plus `--json FILE` with a `FILE.sysinfo` provenance sidecar. `benchmarks/check_sidecars.sh` now also requires sidecars for committed JSON results.
-  - **Coverage so far:** 25 entries across BLAS levels 1–3 (`dot`, `axpy`, `scale`, the norms, `sum`, `gemv`, `symv`, `trmv`, `trsv`, `ger`, `gemm`, `gemmt`, `symm`, `syrk`, `syr2k`, `trmm`, `trsm`, `kron`), in f64 and, for the key kernels, f32.
-  - **Run time on an i7-12700K with one thread:** `small` about 5 s, `medium` about 20 s, `large` about 85 s.
-  - **First findings:** in the generic build, `symm`, `trmm` and `trsm` reach 1–2% of the roofline at n = 512, against 25% for `gemm`. `symv` reaches 5% against 46% for `gemv`.
-  - The remaining areas follow in later milestones of #721.
-
-- **Fixed-length SVE support in `simd::batch`** (#717). `batch` previously compiled for no SVE target at all, because Highway's SVE vectors are sizeless ACLE types (`svfloat32_t`, ...) and a sizeless type cannot be a class member. On the fixed-length targets (`-msve-vector-bits=N`, Highway's `SVE2_128` and `SVE_256`), `batch` now stores the register as a fixed-length ACLE type (`arm_sve_vector_bits(N)`). NEON and x86 builds are unchanged. A build with `-mcpu=neoverse-n2 -msve-vector-bits=128` gets real SVE2 code with `batch<float>::size == 4`. Such a binary is correct only on a machine whose SVE vector length is 128 bits. The scalable targets (no `-msve-vector-bits`) are still demoted to the scalar `batch` (#427).
 
 ### CI
 
