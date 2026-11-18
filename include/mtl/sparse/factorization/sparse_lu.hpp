@@ -139,6 +139,18 @@ struct lu_numeric {
     /// `void` is the raw Value loop; see level_schedule.hpp for the contract.
     template <typename Accumulator = void, typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        std::vector<Value> w;
+        solve<Accumulator>(x, b, w);
+    }
+
+    /// solve(x, b) with the caller's workspace `w`, resized to n: a caller
+    /// that solves many small systems (native_klu's blocks) reuses one
+    /// buffer instead of allocating per solve (issue 908). Same arithmetic.
+    /// `w` must not share storage with x or b: b is read through the row
+    /// permutation while w is written. x and b may be the same vector (all of
+    /// b is read into w before x is written).
+    template <typename Accumulator = void, typename VecX, typename VecB>
+    void solve(VecX& x, const VecB& b, std::vector<Value>& w) const {
         // A caller can set `symbolic` (n > 0) yet never install a factor; the
         // triangular solves below would then read empty factor arrays. Reject
         // that explicitly instead of walking off the end.
@@ -155,7 +167,7 @@ struct lu_numeric {
         }
 
         // Step 1: Apply row permutation: w = P * b
-        std::vector<Value> w(n);
+        w.resize(n);
         for (std::size_t i = 0; i < n; ++i)
             w[i] = static_cast<Value>(b(row_perm[i]));
 

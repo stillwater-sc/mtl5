@@ -47,6 +47,19 @@ namespace mtl::sparse::factorization {
 /// Numeric KLU factorization: BTF permutation, the permuted matrix B = P*A*Q
 /// (block upper triangular), the per-new-index block id, and a left-looking LU
 /// factorization of each diagonal block.
+namespace detail {
+/// A non-owning view of m consecutive Values, with the size() and operator()
+/// lu_numeric::solve takes for its vectors.
+template <typename Value>
+struct klu_slice {
+    Value* p;
+    std::size_t m;
+    std::size_t size() const { return m; }
+    Value& operator()(std::size_t i) const { return p[i]; }
+    using value_type = Value;
+};
+} // namespace detail
+
 template <typename Value>
 struct klu_numeric {
     ordering::btf_result          btf;            ///< row/col permutations + blocks
@@ -87,13 +100,17 @@ struct klu_numeric {
         const auto& ci  = B.ref_minor();
         const auto& dat = B.ref_data();
 
-        // Back-substitution: last block first.
+        // Back-substitution: last block first. One workspace for every block
+        // (issue 908: two dense_vectors per block, and lu_numeric::solve's
+        // own, cost 12x a plain LU solve on 1x1 blocks); rhs and the block's
+        // solution are slices of y, through a span-like view.
+        std::vector<Value> w;
         for (std::size_t blk = nblocks(); blk-- > 0; ) {
             const std::size_t r0 = btf.blocks[blk];
             const std::size_t r1 = btf.blocks[blk + 1];
             const std::size_t m  = r1 - r0;
 
-            vec::dense_vector<Value> rhs(m), sol(m, Value{0});
+            detail::klu_slice<Value> rhs{y.data() + r0, m};
             for (std::size_t i = r0; i < r1; ++i) {
                 Value val = y[i];
                 for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) {
@@ -104,13 +121,24 @@ struct klu_numeric {
                     //   the block LU below). block_of[j] < blk: impossible for
                     //   block-upper-triangular B.
                 }
-                rhs(static_cast<int>(i - r0)) = val;
+                y[i] = val;   // rhs, in place: row i reads y only outside the block
             }
 
-            block_numeric[blk].solve(sol, rhs);
-
-            for (std::size_t i = r0; i < r1; ++i)
-                y[i] = sol(static_cast<int>(i - r0));
+            const auto& bn = block_numeric[blk];
+            if (m == 1) {
+                // A 1x1 block: the two triangular solves reduce to
+                // (rhs / L(0,0)) / U(0,0), divided here as they divide it, so
+                // the bits are the same; a zero (which they reject) takes
+                // their path.
+                const Value l = bn.factorL().values.empty() ? Value{0} : bn.factorL().values.front();
+                const Value u = bn.factorU().values.empty() ? Value{0} : bn.factorU().values.back();
+                if (bn.has_factor() && bn.factorL().values.size() == 1 && bn.factorU().values.size() == 1 &&
+                    l != Value{0} && u != Value{0}) {
+                    y[r0] = (y[r0] / l) / u;
+                    continue;
+                }
+            }
+            bn.solve(rhs, rhs, w);   // reads all of rhs (into w) before it writes
         }
 
         // x[q[j]] = y[j]
@@ -193,20 +221,17 @@ klu_numeric<Value> native_klu_factor(
 
     // Build B = P*(R*A)*Q. New column of old column c is q_inv[c].
     auto q_inv = util::invert_permutation(result.btf.col_perm);
-    mat::compressed2D<Value> B(n, n);
     {
         const auto& rp  = A.ref_major();
         const auto& ci  = A.ref_minor();
         const auto& dat = A.ref_data();
-        mat::inserter<mat::compressed2D<Value>> ins(B);
-        for (std::size_t i = 0; i < n; ++i) {
-            std::size_t orow = result.btf.row_perm[i];
-            Value s = scale ? result.row_scale[orow] : Value{1};
+        result.B = util::detail::csr_from_rows<Value, mat::parameters<>>(n, n, A.nnz(), [&](std::size_t i, auto& buf) {
+            const std::size_t orow = result.btf.row_perm[i];
+            const Value s = scale ? result.row_scale[orow] : Value{1};
             for (std::size_t k = rp[orow]; k < rp[orow + 1]; ++k)
-                ins[i][q_inv[ci[k]]] << s * dat[k];
-        }
+                buf.emplace_back(q_inv[ci[k]], s * dat[k]);
+        });
     }
-    result.B = std::move(B);
 
     // new index -> block id
     result.block_of.assign(n, 0);
@@ -327,15 +352,13 @@ klu_numeric<Value> native_klu_refactor(
 
     // Rebuild B = P*(R*A)*Q (same pattern, new values).
     auto q_inv = util::invert_permutation(result.btf.col_perm);
-    mat::compressed2D<Value> B(n, n);
     {
         const auto& rp  = A.ref_major();
         const auto& ci  = A.ref_minor();
         const auto& dat = A.ref_data();
-        mat::inserter<mat::compressed2D<Value>> ins(B);
-        for (std::size_t i = 0; i < n; ++i) {
-            std::size_t orow = result.btf.row_perm[i];
-            Value s = scale ? result.row_scale[orow] : Value{1};
+        result.B = util::detail::csr_from_rows<Value, mat::parameters<>>(n, n, A.nnz(), [&](std::size_t i, auto& buf) {
+            const std::size_t orow = result.btf.row_perm[i];
+            const Value s = scale ? result.row_scale[orow] : Value{1};
             for (std::size_t k = rp[orow]; k < rp[orow + 1]; ++k) {
                 const std::size_t j = q_inv[ci[k]];
                 // Below the block diagonal, the solve never reads an entry: the
@@ -347,11 +370,10 @@ klu_numeric<Value> native_klu_refactor(
                         + std::to_string(orow) + ", column " + std::to_string(ci[k])
                         + " below the prior block triangular form; factor it afresh");
                 }
-                ins[i][j] << s * dat[k];
+                buf.emplace_back(j, s * dat[k]);
             }
-        }
+        });
     }
-    result.B = std::move(B);
 
     // Refactor each diagonal block, reusing the prior block's pattern + pivots.
     const auto& Brp  = result.B.ref_major();
@@ -364,6 +386,26 @@ klu_numeric<Value> native_klu_refactor(
         const std::size_t r0 = result.btf.blocks[blk];
         const std::size_t r1 = result.btf.blocks[blk + 1];
         const std::size_t m  = r1 - r0;
+
+        if (m == 1) {
+            // A 1x1 block (issue 908): sparse_lu_refactor_in_place computes
+            // L = {1} and U = {a} for its one entry a, and throws on a == 0;
+            // done here without forming the block matrix, its CSC copy and
+            // the refactor's workspaces. A zero or missing entry, or a prior
+            // block of another pattern, takes the general path (and its error).
+            const auto& pb = prev.block_numeric[blk];
+            std::size_t ka = Brp[r0 + 1];   // the entry's position, if stored (an index: no operator& on Value)
+            for (std::size_t k = Brp[r0]; k < Brp[r0 + 1]; ++k)
+                if (Bci[k] == r0) ka = k;
+            if (ka != Brp[r0 + 1] && Bdat[ka] != Value{0} && pb.has_factor() &&
+                pb.factorL().values.size() == 1 && pb.factorU().values.size() == 1) {
+                lu_numeric<Value> nb = pb;
+                nb.set_factor_values(std::vector<Value>{Value{1}}, std::vector<Value>{Bdat[ka]});
+                nb.num_perturbed = 0;   // as the refactor: no perturbation
+                result.block_numeric.push_back(std::move(nb));
+                continue;
+            }
+        }
 
         bstart.assign(m + 1, 0);
         for (std::size_t i = r0; i < r1; ++i)

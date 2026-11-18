@@ -195,6 +195,12 @@ compile_all("true" "sparse" "Tests/sparse" "MTL5::mtl5;Catch2::Catch2WithMain" $
 # nests, which contraction can fuse differently. Under GCC -ffp-contract=fast
 # with -march=x86-64-v3 the convection-diffusion grid's L differed at panel 2.
 #
+# sparse_test_native_klu asserts that a 1x1 block's direct solve (#908) gives
+# the general per-block path's bits, against a reference loop in the test that
+# does the coupling update val -= B(i,j) * y(j) as the solve does. Contraction
+# can fuse one and not the other: on AArch64 (SVE2 lane) one entry of a
+# bidiagonal solve differed by an ulp.
+#
 # math_test_pow2_scaling asserts that inside the old band the power-of-two
 # scaled Givens rotation (#671) gives the unscaled formula's bits: scaling by
 # 2^-e is exact and commutes with every rounding. Contraction can fuse a*a or
@@ -203,6 +209,7 @@ if(NOT MSVC)
     foreach(mt_target sparse_test_supernodal_ldlt_mt
                       sparse_test_supernodal_lu_mt
                       sparse_test_supernodal_lu
+                      sparse_test_native_klu
                       sparse_test_trisolve_level_schedule_mt
                       op_test_mult_ikj
                       op_test_blas_row_loops

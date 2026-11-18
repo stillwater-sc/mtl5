@@ -51,6 +51,7 @@ inline std::vector<std::size_t> tree_postorder(
 
     // Use a visited marker to distinguish first visit from post-visit
     std::vector<bool> expanded(n, false);
+    std::vector<std::size_t> children;   // one buffer for every node (issue 908: one vector per node)
 
     while (!stack.empty()) {
         std::size_t node = stack.back();
@@ -58,7 +59,7 @@ inline std::vector<std::size_t> tree_postorder(
         if (!expanded[node]) {
             expanded[node] = true;
             // Push children in reverse order so leftmost is processed first
-            std::vector<std::size_t> children;
+            children.clear();
             std::size_t child = first_child[node];
             while (child != no_parent) {
                 children.push_back(child);
