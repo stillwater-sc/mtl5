@@ -20,13 +20,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <numeric>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include <type_traits>
 
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/sparse/util/csc.hpp>
@@ -133,9 +136,12 @@ struct qr_numeric {
         for (std::size_t j = nc; j > 0; --j) {
             std::size_t col = j - 1;
             if constexpr (!raw) y[col] = AT::value(ws[col]);   // round once, on consume
+            // An empty column is tested before the diagonal's position is
+            // formed: col_ptr[col + 1] - 1 wraps when col_ptr[col + 1] == 0
+            // (issue 907, as in dense_upper_solve).
+            if (R.col_ptr[col] >= R.col_ptr[col + 1]) continue;
             // Diagonal is last entry in column
             std::size_t diag_pos = R.col_ptr[col + 1] - 1;
-            if (R.col_ptr[col] > diag_pos) continue;
 
             Value diag = R.values[diag_pos];
             // Rank deficiency means an exactly zero (or subnormal) R(j,j); a
@@ -180,11 +186,10 @@ qr_symbolic sparse_qr_symbolic(
     sym.nrows = A.num_rows();
     sym.ncols = A.num_cols();
 
-    if (A.num_rows() == A.num_cols()) {
-        sym.col_perm = ordering(A);
-    } else {
-        sym.col_perm = util::identity_permutation(A.num_cols());
-    }
+    // Every shape goes to the ordering (issue 907): a rectangular A used to
+    // get the identity without a word, although COLAMD orders it. An ordering
+    // that needs a square matrix (AMD, RCM) now says so by throwing.
+    sym.col_perm = ordering(A);
 
     if (!util::is_valid_permutation(sym.col_perm) || sym.col_perm.size() != sym.ncols) {
         throw std::invalid_argument(
@@ -228,6 +233,7 @@ qr_symbolic sparse_qr_symbolic(
 ///     beta = 2 / (v^T * v)
 ///   Then H = I - beta * v * v^T satisfies H*x = alpha * e_1.
 template <typename Accumulator = void, typename Value, typename Parameters>
+    requires OrderedField<Value>   // magnitudes are compared (issue 907), as in sparse_lu_numeric
 qr_numeric<Value> sparse_qr_numeric(
     const mat::compressed2D<Value, Parameters>& A,
     const qr_symbolic& sym)
@@ -272,13 +278,52 @@ qr_numeric<Value> sparse_qr_numeric(
     std::vector<std::vector<Value>>     V_vals(nc);
     std::vector<Value> betas(nc, Value{0});
 
-    for (size_type k = 0; k < nc; ++k) {
-        // Scatter column k into workspace
-        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p)
-            w[C.row_ind[p]] = C.values[p];
+    // Column k touches only the rows in its pattern, and only the reflectors
+    // whose vectors meet that pattern (issue 907): applying every earlier
+    // reflector, and scanning and clearing all m rows of w, made QR quadratic
+    // in n even for a tridiagonal A. `pat` lists the rows of w that may be
+    // nonzero; `refl_of_row[r]` the reflectors whose vectors hold row r.
+    //
+    // The arithmetic is unchanged. A reflector H_j that the old loop applied
+    // had a vector meeting w's pattern when its turn came (otherwise its dot
+    // product is a sum of products with zeros: zero for finite entries, and
+    // the old loop skipped it): that row was either in
+    // column k or brought in by an earlier reflector, and either way H_j was
+    // queued then. The queue is applied in ascending j, as before; the sums
+    // over rows run in ascending row order, as before, and leave out only rows
+    // that are exactly zero.
+    std::vector<size_type> pat;
+    std::vector<size_type> row_stamp(m, 0);          // row r is in pat iff row_stamp[r] == k + 1
+    std::vector<size_type> refl_stamp(nc, 0);        // H_j is queued iff refl_stamp[j] == k + 1
+    std::vector<std::vector<size_type>> refl_of_row(m);
+    std::priority_queue<size_type, std::vector<size_type>, std::greater<size_type>> queue;
 
-        // Apply previous reflectors H_0, ..., H_{k-1}
-        for (size_type j = 0; j < k; ++j) {
+    for (size_type k = 0; k < nc; ++k) {
+        const size_type stamp = k + 1;
+        pat.clear();
+        // Row r enters w's pattern: queue the reflectors holding it that come
+        // after `after` (the reflector being applied; none at the start).
+        auto add_row = [&](size_type r, bool any, size_type after) {
+            if (row_stamp[r] == stamp) return;
+            row_stamp[r] = stamp;
+            pat.push_back(r);
+            for (const size_type j : refl_of_row[r])
+                if ((any || j > after) && refl_stamp[j] != stamp) {
+                    refl_stamp[j] = stamp;
+                    queue.push(j);
+                }
+        };
+
+        // Scatter column k into workspace
+        for (size_type p = C.col_ptr[k]; p < C.col_ptr[k + 1]; ++p) {
+            w[C.row_ind[p]] = C.values[p];
+            add_row(C.row_ind[p], true, 0);
+        }
+
+        // Apply the previous reflectors that meet w, in ascending order
+        while (!queue.empty()) {
+            const size_type j = queue.top();
+            queue.pop();
             if (betas[j] == Value{0}) continue;
 
             Acc dot_acc;
@@ -290,12 +335,17 @@ qr_numeric<Value> sparse_qr_numeric(
             if (dot == Value{0}) continue;
 
             Value scale = betas[j] * dot;
-            for (size_type idx = 0; idx < V_idx[j].size(); ++idx)
+            for (size_type idx = 0; idx < V_idx[j].size(); ++idx) {
                 w[V_idx[j][idx]] -= scale * V_vals[j][idx];
+                add_row(V_idx[j][idx], false, j);
+            }
         }
+        std::sort(pat.begin(), pat.end());
+        const auto pat_k = std::lower_bound(pat.begin(), pat.end(), k);   // first row >= k
 
         // Extract R entries above diagonal: w[0..k-1]
-        for (size_type i = 0; i < k; ++i) {
+        for (auto it = pat.begin(); it != pat_k; ++it) {
+            const size_type i = *it;
             if (w[i] != Value{0}) {
                 R_rows[k].push_back(i);
                 R_vals[k].push_back(w[i]);
@@ -310,8 +360,8 @@ qr_numeric<Value> sparse_qr_numeric(
         // stored scaled (H = I - beta v v^T does not change). Every other
         // column takes the unscaled path, bit for bit as before.
         Value amax = Value{0};
-        for (size_type i = k; i < m; ++i) {
-            const Value a = abs(w[i]);
+        for (auto it = pat_k; it != pat.end(); ++it) {
+            const Value a = abs(w[*it]);
             if (amax < a) amax = a;
         }
         int e = 0;
@@ -324,8 +374,9 @@ qr_numeric<Value> sparse_qr_numeric(
         // sigma = sum(w[i]^2 for i = k+1..m-1), scaled when e != 0
         Acc sigma_acc;
         AT::clear(sigma_acc);
-        for (size_type i = k + 1; i < m; ++i) {
-            const Value wi = down(w[i]);
+        for (auto it = pat_k; it != pat.end(); ++it) {
+            if (*it == k) continue;   // rows k+1..m-1
+            const Value wi = down(w[*it]);
             AT::add_product(sigma_acc, wi, wi);
         }
         Value sigma = AT::value(sigma_acc);
@@ -368,17 +419,21 @@ qr_numeric<Value> sparse_qr_numeric(
             // Store Householder vector v = [v0, w[k+1], ..., w[m-1]] (scaled by 2^-e)
             V_idx[k].push_back(k);
             V_vals[k].push_back(v0);
-            for (size_type i = k + 1; i < m; ++i) {
-                if (w[i] != Value{0}) {
+            for (auto it = pat_k; it != pat.end(); ++it) {
+                const size_type i = *it;
+                if (i != k && w[i] != Value{0}) {
                     V_idx[k].push_back(i);
                     V_vals[k].push_back(down(w[i]));
                 }
             }
         }
 
-        // Clear workspace
-        for (size_type i = 0; i < m; ++i)
-            w[i] = Value{0};
+        // Index the new reflector by its rows (when it acts), then clear the
+        // rows of w this column touched
+        if (betas[k] != Value{0})
+            for (const size_type r : V_idx[k]) refl_of_row[r].push_back(k);
+        for (const size_type r : pat)
+            w[r] = Value{0};
     }
 
     // Build R in CSC (sorted by row within each column)
@@ -425,6 +480,7 @@ qr_numeric<Value> sparse_qr_numeric(
 /// and the solve, so one policy covers the whole solve path (#535).
 template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB,
           typename Ordering>
+    requires OrderedField<Value>
 void sparse_qr_solve(
     const mat::compressed2D<Value, Parameters>& A,
     VecX& x, const VecB& b,
@@ -439,6 +495,7 @@ void sparse_qr_solve(
 /// `Accumulator` (default `void`) is forwarded to both the numeric factorization
 /// and the solve, so one policy covers the whole solve path (#535).
 template <typename Accumulator = void, typename Value, typename Parameters, typename VecX, typename VecB>
+    requires OrderedField<Value>
 void sparse_qr_solve(
     const mat::compressed2D<Value, Parameters>& A,
     VecX& x, const VecB& b)

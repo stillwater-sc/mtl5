@@ -16,6 +16,8 @@
 #include <cassert>
 #include <cstddef>
 #include <limits>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <mtl/sparse/util/csc.hpp>
@@ -36,19 +38,27 @@ inline constexpr std::size_t unvisited = std::numeric_limits<std::size_t>::max()
 /// \param n          Dimension of L
 /// \param b_indices  Nonzero row indices of the right-hand side b
 /// \param xi         Output: topological order (filled from the back)
+/// \param stack_workspace  length n: the DFS stack of nodes
+/// \param pos_workspace    length n: for each stack level, the next entry of
+///                         that node's column to scan
+/// \param marked     length n, caller manages
 /// \return           Starting index in xi (the reach is xi[top..n-1])
 ///
 /// The algorithm uses iterative DFS with an explicit stack. The output
 /// xi is filled from the end backward, so xi[return_value..n-1] gives
-/// the topological order.
+/// the topological order. Each node's column is scanned once in all: a node
+/// resumes its scan where it left off when a child returns (as CSparse's
+/// cs_dfs), where a rescan from the start made a node with d children cost
+/// O(d^2) (issue 907).
 inline std::size_t reach(
     const std::vector<std::size_t>& L_col_ptr,
     const std::vector<std::size_t>& L_row_ind,
     std::size_t n,
     const std::vector<std::size_t>& b_indices,
-    std::vector<std::size_t>& xi,           // output, length n
+    std::vector<std::size_t>& xi,              // output, length n
     std::vector<std::size_t>& stack_workspace, // length n
-    std::vector<bool>& marked)              // length n, caller manages
+    std::vector<std::size_t>& pos_workspace,   // length n
+    std::vector<bool>& marked)                 // length n, caller manages
 {
     // xi is filled from position n backward
     std::size_t top = n;
@@ -60,21 +70,23 @@ inline std::size_t reach(
         // DFS from start
         std::size_t stack_top = 0;
         stack_workspace[0] = start;
+        pos_workspace[0] = L_col_ptr[start];
 
-        while (stack_top != unvisited) {
-            std::size_t node = stack_workspace[stack_top];
+        while (true) {
+            const std::size_t node = stack_workspace[stack_top];
 
-            // Find first unmarked child in L's column
+            // The next unmarked child in node's column, from where the scan
+            // stopped last time.
             bool found_child = false;
-            // We need to track where we are in node's adjacency list.
-            // Use a simple approach: scan from the beginning each time.
-            // (CSparse uses a head pointer array for efficiency; we
-            //  use a slightly simpler approach here.)
-            for (std::size_t p = L_col_ptr[node]; p < L_col_ptr[node + 1]; ++p) {
-                std::size_t child = L_row_ind[p];
+            std::size_t p = pos_workspace[stack_top];
+            for (const std::size_t pend = L_col_ptr[node + 1]; p < pend; ++p) {
+                const std::size_t child = L_row_ind[p];
                 if (child <= node) continue;  // only look at entries below diagonal
                 if (!marked[child]) {
-                    stack_workspace[++stack_top] = child;
+                    pos_workspace[stack_top] = p + 1;
+                    ++stack_top;
+                    stack_workspace[stack_top] = child;
+                    pos_workspace[stack_top] = L_col_ptr[child];
                     found_child = true;
                     break;
                 }
@@ -92,6 +104,40 @@ inline std::size_t reach(
 
     return top;
 }
+
+/// reach() with its own position workspace: allocates O(n) per call. Callers
+/// that compute many reaches should pass a pos_workspace of their own.
+inline std::size_t reach(
+    const std::vector<std::size_t>& L_col_ptr,
+    const std::vector<std::size_t>& L_row_ind,
+    std::size_t n,
+    const std::vector<std::size_t>& b_indices,
+    std::vector<std::size_t>& xi,              // output, length n
+    std::vector<std::size_t>& stack_workspace, // length n
+    std::vector<bool>& marked)                 // length n, caller manages
+{
+    std::vector<std::size_t> pos(n);
+    return reach(L_col_ptr, L_row_ind, n, b_indices, xi, stack_workspace, pos, marked);
+}
+
+namespace detail {
+
+/// The diagonal of column `col` is not where the solve expects it (first in a
+/// column of L, last in a column of U): a wrong layout, or no diagonal stored.
+template <typename SizeType>
+[[noreturn]] inline void misplaced_diagonal(const char* fn, SizeType col) {
+    throw std::invalid_argument(std::string(fn) + ": column " + std::to_string(col) +
+                                " has no diagonal entry where the solve expects it");
+}
+
+/// A zero diagonal: the triangular matrix is singular.
+template <typename SizeType>
+[[noreturn]] inline void zero_diagonal(const char* fn, SizeType col) {
+    throw std::runtime_error(std::string(fn) + ": zero diagonal in column " + std::to_string(col) +
+                             " (singular triangular factor)");
+}
+
+} // namespace detail
 
 /// Sparse triangular solve: solve Lx = b where L is lower triangular in CSC
 /// and b is sparse.
@@ -119,11 +165,13 @@ void sparse_lower_solve(
 
         // Find diagonal entry (first entry in column j should be row j)
         SizeType diag_pos = L.col_ptr[j];
-        assert(diag_pos < L.col_ptr[j + 1]);
-        assert(L.row_ind[diag_pos] == j);
+        // Checked in every build (issue 907): an assert left a missing or zero
+        // diagonal to read past the column or divide by zero under NDEBUG.
+        if (diag_pos >= L.col_ptr[j + 1] || L.row_ind[diag_pos] != j)
+            detail::misplaced_diagonal("sparse_lower_solve", j);
 
         Value diag = L.values[diag_pos];
-        assert(diag != Value{0});
+        if (diag == Value{0}) detail::zero_diagonal("sparse_lower_solve", j);
 
         x[j] /= diag;
 
@@ -147,11 +195,12 @@ void dense_lower_solve(
 
     for (SizeType j = 0; j < n; ++j) {
         SizeType diag_pos = L.col_ptr[j];
-        if (diag_pos >= L.col_ptr[j + 1]) continue;
+        if (diag_pos >= L.col_ptr[j + 1]) continue;   // empty column: skipped, as the level schedules do
 
-        assert(L.row_ind[diag_pos] == j);
+        // Checked in every build (issue 907), not asserted.
+        if (L.row_ind[diag_pos] != j) detail::misplaced_diagonal("dense_lower_solve", j);
         Value diag = L.values[diag_pos];
-        assert(diag != Value{0});
+        if (diag == Value{0}) detail::zero_diagonal("dense_lower_solve", j);
 
         x[j] /= diag;
 
@@ -173,13 +222,18 @@ void dense_upper_solve(
 
     for (SizeType j = n; j > 0; --j) {
         SizeType col = j - 1;
+        // An empty column is skipped, as the level schedules do. It is tested
+        // before the diagonal's position is formed (issue 907): with
+        // col_ptr[col + 1] == 0, col_ptr[col + 1] - 1 wrapped to SIZE_MAX,
+        // passed the old test and read row_ind[SIZE_MAX].
+        if (U.col_ptr[col] >= U.col_ptr[col + 1]) continue;
         // Find diagonal (last entry in column col for upper triangular)
         SizeType diag_pos = U.col_ptr[col + 1] - 1;
-        if (U.col_ptr[col] > diag_pos) continue;
 
-        assert(U.row_ind[diag_pos] == col);
+        // Checked in every build (issue 907), not asserted.
+        if (U.row_ind[diag_pos] != col) detail::misplaced_diagonal("dense_upper_solve", col);
         Value diag = U.values[diag_pos];
-        assert(diag != Value{0});
+        if (diag == Value{0}) detail::zero_diagonal("dense_upper_solve", col);
 
         x[col] /= diag;
 
@@ -203,9 +257,11 @@ void dense_lower_transpose_solve(
     for (SizeType j = n; j > 0; --j) {
         SizeType col = j - 1;
         SizeType diag_pos = L.col_ptr[col];
-        if (diag_pos >= L.col_ptr[col + 1]) continue;
+        if (diag_pos >= L.col_ptr[col + 1]) continue;   // empty column: skipped, as the level schedules do
 
-        assert(L.row_ind[diag_pos] == col);
+        // Checked in every build (issue 907), not asserted.
+        if (L.row_ind[diag_pos] != col) detail::misplaced_diagonal("dense_lower_transpose_solve", col);
+        if (L.values[diag_pos] == Value{0}) detail::zero_diagonal("dense_lower_transpose_solve", col);
 
         // Gather: subtract contributions from off-diagonal entries
         for (SizeType p = diag_pos + 1; p < L.col_ptr[col + 1]; ++p) {

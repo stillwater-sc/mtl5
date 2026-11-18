@@ -9,6 +9,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/sparse/factorization/sparse_qr.hpp>
 #include <mtl/sparse/ordering/rcm.hpp>
+#include <mtl/sparse/ordering/colamd.hpp>
 
 using namespace mtl;
 using namespace mtl::sparse;
@@ -316,4 +317,61 @@ TEST_CASE("Sparse QR numeric with custom accumulator type", "[sparse][qr][accumu
     // Both accumulator configs should agree closely on this well-conditioned system.
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE_THAT(x_wide(i), Catch::Matchers::WithinAbs(x_default(i), 1e-10));
+}
+
+// A rectangular A goes to the ordering too (issue 907): it got the identity
+// without a word, although COLAMD orders it. An ordering that needs a square
+// matrix (AMD, RCM) now throws instead of being ignored.
+TEST_CASE("sparse_qr_symbolic: the ordering applies when m > n", "[sparse][qr][907]") {
+    const std::size_t m = 7, n = 4;
+    mat::compressed2D<double> A(m, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < m; ++i) {   // column 0 dense, the others sparse
+            ins[i][0] << 1.0 + double(i);
+            if (i % 3 == 1) ins[i][1] << 2.0;
+            if (i % 3 == 2) ins[i][2] << -1.0;
+            if (i == 3 || i == 6) ins[i][3] << 0.5;
+        }
+    }
+    const std::vector<std::size_t> rev = {3, 2, 1, 0};
+    auto reversed = [&](const auto&) { return rev; };
+    const auto sym = factorization::sparse_qr_symbolic(A, reversed);
+    REQUIRE(sym.col_perm == rev);
+
+    const auto sc = factorization::sparse_qr_symbolic(A, ordering::colamd{});
+    REQUIRE(sc.col_perm == ordering::colamd{}(A));
+
+    REQUIRE_THROWS_AS(factorization::sparse_qr_symbolic(A, ordering::rcm{}), std::invalid_argument);
+
+    // The least-squares solution does not depend on the column order.
+    vec::dense_vector<double> b(m), x0(n), x1(n);
+    for (std::size_t i = 0; i < m; ++i) b(i) = double(i % 4) - 1.5;
+    factorization::sparse_qr_numeric(A, factorization::sparse_qr_symbolic(A)).solve(x0, b);
+    factorization::sparse_qr_numeric(A, sym).solve(x1, b);
+    for (std::size_t j = 0; j < n; ++j) REQUIRE_THAT(x1(j), Catch::Matchers::WithinAbs(x0(j), 1e-12));
+}
+
+// Column k touches only its own rows and the reflectors that meet them (issue
+// 907). A long tridiagonal system: the old loop applied all k earlier
+// reflectors and scanned all m rows per column, O(n^2); this takes
+// milliseconds. Checked against the exact solution.
+TEST_CASE("sparse QR on a long tridiagonal system", "[sparse][qr][907]") {
+    const std::size_t n = 20000;
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i > 0) ins[i][i - 1] << -1.0;
+            ins[i][i] << 4.0;
+            if (i + 1 < n) ins[i][i + 1] << -1.0;
+        }
+    }
+    vec::dense_vector<double> b(n), x(n);
+    for (std::size_t i = 0; i < n; ++i)   // b = A * ones
+        b(i) = 4.0 - (i > 0 ? 1.0 : 0.0) - (i + 1 < n ? 1.0 : 0.0);
+    const auto num = factorization::sparse_qr_numeric(A, factorization::sparse_qr_symbolic(A));
+    num.solve(x, b);
+    for (std::size_t i = 0; i < n; ++i) REQUIRE_THAT(x(i), Catch::Matchers::WithinAbs(1.0, 1e-10));
+    REQUIRE(num.R.values.size() <= 3 * n);   // R stays banded
 }
