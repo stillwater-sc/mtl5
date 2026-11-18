@@ -272,8 +272,14 @@ TEMPLATE_TEST_CASE("blocked syrk and syr2k match the reference", "[operation][23
 // alpha and beta of another type than the matrices keep syrk's and syr2k's
 // own loops (#906 review): gemmt converts them to the element type, so a
 // double beta of 1e-50 on float matrices became 0, C was not read, and the
-// result was 0 where beta * C(i, j) in double is about 1e-20.
+// result was 0 where beta * C(i, j) in double is about 1e-20. A BLAS build
+// calls ?syrk / ?syr2k, which take float coefficients for float matrices, so
+// the case is checked where they are not called.
 TEST_CASE("syrk and syr2k with double coefficients on float matrices", "[operation][236]") {
+    if constexpr (detail::syrk_dispatches_blas_v<void, rm<float>, rm<float>> ||
+                  detail::syr2k_dispatches_blas_v<void, rm<float>, rm<float>, rm<float>>) {
+        SKIP("BLAS build: ?syrk / ?syr2k take the coefficients in the matrices' precision");
+    }
     const std::size_t m = 65, k = 1;
     auto fill = [](std::size_t r, std::size_t c, float v) {
         rm<float> X(r, c);
