@@ -290,6 +290,32 @@ TEST_CASE("Triangular solves: empty columns, misplaced and zero diagonals", "[sp
         REQUIRE_THROWS_AS(dense_lower_transpose_solve(E, x), std::invalid_argument);
         REQUIRE_THROWS_AS(factorization::build_lower_solve_schedule(E), std::invalid_argument);
         REQUIRE_THROWS_AS(factorization::build_lower_transpose_solve_schedule(E), std::invalid_argument);
+
+        // sparse_lower_solve on a 1x1 factor with nothing stored: the bounds
+        // test alone (there is no row entry for the next check to read).
+        util::csc_matrix<double> Z;
+        Z.nrows = Z.ncols = 1;
+        Z.col_ptr = {0, 0};
+        std::vector<double> z = {5.0};
+        std::vector<std::size_t> xi = {0};
+        REQUIRE_THROWS_AS(factorization::sparse_lower_solve(Z, z, xi, 0), std::invalid_argument);
+    }
+    SECTION("a zero diagonal installed after the schedule was built: std::runtime_error") {
+        util::csc_matrix<double> D;
+        D.nrows = D.ncols = 1;
+        D.col_ptr = {0, 1};
+        D.row_ind = {0};
+        D.values  = {2.0};
+        const auto ls = factorization::build_lower_solve_schedule(D);
+        const auto lt = factorization::build_lower_transpose_solve_schedule(D);
+        const auto us = factorization::build_upper_solve_schedule(D);
+        std::vector<double> y = {6.0};
+        factorization::level_scheduled_lower_solve(D, ls, y);
+        REQUIRE(y[0] == 3.0);
+        D.values[0] = 0.0;   // same pattern, new value
+        REQUIRE_THROWS_AS(factorization::level_scheduled_lower_solve(D, ls, y), std::runtime_error);
+        REQUIRE_THROWS_AS(factorization::level_scheduled_lower_transpose_solve(D, lt, y), std::runtime_error);
+        REQUIRE_THROWS_AS(factorization::level_scheduled_upper_solve(D, us, y), std::runtime_error);
     }
     util::csc_matrix<double> L;   // 2x2 lower: col 0 = rows {0, 1}, col 1 = row {1}
     L.nrows = L.ncols = 2;

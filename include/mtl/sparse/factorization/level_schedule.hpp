@@ -165,6 +165,13 @@ void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
            s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
            "schedule does not match L (rebuild after a pattern change)");
     assert(x.size() >= s.n && "solution vector shorter than the system");
+    // A zero diagonal, checked on every solve and before any worker starts
+    // (issue 907): the schedule fixes the pattern, but values installed later
+    // with the same pattern (set_factor_values) can put a zero there, and
+    // the division would give inf, where the serial solve throws.
+    for (std::size_t j = 0; j < s.n; ++j)
+        if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
+            detail::zero_diagonal("level_scheduled_lower_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -279,6 +286,13 @@ void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeTyp
            s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
            "schedule does not match L (rebuild after a pattern change)");
     assert(x.size() >= s.n && "solution vector shorter than the system");
+    // A zero diagonal, checked on every solve and before any worker starts
+    // (issue 907): the schedule fixes the pattern, but values installed later
+    // with the same pattern (set_factor_values) can put a zero there, and
+    // the division would give inf, where the serial solve throws.
+    for (std::size_t j = 0; j < s.n; ++j)
+        if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
+            detail::zero_diagonal("level_scheduled_lower_transpose_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -427,6 +441,13 @@ void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
            s.built_nnz == static_cast<std::size_t>(U.nnz()) &&
            "schedule does not match U (rebuild after a pattern change)");
     assert(x.size() >= s.n && "solution vector shorter than the system");
+    // A zero diagonal, checked on every solve and before any worker starts
+    // (issue 907): the schedule fixes the pattern, but values installed later
+    // with the same pattern (set_factor_values) can put a zero there, and
+    // the division would give inf, where the serial solve throws.
+    for (std::size_t j = 0; j < s.n; ++j)
+        if (U.values[static_cast<std::size_t>(U.col_ptr[j + 1] - 1)] == Value{0})
+            detail::zero_diagonal("level_scheduled_upper_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
