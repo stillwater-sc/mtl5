@@ -16,6 +16,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -567,4 +568,75 @@ TEST_CASE("IDR(s): residual replacement sees a peak inside a cycle (issue 874)",
         return count;
     };
     CHECK(products(true) == products(false) + 1);
+}
+
+namespace {
+// A, except that the operator calls listed in `zero` return 0: G = A U is 0
+// there, a breakdown of P^H G.
+struct flaky_op {
+    const csr& A;
+    std::set<int> zero;
+    mutable int calls = 0;
+    std::size_t num_rows() const { return A.num_rows(); }
+    std::size_t num_cols() const { return A.num_cols(); }
+    vec_t operator*(const vec_t& x) const {
+        ++calls;
+        vec_t y(A.num_rows(), 0.0);
+        if (!zero.count(calls)) mult(A, x, y);
+        return y;
+    }
+};
+// basic_iteration, except that the finished(vector) calls listed in `lie`
+// report convergence: IDR(s) then checks the true residual, finds it not
+// converged, and restarts without a breakdown.
+struct lying_iter : itl::basic_iteration<double> {
+    using base = itl::basic_iteration<double>;
+    std::set<int> lie;
+    int calls = 0;
+    lying_iter(const vec_t& b, int m, double t) : base(b, m, t) {}
+    template <typename V>
+    bool finished(const V& r) { return lie.count(++calls) ? true : base::finished(r); }
+    bool finished(double r) { return base::finished(r); }
+};
+} // namespace
+
+// The redraw budget counts consecutive first-step breakdowns (issue 909). It
+// was reset only by a breakdown at a later step, so first-step breakdowns
+// separated by successful steps and true-residual restarts added up: the
+// fourth gave code 2. With s = 1 on a tridiagonal A, operator call 2 is the
+// first step after the initial residual; each later restart's first step
+// falls on calls 6, 10, 14, after the lies at finished() calls 4, 9, 14 send
+// IDR(s) back to the true residual. (The call numbers were traced on this
+// sequence; a change in the order of IDR(s)'s operator calls moves them.)
+TEST_CASE("IDR(s): first-step breakdowns separated by progress do not exhaust the redraws (issue 909)",
+          "[itl][krylov][idr_s][909]") {
+    const std::size_t n = 30;
+    csr A(n, n);
+    {
+        mat::inserter<csr> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i > 0) ins[i][i - 1] << -1.0;
+            ins[i][i] << 4.0;
+            if (i + 1 < n) ins[i][i + 1] << -1.0;
+        }
+    }
+    const itl::pc::identity<csr> M(A);
+    const vec_t b(n, 1.0);
+    itl::idrs_options opt;
+    opt.s = 1;
+    SECTION("four first-step breakdowns, each after a successful step: converges") {
+        flaky_op op{A, {2, 6, 10, 14}};
+        lying_iter iter(b, 200, 1e-10);
+        iter.lie = {4, 9, 14};
+        vec_t x(n, 0.0);
+        CHECK(itl::idr_s(op, x, b, M, iter, opt) == 0);
+        CHECK(op.calls > *op.zero.rbegin());   // it went on past the last injected breakdown
+        CHECK(true_relres(A, x, b) <= 1.5e-10);
+    }
+    SECTION("four consecutive first-step breakdowns: code 2, as before") {
+        flaky_op op{A, {2, 4, 6, 8}};   // every restart's first step
+        itl::basic_iteration<double> iter(b, 200, 1e-10);
+        vec_t x(n, 0.0);
+        CHECK(itl::idr_s(op, x, b, M, iter, opt) == 2);
+    }
 }

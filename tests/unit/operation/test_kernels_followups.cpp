@@ -172,12 +172,16 @@ TEST_CASE("sparse norms and predicates are O(nnz) (issue 886)", "[operation][nor
     CHECK(one_norm(W) == 3.5);
     CHECK(infinity_norm(W) == 3.5);
     // The sorted path, also on a wide matrix with several entries per column.
+    // Column 7's sum (1 + 2 + 2.5 = 5.5) must win over the lone 4.0, and every
+    // single entry is below both: a bug that stops summing within a column
+    // gives 4 or 2.5, and one that sums across columns more (issue 909: with
+    // 1, -2, 0.5 the lone 4.0 was the answer either way).
     crs V(3, 50000000);
     {
         mat::inserter<crs> ins(V);
-        ins[0][7] << 1.0; ins[1][7] << -2.0; ins[2][7] << 0.5; ins[1][40000000] << 4.0;
+        ins[0][7] << 1.0; ins[1][7] << -2.0; ins[2][7] << 2.5; ins[1][40000000] << 4.0;
     }
-    CHECK(one_norm(V) == 4.0);
+    CHECK(one_norm(V) == 5.5);
     // Empty dense matrices return 0 before any buffer: a row-major 0 x 1e8
     // one_norm allocated 800 MB, as did a column-major 1e8 x 0 infinity_norm.
     CHECK(one_norm(rm(0, 100000000)) == 0.0);
@@ -495,4 +499,66 @@ TEST_CASE("BLAS dispatch: ger's mixed alpha, empty shapes, every gemm orientatio
     };
     run(rm(), rm(), rm()); run(rm(), rm(), cm()); run(rm(), cm(), rm()); run(rm(), cm(), cm());
     run(cm(), rm(), rm()); run(cm(), rm(), cm()); run(cm(), cm(), rm()); run(cm(), cm(), cm());
+}
+
+namespace order_record {
+inline std::vector<double>& last_seen() { static std::vector<double> v; return v; }
+/// An accumulator (the ADL hooks) that records the magnitudes in the order
+/// they are added, so a test can see the walk (issue 909).
+struct record_acc { std::vector<double> seen; double s; };
+inline void accumulator_clear(record_acc& a) { a.seen.clear(); a.s = 0.0; }
+template <typename V>
+void accumulator_assign(record_acc& a, const V& v) { a.seen.assign(1, double(v)); a.s = double(v) * double(v); }
+template <typename V>
+void accumulator_add_product(record_acc& a, const V& x, const V& y) { a.seen.push_back(double(x)); a.s += double(x) * double(y); }
+template <typename R>
+R accumulator_value(const record_acc& a, std::type_identity<R>) {
+    last_seen() = a.seen;
+    return static_cast<R>(a.s);
+}
+} // namespace order_record
+
+// frobenius_norm<Accumulator> walks a column-major matrix by columns (issue
+// 909): only the default branch was made layout-aware in issue 886, and the
+// Accumulator branch read a column-major matrix by rows.
+TEST_CASE("frobenius_norm<Accumulator> walks the storage order (issue 909)", "[operation][norms][909]") {
+    rm R(2, 3);
+    cm C(2, 3);
+    for (std::size_t i = 0; i < 2; ++i)
+        for (std::size_t j = 0; j < 3; ++j) R(i, j) = C(i, j) = double(1 + i + 2 * j);   // 1 3 5 / 2 4 6
+    const double want = std::sqrt(1.0 + 4 + 9 + 16 + 25 + 36);
+    CHECK(frobenius_norm<order_record::record_acc>(C) == want);
+    CHECK(order_record::last_seen() == std::vector<double>({1, 2, 3, 4, 5, 6}));   // column by column
+    CHECK(frobenius_norm<order_record::record_acc>(R) == want);
+    CHECK(order_record::last_seen() == std::vector<double>({1, 3, 5, 2, 4, 6}));   // row by row
+}
+
+// The dense copy of an expression operand stays (issue 909, option a), so a
+// large sparse expression is formed as a compressed2D first, which mult takes
+// without a dense copy: here 2.0 * S as a copy of S with its values scaled. At
+// 200000 x 200000 a dense copy would be 320 GB.
+TEST_CASE("a large sparse operand formed as a compressed2D is not copied dense (issue 909)",
+          "[operation][mult][909]") {
+    const std::size_t n = 200000;
+    crs S(n, n);
+    {
+        mat::inserter<crs> ins(S);
+        for (std::size_t i = 0; i < n; i += 1000) ins[i][i] << 1.5;
+    }
+    crs T = S;                                   // 2.0 * S, formed sparse
+    for (auto& v : T.ref_data()) v *= 2.0;
+    static_assert(!detail::holds_expression_v<crs>);
+    rm B(n, 1), C(n, 1);
+    for (std::size_t i = 0; i < n; ++i) B(i, 0) = 1.0;
+    mult(T, B, C);
+    CHECK(C(0, 0) == 3.0);
+    CHECK(C(1000, 0) == 3.0);
+    CHECK(C(1, 0) == 0.0);
+}
+
+// frobenius_norm<Accumulator> on empty matrices submits no work (#911 review)
+// and still rounds out through the accumulator.
+TEST_CASE("frobenius_norm<Accumulator> of an empty column-major matrix (issue 909)", "[operation][norms][909]") {
+    CHECK(frobenius_norm<long double>(cm(0, 100000000)) == 0.0);
+    CHECK(frobenius_norm<long double>(cm(100000000, 0)) == 0.0);
 }

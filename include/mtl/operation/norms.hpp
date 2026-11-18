@@ -326,16 +326,32 @@ auto frobenius_norm(const M& m) {
     if constexpr (!std::is_void_v<Accumulator>) {
         using out_t = std::conditional_t<std::is_void_v<Result>, mag_t, Result>;
         using AT = math::accumulator_traits<Accumulator, mag_t>;
-        // Split by rows across the thread pool when m is plain dense storage and
-        // the accumulator can merge (#582); serial otherwise. Each chunk walks
-        // its rows in the serial order, so one thread gives the original loop.
+        // Split across the thread pool when m is plain dense storage and the
+        // accumulator can merge (#582); serial otherwise. The units are rows,
+        // or columns of a column-major matrix, which the row walk read against
+        // its layout (issue 909; the default branch was made layout-aware in
+        // issue 886). Each chunk walks its units in the serial order, so one
+        // thread gives the serial loop.
+        // With fewer columns than the team has threads, columns would leave
+        // threads idle (a 1e6 x 1 matrix ran on one), so such a matrix is
+        // split by rows, as before (#911 review). An empty matrix submits no
+        // units: 0 x 1e8 column-major submitted 1e8 empty columns.
         const std::size_t ncols = m.num_cols();
-        const std::size_t row_grain = ncols
-            ? std::max(std::size_t{1}, detail::accumulate_chunk_units<Accumulator, mag_t> / ncols)
+        const std::size_t nrows = m.num_rows();
+        bool by_cols = detail::norm_col_major_v<M>;
+        if constexpr (detail::norm_col_major_v<M> && interface::ThreadableDenseMatrix<M> &&
+                      math::mergeable_accumulator<Accumulator, mag_t>) {
+            const std::size_t team = ::mtl::parallel::pool().size();
+            if (team > 1 && ncols < team) by_cols = false;
+        }
+        const std::size_t units = (nrows == 0 || ncols == 0) ? 0 : (by_cols ? ncols : nrows);
+        const std::size_t unit_len = by_cols ? nrows : ncols;
+        const std::size_t grain = unit_len
+            ? std::max(std::size_t{1}, detail::accumulate_chunk_units<Accumulator, mag_t> / unit_len)
             : std::size_t{1};
         const Accumulator acc = detail::accumulate<Accumulator, mag_t,
                                                    interface::ThreadableDenseMatrix<M>>(
-            m.num_rows(), row_grain,
+            units, grain,
             [&](Accumulator& part, std::size_t lo, std::size_t hi) {
                 if constexpr (interface::is_compressed2D_v<M>) {
                     // A compressed2D's stored entries, row by row (serial: it
@@ -346,6 +362,12 @@ auto frobenius_norm(const M& m) {
                     for (std::size_t r = lo; r < hi; ++r)
                         for (auto k = starts[r]; k < starts[r + 1]; ++k) {
                             mag_t a = detail::generic_abs(vals[k]);
+                            AT::add_product(part, a, a);
+                        }
+                } else if (by_cols) {
+                    for (std::size_t c = lo; c < hi; ++c)
+                        for (std::size_t r = 0; r < nrows; ++r) {
+                            mag_t a = detail::generic_abs(m(r, c));
                             AT::add_product(part, a, a);
                         }
                 } else {
