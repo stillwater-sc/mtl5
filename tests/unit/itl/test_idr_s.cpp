@@ -630,7 +630,7 @@ TEST_CASE("IDR(s): first-step breakdowns separated by progress do not exhaust th
         iter.lie = {4, 9, 14};
         vec_t x(n, 0.0);
         CHECK(itl::idr_s(op, x, b, M, iter, opt) == 0);
-        CHECK(op.zero.count(op.calls) == 0);   // it went on past the last injected breakdown
+        CHECK(op.calls > *op.zero.rbegin());   // it went on past the last injected breakdown
         CHECK(true_relres(A, x, b) <= 1.5e-10);
     }
     SECTION("four consecutive first-step breakdowns: code 2, as before") {

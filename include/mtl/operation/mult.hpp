@@ -977,7 +977,10 @@ inline constexpr bool holds_expression_v = holds_expression<std::remove_cvref_t<
 /// was once read lazily. That is the chosen trade (issue 909, option a): the
 /// copy is what lets storage_overlaps see the operand's storage, so that
 /// mult(S, C + C, C) cannot read C while writing it (issue 886). A caller with
-/// a large sparse expression evaluates it into a compressed2D first.
+/// a large sparse expression forms the sparse matrix itself first (there is
+/// no expression-to-compressed2D evaluation): a copy of S with its values
+/// scaled for 2.0 * S, or an inserter for a sum. A compressed2D operand is
+/// not copied.
 template <typename M>
 mat::dense2D<typename M::value_type> dense_copy(const M& A) {
     mat::dense2D<typename M::value_type> D(A.num_rows(), A.num_cols());

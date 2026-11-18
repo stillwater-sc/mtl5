@@ -532,3 +532,33 @@ TEST_CASE("frobenius_norm<Accumulator> walks the storage order (issue 909)", "[o
     CHECK(frobenius_norm<order_record::record_acc>(R) == want);
     CHECK(order_record::last_seen() == std::vector<double>({1, 3, 5, 2, 4, 6}));   // row by row
 }
+
+// The dense copy of an expression operand stays (issue 909, option a), so a
+// large sparse expression is formed as a compressed2D first, which mult takes
+// without a dense copy: here 2.0 * S as a copy of S with its values scaled. At
+// 200000 x 200000 a dense copy would be 320 GB.
+TEST_CASE("a large sparse operand formed as a compressed2D is not copied dense (issue 909)",
+          "[operation][mult][909]") {
+    const std::size_t n = 200000;
+    crs S(n, n);
+    {
+        mat::inserter<crs> ins(S);
+        for (std::size_t i = 0; i < n; i += 1000) ins[i][i] << 1.5;
+    }
+    crs T = S;                                   // 2.0 * S, formed sparse
+    for (auto& v : T.ref_data()) v *= 2.0;
+    static_assert(!detail::holds_expression_v<crs>);
+    rm B(n, 1), C(n, 1);
+    for (std::size_t i = 0; i < n; ++i) B(i, 0) = 1.0;
+    mult(T, B, C);
+    CHECK(C(0, 0) == 3.0);
+    CHECK(C(1000, 0) == 3.0);
+    CHECK(C(1, 0) == 0.0);
+}
+
+// frobenius_norm<Accumulator> on empty matrices submits no work (#911 review)
+// and still rounds out through the accumulator.
+TEST_CASE("frobenius_norm<Accumulator> of an empty column-major matrix (issue 909)", "[operation][norms][909]") {
+    CHECK(frobenius_norm<long double>(cm(0, 100000000)) == 0.0);
+    CHECK(frobenius_norm<long double>(cm(100000000, 0)) == 0.0);
+}

@@ -234,6 +234,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     bool r_is_true = true;   // no step since r was computed from x
     constexpr std::size_t max_redraws = 3;
     std::size_t redraws = 0;   // breakdowns at a first step since the last step that succeeded
+    std::size_t draws = 0;     // shadow spaces drawn so far: each draw takes a new seed
     for (;;) {
         // (Re)start: G = U = 0, P^H G = I, omega = 1; the smoothed pair is
         // the current one.
@@ -338,7 +339,11 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
                             return iter;
                         }
                         ++redraws;
-                        P = detail::idrs_random_shadow<value_type>(n, s, opt.seed + redraws);
+                        // A seed of its own per draw: reusing opt.seed +
+                        // redraws after a reset of the budget redrew a
+                        // space already tried (#911 review).
+                        ++draws;
+                        P = detail::idrs_random_shadow<value_type>(n, s, opt.seed + draws);
                         detail::idrs_orthonormalize<Accumulator>(P);
                     }
                     breakdown = true;
