@@ -148,10 +148,13 @@ std::vector<vec::dense_vector<Value>> idrs_random_shadow(std::size_t n, std::siz
 ///
 /// A near-breakdown in P^H G (a diagonal entry negligible against ||G_k||)
 /// restarts the method from the current x. One at the first step after a
-/// start means P is degenerate for the residual: a new shadow space is drawn
-/// from opt.seed + 1, + 2, + 3 (also when P was supplied), and the solve
-/// fails only when that does not help. Return codes: 0 converged, 1
-/// iteration limit, 2 breakdown in P^H G after the redraws, 3 breakdown in
+/// start means P is degenerate for the residual: a new shadow space is drawn,
+/// each draw from the next seed (opt.seed + 1, + 2, ..., also when P was
+/// supplied). Up to three redraws in a row are allowed; a successful step
+/// resets that budget (issue 909), so a long solve can draw past opt.seed + 3.
+/// The solve fails when three consecutive redraws do not help. Return codes:
+/// 0 converged, 1 iteration limit, 2 breakdown in P^H G after three
+/// consecutive redraws, 3 breakdown in
 /// omega (t = 0, or t orthogonal to r to rounding, |cos(r, t)| <= eps).
 ///
 /// Accumulator (optional): accumulation type for the dot products and the
