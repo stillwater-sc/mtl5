@@ -233,7 +233,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     }
     bool r_is_true = true;   // no step since r was computed from x
     constexpr std::size_t max_redraws = 3;
-    std::size_t redraws = 0;   // consecutive breakdowns at a first step
+    std::size_t redraws = 0;   // breakdowns at a first step since the last step that succeeded
     for (;;) {
         // (Re)start: G = U = 0, P^H G = I, omega = 1; the smoothed pair is
         // the current one.
@@ -340,8 +340,6 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
                         ++redraws;
                         P = detail::idrs_random_shadow<value_type>(n, s, opt.seed + redraws);
                         detail::idrs_orthonormalize<Accumulator>(P);
-                    } else {
-                        redraws = 0;
                     }
                     breakdown = true;
                     break;
@@ -355,6 +353,13 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
                 }
                 ++iter;
                 ++steps_since_start;
+                // A step succeeded with this shadow space: the redraw budget
+                // counts consecutive first-step breakdowns only (issue 909).
+                // It was reset only by a breakdown at a later step, so first-
+                // step breakdowns separated by progress and restarts on the
+                // true residual (no breakdown) added up, and the fourth failed
+                // with code 2.
+                redraws = 0;
                 r_is_true = false;
                 note_peak();
                 if (opt.smoothing) smooth();

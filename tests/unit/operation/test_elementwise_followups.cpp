@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -238,6 +239,85 @@ TEST_CASE("saturating_cast clamps a non-std floating source (issue 887)", "[oper
     CHECK(detail::saturating_cast<std::int8_t>(no_inf(-1e10)) == -128);
     CHECK(detail::saturating_cast<std::int8_t>(no_inf(qnan)) == 0);
     CHECK(detail::saturating_cast<std::int8_t>(no_inf(42.0)) == 42);
+}
+
+// A non-integer number type with no conversion to long double (only explicit
+// ones to the integral types): saturating_cast's branch that cannot judge
+// Value's range in long double, and so clamps on both sides (issue 909: the
+// sweep found it unreached).
+namespace {
+struct int_only {
+    long long v;   // in hundredths: int_only(3) holds 300
+    constexpr int_only() : v(0) {}
+    constexpr int_only(long long i) : v(i * 100) {}
+    static constexpr int_only raw(long long r) { int_only x; x.v = r; return x; }
+    template <std::integral I>
+    explicit constexpr operator I() const { return static_cast<I>(v / 100); }
+    friend constexpr bool operator==(int_only a, int_only b) { return a.v == b.v; }
+    friend constexpr bool operator!=(int_only a, int_only b) { return a.v != b.v; }
+    friend constexpr bool operator<=(int_only a, int_only b) { return a.v <= b.v; }
+    friend constexpr bool operator>=(int_only a, int_only b) { return a.v >= b.v; }
+};
+template <typename T>
+concept converts_to_long_double = requires(const T& t) { static_cast<long double>(t); };
+} // namespace
+template <> struct std::numeric_limits<int_only> {
+    static constexpr bool is_specialized = true;
+    static constexpr bool is_integer = false;
+    static constexpr int_only max() noexcept { return int_only::raw(std::numeric_limits<long long>::max()); }
+    static constexpr int_only lowest() noexcept { return int_only::raw(std::numeric_limits<long long>::lowest()); }
+    static constexpr int_only min() noexcept { return int_only::raw(1); }
+};
+
+TEST_CASE("saturating_cast from a type without a long double conversion (issue 909)", "[operation][projection][909]") {
+    static_assert(!converts_to_long_double<int_only>);
+    CHECK(detail::saturating_cast<std::int8_t>(int_only(1000)) == 127);
+    CHECK(detail::saturating_cast<std::int8_t>(int_only(-1000)) == -128);
+    CHECK(detail::saturating_cast<std::int8_t>(int_only(42)) == 42);
+    CHECK(detail::saturating_cast<std::int8_t>(int_only(-7)) == -7);
+}
+
+// fused_assign and fused_plus_assign on a target whose element storage can't
+// be seen (no data()/size()), and the vector overload (issue 909): the matrix
+// forms take the temporary, assumed read, and the results are exact.
+namespace {
+struct grid {   // a matrix target with no visible storage
+    using value_type = double;
+    using size_type = std::size_t;
+    std::size_t r = 0, c = 0;
+    std::vector<double> cells;
+    grid(std::size_t rr, std::size_t cc) : r(rr), c(cc), cells(rr * cc, 0.0) {}
+    std::size_t num_rows() const { return r; }
+    std::size_t num_cols() const { return c; }
+    void change_dim(std::size_t rr, std::size_t cc) { r = rr; c = cc; cells.assign(rr * cc, 0.0); }
+    double& operator()(std::size_t i, std::size_t j) { return cells[i * c + j]; }
+    double operator()(std::size_t i, std::size_t j) const { return cells[i * c + j]; }
+};
+} // namespace
+
+TEST_CASE("fused_assign on a target without visible storage, and on vectors (issue 909)", "[expr][fuse][909]") {
+    static_assert(!detail::contiguous_storage<grid>);
+    using M = mat::dense2D<double>;
+    const M A = {{1, 2}, {3, 4}};
+    const M B = {{10, 20}, {30, 40}};
+    grid G(2, 2);
+    fused_assign(G, A + B);
+    CHECK(G(0, 0) == 11.0); CHECK(G(0, 1) == 22.0); CHECK(G(1, 0) == 33.0); CHECK(G(1, 1) == 44.0);
+    fused_plus_assign(G, 2.0 * A);
+    CHECK(G(0, 0) == 13.0); CHECK(G(1, 1) == 52.0);
+    grid H(1, 1);                  // another shape: resized after the expression is read
+    fused_assign(H, 1.0 * trans(B));
+    REQUIRE(H.num_rows() == 2);
+    CHECK(H(0, 1) == 30.0); CHECK(H(1, 0) == 20.0);
+
+    const vec::dense_vector<double> x = {1.0, 2.0, 3.0};
+    vec::dense_vector<double> y = {5.0, 6.0, 7.0};
+    fused_assign(y, x + y);        // element i reads only element i: in place
+    CHECK(y(0) == 6.0); CHECK(y(1) == 8.0); CHECK(y(2) == 10.0);
+    vec::dense_vector<double> z(1);
+    fused_assign(z, x * 2.0);      // resized to the expression's size
+    REQUIRE(z.size() == 3);
+    CHECK(z(2) == 6.0);
 }
 
 // -- normwise_backward_error ---------------------------------------------------------

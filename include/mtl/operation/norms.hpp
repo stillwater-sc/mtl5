@@ -326,16 +326,22 @@ auto frobenius_norm(const M& m) {
     if constexpr (!std::is_void_v<Accumulator>) {
         using out_t = std::conditional_t<std::is_void_v<Result>, mag_t, Result>;
         using AT = math::accumulator_traits<Accumulator, mag_t>;
-        // Split by rows across the thread pool when m is plain dense storage and
-        // the accumulator can merge (#582); serial otherwise. Each chunk walks
-        // its rows in the serial order, so one thread gives the original loop.
+        // Split across the thread pool when m is plain dense storage and the
+        // accumulator can merge (#582); serial otherwise. The units are rows,
+        // or columns of a column-major matrix, which the row walk read against
+        // its layout (issue 909; the default branch was made layout-aware in
+        // issue 886). Each chunk walks its units in the serial order, so one
+        // thread gives the serial loop.
+        constexpr bool by_cols = detail::norm_col_major_v<M>;
         const std::size_t ncols = m.num_cols();
-        const std::size_t row_grain = ncols
-            ? std::max(std::size_t{1}, detail::accumulate_chunk_units<Accumulator, mag_t> / ncols)
+        const std::size_t nrows = m.num_rows();
+        const std::size_t unit_len = by_cols ? nrows : ncols;
+        const std::size_t grain = unit_len
+            ? std::max(std::size_t{1}, detail::accumulate_chunk_units<Accumulator, mag_t> / unit_len)
             : std::size_t{1};
         const Accumulator acc = detail::accumulate<Accumulator, mag_t,
                                                    interface::ThreadableDenseMatrix<M>>(
-            m.num_rows(), row_grain,
+            by_cols ? ncols : nrows, grain,
             [&](Accumulator& part, std::size_t lo, std::size_t hi) {
                 if constexpr (interface::is_compressed2D_v<M>) {
                     // A compressed2D's stored entries, row by row (serial: it
@@ -346,6 +352,12 @@ auto frobenius_norm(const M& m) {
                     for (std::size_t r = lo; r < hi; ++r)
                         for (auto k = starts[r]; k < starts[r + 1]; ++k) {
                             mag_t a = detail::generic_abs(vals[k]);
+                            AT::add_product(part, a, a);
+                        }
+                } else if constexpr (by_cols) {
+                    for (std::size_t c = lo; c < hi; ++c)
+                        for (std::size_t r = 0; r < nrows; ++r) {
+                            mag_t a = detail::generic_abs(m(r, c));
                             AT::add_product(part, a, a);
                         }
                 } else {

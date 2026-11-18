@@ -971,6 +971,13 @@ inline constexpr bool holds_expression_v = holds_expression<std::remove_cvref_t<
 
 /// An owning dense copy of a matrix operand, in its own element type: what an
 /// expression operand is evaluated into before a kernel that writes C runs.
+///
+/// A sparse expression is densified too: mult(S + S, B, C) or mult(2.0 * S,
+/// B, C) with a compressed2D S allocates an m x k dense2D, where the operand
+/// was once read lazily. That is the chosen trade (issue 909, option a): the
+/// copy is what lets storage_overlaps see the operand's storage, so that
+/// mult(S, C + C, C) cannot read C while writing it (issue 886). A caller with
+/// a large sparse expression evaluates it into a compressed2D first.
 template <typename M>
 mat::dense2D<typename M::value_type> dense_copy(const M& A) {
     mat::dense2D<typename M::value_type> D(A.num_rows(), A.num_cols());
