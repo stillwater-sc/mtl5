@@ -25,6 +25,7 @@
 #include <mtl/detail/same_object.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/interface/dispatch_traits.hpp>
+#include <mtl/detail/column_sweep.hpp>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
 #endif
@@ -54,6 +55,40 @@ inline constexpr bool symv_dispatches_blas_v = [] {
 /// lower triangle (#724).
 template <typename M>
 inline constexpr bool symv_uses_row_loop_v = row_major_contiguous_v<M>;
+
+/// Rows per strip of the row-major symv (#236), and columns per block of a
+/// strip's pass over the columns left of it: 8 rows of 256 doubles are 16 KB,
+/// in L1 for the second of the two loops below. Below symv_strip_min_n the
+/// row loop is as fast.
+inline constexpr std::size_t symv_strip_rows = 8;
+inline constexpr std::size_t symv_strip_block = 256;
+inline constexpr std::size_t symv_strip_min_n = 128;
+
+/// acc[j] += p[0][j] x[0] + p[1][j] x[1] + ... in row order, for j < len: R
+/// rows' contributions to the entries left of the strip. Each acc[j] gets its
+/// terms one at a time, in the row loop's order; the j's are independent, so
+/// the loop vectorizes over j.
+template <std::size_t R, typename Acc, typename TA, typename TX>
+inline void symv_strip_scatter(std::size_t len, const TA* const* p, const TX* xr, Acc* acc) {
+    for (std::size_t j = 0; j < len; ++j) {
+        Acc a = acc[j];
+        for (std::size_t r = 0; r < R; ++r)
+            a += p[r][j] * xr[r];
+        acc[j] = a;
+    }
+}
+
+/// s[r] += p[r][j] x[j] in ascending j, for j < len: each row's own sum, R
+/// independent chains sharing each x[j] (see MTL5_NO_LOOP_VECTORIZE).
+template <std::size_t R, typename Acc, typename TA, typename X>
+MTL5_NO_LOOP_VECTORIZE inline void symv_strip_gather(std::size_t len, const TA* const* p, Acc* s,
+                                                     const X& x, std::size_t j0) {
+    for (std::size_t j = 0; j < len; ++j) {
+        const auto& xj = x(j0 + j);
+        for (std::size_t r = 0; r < R; ++r)
+            s[r] += p[r][j] * xj;
+    }
+}
 
 } // namespace detail
 
@@ -145,7 +180,49 @@ void symv(const S& alpha, const M& A, const VX& x, const S& beta, VY& y) {
             return;
         }
         std::vector<value_type> acc(static_cast<std::size_t>(n), math::zero<value_type>());
-        for (size_type i = 0; i < n; ++i) {
+        size_type i = 0;
+        if (static_cast<std::size_t>(n) >= detail::symv_strip_min_n) {
+            // Strips of R rows (#236). The row loop's s is a serial chain, one
+            // term per FMA latency; R rows at once are R independent chains, and
+            // the j < i0 updates of acc[] read each acc[j] once for R terms.
+            // Every term, and the order in which each acc[] and s receives
+            // them, is the row loop's: row i0 + r's own sum runs over j < i0,
+            // then j in [i0, i0 + r]; acc[j], j < i0, receives rows i0, i0 + 1,
+            // ... in turn; an in-strip acc[i0 + q] holds its row's sum, then the
+            // later rows of the strip, then those of later strips. So the
+            // result is bit-identical (contraction aside).
+            using TA = typename M::value_type;
+            using TX = std::remove_cvref_t<decltype(x(size_type{0}))>;   // x(i)'s type, as the row loop's xi
+            constexpr std::size_t R  = detail::symv_strip_rows;
+            constexpr std::size_t Bk = detail::symv_strip_block;
+            const std::size_t ns = static_cast<std::size_t>(n);
+            for (; static_cast<std::size_t>(i) + R <= ns; i += static_cast<size_type>(R)) {
+                const std::size_t i0 = static_cast<std::size_t>(i);
+                const TA* p[R];
+                TX xr[R];
+                value_type s[R];
+                for (std::size_t r = 0; r < R; ++r) {
+                    p[r]  = &A(static_cast<size_type>(i0 + r), 0);
+                    xr[r] = x(static_cast<size_type>(i0 + r));
+                    s[r]  = math::zero<value_type>();
+                }
+                for (std::size_t j0 = 0; j0 < i0; j0 += Bk) {
+                    const std::size_t len = std::min(Bk, i0 - j0);
+                    const TA* q[R];
+                    for (std::size_t r = 0; r < R; ++r) q[r] = p[r] + j0;
+                    detail::symv_strip_scatter<R>(len, q, xr, acc.data() + j0);
+                    detail::symv_strip_gather<R>(len, q, s, x, j0);
+                }
+                for (std::size_t r = 0; r < R; ++r)
+                    for (std::size_t j = i0; j <= i0 + r; ++j)
+                        s[r] += p[r][j] * x(static_cast<size_type>(j));
+                for (std::size_t r = 0; r < R; ++r) acc[i0 + r] = s[r];
+                for (std::size_t r = 1; r < R; ++r)
+                    for (std::size_t q = 0; q < r; ++q)
+                        acc[i0 + q] += p[r][i0 + q] * xr[r];
+            }
+        }
+        for (; i < n; ++i) {
             const auto* ai = &A(i, 0);
             const auto& xi = x(i);
             for (size_type j = 0; j < i; ++j)       // y(j) += a(j,i) x(i), j < i

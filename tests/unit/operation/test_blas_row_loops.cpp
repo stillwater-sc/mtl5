@@ -20,6 +20,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <utility>
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
@@ -312,6 +313,42 @@ TEMPLATE_TEST_CASE("symm and symv row loops are bit-identical to the old loops",
                 REQUIRE(std::fabs(double(u(i)) - double(w(i))) <= 1e-4 * (1 + std::fabs(double(w(i)))));
             else
                 REQUIRE(identical(u(i), w(i)));
+        }
+    }
+}
+
+// The strips of the row-major symv (#236) start at detail::symv_strip_min_n
+// rows: sizes at the threshold, with a tail of rows after the last strip, and
+// past one column block (detail::symv_strip_block), against the column loop.
+TEMPLATE_TEST_CASE("symv strips are bit-identical to the old loop", "[operation][236]",
+                   (std::pair<float, float>), (std::pair<double, double>),
+                   (std::pair<long double, long double>), (std::pair<float, double>)) {
+    using T  = typename TestType::first_type;    // A and y
+    using TX = typename TestType::second_type;   // x
+    using M  = rm<T>;
+    using V  = vec::dense_vector<T>;
+    using VX = vec::dense_vector<TX>;
+    static_assert(detail::symv_strip_min_n == 128 && detail::symv_strip_block == 256 &&
+                  detail::symv_strip_rows == 8);
+    for (const std::size_t n : {std::size_t{127}, std::size_t{128}, std::size_t{133},
+                                std::size_t{263}, std::size_t{521}}) {
+        CAPTURE(n);
+        const M A = filled<M>(n, n, 15);
+        VX x(n);
+        V y0(n);
+        for (std::size_t i = 0; i < n; ++i) { x(i) = TX(val(16, i, 0)); y0(i) = T(val(17, i, 0)); }
+        for (const T beta : {T(0), T(0.75)}) {
+            CAPTURE(static_cast<double>(beta));
+            V u = y0, w = y0;
+            symv(T(1.25), A, x, beta, u);
+            old_symv(T(1.25), A, x, beta, w);
+            for (std::size_t i = 0; i < n; ++i) {
+                INFO("y(" << i << ")");
+                if constexpr (detail::symv_dispatches_blas_v<void, M, VX, V>)
+                    REQUIRE(std::fabs(double(u(i)) - double(w(i))) <= 1e-4 * (1 + std::fabs(double(w(i)))));
+                else
+                    REQUIRE(identical(u(i), w(i)));
+            }
         }
     }
 }
