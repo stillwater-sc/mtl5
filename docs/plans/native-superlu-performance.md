@@ -2,7 +2,18 @@
 
 ## Status
 
-**Planning.** MTL5 has an external SuperLU binding (`include/mtl/interface/superlu.hpp`)
+**Current (2026-11-17).** The native supernodal LU exists
+(`include/mtl/sparse/factorization/supernodal_lu.hpp`). It is correct, has
+the refactor, scaling, pivot perturbation and mixed-precision refinement, and
+since #195's first steps (#902, #903) it has panel updates. Its FP64 parity
+with SuiteSparse SuperLU is **parked** at 1.88-2.39x SuperLU's time on wang3,
+wang4 and raefsky3, and 1.99x on bbmat, with fill already within 1.2x. The
+measured state and the remaining plan are at the end of this page, from
+"Measured baseline for #195". The rest of the gap needs a storage rework (L
+kept once as supernode blocks, a supernodal DFS), described in "Step 3 of
+#195". The Phase 0-5 text below is the original plan, kept as written.
+
+**Planning (the original status, before the native solver existed).** MTL5 has an external SuperLU binding (`include/mtl/interface/superlu.hpp`)
 but **no native SuperLU** — no native supernodal unsymmetric LU. Its native sparse
 LU is scalar, non-supernodal Gilbert–Peierls (`sparse_lu.hpp`, and per-block in
 `native_klu.hpp`); the only native *supernodal* factorization is the symmetric
