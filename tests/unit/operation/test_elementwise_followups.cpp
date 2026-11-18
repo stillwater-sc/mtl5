@@ -261,9 +261,22 @@ struct int_only {
 template <typename T>
 concept converts_to_long_double = requires(const T& t) { static_cast<long double>(t); };
 } // namespace
-template <> struct std::numeric_limits<int_only> {
+template <> struct std::numeric_limits<int_only> {   // every member MSVC's traits read
     static constexpr bool is_specialized = true;
     static constexpr bool is_integer = false;
+    static constexpr bool is_signed = true;
+    static constexpr bool is_exact = true;
+    static constexpr bool has_infinity = false;
+    static constexpr bool has_quiet_NaN = false;
+    static constexpr bool has_signaling_NaN = false;
+    static constexpr bool is_bounded = true;
+    static constexpr bool is_modulo = false;
+    static constexpr int radix = 10;
+    static constexpr int digits = 17;
+    static constexpr int digits10 = 16;
+    static constexpr int_only epsilon() noexcept { return int_only::raw(1); }
+    static constexpr int_only infinity() noexcept { return int_only(); }
+    static constexpr int_only quiet_NaN() noexcept { return int_only(); }
     static constexpr int_only max() noexcept { return int_only::raw(std::numeric_limits<long long>::max()); }
     static constexpr int_only lowest() noexcept { return int_only::raw(std::numeric_limits<long long>::lowest()); }
     static constexpr int_only min() noexcept { return int_only::raw(1); }
