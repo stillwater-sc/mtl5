@@ -12,6 +12,7 @@
 #include <mtl/sparse/analysis/elimination_tree.hpp>
 #include <mtl/sparse/analysis/postorder.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
+#include <mtl/sparse/factorization/level_schedule.hpp>
 
 using namespace mtl;
 using namespace mtl::sparse;
@@ -262,27 +263,33 @@ TEST_CASE("Upper triangular solve with diagonal matrix", "[sparse][trisolve][edg
     REQUIRE_THAT(x[2], Catch::Matchers::WithinAbs(5.0, 1e-12));
 }
 
-// Empty columns and misplaced or zero diagonals (issue 907). An empty column
-// is skipped, as the level schedules do; dense_upper_solve formed its
-// diagonal's position as col_ptr[col + 1] - 1 first, which wrapped to
-// SIZE_MAX for an empty leading column and read row_ind[SIZE_MAX] (an ASan
-// heap overflow). A diagonal that is not where the solve expects it, or is
-// zero, was only asserted: under NDEBUG it read the wrong entry or divided by
-// zero. Both now throw in every build.
+// Empty columns and misplaced or zero diagonals (issue 907). dense_upper_solve
+// formed its diagonal's position as col_ptr[col + 1] - 1 first, which wrapped
+// to SIZE_MAX for an empty leading column and read row_ind[SIZE_MAX] (an ASan
+// heap overflow); the other solves skipped an empty column, solving as if its
+// diagonal were 1 (U = {col_ptr {0,0,1}, row 1, 2}, b = {3, 8} gave {3, 4}).
+// A diagonal that is not where the solve expects it, or is zero, was only
+// asserted: under NDEBUG it read the wrong entry or divided by zero. All of
+// these throw in every build, and the level schedules reject the same
+// structures when they are built.
 TEST_CASE("Triangular solves: empty columns, misplaced and zero diagonals", "[sparse][trisolve][edge][907]") {
     using factorization::dense_upper_solve;
     using factorization::dense_lower_solve;
     using factorization::dense_lower_transpose_solve;
-    SECTION("dense_upper_solve skips an empty leading column") {
+    SECTION("an empty column has no diagonal: std::invalid_argument") {
         util::csc_matrix<double> U;
         U.nrows = U.ncols = 2;
         U.col_ptr = {0, 0, 1};
         U.row_ind = {1};
         U.values  = {2.0};
         std::vector<double> x = {3.0, 8.0};
-        dense_upper_solve(U, x);
-        REQUIRE(x[0] == 3.0);
-        REQUIRE(x[1] == 4.0);
+        REQUIRE_THROWS_AS(dense_upper_solve(U, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_upper_solve_schedule(U), std::invalid_argument);
+        util::csc_matrix<double> E = U;   // as lower: column 0 empty
+        REQUIRE_THROWS_AS(dense_lower_solve(E, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(dense_lower_transpose_solve(E, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_solve_schedule(E), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_transpose_solve_schedule(E), std::invalid_argument);
     }
     util::csc_matrix<double> L;   // 2x2 lower: col 0 = rows {0, 1}, col 1 = row {1}
     L.nrows = L.ncols = 2;
@@ -297,6 +304,9 @@ TEST_CASE("Triangular solves: empty columns, misplaced and zero diagonals", "[sp
         REQUIRE_THROWS_AS(dense_lower_transpose_solve(bad, x), std::invalid_argument);
         util::csc_matrix<double> U = L;   // as upper: column 0's last entry is row 1, not 0
         REQUIRE_THROWS_AS(dense_upper_solve(U, x), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_upper_solve_schedule(U), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_solve_schedule(bad), std::invalid_argument);
+        REQUIRE_THROWS_AS(factorization::build_lower_transpose_solve_schedule(bad), std::invalid_argument);
         std::vector<std::size_t> xi = {0, 1};
         REQUIRE_THROWS_AS(factorization::sparse_lower_solve(bad, x, xi, 0), std::invalid_argument);
     }

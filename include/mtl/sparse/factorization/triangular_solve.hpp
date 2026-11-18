@@ -195,10 +195,10 @@ void dense_lower_solve(
 
     for (SizeType j = 0; j < n; ++j) {
         SizeType diag_pos = L.col_ptr[j];
-        if (diag_pos >= L.col_ptr[j + 1]) continue;   // empty column: skipped, as the level schedules do
-
-        // Checked in every build (issue 907), not asserted.
-        if (L.row_ind[diag_pos] != j) detail::misplaced_diagonal("dense_lower_solve", j);
+        // Checked in every build (issue 907), not asserted. An empty column
+        // has no diagonal: skipping it solved the system as if it were 1.
+        if (diag_pos >= L.col_ptr[j + 1] || L.row_ind[diag_pos] != j)
+            detail::misplaced_diagonal("dense_lower_solve", j);
         Value diag = L.values[diag_pos];
         if (diag == Value{0}) detail::zero_diagonal("dense_lower_solve", j);
 
@@ -222,11 +222,12 @@ void dense_upper_solve(
 
     for (SizeType j = n; j > 0; --j) {
         SizeType col = j - 1;
-        // An empty column is skipped, as the level schedules do. It is tested
-        // before the diagonal's position is formed (issue 907): with
-        // col_ptr[col + 1] == 0, col_ptr[col + 1] - 1 wrapped to SIZE_MAX,
-        // passed the old test and read row_ind[SIZE_MAX].
-        if (U.col_ptr[col] >= U.col_ptr[col + 1]) continue;
+        // An empty column has no diagonal (issue 907). It is tested before the
+        // diagonal's position is formed: with col_ptr[col + 1] == 0,
+        // col_ptr[col + 1] - 1 wrapped to SIZE_MAX, passed the old test and
+        // read row_ind[SIZE_MAX]; and skipping it solved the system as if the
+        // diagonal were 1.
+        if (U.col_ptr[col] >= U.col_ptr[col + 1]) detail::misplaced_diagonal("dense_upper_solve", col);
         // Find diagonal (last entry in column col for upper triangular)
         SizeType diag_pos = U.col_ptr[col + 1] - 1;
 
@@ -257,10 +258,10 @@ void dense_lower_transpose_solve(
     for (SizeType j = n; j > 0; --j) {
         SizeType col = j - 1;
         SizeType diag_pos = L.col_ptr[col];
-        if (diag_pos >= L.col_ptr[col + 1]) continue;   // empty column: skipped, as the level schedules do
-
-        // Checked in every build (issue 907), not asserted.
-        if (L.row_ind[diag_pos] != col) detail::misplaced_diagonal("dense_lower_transpose_solve", col);
+        // Checked in every build (issue 907), not asserted; an empty column
+        // has no diagonal.
+        if (diag_pos >= L.col_ptr[col + 1] || L.row_ind[diag_pos] != col)
+            detail::misplaced_diagonal("dense_lower_transpose_solve", col);
         if (L.values[diag_pos] == Value{0}) detail::zero_diagonal("dense_lower_transpose_solve", col);
 
         // Gather: subtract contributions from off-diagonal entries

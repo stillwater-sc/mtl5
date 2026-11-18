@@ -162,8 +162,10 @@ struct identity_factor {
 };
 mat::compressed2D<double> identity(std::size_t n) {
     mat::compressed2D<double> A(n, n);
-    mat::inserter<mat::compressed2D<double>> ins(A);
-    for (std::size_t i = 0; i < n; ++i) ins[i][i] << 1.0;
+    {   // the inserter commits its entries in its destructor, before the return
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) ins[i][i] << 1.0;
+    }
     return A;
 }
 } // namespace
@@ -176,6 +178,7 @@ TEST_CASE("iterative_refine: NaN in the residual, x or b is not converged", "[sp
     const auto A = identity(n);
     sparse::refine_options opt;
     opt.rel_tol = 1e-10;
+    REQUIRE(A.nnz() == n);   // the fixture is the identity
     SECTION("a correction that returns NaN") {
         vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
         const auto res = sparse::iterative_refine<double>(A, nan_factor{}, b, x, opt);
