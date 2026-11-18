@@ -165,6 +165,13 @@ private:
     bool                                has_factor_ = false;  // set by set_factor; solve() requires it
 };
 
+/// Source-supernode width from which the LDL^T block update runs with the
+/// supernode's columns outermost (issue 908; see the update loop).
+#ifndef MTL5_SUPERNODAL_LDLT_KK_OUTER_WIDTH
+#define MTL5_SUPERNODAL_LDLT_KK_OUTER_WIDTH 2
+#endif
+inline constexpr std::size_t supernodal_ldlt_kk_outer_width = MTL5_SUPERNODAL_LDLT_KK_OUTER_WIDTH;
+
 namespace detail {
 /// Shared back end of the two symbolic overloads: fuse the fill-reducing
 /// ordering with a postorder of the elimination tree (so supernode columns are
@@ -341,21 +348,55 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
                     for (std::size_t kk = 0; kk < wK; ++kk)
                         split_coef[kk] = mtl::math::two_product(D[fK + kk], UK[kk * moff + bi]);
                 }
-                for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
-                    const std::size_t tr = rel[rowsK[ui]];
-                    assert(tr != NPOS && "update row must lie in the target panel");
-                    Acc* dst = &P[tc * m + tr];
-                    for (std::size_t kk = 0; kk < wK; ++kk) {
-                        // coefficient D(k)*L(row_b,k) formed in Value; product with
-                        // L(row_u,k) accumulated in Accumulator (negated -> subtract).
-                        if constexpr (split) {
-                            const auto& coef = split_coef[kk];
-                            AT::add_product(*dst, UK[kk * moff + ui], -coef.hi);
+                // Both loop orders give each destination its kk terms in
+                // ascending kk (the destinations are distinct accumulators), so
+                // they are bit-identical. kk outermost (issue 908) reads column kk
+                // of K's panel, UK[kk * moff + ui], contiguously; kk innermost
+                // strides by moff but keeps one destination at a time. From
+                // width 2 the first is taken: a 28^3 grid with AMD factors 1.39x
+                // faster (788 -> 567 ms, i7-12700K, one thread); a 160^2 grid,
+                // whose supernodes are narrow, is unchanged (19.1 -> 19.3 ms,
+                // within noise), where kk outermost at every width was 0.90x.
+                // Thresholds of 8 and 16 were slower on both.
+                Acc* const col = &P[tc * m];
+                if (wK < supernodal_ldlt_kk_outer_width) {
+                    for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
+                        const std::size_t tr = rel[rowsK[ui]];
+                        assert(tr != NPOS && "update row must lie in the target panel");
+                        Acc* dst = &col[tr];
+                        for (std::size_t kk = 0; kk < wK; ++kk) {
+                            if constexpr (split) {
+                                const auto& coef = split_coef[kk];
+                                AT::add_product(*dst, UK[kk * moff + ui], -coef.hi);
+                                if (coef.lo != Value{0})
+                                    AT::add_product(*dst, UK[kk * moff + ui], -coef.lo);
+                            } else {
+                                const Value coef = D[fK + kk] * UK[kk * moff + bi];
+                                AT::add_product(*dst, UK[kk * moff + ui], -coef);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                for (std::size_t kk = 0; kk < wK; ++kk) {
+                    const Value* const uk = &UK[kk * moff];
+                    // coefficient D(k)*L(row_b,k) formed in Value; product with
+                    // L(row_u,k) accumulated in Accumulator (negated -> subtract).
+                    if constexpr (split) {
+                        const auto& coef = split_coef[kk];
+                        for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
+                            const std::size_t tr = rel[rowsK[ui]];
+                            assert(tr != NPOS && "update row must lie in the target panel");
+                            AT::add_product(col[tr], uk[ui], -coef.hi);
                             if (coef.lo != Value{0})
-                                AT::add_product(*dst, UK[kk * moff + ui], -coef.lo);
-                        } else {
-                            const Value coef = D[fK + kk] * UK[kk * moff + bi];
-                            AT::add_product(*dst, UK[kk * moff + ui], -coef);
+                                AT::add_product(col[tr], uk[ui], -coef.lo);
+                        }
+                    } else {
+                        const Value coef = D[fK + kk] * uk[bi];
+                        for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
+                            const std::size_t tr = rel[rowsK[ui]];
+                            assert(tr != NPOS && "update row must lie in the target panel");
+                            AT::add_product(col[tr], uk[ui], -coef);
                         }
                     }
                 }

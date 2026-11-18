@@ -14,6 +14,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <mtl/mat/compressed2D.hpp>
@@ -71,6 +72,38 @@ inline bool is_valid_permutation(const std::vector<std::size_t>& p) {
     return true;
 }
 
+namespace detail {
+
+/// A compressed2D built row by row, without an inserter (issue 908): the
+/// default inserter's 5 slots per row sent longer rows to its std::map, and a
+/// permutation keeps every row whole, so the rows can be written directly.
+/// fill(i, buf) appends new row i's (column, value) pairs, columns unique and
+/// in any order; they are sorted by column here.
+template <typename Value, typename Parameters, typename Fill>
+mat::compressed2D<Value, Parameters> csr_from_rows(std::size_t nrows, std::size_t ncols,
+                                                   std::size_t nnz, Fill&& fill) {
+    using size_type = typename mat::compressed2D<Value, Parameters>::size_type;
+    mat::compressed2D<Value, Parameters> B(nrows, ncols);
+    auto& starts  = B.ref_major();
+    auto& indices = B.ref_minor();
+    auto& data    = B.ref_data();
+    indices.reserve(nnz);
+    data.reserve(nnz);
+    std::vector<std::pair<size_type, Value>> buf;
+    for (std::size_t i = 0; i < nrows; ++i) {
+        buf.clear();
+        fill(i, buf);
+        const auto by_col = [](const auto& a, const auto& b) { return a.first < b.first; };
+        if (!std::is_sorted(buf.begin(), buf.end(), by_col))
+            std::sort(buf.begin(), buf.end(), by_col);
+        for (const auto& [c, v] : buf) { indices.push_back(c); data.push_back(v); }
+        starts[i + 1] = static_cast<size_type>(indices.size());
+    }
+    return B;
+}
+
+} // namespace detail
+
 /// Apply a symmetric permutation to a sparse matrix: B = P * A * P^T
 /// where P is the permutation matrix corresponding to perm.
 /// perm[new] = old, so B(i,j) = A(perm[i], perm[j]).
@@ -88,23 +121,14 @@ mat::compressed2D<Value, Parameters> symmetric_permute(
 
     auto pinv = invert_permutation(perm);   // checks perm
 
-    mat::compressed2D<Value, Parameters> B(n, n);
-    {
-        mat::inserter<mat::compressed2D<Value, Parameters>> ins(B);
-        const auto& starts  = A.ref_major();
-        const auto& indices = A.ref_minor();
-        const auto& data    = A.ref_data();
-
-        for (std::size_t old_row = 0; old_row < n; ++old_row) {
-            std::size_t new_row = pinv[old_row];
-            for (std::size_t k = starts[old_row]; k < starts[old_row + 1]; ++k) {
-                std::size_t old_col = indices[k];
-                std::size_t new_col = pinv[old_col];
-                ins[new_row][new_col] << data[k];
-            }
-        }
-    }
-    return B;
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    return detail::csr_from_rows<Value, Parameters>(n, n, A.nnz(), [&](std::size_t new_row, auto& buf) {
+        const std::size_t old_row = perm[new_row];
+        for (std::size_t k = starts[old_row]; k < starts[old_row + 1]; ++k)
+            buf.emplace_back(static_cast<size_type>(pinv[indices[k]]), data[k]);
+    });
 }
 
 /// Apply a column permutation to a sparse matrix: B = A * P^T
@@ -121,21 +145,14 @@ mat::compressed2D<Value, Parameters> column_permute(
 
     auto pinv = invert_permutation(perm);   // checks perm
 
-    mat::compressed2D<Value, Parameters> B(nrows, ncols);
-    {
-        mat::inserter<mat::compressed2D<Value, Parameters>> ins(B);
-        const auto& starts  = A.ref_major();
-        const auto& indices = A.ref_minor();
-        const auto& data    = A.ref_data();
-
-        for (std::size_t r = 0; r < nrows; ++r) {
-            for (std::size_t k = starts[r]; k < starts[r + 1]; ++k) {
-                std::size_t new_col = pinv[indices[k]];
-                ins[r][new_col] << data[k];
-            }
-        }
-    }
-    return B;
+    using size_type = typename mat::compressed2D<Value, Parameters>::size_type;
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    return detail::csr_from_rows<Value, Parameters>(nrows, ncols, A.nnz(), [&](std::size_t r, auto& buf) {
+        for (std::size_t k = starts[r]; k < starts[r + 1]; ++k)
+            buf.emplace_back(static_cast<size_type>(pinv[indices[k]]), data[k]);
+    });
 }
 
 /// Apply a row permutation to a sparse matrix: B = P * A
@@ -150,23 +167,17 @@ mat::compressed2D<Value, Parameters> row_permute(
     if (perm.size() != nrows)
         throw std::invalid_argument("row_permute: permutation size does not match the rows");
 
-    auto pinv = invert_permutation(perm);   // checks perm
+    (void)invert_permutation(perm);   // checks perm (the rows are read through perm itself)
 
-    mat::compressed2D<Value, Parameters> B(nrows, ncols);
-    {
-        mat::inserter<mat::compressed2D<Value, Parameters>> ins(B);
-        const auto& starts  = A.ref_major();
-        const auto& indices = A.ref_minor();
-        const auto& data    = A.ref_data();
-
-        for (std::size_t old_row = 0; old_row < nrows; ++old_row) {
-            std::size_t new_row = pinv[old_row];
-            for (std::size_t k = starts[old_row]; k < starts[old_row + 1]; ++k) {
-                ins[new_row][indices[k]] << data[k];
-            }
-        }
-    }
-    return B;
+    using size_type = typename mat::compressed2D<Value, Parameters>::size_type;
+    const auto& starts  = A.ref_major();
+    const auto& indices = A.ref_minor();
+    const auto& data    = A.ref_data();
+    return detail::csr_from_rows<Value, Parameters>(nrows, ncols, A.nnz(), [&](std::size_t new_row, auto& buf) {
+        const std::size_t old_row = perm[new_row];
+        for (std::size_t k = starts[old_row]; k < starts[old_row + 1]; ++k)
+            buf.emplace_back(static_cast<size_type>(indices[k]), data[k]);
+    });
 }
 
 /// Apply a permutation to a dense vector: y[i] = x[perm[i]]

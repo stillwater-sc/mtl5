@@ -418,3 +418,98 @@ TEST_CASE("native KLU zero-pivot perturbation (#123)", "[sparse][klu][native][pe
     gfac.solve(gx, gb);
     REQUIRE(relative_residual(G, gx, gb) < 1e-12);
 }
+
+// 1x1 blocks take their own path in solve and refactor (issue 908): the
+// triangular solves reduce to (b / L(0,0)) / U(0,0), and the refactor to L =
+// {1}, U = {a}. A bidiagonal matrix is all 1x1 blocks; a mixed one has 1x1
+// and larger blocks. Each is checked against the general per-block path,
+// lu_numeric::solve on the block, through the solution of a fresh factor
+// (bit for bit: the same divisions), and the refactor against a fresh factor.
+TEST_CASE("native_klu: 1x1 blocks in solve and refactor (issue 908)", "[sparse][klu][908]") {
+    using csr = mat::compressed2D<double>;
+    const std::size_t n = 40;
+    auto make = [&](double shift, bool mixed) {
+        csr A(n, n);
+        mat::inserter<csr> ins(A, 4);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 3.0 + shift + double(i % 5);
+            if (i + 1 < n) ins[i][i + 1] << -1.0;
+            if (mixed && i % 7 == 3 && i + 1 < n) ins[i + 1][i] << 0.5;   // a 2x2 block
+        }
+        return A;
+    };
+    for (const bool mixed : {false, true}) {
+        CAPTURE(mixed);
+        const csr A = make(0.0, mixed);
+        auto fac = native_klu_factor(A);
+        if (!mixed) REQUIRE(fac.nblocks() == n);
+        vec::dense_vector<double> b(n), x(n), y(n);
+        for (std::size_t i = 0; i < n; ++i) b(i) = 1.0 + double(i % 3);
+        fac.solve(x, b);
+        // The block back-substitution, written out with lu_numeric::solve on
+        // every block: the general path.
+        {
+            std::vector<double> w(n);
+            for (std::size_t i = 0; i < n; ++i) w[i] = b(fac.btf.row_perm[i]) * (fac.row_scale.empty() ? 1.0 : fac.row_scale[fac.btf.row_perm[i]]);
+            const auto& rp = fac.B.ref_major(); const auto& ci = fac.B.ref_minor(); const auto& d = fac.B.ref_data();
+            for (std::size_t blk = fac.nblocks(); blk-- > 0; ) {
+                const std::size_t r0 = fac.btf.blocks[blk], r1 = fac.btf.blocks[blk + 1];
+                vec::dense_vector<double> rhs(r1 - r0), sol(r1 - r0);
+                for (std::size_t i = r0; i < r1; ++i) {
+                    double v = w[i];
+                    for (std::size_t k = rp[i]; k < rp[i + 1]; ++k)
+                        if (fac.block_of[ci[k]] > blk) v -= d[k] * w[ci[k]];
+                    rhs(i - r0) = v;
+                }
+                fac.block_numeric[blk].solve(sol, rhs);
+                for (std::size_t i = r0; i < r1; ++i) w[i] = sol(i - r0);
+            }
+            for (std::size_t j = 0; j < n; ++j) y(fac.btf.col_perm[j]) = w[j];
+        }
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(x(i) == y(i));
+
+        // Refactor with new values on the same pattern: the same solution as
+        // a fresh factor of the new matrix.
+        const csr A2 = make(1.5, mixed);
+        const auto re = sparse::factorization::native_klu_refactor(A2, fac);
+        const auto fresh = native_klu_factor(A2);
+        vec::dense_vector<double> xr(n), xf(n);
+        re.solve(xr, b);
+        fresh.solve(xf, b);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(xr(i) == xf(i));
+        for (const auto& bn : re.block_numeric) REQUIRE(bn.num_perturbed == 0);
+    }
+    // A refactor whose 1x1 entry became 0 takes the general path, and its error.
+    csr Z(2, 2);
+    { mat::inserter<csr> ins(Z); ins[0][0] << 2.0; ins[0][1] << 1.0; ins[1][1] << 3.0; }
+    const auto fz = native_klu_factor(Z);
+    csr Z0(2, 2);
+    { mat::inserter<csr> ins(Z0); ins[0][0] << 2.0; ins[0][1] << 1.0; ins[1][1] << 0.0; }
+    REQUIRE_THROWS_AS(sparse::factorization::native_klu_refactor(Z0, fz), std::runtime_error);
+}
+
+// lu_numeric::solve with the caller's workspace gives the same bits as the
+// one that allocates its own, and reuses the buffer across sizes (issue 908).
+TEST_CASE("lu_numeric::solve with a caller workspace (issue 908)", "[sparse][lu][908]") {
+    using csr = mat::compressed2D<double>;
+    std::vector<double> w;
+    for (const std::size_t n : {std::size_t{9}, std::size_t{3}, std::size_t{17}}) {
+        csr A(n, n);
+        {
+            mat::inserter<csr> ins(A, 4);
+            for (std::size_t i = 0; i < n; ++i) {
+                ins[i][i] << 4.0 + double(i % 3);
+                if (i > 0) ins[i][i - 1] << -1.25;
+                if (i + 2 < n) ins[i][i + 2] << 0.5;
+            }
+        }
+        const auto sym = sparse::factorization::sparse_lu_symbolic(A);
+        const auto lu = sparse::factorization::sparse_lu_numeric(A, sym);
+        vec::dense_vector<double> b(n), x1(n), x2(n);
+        for (std::size_t i = 0; i < n; ++i) b(i) = double(i) - 2.5;
+        lu.solve(x1, b);
+        lu.solve(x2, b, w);
+        REQUIRE(w.size() == n);
+        for (std::size_t i = 0; i < n; ++i) REQUIRE(x1(i) == x2(i));
+    }
+}

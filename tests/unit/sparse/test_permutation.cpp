@@ -92,3 +92,37 @@ TEST_CASE("Permute dense vector", "[sparse][permutation]") {
     REQUIRE(z[1] == 20.0);
     REQUIRE(z[2] == 30.0);
 }
+
+// The permutations write their rows directly (issue 908): rows longer than
+// the inserter's 5 slots, and new columns that arrive out of order, against
+// the definitions B(i, j) = A(p[i], p[j]), A(i, p[j]) and A(p[i], j).
+TEST_CASE("permutations of long rows, written without the inserter (issue 908)", "[sparse][permutation][908]") {
+    using csr = mat::compressed2D<double>;
+    const std::size_t n = 13;
+    csr A(n, n);
+    {
+        mat::inserter<csr> ins(A, n);
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j)
+                if ((i * 7 + j * 3) % 4 != 0 || i == j) ins[i][j] << double(100 * i + j);
+    }
+    std::vector<std::size_t> p(n);
+    for (std::size_t i = 0; i < n; ++i) p[i] = (i * 5 + 3) % n;   // a permutation (5 and 13 coprime)
+    auto pinv = invert_permutation(p);
+    const auto S = symmetric_permute(A, p);
+    const auto C = column_permute(A, p);
+    const auto R = row_permute(A, p);
+    for (const csr* B : {&S, &C, &R}) {
+        REQUIRE(B->nnz() == A.nnz());
+        const auto& rp = B->ref_major(); const auto& ci = B->ref_minor();
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t k = rp[i] + 1; k < rp[i + 1]; ++k) REQUIRE(ci[k] > ci[k - 1]);   // sorted, unique
+    }
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            REQUIRE(S(i, j) == A(p[i], p[j]));
+            REQUIRE(C(i, j) == A(i, p[j]));
+            REQUIRE(R(i, j) == A(p[i], j));
+        }
+    (void)pinv;
+}
