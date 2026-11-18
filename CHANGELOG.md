@@ -5,6 +5,24 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.24.0] - 2026-11-18
+
+134 commits since 5.23.0, most of them from seven QA sweeps (#740, #767, #816, #832, #848, #872, #893), each triaged into tracking issues and resolved.
+- **Krylov solvers:** they judge convergence by the true residual (issue 873), and IDR(s) is the biorthogonal method with residual replacement and breakdown restarts (issue 874).
+- **Benchmarking:** `mtl5_bench`, a platform benchmark covering every operation family, has capability cards from seven machines (#721, #737).
+- **Native kernels:**
+  - the generic row kernels interleave rows and sweep column-major matrices by columns (#749, #777, #884, #898);
+  - the BLAS Level 2/3 operators have native-fast paths (#724, #744, #747, #236);
+  - the native supernodal LU has panel updates (#195), at 1.9-2.4x SuperLU's time.
+
+It is a minor release because it adds features and has four breaking changes. MAJOR stays at 5.
+- **#842:** `Scalar` requires `std::numeric_limits` on the magnitude type.
+- **#707:** `trans` and the view factories reject a temporary at compile time.
+- **#773:** BLAS Level 1 takes MTL5's SIMD loops in a BLAS build too.
+- **#895:** `eigen()` takes its eigenvalues from its own Schur run.
+
+#910 also changes behaviour without being breaking in type: the non-unit triangular solves throw on a missing, misplaced or zero diagonal, and sparse QR passes tall matrices to their ordering.
+
 ### Added
 
 - **Zero-pivot perturbation through the mixed-precision supernodal LU solve** (#185). `supernodal_lu_solve_refined<FactorValue>(A, x, b, ordering, opt, pivot_perturb)` takes the opt-in `pivot_perturb` that `supernodal_lu_numeric` gained in #198, and `refine_result::num_perturbed` reports how many pivots it replaced. This is the path where a pivot cancels to zero: a matrix nonsingular in the residual precision can have an exact zero pivot in its low-precision factor ([[1, 1], [1, 1 + 1e-9]] in float). With perturbation off (the default) the refined solve throws as before; on, it completes. A pivot cancelled exactly to zero in precision u means a condition number of order 1/u or more, so full accuracy is not promised then. `rel_residual` says what the refinement reached. `iterative_refine` also no longer takes a NaN residual for 0: `std::max(m, NaN)` keeps m, so a correction that overflowed (likelier through a perturbed factor) became the best iterate and was reported converged with `rel_residual` 0; a non-finite residual now counts as infinite. Tests: `test_supernodal_lu.cpp`, `test_sparse_factorization_edges.cpp`.
