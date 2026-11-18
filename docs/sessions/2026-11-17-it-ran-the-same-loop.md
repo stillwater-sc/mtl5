@@ -14,12 +14,13 @@
   Ryzen 7 8845HS, the Arduino Ventuno Q and the Xeon E5-2420 v2, plus the
   local i7-12700K.
 
-**Merged:** #895 (#894), #896 (#884), #899 (#898).
+**Merged:** #895 (#894), #896 (#884), #899 (#898), #901 (#185), #902, #903
+and #904 (#195).
 
 **Filed:** #894, split out of issue 888 at the user's request; #898, from
 this log's open item on GCC's row kernels.
 
-**Closed:** #872, #886, #887, #888.
+**Closed:** #872, #884, #886, #887, #888, #894, #898, #185.
 
 ## The through-line
 
@@ -147,8 +148,55 @@ A, GCC's native row kernels are as fast as its generic ones or faster
   - A run-time `if` around a call that needs `A.data()` built in the bench
     and broke every view in the test suite.
 
+### Zero-pivot perturbation through the refined solve (#185, #901)
+
+The low-precision tiny-pivot perturbation #185 still listed had shipped in
+June (#198), after the issue's status comment. What was missing was a way to
+reach it from `supernodal_lu_solve_refined`, the path where a pivot cancels to
+zero. That solve now takes `pivot_perturb`, and `refine_result::num_perturbed`
+reports how many pivots were replaced.
+
+CodeRabbit's review found a real bug next to it. `iterative_refine`'s
+`norm_inf` used `std::max`, which keeps its first argument against NaN, so a
+NaN residual measured 0: an overflowed correction became the best iterate and
+was reported converged. A non-finite residual now counts as infinite. #185 is
+closed; its parity clause is #195.
+
+### Supernodal LU parity (#195): measured, improved, parked
+
+- **The scoreboard had never measured the solver #195 is about.**
+  `bench_superlu` timed native **KLU** against SuperLU, and the June profile
+  came from a dense 400 x 400 matrix. #902 added the supernodal column. The
+  real gap was 3.45-4.41x SuperLU's time, at fill already within 1.2x.
+- **#902:** three local fixes, found with `rdtsc` phase timers:
+  - a GEMV that walked its block a row at a time;
+  - a quadratic supernode close;
+  - a per-column sort in the finalize.
+
+  1.3-1.55x on the numeric factorization, bit-identical factors.
+- **#903:** panel updates, applying the pre-panel supernodes to 16 columns at
+  once with a register-tiled GEMV, 1.14-1.46x. A gate on the block reads saved
+  against the reach keeps the convection-diffusion grids, where panels don't
+  pay, to 3-5%.
+- **Measured and dropped:** SuperLU-style relaxed supernodes widened wang3's
+  supernodes from 2.4 to 10.1 columns at no gain. Three step-3
+  micro-optimizations made it 0.74-0.85x or neutral.
+- **#904** records the verdict. The GEMM runs at 19-30 GFLOP/s, and on wang3
+  everything else is 3.6 s against SuperLU's 2.1 s total, so even a free GEMM
+  would leave about 1.7x. The rest needs the storage rework: L kept once as
+  supernodes, a supernodal DFS. That trades away the level-scheduled parallel
+  solve (#297). The user chose to park it there, at 1.88-2.39x on wang3, wang4
+  and raefsky3, and 1.99x on bbmat.
+- **Two lessons:**
+  - **The FP-contract lane:** the new bit-identity test needed
+    `-ffp-contract=off`, as the other bit-identity targets have.
+  - **Timing under load:** a scoreboard taken at load average 4-6 read up
+    to 19% slow on the grids. Its sidecars record the load.
+
 ## Open
 
+- **#195 parity:** parked at 1.9-2.4x, with the rework plan in
+  `docs/plans/native-superlu-performance.md`.
 - **Clang's forward substitution at n = 96-256:** the blocked diagonal
   compiles less well there than the one-column loop. Raising the cutoff
   for Clang alone would cost GCC.
