@@ -290,6 +290,73 @@ gathers/scatters of each panel column's rows (about a quarter of wang3), the
 per-column pivot search and L/U emission (about 10%), and the reach DFS
 (about 10%, half of it the pre-pass's).
 
+## Step 3 of #195: what's left is structure (2026-11-17)
+
+After #903 the supernodal LU is 1.88-2.39x SuperLU's time on wang3, wang4 and
+raefsky3, and 1.99x on bbmat. The profile by phase, with panels (share of the
+numeric factorization, i7-12700K, one thread):
+
+| phase | wang3 | raefsky3 | bbmat |
+|---|---|---|---|
+| pre-pass: tiled GEMV | 27.7% | 18.6% | 23.0% |
+| pre-pass: gather + TRSV | 13.1% | 4.2% | 12.2% |
+| pre-pass: scatter back | 14.3% | 1.0% | 10.8% |
+| pre-pass: DFS + scatter of A | 4.7% | 5.3% | 4.8% |
+| finalize: remap, two transposes to CSC, solve schedules | 12.7% | 21.1% | 13.4% |
+| per column: emit L, candidate rows | 8.8% | 8.3% | 7.0% |
+| per column: DFS | 7.1% | 8.8% | 7.0% |
+| per column: supernodes closed in the panel | 3.4% | 7.8% | 10.6% |
+
+**The GEMM is not the gap.** The panel GEMM runs at 19-23 GFLOP/s in the
+generic build, and 28-30 GFLOP/s with `-march=native` (wang3: 28.5 GFLOP in
+1.37 s generic, 20.8 GFLOP/s; 1.02 s native, 27.9 GFLOP/s). The system SuperLU calls OpenBLAS, pinned to one core like the native
+column. But on wang3 everything other than the GEMM is 3.6 s, against
+SuperLU's 2.1 s for the whole factorization: even a free GEMM would leave the
+native LU at about 1.7x. Reaching 1.5x means removing more than half of the
+overhead.
+
+**Three local attempts, each measured and dropped:**
+
+| attempt | effect on the numeric factorization |
+|---|---|
+| fusing the gather and scatter into the GEMV tile (accumulators loaded and stored through the row index) | 0.74-0.79x of main |
+| a row-major panel workspace (a row's panel columns in one cache line) | 0.82-0.85x |
+| the candidate-row nesting test by stamps instead of a sort | neutral (+-3%) |
+
+The contiguous temporary is what lets the compiler vectorize the tile.
+
+**What the overhead is.** It comes from the storage, not from any one loop.
+- **L is kept twice:** as CSC (built column by column, then remapped,
+  transposed twice and given solve schedules) and as dense supernode blocks
+  (built when each supernode closes). SuperLU keeps it once, in supernodal
+  storage, and solves with it.
+- **The DFS is over columns,** twice per column with panels. SuperLU's DFS
+  is over supernodes, on a pruned supernodal graph.
+
+**The rework, in order** (each a PR, measured, bit-identical where the
+operation order is unchanged):
+1. **Supernodal solve:** `solve()` from the dense supernode blocks (TRSV +
+   GEMV per supernode) instead of the CSC schedules. It removes the solve
+   schedules from the finalize, and makes the blocks the factor.
+2. **L stored only as supernode blocks:** emit each column's L values into
+   its open supernode's block (a pending column store until it closes),
+   drop Li/Lx, and build CSC only on request (`factorL()`). This removes the
+   transposes and the second copy. Refactor must then replay values on the
+   supernode structure; this is the step with the most surface.
+3. **Supernodal DFS:** the reach over supernodes, with SuperLU's
+   supernodal pruning. Not bit-identical: the reach order sets pivot
+   tie-breaks and the open-supernode SAXPY order.
+4. **The pre-pass gathers:** a separate workspace change, not a consequence
+   of step 2. The panel workspace `panel_x` is indexed by original row and
+   read through `S.rows`, so a supernode's rows (say, original rows 2, 7 and
+   11) stay apart however L is stored. Indexing the workspace by supernode row
+   position instead (as SuperLU's panel_bmod addresses its dense panel) would
+   make a supernode's rows a contiguous segment and remove the gather.
+
+Steps 1-2 touch `solve`, `refactor`, `factorL()`/`factorU()`, the
+mixed-precision solve and the threaded solve tests. That is the reason to do
+them as their own PRs.
+
 ## References
 
 - Demmel, Eisenstat, Gilbert, Li, Liu, "A Supernodal Approach to Sparse Partial
