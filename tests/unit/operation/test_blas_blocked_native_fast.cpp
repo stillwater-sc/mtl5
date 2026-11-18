@@ -24,6 +24,7 @@
 
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/mat/parameter.hpp>
+#include <mtl/operation/gemmt.hpp>
 #include <mtl/operation/symm.hpp>
 #include <mtl/operation/syr2k.hpp>
 #include <mtl/operation/syrk.hpp>
