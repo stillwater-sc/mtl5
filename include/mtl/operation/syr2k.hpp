@@ -73,14 +73,16 @@ inline constexpr bool syr2k_uses_row_loop_v = row_major_contiguous_v<MA> && row_
 /// C = alpha A B^T + beta C and then C += alpha B A^T, above
 /// detail::gemmt_block rows (#236): the MTL5_NATIVE_FAST_GEMM build without
 /// BLAS, where gemmt takes its blocked path over gemm_blocked. A BLAS build
-/// calls ?syr2k instead.
-template <typename Accumulator, typename MA, typename MB, typename MC>
+/// calls ?syr2k instead. alpha and beta must be of C's element type, as in
+/// syrk_uses_gemmt_v.
+template <typename Accumulator, typename S, typename MA, typename MB, typename MC>
 inline constexpr bool syr2k_uses_gemmt_v = [] {
 #if defined(MTL5_NATIVE_FAST_GEMM) && !defined(MTL5_HAS_BLAS)
     // Dense A and B first: transposed_view can't be named for an expression,
     // and syr2k's body still names this trait after it copies one.
     if constexpr (gemmt_strided_dense_v<MA> && gemmt_strided_dense_v<MB>)
-        return gemmt_uses_blocked_v<Accumulator, MA, mat::view::transposed_view<MB>, MC> &&
+        return std::is_same_v<S, typename MC::value_type> &&
+               gemmt_uses_blocked_v<Accumulator, MA, mat::view::transposed_view<MB>, MC> &&
                gemmt_uses_blocked_v<Accumulator, MB, mat::view::transposed_view<MA>, MC>;
     else
         return false;
@@ -176,7 +178,7 @@ void syr2k(const S& alpha, const MA& A, const MB& B, const S& beta, MC& C) {
     }
 #endif
 #if defined(MTL5_NATIVE_FAST_GEMM) && !defined(MTL5_HAS_BLAS)
-    if constexpr (detail::syr2k_uses_gemmt_v<Accumulator, MA, MB, MC>) {
+    if constexpr (detail::syr2k_uses_gemmt_v<Accumulator, S, MA, MB, MC>) {
         // Two of gemmt's triangular products (#236): A B^T into the lower
         // triangle with beta, then B A^T added onto it, mirrored. Each is
         // gemmt's blocked path over gemm_blocked, so the rounding is the

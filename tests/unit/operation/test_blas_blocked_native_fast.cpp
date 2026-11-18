@@ -50,16 +50,18 @@ static_assert(!detail::trmm_uses_blocked_v<rm<float>, rm<double>>);
 static_assert(detail::symm_uses_blocked_v<rm<double>, cm<double>, rm<double>>);
 static_assert(!detail::symm_uses_blocked_v<rm<double>, rm<double>, cm<double>>); // col-major C: not blocked
 #ifndef MTL5_HAS_BLAS   // a BLAS build calls ?syrk / ?syr2k instead
-static_assert(detail::syrk_uses_gemmt_v<void, rm<double>, rm<double>>);
-static_assert(detail::syrk_uses_gemmt_v<void, cm<float>, cm<float>>);
-static_assert(!detail::syrk_uses_gemmt_v<void, rm<float>, rm<double>>);              // mixed types
-static_assert(!detail::syrk_uses_gemmt_v<void, rm<long double>, rm<long double>>);
-static_assert(detail::syr2k_uses_gemmt_v<void, rm<double>, cm<double>, cm<double>>);
-static_assert(!detail::syr2k_uses_gemmt_v<void, rm<double>, rm<float>, rm<double>>);   // mixed types
+static_assert(detail::syrk_uses_gemmt_v<void, double, rm<double>, rm<double>>);
+static_assert(detail::syrk_uses_gemmt_v<void, float, cm<float>, cm<float>>);
+static_assert(!detail::syrk_uses_gemmt_v<void, float, rm<float>, rm<double>>);              // mixed types
+static_assert(!detail::syrk_uses_gemmt_v<void, long double, rm<long double>, rm<long double>>);
+//MUT                 // double alpha/beta
+static_assert(!detail::syr2k_uses_gemmt_v<void, double, rm<float>, rm<float>, rm<float>>);
+static_assert(detail::syr2k_uses_gemmt_v<void, double, rm<double>, cm<double>, cm<double>>);
+static_assert(!detail::syr2k_uses_gemmt_v<void, double, rm<double>, rm<float>, rm<double>>);   // mixed types
 // An expression operand is copied to a dense matrix before the dispatch; the
 // trait must still be well-formed for it (named after the copy's early return).
-static_assert(!detail::syrk_uses_gemmt_v<void, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() * 2.0)>, rm<double>>);
-static_assert(!detail::syr2k_uses_gemmt_v<void, rm<double>, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() + std::declval<const rm<double>&>())>, rm<double>>);
+static_assert(!detail::syrk_uses_gemmt_v<void, double, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() * 2.0)>, rm<double>>);
+static_assert(!detail::syr2k_uses_gemmt_v<void, double, rm<double>, std::remove_cvref_t<decltype(std::declval<const rm<double>&>() + std::declval<const rm<double>&>())>, rm<double>>);
 #endif
 
 double val(std::size_t seed, std::size_t i, std::size_t j) {
@@ -265,4 +267,28 @@ TEMPLATE_TEST_CASE("blocked syrk and syr2k match the reference", "[operation][23
             REQUIRE(C(i, j) == T(2) * C0(i, j));
             REQUIRE(D(i, j) == T(2) * C0(i, j));
         }
+}
+
+// alpha and beta of another type than the matrices keep syrk's and syr2k's
+// own loops (#906 review): gemmt converts them to the element type, so a
+// double beta of 1e-50 on float matrices became 0, C was not read, and the
+// result was 0 where beta * C(i, j) in double is about 1e-20.
+TEST_CASE("syrk and syr2k with double coefficients on float matrices", "[operation][236]") {
+    const std::size_t m = 65, k = 1;
+    auto fill = [](std::size_t r, std::size_t c, float v) {
+        rm<float> X(r, c);
+        for (std::size_t i = 0; i < r; ++i)
+            for (std::size_t j = 0; j < c; ++j) X(i, j) = v;
+        return X;
+    };
+    const rm<float> A = fill(m, k, 0.0f), B = fill(m, k, 0.0f);
+    for (int op = 0; op < 2; ++op) {
+        CAPTURE(op);
+        rm<float> C = fill(m, m, 1e30f);
+        if (op == 0) syrk(1.0, A, 1e-50, C);
+        else         syr2k(1.0, A, B, 1e-50, C);
+        const float want = static_cast<float>(1e-50 * static_cast<double>(1e30f));
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < m; ++j) REQUIRE(C(i, j) == want);
+    }
 }
