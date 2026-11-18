@@ -394,13 +394,13 @@ klu_numeric<Value> native_klu_refactor(
             // the refactor's workspaces. A zero or missing entry, or a prior
             // block of another pattern, takes the general path (and its error).
             const auto& pb = prev.block_numeric[blk];
-            const Value* a = nullptr;
+            std::size_t ka = Brp[r0 + 1];   // the entry's position, if stored (an index: no operator& on Value)
             for (std::size_t k = Brp[r0]; k < Brp[r0 + 1]; ++k)
-                if (Bci[k] == r0) a = &Bdat[k];
-            if (a != nullptr && *a != Value{0} && pb.has_factor() &&
+                if (Bci[k] == r0) ka = k;
+            if (ka != Brp[r0 + 1] && Bdat[ka] != Value{0} && pb.has_factor() &&
                 pb.factorL().values.size() == 1 && pb.factorU().values.size() == 1) {
                 lu_numeric<Value> nb = pb;
-                nb.set_factor_values(std::vector<Value>{Value{1}}, std::vector<Value>{*a});
+                nb.set_factor_values(std::vector<Value>{Value{1}}, std::vector<Value>{Bdat[ka]});
                 nb.num_perturbed = 0;   // as the refactor: no perturbation
                 result.block_numeric.push_back(std::move(nb));
                 continue;

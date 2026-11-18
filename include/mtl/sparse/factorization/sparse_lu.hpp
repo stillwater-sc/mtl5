@@ -146,6 +146,9 @@ struct lu_numeric {
     /// solve(x, b) with the caller's workspace `w`, resized to n: a caller
     /// that solves many small systems (native_klu's blocks) reuses one
     /// buffer instead of allocating per solve (issue 908). Same arithmetic.
+    /// `w` must not share storage with x or b: b is read through the row
+    /// permutation while w is written. x and b may be the same vector (all of
+    /// b is read into w before x is written).
     template <typename Accumulator = void, typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b, std::vector<Value>& w) const {
         // A caller can set `symbolic` (n > 0) yet never install a factor; the

@@ -166,11 +166,10 @@ private:
 };
 
 /// Source-supernode width from which the LDL^T block update runs with the
-/// supernode's columns outermost (issue 908; see the update loop).
-#ifndef MTL5_SUPERNODAL_LDLT_KK_OUTER_WIDTH
-#define MTL5_SUPERNODAL_LDLT_KK_OUTER_WIDTH 2
-#endif
-inline constexpr std::size_t supernodal_ldlt_kk_outer_width = MTL5_SUPERNODAL_LDLT_KK_OUTER_WIDTH;
+/// supernode's columns outermost (issue 908; see the update loop). A fixed
+/// constant, not a macro: a value that differed between translation units
+/// would break the one-definition rule for this header's templates.
+inline constexpr std::size_t supernodal_ldlt_kk_outer_width = 2;
 
 namespace detail {
 /// Shared back end of the two symbolic overloads: fuse the fill-reducing
@@ -357,13 +356,13 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
                 // faster (788 -> 567 ms, i7-12700K, one thread); a 160^2 grid,
                 // whose supernodes are narrow, is unchanged (19.1 -> 19.3 ms,
                 // within noise), where kk outermost at every width was 0.90x.
-                // Thresholds of 8 and 16 were slower on both.
-                Acc* const col = &P[tc * m];
+                // Thresholds of 4 gave the same times; 8 and 16 were slower on both.
+                Acc* const col = P.data() + tc * m;   // .data(): no operator& on Acc or Value
                 if (wK < supernodal_ldlt_kk_outer_width) {
                     for (std::size_t ui = bi; ui < moff; ++ui) {  // ui>=bi => lower triangle
                         const std::size_t tr = rel[rowsK[ui]];
                         assert(tr != NPOS && "update row must lie in the target panel");
-                        Acc* dst = &col[tr];
+                        Acc* dst = col + tr;
                         for (std::size_t kk = 0; kk < wK; ++kk) {
                             if constexpr (split) {
                                 const auto& coef = split_coef[kk];
@@ -379,7 +378,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
                     continue;
                 }
                 for (std::size_t kk = 0; kk < wK; ++kk) {
-                    const Value* const uk = &UK[kk * moff];
+                    const Value* const uk = UK.data() + kk * moff;
                     // coefficient D(k)*L(row_b,k) formed in Value; product with
                     // L(row_u,k) accumulated in Accumulator (negated -> subtract).
                     if constexpr (split) {
@@ -430,7 +429,7 @@ supernodal_ldlt_factor<Value> supernodal_ldlt_numeric(
             // Rank-1 update of the remaining diagonal-block columns cc in (c,w):
             //   P(r,cc) -= L(r,c) * dcc * L(cc,c)   for r >= cc.
             for (std::size_t cc = c + 1; cc < w; ++cc) {
-                Acc* col = &P[cc * m];
+                Acc* col = P.data() + cc * m;
                 if constexpr (split) {
                     const auto coef = mtl::math::two_product(dcc, Lcol[cc]);
                     for (std::size_t r = cc; r < m; ++r) {

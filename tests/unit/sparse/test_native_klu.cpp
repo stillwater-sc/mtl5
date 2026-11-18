@@ -430,17 +430,20 @@ TEST_CASE("native_klu: 1x1 blocks in solve and refactor (issue 908)", "[sparse][
     const std::size_t n = 40;
     auto make = [&](double shift, bool mixed) {
         csr A(n, n);
-        mat::inserter<csr> ins(A, 4);
-        for (std::size_t i = 0; i < n; ++i) {
-            ins[i][i] << 3.0 + shift + double(i % 5);
-            if (i + 1 < n) ins[i][i + 1] << -1.0;
-            if (mixed && i % 7 == 3 && i + 1 < n) ins[i + 1][i] << 0.5;   // a 2x2 block
+        {   // the inserter commits its entries in its destructor, before the return
+            mat::inserter<csr> ins(A, 4);
+            for (std::size_t i = 0; i < n; ++i) {
+                ins[i][i] << 3.0 + shift + double(i % 5);
+                if (i + 1 < n) ins[i][i + 1] << -1.0;
+                if (mixed && i % 7 == 3 && i + 1 < n) ins[i + 1][i] << 0.5;   // a 2x2 block
+            }
         }
         return A;
     };
     for (const bool mixed : {false, true}) {
         CAPTURE(mixed);
         const csr A = make(0.0, mixed);
+        REQUIRE(A.nnz() == 2 * n - 1 + (mixed ? 6 : 0));   // the fixture is the intended system
         auto fac = native_klu_factor(A);
         if (!mixed) REQUIRE(fac.nblocks() == n);
         vec::dense_vector<double> b(n), x(n), y(n);
