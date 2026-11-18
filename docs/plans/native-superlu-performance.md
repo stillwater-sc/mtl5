@@ -309,7 +309,7 @@ numeric factorization, i7-12700K, one thread):
 
 **The GEMM is not the gap.** The panel GEMM runs at 19-23 GFLOP/s in the
 generic build, and 28-30 GFLOP/s with `-march=native` (wang3: 28.5 GFLOP in
-1.37 s). The system SuperLU calls OpenBLAS, pinned to one core like the native
+1.37 s generic, 20.8 GFLOP/s; 1.02 s native, 27.9 GFLOP/s). The system SuperLU calls OpenBLAS, pinned to one core like the native
 column. But on wang3 everything other than the GEMM is 3.6 s, against
 SuperLU's 2.1 s for the whole factorization: even a free GEMM would leave the
 native LU at about 1.7x. Reaching 1.5x means removing more than half of the
@@ -346,9 +346,12 @@ operation order is unchanged):
 3. **Supernodal DFS:** the reach over supernodes, with SuperLU's
    supernodal pruning. Not bit-identical: the reach order sets pivot
    tie-breaks and the open-supernode SAXPY order.
-4. **The pre-pass gathers:** with L supernodal, a panel column's rows in a
-   supernode are a contiguous segment of the panel's dense workspace, as in
-   SuperLU's panel_bmod.
+4. **The pre-pass gathers:** a separate workspace change, not a consequence
+   of step 2. The panel workspace `panel_x` is indexed by original row and
+   read through `S.rows`, so a supernode's rows (say, original rows 2, 7 and
+   11) stay apart however L is stored. Indexing the workspace by supernode row
+   position instead (as SuperLU's panel_bmod addresses its dense panel) would
+   make a supernode's rows a contiguous segment and remove the gather.
 
 Steps 1-2 touch `solve`, `refactor`, `factorL()`/`factorU()`, the
 mixed-precision solve and the threaded solve tests. That is the reason to do
