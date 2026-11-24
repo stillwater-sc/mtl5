@@ -152,6 +152,7 @@ sparse/ordering/rcm.hpp             bench   ordering/rcm/
 sparse/ordering/nested_dissection.hpp  bench  ordering/nested_dissection/
 sparse/ordering/dulmage_mendelsohn.hpp  bench  ordering/block_triangular_form/
 sparse/ordering/minimum_degree.hpp  via     ordering/amd/        # the engine inside amd and colamd
+sparse/ordering/multilevel_separator.hpp  via  ordering/nested_dissection/  # the default separator inside nested_dissection
 sparse/ordering/ordering_concepts.hpp  exempt  concepts only
 
 # -- Krylov solvers --------------------------------------------------------------

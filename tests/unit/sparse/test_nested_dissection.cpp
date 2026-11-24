@@ -1,15 +1,21 @@
-// Nested dissection ordering (issue 919).
+// Nested dissection ordering (issues 919 and 922).
 //
-//   - edge cases: empty, 1x1, disconnected, empty rows, an unsymmetric
-//     pattern, a non-square matrix, a long path (deep separator tree);
+//   - edge cases, for both separator methods: empty, 1x1, disconnected, empty
+//     rows, an unsymmetric pattern, a non-square matrix, a long path (deep
+//     separator tree), a star and a complete graph;
 //   - below the cutoff it is exactly AMD;
+//   - the multilevel separator's invariants: no edge between A and B, the
+//     balance bound, and no vertex of S that touches only one side;
+//   - determinism: a pinned hash of the permutation;
 //   - fill and factor flops against AMD on 2-D and 3-D grid Laplacians, and the
-//     growth exponents over a range of 2-D grids;
+//     growth exponents over a range of 2-D grids (level structure); multilevel
+//     against level structure and AMD on grids and irregular graphs;
 //   - correct solves through sparse_cholesky, sparse_lu, supernodal_ldlt and
-//     supernodal_lu.
+//     supernodal_lu, under both methods.
 //
-// Measured with the defaults (cutoff 64, balance 0.7), Cholesky nnz(L) and
-// flops (sum of squared column counts) relative to AMD:
+// Level-structure separators (nd_separator::level_structure, cutoff 64,
+// balance 0.7), Cholesky nnz(L) and flops (sum of squared column counts)
+// relative to AMD:
 //
 //   2-D k x k   k=32   64     128    256    512
 //   nnz         1.125  1.041  0.920  0.844  0.780
@@ -20,12 +26,36 @@
 //   flops       0.766  0.683  0.520  0.526  0.404  0.355
 //
 // So on small 2-D grids AMD is as good or better; nested dissection wins as
-// the grid grows, and in 3-D from the smallest size measured. The bounds below
-// leave margin around these numbers.
+// the grid grows, and in 3-D from the smallest size measured.
+//
+// Multilevel separators (the default), nnz(L) and flops relative to AMD, with
+// the level structure's in parentheses:
+//
+//   2-D k x k     k=64          128           256           512
+//   nnz           1.020 (1.041) 0.882 (0.920) 0.818 (0.844) 0.755 (0.780)
+//   flops         0.885 (0.944) 0.620 (0.692) 0.580 (0.618) 0.499 (0.538)
+//
+//   3-D k^3       k=12          16            20            32
+//   nnz           0.880 (0.950) 0.833 (0.914) 0.728 (0.790) 0.600 (0.641)
+//   flops         0.701 (0.766) 0.595 (0.683) 0.467 (0.520) 0.327 (0.355)
+//
+//   irregular                      nnz           flops
+//   grid 256^2, 60 holes r=12      1.060 (1.131) 0.963 (1.162)
+//   random geometric 2-D, 50k      1.169 (2.045) 1.383 (6.117)
+//   random geometric 3-D, 30k      0.701 (1.442) 0.444 (1.533)
+//
+// Multilevel is never worse than the level structure by more than 2% (2-D,
+// k=32) and is much better on irregular graphs, where a breadth-first level
+// can be far wider than the best separator. The bounds below leave margin
+// around these numbers.
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -97,12 +127,114 @@ double rel_residual(const Mat& A, const vec::dense_vector<double>& x,
     return std::sqrt(r2 / b2);
 }
 
+/// Laplacian-like SPD matrix (degree + 1 on the diagonal, -1 per edge) from an
+/// edge list.
+Mat from_edges(std::size_t n, const std::vector<std::pair<std::size_t, std::size_t>>& edges) {
+    std::vector<double> d(n, 1.0);
+    for (auto [a, b] : edges) { d[a] += 1.0; d[b] += 1.0; }
+    Mat A(n, n);
+    {
+        mat::inserter<Mat> ins(A);
+        for (std::size_t i = 0; i < n; ++i) ins[i][i] << d[i];
+        for (auto [a, b] : edges) { ins[a][b] << -1.0; ins[b][a] << -1.0; }
+    }
+    return A;
+}
+
+/// 64-bit LCG (Knuth's MMIX constants): integer-only, so the test graphs are the
+/// same on every platform.
+struct lcg {
+    std::uint64_t s;
+    std::uint64_t next() { return s = s * 6364136223846793005ull + 1442695040888963407ull; }
+};
+
+/// Random geometric graph: n points with integer coordinates in [0, 2^16)^dim,
+/// joined when their squared distance is below r2. Integer arithmetic only.
+Mat random_geometric(std::size_t n, int dim, std::int64_t r2, std::uint64_t seed) {
+    lcg g{seed};
+    std::vector<std::array<std::int64_t, 3>> p(n);
+    for (auto& q : p)
+        for (int t = 0; t < 3; ++t) q[t] = t < dim ? static_cast<std::int64_t>(g.next() >> 48) : 0;
+    std::vector<std::size_t> byx(n);
+    for (std::size_t i = 0; i < n; ++i) byx[i] = i;
+    std::sort(byx.begin(), byx.end(), [&](std::size_t a, std::size_t b) {
+        return p[a][0] != p[b][0] ? p[a][0] < p[b][0] : a < b;
+    });
+    std::vector<std::pair<std::size_t, std::size_t>> edges;
+    for (std::size_t a = 0; a < n; ++a)
+        for (std::size_t b = a + 1; b < n; ++b) {
+            const auto& u = p[byx[a]];
+            const auto& v = p[byx[b]];
+            const std::int64_t dx = v[0] - u[0];
+            if (dx * dx >= r2) break;
+            const std::int64_t d2 = dx * dx + (v[1] - u[1]) * (v[1] - u[1]) + (v[2] - u[2]) * (v[2] - u[2]);
+            if (d2 < r2) edges.push_back({byx[a], byx[b]});
+        }
+    return from_edges(n, edges);
+}
+
+/// A k x k grid with `holes` square holes of side `side`, at random positions;
+/// the remaining vertices are renumbered.
+Mat grid_with_holes(std::size_t k, int holes, std::size_t side, std::uint64_t seed) {
+    lcg g{seed};
+    std::vector<char> gone(k * k, 0);
+    for (int h = 0; h < holes; ++h) {
+        const std::size_t r0 = static_cast<std::size_t>(g.next() >> 33) % k;
+        const std::size_t c0 = static_cast<std::size_t>(g.next() >> 33) % k;
+        for (std::size_t r = r0; r < std::min(k, r0 + side); ++r)
+            for (std::size_t c = c0; c < std::min(k, c0 + side); ++c) gone[r * k + c] = 1;
+    }
+    std::vector<std::size_t> id(k * k);
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < k * k; ++i) id[i] = gone[i] ? 0 : n++;
+    std::vector<std::pair<std::size_t, std::size_t>> edges;
+    for (std::size_t r = 0; r < k; ++r)
+        for (std::size_t c = 0; c < k; ++c) {
+            const std::size_t i = r * k + c;
+            if (gone[i]) continue;
+            if (c + 1 < k && !gone[i + 1]) edges.push_back({id[i], id[i + 1]});
+            if (r + 1 < k && !gone[i + k]) edges.push_back({id[i], id[i + k]});
+        }
+    return from_edges(n, edges);
+}
+
+/// The graph of a symmetric matrix's off-diagonal pattern, with unit weights.
+ordering::detail::nd_graph graph_of(const Mat& A) {
+    ordering::detail::nd_graph g;
+    const auto& s = A.ref_major();
+    const auto& j = A.ref_minor();
+    const std::size_t n = A.num_rows();
+    g.xadj.assign(n + 1, 0);
+    g.vwgt.assign(n, 1);
+    for (std::size_t r = 0; r < n; ++r) {
+        for (std::size_t k = s[r]; k < s[r + 1]; ++k)
+            if (j[k] != r) {
+                g.adj.push_back(static_cast<ordering::detail::idx>(j[k]));
+                g.ewgt.push_back(1);
+            }
+        g.xadj[r + 1] = static_cast<ordering::detail::idx>(g.adj.size());
+    }
+    return g;
+}
+
 } // namespace
 
 static_assert(FillReducingOrdering<ordering::nested_dissection, Mat>);
 
+using ordering::nd_separator;
+constexpr auto level_structure = nd_separator::level_structure;
+constexpr auto multilevel = nd_separator::multilevel;
+
+TEST_CASE("nested_dissection: the default separator is multilevel", "[sparse][ordering][nd]") {
+    REQUIRE(ordering::nested_dissection{}.method == multilevel);
+    REQUIRE(ordering::nested_dissection{32}.method == multilevel);
+    REQUIRE(ordering::nested_dissection{level_structure}.method == level_structure);
+    REQUIRE(ordering::nested_dissection{level_structure}.cutoff == 64);
+}
+
 TEST_CASE("nested_dissection: edge cases give valid permutations", "[sparse][ordering][nd]") {
-    const ordering::nested_dissection nd;
+    const auto method = GENERATE(level_structure, multilevel);
+    const ordering::nested_dissection nd{method};
 
     SECTION("empty and 1x1") {
         REQUIRE(nd(Mat(0, 0)).empty());
@@ -192,17 +324,141 @@ TEST_CASE("nested_dissection: edge cases give valid permutations", "[sparse][ord
         const auto p = nd(P);
         REQUIRE(util::is_valid_permutation(p));
     }
+
+    SECTION("a star: diameter 2, no level separates it") {
+        // Only a vertex separator works: the centre. Eliminating the leaves
+        // first gives no fill at all, which AMD finds too.
+        const std::size_t n = 1000;
+        std::vector<std::pair<std::size_t, std::size_t>> e;
+        for (std::size_t i = 1; i < n; ++i) e.push_back({0, i});
+        const auto S = from_edges(n, e);
+        const auto p = nd(S);
+        REQUIRE(util::is_valid_permutation(p));
+        REQUIRE(cholesky_cost(S, nd).first == cholesky_cost(S, ordering::amd{}).first);
+    }
+
+    SECTION("a complete graph has no separator") {
+        const std::size_t n = 120;
+        std::vector<std::pair<std::size_t, std::size_t>> e;
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = i + 1; j < n; ++j) e.push_back({i, j});
+        const auto p = nd(from_edges(n, e));
+        REQUIRE(p.size() == n);
+        REQUIRE(util::is_valid_permutation(p));
+    }
 }
 
 TEST_CASE("nested_dissection: at or below the cutoff it is AMD", "[sparse][ordering][nd]") {
+    const auto method = GENERATE(level_structure, multilevel);
     const auto A = grid_laplacian(8, 2);             // 64 vertices, one component
-    REQUIRE(ordering::nested_dissection{64}(A) == ordering::amd{}(A));
-    REQUIRE(ordering::nested_dissection{16}(A) != ordering::amd{}(A));
+    REQUIRE(ordering::nested_dissection{64, 0.7, method}(A) == ordering::amd{}(A));
+    REQUIRE(ordering::nested_dissection{16, 0.7, method}(A) != ordering::amd{}(A));
+}
+
+TEST_CASE("multilevel_separator: separates, balances, and is minimal",
+          "[sparse][ordering][nd]") {
+    using namespace ordering::detail;
+    struct named { const char* name; Mat A; };
+    const std::vector<named> graphs = {
+        {"2-D grid 64x64", grid_laplacian(64, 2)},
+        {"3-D grid 16^3", grid_laplacian(16, 3)},
+        {"grid with holes", grid_with_holes(96, 12, 9, 7)},
+        {"random geometric 2-D", random_geometric(4000, 2, 2734261, 11)},
+    };
+    for (const auto& [name, A] : graphs) {
+        INFO(name);
+        const auto g = graph_of(A);
+        const double balance = 0.7;
+        const auto where = multilevel_separator(g, balance, 1);
+        REQUIRE(where.size() == A.num_rows());
+        const nd_weights pw = nd_part_weights(g, where);
+        REQUIRE(pw.w[nd_part_a] > 0);
+        REQUIRE(pw.w[nd_part_b] > 0);
+        for (idx v = 0; v < g.size(); ++v) {
+            bool touches[3] = {false, false, false};
+            for (idx p = g.xadj[v]; p < g.xadj[v + 1]; ++p) touches[where[g.adj[p]]] = true;
+            // No edge joins A and B.
+            if (where[v] == nd_part_a) REQUIRE_FALSE(touches[nd_part_b]);
+            if (where[v] == nd_part_b) REQUIRE_FALSE(touches[nd_part_a]);
+            // Minimal: every separator vertex touches both sides, so none can
+            // leave S on its own.
+            if (where[v] == nd_part_s) REQUIRE((touches[nd_part_a] && touches[nd_part_b]));
+        }
+        // The balance bound holds for the refined separator, before thinning.
+        // Thinning only moves separator vertices into A or B.
+        const auto refined = multilevel_separator(g, balance, 1, false);
+        const nd_weights rw = nd_part_weights(g, refined);
+        REQUIRE(rw.balanced(balance));
+        REQUIRE(pw.w[nd_part_s] <= rw.w[nd_part_s]);
+        for (idx v = 0; v < g.size(); ++v)
+            if (refined[v] != nd_part_s) REQUIRE(where[v] == refined[v]);
+    }
+
+    SECTION("a grid's separator is about one row") {
+        // Measured: 64 vertices on the 64 x 64 grid, one straight row.
+        const auto g = graph_of(grid_laplacian(64, 2));
+        const auto pw = nd_part_weights(g, multilevel_separator(g, 0.7, 1));
+        REQUIRE(pw.w[nd_part_s] <= 66);
+    }
+}
+
+TEST_CASE("nd_refine: a move that breaks the balance does not hide feasible ones",
+          "[sparse][ordering][nd]") {
+    // A weighted graph, as on a coarse level. A = {a1 (1), a2 (4)},
+    // B = {b1 (1), b2 (1), b3 (3)}, S = {x (8), y (2)}; edges x-a1, x-b1,
+    // y-a2, y-b2, b1-b3. The best gain on either side is x's (7), and moving x
+    // to either side breaks the 0.7 balance bound (13 against 4). Moving y to
+    // A pulls b2 into S and shrinks S from 10 to 9 within the bound (7 against
+    // 4), and then b2 can follow y into A (S = 8).
+    using namespace ordering::detail;
+    enum : idx { a1, a2, b1, b2, b3, x, y, nv };
+    const std::vector<std::pair<idx, idx>> edges = {{x, a1}, {x, b1}, {y, a2}, {y, b2}, {b1, b3}};
+    nd_graph g;
+    g.vwgt = {1, 4, 1, 1, 3, 8, 2};
+    std::vector<std::vector<idx>> nbr(nv);
+    for (auto [u, v] : edges) { nbr[u].push_back(v); nbr[v].push_back(u); }
+    g.xadj.assign(nv + 1, 0);
+    for (idx v = 0; v < nv; ++v) {
+        for (idx w : nbr[v]) { g.adj.push_back(w); g.ewgt.push_back(1); }
+        g.xadj[v + 1] = static_cast<idx>(g.adj.size());
+    }
+    std::vector<signed char> where = {nd_part_a, nd_part_a, nd_part_b, nd_part_b, nd_part_b,
+                                      nd_part_s, nd_part_s};
+    nd_refine(g, where, 0.7);
+    const nd_weights pw = nd_part_weights(g, where);
+    INFO("A " << pw.w[nd_part_a] << " B " << pw.w[nd_part_b] << " S " << pw.w[nd_part_s]);
+    REQUIRE(pw.balanced(0.7));
+    REQUIRE(pw.w[nd_part_s] <= 9);
+    for (auto [u, v] : edges)
+        REQUIRE_FALSE(((where[u] == nd_part_a && where[v] == nd_part_b)
+                       || (where[u] == nd_part_b && where[v] == nd_part_a)));
+}
+
+TEST_CASE("nested_dissection: multilevel is deterministic", "[sparse][ordering][nd]") {
+    // Integer-only test graphs, a fixed-seed integer RNG and totally ordered
+    // priorities: the same permutation with every compiler and standard
+    // library, pinned here by its FNV-1a hash.
+    auto fnv = [](const std::vector<std::size_t>& p) {
+        std::uint64_t h = 1469598103934665603ull;
+        for (std::size_t v : p) { h ^= static_cast<std::uint64_t>(v); h *= 1099511628211ull; }
+        return h;
+    };
+    const ordering::nested_dissection nd;
+    const auto A = random_geometric(3000, 2, 3645681, 5);
+    const auto p = nd(A);
+    REQUIRE(util::is_valid_permutation(p));
+    REQUIRE(nd(A) == p);
+    const auto B = grid_with_holes(60, 8, 7, 3);
+    const auto q = nd(B);
+    INFO("hashes " << fnv(p) << " " << fnv(q));
+    REQUIRE(fnv(p) == 8123638548852251361ull);
+    REQUIRE(fnv(q) == 12346266757541259587ull);
 }
 
 TEST_CASE("nested_dissection: less fill and work than AMD on large grids",
           "[sparse][ordering][nd]") {
-    const ordering::nested_dissection nd;
+    // The level-structure separators; the multilevel ones are tested below.
+    const ordering::nested_dissection nd{level_structure};
 
     SECTION("2-D, k = 256: nnz 0.84x and flops 0.62x AMD's, measured") {
         const auto A = grid_laplacian(256, 2);
@@ -240,13 +496,64 @@ TEST_CASE("nested_dissection: less fill and work than AMD on large grids",
     }
 }
 
+TEST_CASE("nested_dissection: multilevel beats level structures, and AMD in 3-D",
+          "[sparse][ordering][nd]") {
+    const ordering::nested_dissection ml{multilevel}, ls{level_structure};
+    struct row { const char* name; Mat A; };
+
+    SECTION("grids: at least as good as level structures") {
+        // Measured nnz ML/LS: 0.969 (2-D, k=256), 0.922 (3-D, k=20).
+        for (const auto& [name, A] : {row{"2-D k=256", grid_laplacian(256, 2)},
+                                      row{"3-D k=20", grid_laplacian(20, 3)}}) {
+            INFO(name);
+            const auto [nnz_ml, fl_ml] = cholesky_cost(A, ml);
+            const auto [nnz_ls, fl_ls] = cholesky_cost(A, ls);
+            const auto [nnz_amd, fl_amd] = cholesky_cost(A, ordering::amd{});
+            INFO("nnz " << nnz_ml / nnz_amd << " (LS " << nnz_ls / nnz_amd << "), flops "
+                        << fl_ml / fl_amd << " (LS " << fl_ls / fl_amd << ") of AMD's");
+            REQUIRE(nnz_ml < nnz_ls);
+            REQUIRE(fl_ml < fl_ls);
+            REQUIRE(nnz_ml < 0.88 * nnz_amd);
+            REQUIRE(fl_ml < 0.66 * fl_amd);
+        }
+    }
+
+    SECTION("irregular graphs: much better than level structures") {
+        // Measured nnz ML/LS, flops ML/LS:
+        //                                  nnz    flops   (of AMD's: nnz, flops)
+        //   random geometric 2-D (n=10000)  0.614  0.305   (1.173, 1.449)
+        //   random geometric 3-D (n=10000)  0.500  0.265   (0.754, 0.460)
+        //   grid with holes (128^2)         0.941  0.799   (1.047, 0.893)
+        const auto R2 = random_geometric(10000, 2, 1093704, 21);
+        const auto R3 = random_geometric(10000, 3, 18664726, 22);
+        const auto H = grid_with_holes(128, 20, 12, 23);
+        auto ratios = [&](const Mat& A) {
+            const auto a = cholesky_cost(A, ml), b = cholesky_cost(A, ls), c = cholesky_cost(A, ordering::amd{});
+            return std::array<double, 4>{a.first / b.first, a.second / b.second,
+                                         a.first / c.first, a.second / c.second};
+        };
+        const auto r2 = ratios(R2), r3 = ratios(R3), h = ratios(H);
+        INFO("rgg2 " << r2[0] << " " << r2[1] << " " << r2[2] << " " << r2[3]);
+        INFO("rgg3 " << r3[0] << " " << r3[1] << " " << r3[2] << " " << r3[3]);
+        INFO("holes " << h[0] << " " << h[1] << " " << h[2] << " " << h[3]);
+        CHECK(r2[0] < 0.72);
+        CHECK(r2[1] < 0.45);
+        CHECK(r3[0] < 0.6);
+        CHECK(r3[1] < 0.4);
+        CHECK(r3[2] < 0.85);       // and beats AMD in 3-D
+        CHECK(r3[3] < 0.6);
+        CHECK(h[0] < 0.98);
+        CHECK(h[1] < 0.9);
+    }
+}
+
 TEST_CASE("nested_dissection: the factorizations solve correctly under it",
           "[sparse][ordering][nd]") {
     const auto A = grid_laplacian(40, 2);            // 1600 vertices: dissected
     const std::size_t n = A.num_rows();
     vec::dense_vector<double> b(n);
     for (std::size_t i = 0; i < n; ++i) b(i) = 1.0 + static_cast<double>(i % 7);
-    const ordering::nested_dissection nd;
+    const ordering::nested_dissection nd{GENERATE(level_structure, multilevel)};
 
     vec::dense_vector<double> x(n, 0.0);
     factorization::sparse_cholesky_solve(A, x, b, nd);
