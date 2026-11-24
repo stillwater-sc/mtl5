@@ -10,8 +10,12 @@ the pattern of A + Aᵀ, and it returns `perm` with `perm[new] = old`.
 
 auto sym = mtl::sparse::factorization::sparse_cholesky_symbolic(
     A, mtl::sparse::ordering::nested_dissection{});
-// or tuned: nested_dissection{/*cutoff=*/64, /*balance=*/0.7, nd_separator::multilevel}
-// or the cheaper level-structure separators: nested_dissection{nd_separator::level_structure}
+// or tuned:
+//   mtl::sparse::ordering::nested_dissection{/*cutoff=*/64, /*balance=*/0.7,
+//       mtl::sparse::ordering::nd_separator::multilevel}
+// or the cheaper level-structure separators:
+//   mtl::sparse::ordering::nested_dissection{
+//       mtl::sparse::ordering::nd_separator::level_structure}
 ```
 
 ## The idea

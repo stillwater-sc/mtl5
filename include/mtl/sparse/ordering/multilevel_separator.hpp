@@ -399,9 +399,11 @@ inline void nd_thin_separator(const nd_graph& g, std::vector<signed char>& where
 }
 
 /// Multilevel vertex separator of a connected graph. Returns where[v] in
-/// {nd_part_a, nd_part_b, nd_part_s}, with no edge between A and B.
+/// {nd_part_a, nd_part_b, nd_part_s}, with no edge between A and B. With `thin`
+/// false the final thinning is skipped, which leaves the refined separator, the
+/// one the balance bound applies to.
 inline std::vector<signed char> multilevel_separator(const nd_graph& g, double balance,
-                                                     std::uint64_t seed) {
+                                                     std::uint64_t seed, bool thin = true) {
     const idx n = g.size();
     if (n == 0) return {};
     constexpr idx coarsen_to = 100;
@@ -431,7 +433,7 @@ inline std::vector<signed char> multilevel_separator(const nd_graph& g, double b
         where = std::move(fw);
         nd_refine(fine, where, balance);
     }
-    nd_thin_separator(g, where);
+    if (thin) nd_thin_separator(g, where);
     return where;
 }
 

@@ -342,7 +342,9 @@ TEST_CASE("nested_dissection: edge cases give valid permutations", "[sparse][ord
         std::vector<std::pair<std::size_t, std::size_t>> e;
         for (std::size_t i = 0; i < n; ++i)
             for (std::size_t j = i + 1; j < n; ++j) e.push_back({i, j});
-        REQUIRE(util::is_valid_permutation(nd(from_edges(n, e))));
+        const auto p = nd(from_edges(n, e));
+        REQUIRE(p.size() == n);
+        REQUIRE(util::is_valid_permutation(p));
     }
 }
 
@@ -382,11 +384,14 @@ TEST_CASE("multilevel_separator: separates, balances, and is minimal",
             // leave S on its own.
             if (where[v] == nd_part_s) REQUIRE((touches[nd_part_a] && touches[nd_part_b]));
         }
-        // Refinement keeps the larger side within `balance` of A + B; the final
-        // thinning can move up to |S| more vertices onto one side.
-        const double big = static_cast<double>(std::max(pw.w[nd_part_a], pw.w[nd_part_b]));
-        REQUIRE(big <= balance * static_cast<double>(pw.w[nd_part_a] + pw.w[nd_part_b])
-                           + static_cast<double>(pw.w[nd_part_s]));
+        // The balance bound holds for the refined separator, before thinning.
+        // Thinning only moves separator vertices into A or B.
+        const auto refined = multilevel_separator(g, balance, 1, false);
+        const nd_weights rw = nd_part_weights(g, refined);
+        REQUIRE(rw.balanced(balance));
+        REQUIRE(pw.w[nd_part_s] <= rw.w[nd_part_s]);
+        for (idx v = 0; v < g.size(); ++v)
+            if (refined[v] != nd_part_s) REQUIRE(where[v] == refined[v]);
     }
 
     SECTION("a grid's separator is about one row") {
