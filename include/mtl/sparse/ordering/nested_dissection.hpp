@@ -1,5 +1,5 @@
 #pragma once
-// MTL5 -- Nested dissection ordering (level-structure separators)
+// MTL5 -- Nested dissection ordering (multilevel or level-structure separators)
 //
 // Nested dissection orders a graph by divide and conquer. It finds a small
 // vertex separator S whose removal splits the graph into two parts A and B with
@@ -34,10 +34,15 @@
 // The recursion runs on an explicit work stack, so deep separator trees cannot
 // overflow the call stack.
 //
-// Multilevel partitioning (coarsening by matching, Fiduccia-Mattheyses
-// refinement) finds better separators on irregular graphs; level structures
-// are simple, dependency-free, and asymptotically optimal on grids and meshes
-// of bounded aspect ratio.
+// That is nd_separator::level_structure. The default, nd_separator::multilevel,
+// replaces step 3 with a multilevel separator (multilevel_separator.hpp):
+// coarsening by heavy-edge matching, an initial separator on the coarsest
+// graph, and vertex-separator Fiduccia-Mattheyses refinement on the way back,
+// as in METIS. The level-structure separator, refined the same way, is a second
+// candidate, and the smaller balanced separator wins. Level structures are
+// cheap and asymptotically optimal on grids; on irregular graphs a level can be
+// far wider than the best separator, and the multilevel one is much better
+// (random geometric graphs: half the fill, a quarter of the flops).
 //
 // References: George, "Nested Dissection of a Regular Finite Element Mesh",
 //             SIAM J. Numer. Anal. 10(2), 1973.
@@ -49,6 +54,7 @@
 //             SIAM J. Numer. Anal. 16(2), 1979.
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -56,8 +62,18 @@
 
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/sparse/ordering/minimum_degree.hpp>
+#include <mtl/sparse/ordering/multilevel_separator.hpp>
 
 namespace mtl::sparse::ordering {
+
+/// How nested_dissection finds its separators.
+///   level_structure: one level of a breadth-first search from a
+///                    pseudo-peripheral vertex (George's automatic ND).
+///   multilevel:      coarsening by heavy-edge matching, an initial separator
+///                    on the coarsest graph, and vertex-separator
+///                    Fiduccia-Mattheyses refinement while uncoarsening
+///                    (METIS-style); see multilevel_separator.hpp.
+enum class nd_separator { level_structure, multilevel };
 
 namespace detail {
 
@@ -66,7 +82,8 @@ namespace detail {
 /// perm with perm[new] = old.
 inline std::vector<std::size_t> nested_dissection_core(
     std::size_t n, const std::vector<idx>& Cp, const std::vector<idx>& Ci,
-    std::size_t cutoff, double balance)
+    std::size_t cutoff, double balance,
+    nd_separator method = nd_separator::level_structure)
 {
     std::vector<std::size_t> perm(n);
     if (n == 0) return perm;
@@ -199,77 +216,129 @@ inline std::vector<std::size_t> nested_dissection_core(
             continue;
         }
 
-        // Pseudo-peripheral vertex (George-Liu): restart from the minimum-degree
-        // vertex of the last level while the number of levels grows.
-        idx root = it.verts.front();
-        {
-            idx best = it.verts.front();
-            idx bestd = degree_in(best, it.id);
-            for (idx v : it.verts) {
-                idx d = degree_in(v, it.id);
-                if (d < bestd) { best = v; bestd = d; }
+        // Level-structure split into A, B and S. False when the item has
+        // diameter < 2, so that no level separates anything.
+        std::vector<idx> part_a, part_b, part_s;
+        auto level_split = [&]() -> bool {
+            // Pseudo-peripheral vertex (George-Liu): restart from the minimum-degree
+            // vertex of the last level while the number of levels grows.
+            idx root = it.verts.front();
+            {
+                idx best = it.verts.front();
+                idx bestd = degree_in(best, it.id);
+                for (idx v : it.verts) {
+                    idx d = degree_in(v, it.id);
+                    if (d < bestd) { best = v; bestd = d; }
+                }
+                root = best;
             }
-            root = best;
-        }
-        idx nlev = bfs(root, it.id);
-        for (;;) {
-            idx cand = order[starts[nlev - 1]];
-            idx cd = degree_in(cand, it.id);
-            for (idx q = starts[nlev - 1]; q < starts[nlev]; ++q) {
-                idx d = degree_in(order[q], it.id);
-                if (d < cd) { cand = order[q]; cd = d; }
+            idx nlev = bfs(root, it.id);
+            for (;;) {
+                idx cand = order[starts[nlev - 1]];
+                idx cd = degree_in(cand, it.id);
+                for (idx q = starts[nlev - 1]; q < starts[nlev]; ++q) {
+                    idx d = degree_in(order[q], it.id);
+                    if (d < cd) { cand = order[q]; cd = d; }
+                }
+                idx nl = bfs(cand, it.id);
+                if (nl > nlev) { root = cand; nlev = nl; continue; }
+                bfs(root, it.id);   // restore the deepest structure found
+                break;
             }
-            idx nl = bfs(cand, it.id);
-            if (nl > nlev) { root = cand; nlev = nl; continue; }
-            bfs(root, it.id);   // restore the deepest structure found
-            break;
-        }
 
-        // A graph of diameter < 2 has no level that separates anything.
-        if (nlev < 3) {
+            // A graph of diameter < 2 has no level that separates anything.
+            if (nlev < 3) return false;
+
+            // Separator level j in [1, nlev-2]: the narrowest level whose larger
+            // side holds at most `balance` of the non-separator vertices. Balance
+            // alone picks wide levels (a grid's middle anti-diagonal); width alone
+            // picks lopsided splits that barely shrink the problem. If no level
+            // meets the bound, take the most balanced one.
+            idx sep = 1;
+            {
+                std::size_t best_width = static_cast<std::size_t>(-1);
+                std::size_t best_big = static_cast<std::size_t>(-1);
+                idx fallback = 1;
+                for (idx j = 1; j <= nlev - 2; ++j) {
+                    const std::size_t before = static_cast<std::size_t>(starts[j]);
+                    const std::size_t after  = m - static_cast<std::size_t>(starts[j + 1]);
+                    const std::size_t width  = static_cast<std::size_t>(starts[j + 1] - starts[j]);
+                    const std::size_t big = before > after ? before : after;
+                    if (big < best_big) { best_big = big; fallback = j; }
+                    if (static_cast<double>(big) <= balance * static_cast<double>(before + after)
+                        && width < best_width) {
+                        best_width = width;
+                        sep = j;
+                    }
+                }
+                if (best_width == static_cast<std::size_t>(-1)) sep = fallback;
+            }
+
+            part_a.reserve(static_cast<std::size_t>(starts[sep]));
+            for (idx q = 0; q < starts[sep]; ++q) part_a.push_back(order[q]);
+            for (idx q = starts[sep + 1]; q < starts[nlev]; ++q) part_b.push_back(order[q]);
+            // Thin the separator: a vertex with no neighbour in level sep+1 touches
+            // only A and S, so it can join A.
+            for (idx q = starts[sep]; q < starts[sep + 1]; ++q) {
+                idx v = order[q];
+                bool touches_b = false;
+                for (idx p = Cp[v]; p < Cp[v + 1] && !touches_b; ++p) {
+                    idx w = Ci[p];
+                    if (owner[w] == it.id && seen[w] == search && level[w] == sep + 1) touches_b = true;
+                }
+                (touches_b ? part_s : part_a).push_back(v);
+            }
+            return true;
+        };
+        bool split = level_split();
+
+        if (method == nd_separator::multilevel) {
+            // The item's induced subgraph, with unit weights.
+            for (std::size_t i = 0; i < m; ++i) local[it.verts[i]] = static_cast<idx>(i);
+            nd_graph g;
+            g.xadj.assign(m + 1, 0);
+            g.vwgt.assign(m, 1);
+            for (std::size_t i = 0; i < m; ++i) {
+                const idx v = it.verts[i];
+                for (idx p = Cp[v]; p < Cp[v + 1]; ++p)
+                    if (owner[Ci[p]] == it.id) {
+                        g.adj.push_back(local[Ci[p]]);
+                        g.ewgt.push_back(1);
+                    }
+                g.xadj[i + 1] = static_cast<idx>(g.adj.size());
+            }
+            // A fixed seed per item: the same input gives the same ordering.
+            const std::uint64_t seed = 0x6E64ull ^ (static_cast<std::uint64_t>(m) << 32)
+                                       ^ static_cast<std::uint64_t>(it.lo);
+            std::vector<signed char> chosen = multilevel_separator(g, balance, seed);
+            // The level-structure separator, polished by the same refinement,
+            // is a second candidate: on grids and regular meshes its lopsided
+            // corner cuts are shorter than anything the coarse graphs suggest.
+            if (split) {
+                std::vector<signed char> ls(m);
+                for (idx v : part_a) ls[local[v]] = nd_part_a;
+                for (idx v : part_b) ls[local[v]] = nd_part_b;
+                for (idx v : part_s) ls[local[v]] = nd_part_s;
+                nd_refine(g, ls, balance);
+                nd_thin_separator(g, ls);
+                if (nd_part_weights(g, ls).better_than(nd_part_weights(g, chosen), balance))
+                    chosen = std::move(ls);
+            }
+            const nd_weights pw = nd_part_weights(g, chosen);
+            // A degenerate split (one side empty) keeps the plain level structure.
+            if (pw.w[nd_part_a] > 0 && pw.w[nd_part_b] > 0) {
+                part_a.clear();
+                part_b.clear();
+                part_s.clear();
+                for (std::size_t i = 0; i < m; ++i)
+                    (chosen[i] == nd_part_a ? part_a : chosen[i] == nd_part_b ? part_b : part_s)
+                        .push_back(it.verts[i]);
+                split = true;
+            }
+        }
+        if (!split) {
             order_small(it.verts, it.lo, it.id);
             continue;
-        }
-
-        // Separator level j in [1, nlev-2]: the narrowest level whose larger
-        // side holds at most `balance` of the non-separator vertices. Balance
-        // alone picks wide levels (a grid's middle anti-diagonal); width alone
-        // picks lopsided splits that barely shrink the problem. If no level
-        // meets the bound, take the most balanced one.
-        idx sep = 1;
-        {
-            std::size_t best_width = static_cast<std::size_t>(-1);
-            std::size_t best_big = static_cast<std::size_t>(-1);
-            idx fallback = 1;
-            for (idx j = 1; j <= nlev - 2; ++j) {
-                const std::size_t before = static_cast<std::size_t>(starts[j]);
-                const std::size_t after  = m - static_cast<std::size_t>(starts[j + 1]);
-                const std::size_t width  = static_cast<std::size_t>(starts[j + 1] - starts[j]);
-                const std::size_t big = before > after ? before : after;
-                if (big < best_big) { best_big = big; fallback = j; }
-                if (static_cast<double>(big) <= balance * static_cast<double>(before + after)
-                    && width < best_width) {
-                    best_width = width;
-                    sep = j;
-                }
-            }
-            if (best_width == static_cast<std::size_t>(-1)) sep = fallback;
-        }
-
-        std::vector<idx> part_a, part_b, part_s;
-        part_a.reserve(static_cast<std::size_t>(starts[sep]));
-        for (idx q = 0; q < starts[sep]; ++q) part_a.push_back(order[q]);
-        for (idx q = starts[sep + 1]; q < starts[nlev]; ++q) part_b.push_back(order[q]);
-        // Thin the separator: a vertex with no neighbour in level sep+1 touches
-        // only A and S, so it can join A.
-        for (idx q = starts[sep]; q < starts[sep + 1]; ++q) {
-            idx v = order[q];
-            bool touches_b = false;
-            for (idx p = Cp[v]; p < Cp[v + 1] && !touches_b; ++p) {
-                idx w = Ci[p];
-                if (owner[w] == it.id && seen[w] == search && level[w] == sep + 1) touches_b = true;
-            }
-            (touches_b ? part_s : part_a).push_back(v);
         }
 
         // Separator last, in its level order; then A and B as children.
@@ -295,16 +364,25 @@ inline std::vector<std::size_t> nested_dissection_core(
 /// instead of being dissected further. Measured on 2-D grids, 16 to 256 change
 /// the fill by under 3%; 64 is the default.
 ///
-/// `balance`: a separator level is acceptable when the larger of the two parts
-/// holds at most this fraction of their vertices; among acceptable levels the
-/// narrowest is taken. On 2-D grids 0.7 gave the least fill of 0.5-0.9.
+/// `balance`: a separator is acceptable when the larger of the two parts holds
+/// at most this fraction of their vertices; among acceptable separators the
+/// smallest is taken. On 2-D grids 0.7 gave the least fill of 0.5-0.9 for level
+/// structures, and of 0.65-0.8 for multilevel separators.
+///
+/// `method`: nd_separator::multilevel (the default) or
+/// nd_separator::level_structure. Multilevel gives less fill on every graph
+/// measured, and much less on irregular ones. It costs 10-40x AMD's ordering
+/// time (0.44 s on a 256 x 256 grid), against 3-4x for level structures.
 struct nested_dissection {
     std::size_t cutoff = 64;
     double balance = 0.7;
+    nd_separator method = nd_separator::multilevel;
 
     nested_dissection() = default;
-    explicit nested_dissection(std::size_t cutoff_, double balance_ = 0.7)
-        : cutoff(cutoff_), balance(balance_) {}
+    explicit nested_dissection(std::size_t cutoff_, double balance_ = 0.7,
+                               nd_separator method_ = nd_separator::multilevel)
+        : cutoff(cutoff_), balance(balance_), method(method_) {}
+    explicit nested_dissection(nd_separator method_) : method(method_) {}
 
     template <typename Value, typename Parameters>
     std::vector<std::size_t> operator()(
@@ -317,7 +395,7 @@ struct nested_dissection {
         if (n == 0) return {};
         std::vector<detail::idx> Cp, Ci;
         detail::build_aplusat_pattern(A, Cp, Ci);
-        return detail::nested_dissection_core(n, Cp, Ci, cutoff, balance);
+        return detail::nested_dissection_core(n, Cp, Ci, cutoff, balance, method);
     }
 };
 

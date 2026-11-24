@@ -5,6 +5,33 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Multilevel separators for nested dissection** (issue 922): `nested_dissection` takes a separator method, `nd_separator::multilevel` (the new default) or `nd_separator::level_structure` (the 5.25.0 behaviour). Write `nested_dissection{nd_separator::level_structure}`, or `nested_dissection{cutoff, balance, method}`. There is still no external dependency.
+  - **The multilevel separator** (`multilevel_separator.hpp`) works in METIS's style:
+    - It coarsens by heavy-edge matching in a random order, down to about 100 vertices.
+    - On the coarsest graph it tries several breadth-first regions, of 30% to 50% of the weight, and takes each region's boundary as a separator.
+    - While uncoarsening, it refines the separator with vertex-separator Fiduccia–Mattheyses: a bounded hill-climb with rollback, under the `balance` bound.
+    - Finally it thins the separator, so that every separator vertex touches both sides.
+  - **The level-structure separator** is also refined, and the smaller of the two balanced separators is taken. On grids, the lopsided corner cuts of a level structure can be shorter than anything the coarse graphs suggest.
+  - **Determinism:** the random choices use splitmix64 with a fixed seed, and every priority has a total order. The permutation is the same with every compiler and standard library, and a test pins its hash.
+  - **Measured Cholesky nnz(L) relative to AMD, with the level structure's in parentheses:**
+    - 2-D grids: 1.02 (1.04) at k = 64, 0.82 (0.84) at k = 256, 0.76 (0.78) at k = 512.
+    - 3-D grids: 0.88 (0.95) at k = 12, 0.60 (0.64) at k = 32.
+    - A 256² grid with 60 holes: 1.06 (1.13).
+    - Random geometric graphs: 1.17 (2.05) in 2-D at n = 50 000, and 0.70 (1.44) in 3-D at n = 30 000.
+  - **Measured flops relative to AMD:**
+    - 0.50 (0.54) at k = 512 in 2-D;
+    - 0.33 (0.36) at k = 32 in 3-D;
+    - 0.44 (1.53) on the 3-D random geometric graph.
+  - **Cost:** the multilevel ordering takes 10 to 40 times AMD's time:
+    - 0.44 s against 0.01 s on a 256² grid;
+    - 2.0 s against 0.06 s on a 512² grid;
+    - 0.40 s against 0.03 s on the 3-D random geometric graph.
+    
+    The level structure takes 3 to 4 times AMD's time. Choose it when the ordering time matters more than the fill.
+  - Tests: `test_nested_dissection.cpp`. Docs: `docs/algorithms/nested-dissection.md`.
+
 ## [5.25.0] - 2026-11-24
 
 One feature since 5.24.1 (#920), so it is a minor release: a nested dissection ordering. MAJOR stays at 5.
