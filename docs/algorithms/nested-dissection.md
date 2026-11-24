@@ -5,9 +5,11 @@ sparse factorizations, next to `amd`, `colamd` and `rcm`. Like `amd`, it works o
 the pattern of A + Aᵀ, and it returns `perm` with `perm[new] = old`.
 
 ```cpp
+#include <mtl/sparse/factorization/sparse_cholesky.hpp>
 #include <mtl/sparse/ordering/nested_dissection.hpp>
 
-auto sym = sparse_cholesky_symbolic(A, mtl::sparse::ordering::nested_dissection{});
+auto sym = mtl::sparse::factorization::sparse_cholesky_symbolic(
+    A, mtl::sparse::ordering::nested_dissection{});
 // or tuned: nested_dissection{/*cutoff=*/64, /*balance=*/0.7}
 ```
 
