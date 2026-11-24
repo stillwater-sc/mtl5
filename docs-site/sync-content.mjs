@@ -82,6 +82,7 @@ const FILE_MAP = {
   'numerical/summation-order-in-cholesky.md':   'numerical/summation-order-in-cholesky.md',
   'numerical/householder-reflector-forms.md':   'numerical/householder-reflector-forms.md',
   'algorithms/klu.md':                          'algorithms/klu.md',
+  'algorithms/nested-dissection.md':            'algorithms/nested-dissection.md',
   'algorithms/matrix-functions.md':             'algorithms/matrix-functions.md',
   'algorithms/sylvester.md':                    'algorithms/sylvester.md',
   'algorithms/gemmt.md':                        'algorithms/gemmt.md',
