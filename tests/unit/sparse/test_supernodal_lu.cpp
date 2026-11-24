@@ -16,6 +16,7 @@
 #include <mtl/sparse/factorization/sparse_lu.hpp>
 #include <mtl/sparse/factorization/supernodal_lu.hpp>
 #include <mtl/sparse/ordering/colamd.hpp>
+#include <mtl/sparse/ordering/rcm.hpp>
 
 using namespace mtl;
 using namespace mtl::sparse;
@@ -495,5 +496,76 @@ TEST_CASE("Supernodal LU zero-pivot perturbation (#185)", "[sparse][lu][supernod
         vec::dense_vector<double> b = {1.0, 2.0}, x(2, 0.0);
         re.solve(x, b);
         REQUIRE(rel_residual(A2, x, b) < 1e-12);
+    }
+}
+
+// A k x k five-point grid, made unsymmetric by random off-diagonal factors in
+// [0.5, 1.5] and given a diagonal weakened by a random factor in [0.05, 1]. Full
+// partial pivoting leaves the diagonal for about half the columns; a small
+// threshold should keep nearly every pivot on it.
+static mat::compressed2D<double> weak_diagonal_grid_916(std::size_t k) {
+    const std::size_t n = k * k;
+    std::mt19937 gen(916);
+    std::uniform_real_distribution<double> off(0.5, 1.5), dia(0.05, 1.0);
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t r = 0; r < k; ++r)
+            for (std::size_t c = 0; c < k; ++c) {
+                const std::size_t i = r * k + c;
+                ins[i][i] << dia(gen);
+                if (c > 0)     ins[i][i - 1] << -0.25 * off(gen);
+                if (c + 1 < k) ins[i][i + 1] << -0.25 * off(gen);
+                if (r > 0)     ins[i][i - k] << -0.25 * off(gen);
+                if (r + 1 < k) ins[i][i + k] << -0.25 * off(gen);
+            }
+    }
+    return A;
+}
+
+/// Pivots taken on the diagonal of the permuted column: row_perm[k] == col_perm[k].
+static std::size_t diagonal_pivots_916(const std::vector<std::size_t>& row_perm,
+                                       const std::vector<std::size_t>& col_perm) {
+    std::size_t d = 0;
+    for (std::size_t i = 0; i < row_perm.size(); ++i)
+        if (row_perm[i] == col_perm[i]) ++d;
+    return d;
+}
+
+static bool is_identity_916(const std::vector<std::size_t>& p) {
+    for (std::size_t i = 0; i < p.size(); ++i)
+        if (p[i] != i) return false;
+    return true;
+}
+
+TEST_CASE("Supernodal threshold pivoting prefers the permuted diagonal q[k] (#916)", "[sparse][lu][supernodal]") {
+    // Column k of the factored matrix is A(:, q[k]), so the diagonal the
+    // threshold should prefer is row q[k]. Preferring row k instead made the
+    // threshold nearly inert under any non-natural ordering.
+    const auto A = weak_diagonal_grid_916(20);
+    const std::size_t n = A.num_rows();
+    vec::dense_vector<double> b(n, 1.0);
+
+    for (int which = 0; which < 2; ++which) {
+        auto sym = which == 0 ? factorization::supernodal_lu_symbolic_analyze(A, ordering::rcm{})
+                              : factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        INFO("ordering " << (which == 0 ? "rcm" : "colamd"));
+        REQUIRE_FALSE(is_identity_916(sym.col_perm));
+
+        auto full    = factorization::supernodal_lu_numeric(A, sym, 1.0);
+        auto relaxed = factorization::supernodal_lu_numeric(A, sym, 0.01);
+        const auto dfull = diagonal_pivots_916(full.row_perm, sym.col_perm);
+        const auto drel  = diagonal_pivots_916(relaxed.row_perm, sym.col_perm);
+        // The matrix exercises pivoting: full pivoting leaves the diagonal often.
+        REQUIRE(dfull < 3 * n / 4);
+        // A small threshold keeps nearly every pivot on the diagonal. Before the
+        // fix this was about the same count as full pivoting.
+        REQUIRE(drel >= 95 * n / 100);
+        REQUIRE(relaxed.factorL().nnz() + relaxed.factorU().nnz()
+                < full.factorL().nnz() + full.factorU().nnz());
+
+        vec::dense_vector<double> x(n, 0.0);
+        relaxed.solve(x, b);
+        REQUIRE(rel_residual(A, x, b) < 1e-10);
     }
 }

@@ -599,9 +599,11 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         if (!perturb && a == Value{0})               // default: hard throw, unchanged
             throw std::runtime_error(
                 "supernodal_lu_numeric: zero pivot at column " + std::to_string(k) + " (singular)");
-        if (pinv[static_cast<std::ptrdiff_t>(k)] < 0
-            && abs(AT::value(x[k])) >= threshold * a)
-            ipiv = static_cast<std::ptrdiff_t>(k);
+        // Prefer the diagonal of C(:,k) = A(:, q[k]), which is row q[k] in the
+        // original numbering, not row k (issue 916).
+        const auto kd = static_cast<std::ptrdiff_t>(sym.col_perm[k]);
+        if (pinv[kd] < 0 && abs(AT::value(x[kd])) >= threshold * a)
+            ipiv = kd;
 
         Value pivot = AT::value(x[ipiv]);
         // Opt-in zero-pivot perturbation: replace a collapsed pivot (below
