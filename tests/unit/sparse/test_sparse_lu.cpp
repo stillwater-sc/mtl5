@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <vector>
@@ -479,4 +480,24 @@ TEST_CASE("Threshold pivoting prefers the permuted diagonal q[k] (#916)", "[spar
         relaxed.solve(x, b);
         REQUIRE(relative_residual(A, x, b) < 1e-10);
     }
+}
+
+TEST_CASE("Threshold pivoting keeps a nonzero pivot when threshold * max underflows (#916)",
+          "[sparse][lu]") {
+    // A = [[0, s], [s, 0]] with s = denorm_min and q = [1, 0]. The diagonal of
+    // column 0 of A(:, q) is A(1, 1) = 0, and threshold * s rounds to 0, so a
+    // bare ">= threshold * max" test would pick the zero diagonal.
+    const double s = std::numeric_limits<double>::denorm_min();
+    mat::compressed2D<double> A(2, 2);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        ins[0][1] << s;
+        ins[1][0] << s;
+    }
+    auto swap_cols = [](const auto&) { return std::vector<std::size_t>{1, 0}; };
+    auto sym = factorization::sparse_lu_symbolic(A, swap_cols);
+    auto num = factorization::sparse_lu_numeric(A, sym, 0.01);
+    const auto& U = num.factorU();
+    for (std::size_t k = 0; k < 2; ++k)          // U(k,k) is stored last in column k
+        REQUIRE(U.values[U.col_ptr[k + 1] - 1] != 0.0);
 }
