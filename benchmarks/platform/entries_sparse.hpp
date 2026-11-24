@@ -23,9 +23,10 @@
 //                                  built as users build, and an FMA in one loop
 //                                  and not the other differs in the last bits
 //   direct solvers                 normwise backward error of the solve
-//   amd, colamd                    a valid permutation, AND at most half the
+//   amd, colamd, nested_dissection a valid permutation, AND at most half the
 //                                  Cholesky fill of the scrambled natural order
-//                                  (of A for amd, of A^T A for colamd)
+//                                  (of A for amd and nested_dissection, of A^T A
+//                                  for colamd)
 //   rcm                            a valid permutation whose bandwidth is within
 //                                  4x of the grid's natural bandwidth k
 //   block_triangular_form          valid permutations, zero-free diagonal, no
@@ -73,6 +74,7 @@
 #include <mtl/sparse/ordering/amd.hpp>
 #include <mtl/sparse/ordering/colamd.hpp>
 #include <mtl/sparse/ordering/dulmage_mendelsohn.hpp>
+#include <mtl/sparse/ordering/nested_dissection.hpp>
 #include <mtl/sparse/ordering/rcm.hpp>
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
@@ -491,6 +493,32 @@ inline problem amd(size_class c) {
     return p;
 }
 
+/// Nested dissection on a scrambled Laplacian: valid, and at most half the
+/// Cholesky fill of the scrambled natural order, as for AMD. The scrambling
+/// matters here too: on the natural grid order the level structure would
+/// start from a corner without having to find one.
+inline problem nested_dissection(size_class c) {
+    const std::size_t k = grid_direct(c);
+    struct S { csr A; std::vector<std::size_t> perm; };
+    auto P = poisson2d(k);
+    const auto r = random_perm(P.num_rows(), 210);
+    auto s = std::make_shared<S>(S{permuted(P, r, r), {}});
+    problem p{grid_shape(k, s->A) + ", scrambled", 0.0, 0.0, [] {},
+              [s] { s->perm = ord::nested_dissection{}(s->A); }, {}};
+    p.check = [s] {
+        check_result res;
+        res.what = "valid permutation; fill(nested_dissection) / fill(scrambled natural) <= 0.5";
+        res.tolerance = 0.5;
+        if (!valid(s->perm, s->A.num_rows())) { res.error = 1e300; return res; }
+        const double f_nd = double(fac::sparse_cholesky_symbolic(s->A, fixed_order{s->perm}).nnz_L);
+        const double f_nat = double(fac::sparse_cholesky_symbolic(s->A, identity_order{}).nnz_L);
+        res.error = f_nd / f_nat;
+        res.ok = res.error <= res.tolerance;
+        return res;
+    };
+    return p;
+}
+
 /// COLAMD orders COLUMNS to limit the fill of A^T A (LU and QR). On a
 /// column-scrambled convection-diffusion matrix: valid, and at most half the
 /// Cholesky fill of A^T A in the scrambled natural column order.
@@ -623,6 +651,7 @@ inline void register_all(registry& r) {
 
     r.add("ordering", "amd", "f64", amd);
     r.add("ordering", "colamd", "f64", colamd);
+    r.add("ordering", "nested_dissection", "f64", nested_dissection);
     r.add("ordering", "rcm", "f64", rcm);
     r.add("ordering", "block_triangular_form", "f64", block_triangular_form);
 }
