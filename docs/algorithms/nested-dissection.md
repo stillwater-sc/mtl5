@@ -82,9 +82,10 @@ This is the scheme of METIS (Karypis and Kumar, 1998), in
    Matching repeats until about 100 vertices remain, or until a level shrinks
    the graph by less than 15%.
 2. **Initial separator.** On the coarsest graph, grow breadth-first regions from
-   several seeds, the first one pseudo-peripheral. Each region holds 30% to 50%
-   of the weight, and its boundary becomes a separator. The best balanced
-   separator wins.
+   several seeds, the first one pseudo-peripheral. The regions hold
+   1 − `balance`, the midpoint, and 50% of the weight: 30%, 40% and 50% at the
+   default 0.7. Each region's boundary becomes a separator, and the best
+   balanced separator wins.
 3. **Uncoarsen and refine.** The labels project to the next finer graph, and
    the separator stays valid. Vertex-separator Fiduccia–Mattheyses then
    improves it:

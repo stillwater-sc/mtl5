@@ -324,6 +324,10 @@ inline std::vector<std::size_t> nested_dissection_core(
                 if (nd_part_weights(g, ls).better_than(nd_part_weights(g, chosen), balance))
                     chosen = std::move(ls);
             }
+            // Both candidates are thinned, which only ever shrinks S, and is
+            // kept even when it tips the parts past `balance`: a vertex that
+            // touches one side only adds fill by staying in the separator.
+            // Level structures are thinned the same way.
             const nd_weights pw = nd_part_weights(g, chosen);
             // A degenerate split (one side empty) keeps the plain level structure.
             if (pw.w[nd_part_a] > 0 && pw.w[nd_part_b] > 0) {

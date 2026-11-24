@@ -10,7 +10,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 - **Multilevel separators for nested dissection** (issue 922): `nested_dissection` takes a separator method, `nd_separator::multilevel` (the new default) or `nd_separator::level_structure` (the 5.25.0 behaviour). Write `nested_dissection{nd_separator::level_structure}`, or `nested_dissection{cutoff, balance, method}`. There is still no external dependency.
   - **The multilevel separator** (`multilevel_separator.hpp`) works in METIS's style:
     - It coarsens by heavy-edge matching in a random order, down to about 100 vertices.
-    - On the coarsest graph it tries several breadth-first regions, of 30% to 50% of the weight, and takes each region's boundary as a separator.
+    - On the coarsest graph it tries several breadth-first regions, holding 1 − `balance`, the midpoint, and 50% of the weight (30%, 40% and 50% at the default 0.7), and takes each region's boundary as a separator.
     - While uncoarsening, it refines the separator with vertex-separator Fiduccia–Mattheyses: a bounded hill-climb with rollback, under the `balance` bound.
     - Finally it thins the separator, so that every separator vertex touches both sides.
   - **The level-structure separator** is also refined, and the smaller of the two balanced separators is taken. On grids, the lopsided corner cuts of a level structure can be shorter than anything the coarse graphs suggest.
