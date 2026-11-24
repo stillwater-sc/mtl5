@@ -149,6 +149,7 @@ sparse/analysis/supernodes.hpp        via   direct/supernodal_ldlt/
 sparse/ordering/amd.hpp             bench   ordering/amd/
 sparse/ordering/colamd.hpp          bench   ordering/colamd/
 sparse/ordering/rcm.hpp             bench   ordering/rcm/
+sparse/ordering/nested_dissection.hpp  bench  ordering/nested_dissection/
 sparse/ordering/dulmage_mendelsohn.hpp  bench  ordering/block_triangular_form/
 sparse/ordering/minimum_degree.hpp  via     ordering/amd/        # the engine inside amd and colamd
 sparse/ordering/ordering_concepts.hpp  exempt  concepts only

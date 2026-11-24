@@ -5,6 +5,20 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Nested dissection ordering** (issue 919): `mtl::sparse::ordering::nested_dissection`, next to `amd`, `colamd` and `rcm`, with no external dependency.
+  - **The algorithm** is George's automatic nested dissection on the pattern of A + Aᵀ. Each connected component is ordered separately, starting from a George–Liu pseudo-peripheral vertex. The separator is a level of the breadth-first level structure: the narrowest level whose larger side holds at most `balance` (0.7) of the remaining vertices, thinned to the vertices that touch the far side. The two halves are numbered first and the separator last.
+  - **Small pieces:** below `cutoff` (64) vertices, a piece is ordered with AMD.
+  - **No call-stack recursion:** it runs on an explicit work stack.
+  - **Measured Cholesky nnz(L) relative to AMD:**
+    - 2-D k×k grids: 1.13, 1.04, 0.92, 0.84 and 0.78 at k = 32, 64, 128, 256 and 512. AMD is as good or better on small 2-D grids.
+    - 3-D k³ grids: 0.95 at k = 12, down to 0.64 at k = 32.
+  - **Measured flops relative to AMD:** 0.54 at k = 512 in 2-D, and 0.36 at k = 32 in 3-D.
+  - **Growth over 2-D grids from k = 128 to 512:** ND's flops grow like n^1.50, the optimal rate, against AMD's n^1.59. Its fill grows like n^1.12, against AMD's n^1.18.
+  - **Separator quality:** on irregular graphs, level-structure separators are weaker than a multilevel (METIS-style) partitioner's, which remains a possible follow-up.
+  - Tests: `test_nested_dissection.cpp`. Docs: `docs/algorithms/nested-dissection.md`.
+
 ## [5.24.1] - 2026-11-24
 
 One fix since 5.24.0 (#917), so it is a patch release.

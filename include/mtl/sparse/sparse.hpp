@@ -30,6 +30,7 @@
 
 // Orderings
 #include <mtl/sparse/ordering/rcm.hpp>
+#include <mtl/sparse/ordering/nested_dissection.hpp>
 #include <mtl/sparse/ordering/amd.hpp>
 #include <mtl/sparse/ordering/colamd.hpp>
 #include <mtl/sparse/ordering/dulmage_mendelsohn.hpp>
