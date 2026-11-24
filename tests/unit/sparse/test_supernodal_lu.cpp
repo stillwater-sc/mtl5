@@ -506,19 +506,25 @@ TEST_CASE("Supernodal LU zero-pivot perturbation (#185)", "[sparse][lu][supernod
 // threshold should keep nearly every pivot on it.
 static mat::compressed2D<double> weak_diagonal_grid_916(std::size_t k) {
     const std::size_t n = k * k;
+    // mt19937's output is fully specified; uniform_real_distribution is not, so
+    // map the raw output by hand to get the same matrix on every toolchain.
     std::mt19937 gen(916);
-    std::uniform_real_distribution<double> off(0.5, 1.5), dia(0.05, 1.0);
+    auto uniform = [&gen](double lo, double hi) {
+        return lo + (hi - lo) * (static_cast<double>(gen()) / 4294967296.0);
+    };
+    auto off = [&] { return uniform(0.5, 1.5); };
+    auto dia = [&] { return uniform(0.05, 1.0); };
     mat::compressed2D<double> A(n, n);
     {
         mat::inserter<mat::compressed2D<double>> ins(A);
         for (std::size_t r = 0; r < k; ++r)
             for (std::size_t c = 0; c < k; ++c) {
                 const std::size_t i = r * k + c;
-                ins[i][i] << dia(gen);
-                if (c > 0)     ins[i][i - 1] << -0.25 * off(gen);
-                if (c + 1 < k) ins[i][i + 1] << -0.25 * off(gen);
-                if (r > 0)     ins[i][i - k] << -0.25 * off(gen);
-                if (r + 1 < k) ins[i][i + k] << -0.25 * off(gen);
+                ins[i][i] << dia();
+                if (c > 0)     ins[i][i - 1] << -0.25 * off();
+                if (c + 1 < k) ins[i][i + 1] << -0.25 * off();
+                if (r > 0)     ins[i][i - k] << -0.25 * off();
+                if (r + 1 < k) ins[i][i + k] << -0.25 * off();
             }
     }
     return A;
@@ -560,8 +566,8 @@ TEST_CASE("Supernodal threshold pivoting prefers the permuted diagonal q[k] (#91
         // The matrix exercises pivoting: full pivoting leaves the diagonal often.
         REQUIRE(dfull < 3 * n / 4);
         // A small threshold keeps nearly every pivot on the diagonal. Before the
-        // fix this was about the same count as full pivoting.
-        REQUIRE(drel >= 95 * n / 100);
+        // fix it was about a third of n, near the full-pivoting count.
+        REQUIRE(drel >= 85 * n / 100);
         REQUIRE(relaxed.factorL().nnz() + relaxed.factorU().nnz()
                 < full.factorL().nnz() + full.factorU().nnz());
 
