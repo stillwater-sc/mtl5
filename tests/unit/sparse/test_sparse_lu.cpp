@@ -481,6 +481,16 @@ TEST_CASE("Threshold pivoting prefers the permuted diagonal q[k] (#916)", "[spar
         REQUIRE(drel >= 85 * n / 100);
         REQUIRE(relaxed.factorL().nnz() + relaxed.factorU().nnz()
                 < full.factorL().nnz() + full.factorU().nnz());
+        // Fill equivalence: factoring A(q, q) with the natural ordering prefers
+        // row k, which is the same diagonal. The two should agree up to
+        // tie-breaking among rounding-level differences.
+        const auto B = util::symmetric_permute(A, sym.col_perm);
+        auto ref = factorization::sparse_lu_numeric(B, factorization::sparse_lu_symbolic(B), 0.01);
+        const std::size_t nnz_rel = relaxed.factorL().nnz() + relaxed.factorU().nnz();
+        const std::size_t nnz_ref = ref.factorL().nnz() + ref.factorU().nnz();
+        INFO("nnz(L+U): ordered " << nnz_rel << ", pre-permuted natural " << nnz_ref);
+        REQUIRE(100 * nnz_rel <= 102 * nnz_ref);
+        REQUIRE(100 * nnz_rel >= 98 * nnz_ref);
 
         vec::dense_vector<double> x(n, 0.0);
         relaxed.solve(x, b);
