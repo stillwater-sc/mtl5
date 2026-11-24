@@ -132,9 +132,9 @@ Ordering time:
 
 | Graph | AMD | level structure | multilevel |
 |---|---|---|---|
-| 256² grid | 0.01 s | 0.04 s | 0.44 s |
+| 256² grid | 0.01 s | 0.04 s | 0.45 s |
 | 512² grid | 0.06 s | 0.21 s | 2.0 s |
-| 3-D random geometric, n = 30 000 | 0.03 s | 0.09 s | 0.40 s |
+| 3-D random geometric, n = 30 000 | 0.03 s | 0.09 s | 0.46 s |
 
 The growth rates of the level-structure ordering over 2-D grids from k = 128 to
 512, as powers of n = k²:

@@ -372,7 +372,7 @@ inline std::vector<std::size_t> nested_dissection_core(
 /// `method`: nd_separator::multilevel (the default) or
 /// nd_separator::level_structure. Multilevel gives less fill on every graph
 /// measured, and much less on irregular ones. It costs 10-40x AMD's ordering
-/// time (0.44 s on a 256 x 256 grid), against 3-4x for level structures.
+/// time (0.45 s on a 256 x 256 grid), against 3-4x for level structures.
 struct nested_dissection {
     std::size_t cutoff = 64;
     double balance = 0.7;

@@ -25,9 +25,9 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - 0.33 (0.36) at k = 32 in 3-D;
     - 0.44 (1.53) on the 3-D random geometric graph.
   - **Cost:** the multilevel ordering takes 10 to 40 times AMD's time:
-    - 0.44 s against 0.01 s on a 256² grid;
+    - 0.45 s against 0.01 s on a 256² grid;
     - 2.0 s against 0.06 s on a 512² grid;
-    - 0.40 s against 0.03 s on the 3-D random geometric graph.
+    - 0.46 s against 0.03 s on the 3-D random geometric graph.
     
     The level structure takes 3 to 4 times AMD's time. Choose it when the ordering time matters more than the fill.
   - Tests: `test_nested_dissection.cpp`. Docs: `docs/algorithms/nested-dissection.md`.

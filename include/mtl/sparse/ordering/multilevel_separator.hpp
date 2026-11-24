@@ -10,10 +10,12 @@
 //      edge weights sum the edges they replace. Repeat until the graph has about
 //      100 vertices or a level shrinks it by less than 15%. A cap on the vertex
 //      weight keeps the coarse vertices of comparable size.
-//   2. Initial separator on the coarsest graph. Several trials, each growing a
-//      region breadth-first from a seed (the first is pseudo-peripheral, the rest
-//      random) until it holds half the weight, taking the region's boundary as
-//      the separator and refining it as in step 3. The best balanced one wins.
+//   2. Initial separator on the coarsest graph. Several trials, each growing
+//      regions breadth-first from a seed (the first is pseudo-peripheral, the
+//      rest random) to 1 - balance, about 40%, and 50% of the weight, taking
+//      each region's boundary as a separator and refining it as in step 3. The
+//      best balanced one wins: a lopsided region with a shorter boundary (a
+//      corner cut of a grid) can beat a balanced one.
 //   3. Uncoarsen. Project the labels to the next finer graph, which keeps the
 //      separator valid: an edge between a fine A vertex and a fine B vertex would
 //      be an edge between their coarse vertices. Then refine with vertex-separator
@@ -219,6 +221,29 @@ inline void nd_refine(const nd_graph& g, std::vector<signed char>& where, double
         return false;
     };
 
+    // The best current move to side `to` that keeps the balance bound (any
+    // current move when `check` is false). Current entries that would break the
+    // bound are set aside and put back, so they stay available for later moves.
+    std::vector<entry> aside;
+    auto pick = [&](int to, bool check, idx& v, idx& gn) {
+        aside.clear();
+        bool found = false;
+        while (top(to, v, gn)) {
+            nd_weights after = pw;
+            after.w[to] += g.vwgt[v];
+            after.w[1 - to] -= g.vwgt[v] - gn;
+            if (!check || after.balanced(balance)) { found = true; break; }
+            aside.push_back(heap[to].front());
+            std::pop_heap(heap[to].begin(), heap[to].end());
+            heap[to].pop_back();
+        }
+        for (const entry& e : aside) {
+            heap[to].push_back(e);
+            std::push_heap(heap[to].begin(), heap[to].end());
+        }
+        return found;
+    };
+
     for (int pass = 0; pass < max_passes; ++pass) {
         heap[0].clear();
         heap[1].clear();
@@ -238,13 +263,7 @@ inline void nd_refine(const nd_graph& g, std::vector<signed char>& where, double
             for (int side = 0; side < 2; ++side) {
                 if (unbalanced && side != lighter) continue;
                 idx sv, sg;
-                if (!top(side, sv, sg)) continue;
-                if (!unbalanced) {
-                    nd_weights after = pw;
-                    after.w[side] += g.vwgt[sv];
-                    after.w[1 - side] -= g.vwgt[sv] - sg;
-                    if (!after.balanced(balance)) continue;
-                }
+                if (!pick(side, !unbalanced, sv, sg)) continue;
                 if (to < 0 || sg > gn || (sg == gn && side == lighter)) {
                     to = side;
                     v = sv;
@@ -288,9 +307,9 @@ inline void nd_refine(const nd_graph& g, std::vector<signed char>& where, double
     }
 }
 
-/// Initial separator on a (small) graph: grow a region breadth-first from a
-/// seed to half the weight, take its boundary, refine; keep the best of
-/// `trials`.
+/// Initial separator on a (small) graph: for each of `trials` seeds, grow
+/// breadth-first regions of 1 - balance up to half the weight, take each
+/// region's boundary as a separator and refine it; keep the best.
 inline std::vector<signed char> nd_initial_separator(const nd_graph& g, double balance,
                                                      nd_rng& rng, int trials = 4) {
     const idx n = g.size();

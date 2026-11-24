@@ -397,6 +397,38 @@ TEST_CASE("multilevel_separator: separates, balances, and is minimal",
     }
 }
 
+TEST_CASE("nd_refine: a move that breaks the balance does not hide feasible ones",
+          "[sparse][ordering][nd]") {
+    // A weighted graph, as on a coarse level. A = {a1 (1), a2 (4)},
+    // B = {b1 (1), b2 (1), b3 (3)}, S = {x (8), y (2)}; edges x-a1, x-b1,
+    // y-a2, y-b2, b1-b3. The best gain on either side is x's (7), and moving x
+    // to either side breaks the 0.7 balance bound (13 against 4). Moving y to
+    // A pulls b2 into S and shrinks S from 10 to 9 within the bound (7 against
+    // 4), and then b2 can follow y into A (S = 8).
+    using namespace ordering::detail;
+    enum : idx { a1, a2, b1, b2, b3, x, y, nv };
+    const std::vector<std::pair<idx, idx>> edges = {{x, a1}, {x, b1}, {y, a2}, {y, b2}, {b1, b3}};
+    nd_graph g;
+    g.vwgt = {1, 4, 1, 1, 3, 8, 2};
+    std::vector<std::vector<idx>> nbr(nv);
+    for (auto [u, v] : edges) { nbr[u].push_back(v); nbr[v].push_back(u); }
+    g.xadj.assign(nv + 1, 0);
+    for (idx v = 0; v < nv; ++v) {
+        for (idx w : nbr[v]) { g.adj.push_back(w); g.ewgt.push_back(1); }
+        g.xadj[v + 1] = static_cast<idx>(g.adj.size());
+    }
+    std::vector<signed char> where = {nd_part_a, nd_part_a, nd_part_b, nd_part_b, nd_part_b,
+                                      nd_part_s, nd_part_s};
+    nd_refine(g, where, 0.7);
+    const nd_weights pw = nd_part_weights(g, where);
+    INFO("A " << pw.w[nd_part_a] << " B " << pw.w[nd_part_b] << " S " << pw.w[nd_part_s]);
+    REQUIRE(pw.balanced(0.7));
+    REQUIRE(pw.w[nd_part_s] <= 9);
+    for (auto [u, v] : edges)
+        REQUIRE_FALSE(((where[u] == nd_part_a && where[v] == nd_part_b)
+                       || (where[u] == nd_part_b && where[v] == nd_part_a)));
+}
+
 TEST_CASE("nested_dissection: multilevel is deterministic", "[sparse][ordering][nd]") {
     // Integer-only test graphs, a fixed-seed integer RNG and totally ordered
     // priorities: the same permutation with every compiler and standard
