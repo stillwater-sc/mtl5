@@ -5,6 +5,10 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.25.0] - 2026-11-24
+
+One feature since 5.24.1 (#920), so it is a minor release: a nested dissection ordering. MAJOR stays at 5.
+
 ### Added
 
 - **Nested dissection ordering** (issue 919): `mtl::sparse::ordering::nested_dissection`, next to `amd`, `colamd` and `rcm`, with no external dependency.
