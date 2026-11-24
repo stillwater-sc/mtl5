@@ -439,10 +439,16 @@ lu_numeric<Value> sparse_lu_numeric(
                 "sparse_lu_numeric: zero pivot at column " + std::to_string(k)
                 + " (matrix is singular)");
         }
-        // Prefer the natural diagonal (row k) if it meets the threshold.
-        if (pinv[static_cast<std::ptrdiff_t>(k)] < 0
-            && abs(AT::value(x[k])) >= threshold * a) {
-            ipiv = static_cast<std::ptrdiff_t>(k);
+        // Prefer the diagonal if it meets the threshold. Column k of C is
+        // A(:, q[k]) with rows still in the original numbering, so its diagonal
+        // is row q[k], not row k (issue 916; CSparse cs_lu does the same).
+        // A zero diagonal never displaces a nonzero maximum, even when
+        // threshold * a underflows to zero.
+        const auto kd = static_cast<std::ptrdiff_t>(sym.col_perm[k]);
+        if (pinv[kd] < 0) {
+            const Value dmag = abs(AT::value(x[kd]));
+            if (dmag >= threshold * a && (dmag != Value{0} || a == Value{0}))
+                ipiv = kd;
         }
 
         Value pivot = AT::value(x[ipiv]);
