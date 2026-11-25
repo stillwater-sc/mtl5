@@ -48,6 +48,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <cstddef>
 #include <mtl/math/identity.hpp>
 #include <mtl/itl/smoother/sor.hpp>
@@ -71,9 +72,9 @@ class ssor {
     using size_type  = typename Matrix::size_type;
 public:
     explicit ssor(const Matrix& A, value_type omega = value_type(1))
-        : n_(A.num_rows()), sm_(A, omega)
+        : n_((detail::require_square(A, "ssor"), A.num_rows())), sm_(A, omega)
     {
-        assert(A.num_rows() == A.num_cols());
+        // Checked before the smoother is built, in every build (issue 925).
     }
 
     template <typename VecX, typename VecB>

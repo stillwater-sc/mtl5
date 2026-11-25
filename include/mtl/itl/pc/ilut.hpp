@@ -61,7 +61,8 @@ public:
                   magnitude_type threshold = magnitude_type(1e-4))
         : n_(A.num_rows()), fill_(fill), threshold_(threshold)
     {
-        assert(A.num_rows() == A.num_cols());
+        // In every build, as ilu_0 (issue 925).
+        detail::require_square(A, "ilut");
         factorize(A);
     }
 
@@ -333,7 +334,10 @@ private:
             // Truncate U: keep at most (orig_u + fill_) entries counting the
             // diagonal, which is always kept -- so at most orig_u + fill_ - 1
             // of the largest strictly upper entries. (orig_u counts j >= i.)
-            const size_type max_u = orig_u + fill_ - 1;
+            // A row with no stored diagonal or upper entry (orig_u = 0) and
+            // fill = 0 keeps none: orig_u + fill_ - 1 wrapped to SIZE_MAX
+            // there, and every fill-in entry of U was kept (issue 925).
+            const size_type max_u = (orig_u + fill_ > 0) ? orig_u + fill_ - 1 : size_type(0);
             if (u_entries.size() > max_u) {
                 std::partial_sort(u_entries.begin(),
                                   u_entries.begin() + static_cast<std::ptrdiff_t>(max_u),

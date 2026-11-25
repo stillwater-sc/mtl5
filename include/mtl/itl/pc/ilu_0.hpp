@@ -57,7 +57,9 @@ class ilu_0 {
     using size_type   = typename matrix_type::size_type;
 public:
     explicit ilu_0(const matrix_type& A) : n_(A.num_rows()) {
-        assert(A.num_rows() == A.num_cols());
+        // In every build: the work arrays are sized by rows and indexed by
+        // column, so a non-square A wrote past them in a release build (issue 925).
+        detail::require_square(A, "ilu_0");
         factorize(A);
     }
 

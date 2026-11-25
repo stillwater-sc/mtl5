@@ -11,6 +11,9 @@
 // accumulator-aware ones (smoother::*<Matrix, Accumulator>, #265) through the
 // factory.
 #include <cassert>
+#include <stdexcept>
+#include <string>
+#include <mtl/detail/exceptions.hpp>
 #include <cstddef>
 #include <type_traits>
 #include <vector>
@@ -69,9 +72,11 @@ public:
         , nu_post_(nu_post)
         , n_levels_(levels.size())
     {
-        assert(n_levels_ >= 2);
-        assert(restrictors.size() == n_levels_ - 1);
-        assert(prolongators.size() == n_levels_ - 1);
+        // In every build (issue 925): the cycles index the transfers by
+        // level, and the transfers' products index x and the residual, so a
+        // missing transfer or a mismatched dimension read out of bounds in a
+        // release build.
+        check_hierarchy();
 
         // Create smoothers for each level (except coarsest)
         for (size_type l = 0; l < n_levels_ - 1; ++l) {
@@ -157,9 +162,12 @@ public:
         size_type nc = levels_[l + 1].num_rows();
         vector_type e_coarse(nc, Value{0});
 
-        // Recurse TWICE for W-cycle
+        // Recurse TWICE for W-cycle. Not at the coarsest level: its solver
+        // is exact, so a second solve with the same right-hand side gives the
+        // same e_coarse and costs a full coarse solve (issue 925).
         wcycle(e_coarse, r_coarse, level + 1);
-        wcycle(e_coarse, r_coarse, level + 1);
+        if (l + 2 < n_levels_)
+            wcycle(e_coarse, r_coarse, level + 1);
 
         auto e_fine = prolongate<Accumulator>(prolongators_[l], e_coarse);
         for (size_type i = 0; i < n; ++i)
@@ -195,6 +203,25 @@ public:
     }
 
 private:
+    void check_hierarchy() const {
+        auto fail = [](const std::string& what) {
+            ::mtl::detail::throw_or_abort(std::invalid_argument("multigrid: " + what));
+        };
+        if (n_levels_ < 2) fail("at least two levels are needed");
+        if (restrictors_.size() != n_levels_ - 1 || prolongators_.size() != n_levels_ - 1)
+            fail("levels - 1 restrictors and prolongators are needed");
+        for (size_type l = 0; l < n_levels_; ++l)
+            if (levels_[l].num_rows() != levels_[l].num_cols())
+                fail("level " + std::to_string(l) + " is not square");
+        for (size_type l = 0; l + 1 < n_levels_; ++l) {
+            const size_type nf = levels_[l].num_rows(), nc = levels_[l + 1].num_rows();
+            if (restrictors_[l].num_rows() != nc || restrictors_[l].num_cols() != nf)
+                fail("restrictor " + std::to_string(l) + " must be " + std::to_string(nc) + " x " + std::to_string(nf));
+            if (prolongators_[l].num_rows() != nf || prolongators_[l].num_cols() != nc)
+                fail("prolongator " + std::to_string(l) + " must be " + std::to_string(nf) + " x " + std::to_string(nc));
+        }
+    }
+
     std::vector<matrix_type> levels_;
     /// r = b - A x. With an accumulator, b(i) is assigned and A's row products
     /// subtracted inside it, rounded once; void keeps the original A * x.

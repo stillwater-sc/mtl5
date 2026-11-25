@@ -34,6 +34,8 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/itl/detail/sorted_row_merge.hpp>
+#include <mtl/itl/detail/zero_diagonal.hpp>
 
 namespace mtl::itl::pc {
 
@@ -52,8 +54,11 @@ class ildl {
     using value_type  = Value;
     using size_type   = typename matrix_type::size_type;
 public:
+    /// Throws (through throw_or_abort) for a non-square A, and for a zero or
+    /// missing pivot d_i (issue 925). A negative one is fine: ILDL is for
+    /// symmetric indefinite matrices.
     explicit ildl(const matrix_type& A) : n_(A.num_rows()) {
-        assert(A.num_rows() == A.num_cols());
+        detail::require_square(A, "ildl");
         factorize(A);
     }
 
@@ -157,16 +162,8 @@ private:
             for (auto& [j, val] : l_rows[i]) {
                 if (j == i) continue;
                 AT::assign(acc, val);
-                for (const auto& [ik, iv] : l_rows[i]) {
-                    if (ik >= j) break;
-                    for (const auto& [jk, jv] : l_rows[j]) {
-                        if (jk == ik) {
-                            add_term(acc, iv, d_[ik], jv);
-                            break;
-                        }
-                        if (jk > ik) break;
-                    }
-                }
+                detail::for_common_columns(l_rows[i], l_rows[j], j,
+                    [&](const value_type& iv, const value_type& jv, std::size_t k) { add_term(acc, iv, d_[k], jv); });
                 val = AT::template value<value_type>(acc) / d_[j];
             }
 
@@ -176,6 +173,7 @@ private:
             for (const auto& [j, v] : l_rows[i])
                 if (j != i) add_term(acc, v, v, d_[j]);
             d_[i] = AT::template value<value_type>(acc);
+            check_pivot(d_[i], i, l_rows[i]);
         }
     }
 
@@ -210,17 +208,10 @@ private:
             for (auto& [j, val] : l_rows[i]) {
                 if (j == i) continue;
                 auto sum = math::zero<value_type>();
-                // sum = sum_{k<j} L(i,k) * d_k * L(j,k)
-                for (const auto& [ik, iv] : l_rows[i]) {
-                    if (ik >= j) break;
-                    for (const auto& [jk, jv] : l_rows[j]) {
-                        if (jk == ik) {
-                            sum += iv * d_[ik] * jv;
-                            break;
-                        }
-                        if (jk > ik) break;
-                    }
-                }
+                // sum = sum_{k<j} L(i,k) * d_k * L(j,k): one merge of the two
+                // sorted rows (issue 925), the same terms in the same order.
+                detail::for_common_columns(l_rows[i], l_rows[j], j,
+                    [&](const value_type& iv, const value_type& jv, std::size_t k) { sum += iv * d_[k] * jv; });
                 val = (val - sum) / d_[j];
             }
 
@@ -235,6 +226,7 @@ private:
                 }
             }
             d_[i] = diag_val - sum_sq;
+            check_pivot(d_[i], i, l_rows[i]);
 
             // Update L(i,i) entry to 1 (unit diagonal) -- but we don't store diagonal in L
         }
@@ -281,6 +273,16 @@ private:
                 lt_rows_[next[j]] = i;
                 lt_data_[next[j]++] = l_data_[k];
             }
+    }
+
+    /// d_i divides every later L(k,i) and both solves: it must be stored in A
+    /// and nonzero. ILDL on [[0,1],[1,1]] was constructed without complaint,
+    /// and solve() returned NaN (issue 925).
+    static void check_pivot(const value_type& d, size_type i,
+                            const std::vector<std::pair<size_type, value_type>>& row) {
+        const bool stored = !row.empty() && row.back().first == i;
+        if (!stored || d == math::zero<value_type>())
+            detail::throw_zero_diagonal("ildl", i);
     }
 
     size_type n_;

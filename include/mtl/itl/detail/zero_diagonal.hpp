@@ -22,4 +22,26 @@ namespace mtl::itl::detail {
         std::string(who) + ": zero or missing diagonal at row " + std::to_string(row)));
 }
 
+/// A pivot that is not positive where the factorization needs it to be: IC(0)
+/// takes the square root of each pivot, so a zero or negative one (A not
+/// positive definite, or IC(0) breaking down on it) gave NaN in solve() (issue
+/// 925). Checked at construction, as the zero diagonal is.
+[[noreturn]] inline void throw_nonpositive_pivot(const char* who, std::size_t row) {
+    ::mtl::detail::throw_or_abort(std::runtime_error(
+        std::string(who) + ": non-positive pivot at row " + std::to_string(row)
+        + " (the matrix is not positive definite, or the incomplete factorization broke down)"));
+}
+
+/// A matrix that must be square, checked once at construction in every build
+/// (issue 925; the index-check policy of #825). The preconditioners checked it
+/// with assert only, and a non-square A then indexed past the work arrays,
+/// which are sized by rows and indexed by column.
+template <typename Matrix>
+void require_square(const Matrix& A, const char* who) {
+    if (A.num_rows() != A.num_cols())
+        ::mtl::detail::throw_or_abort(std::invalid_argument(
+            std::string(who) + ": the matrix must be square, it is "
+            + std::to_string(A.num_rows()) + " x " + std::to_string(A.num_cols())));
+}
+
 } // namespace mtl::itl::detail

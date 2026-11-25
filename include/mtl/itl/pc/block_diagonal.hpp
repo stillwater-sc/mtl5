@@ -4,6 +4,10 @@
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <algorithm>
 #include <cassert>
+#include <stdexcept>
+#include <string>
+#include <mtl/detail/exceptions.hpp>
+#include <mtl/itl/detail/zero_diagonal.hpp>
 #include <vector>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -21,22 +25,32 @@ public:
     block_diagonal(const Matrix& A, size_type block_size)
         : n_(A.num_rows()), bs_(block_size)
     {
-        assert(A.num_rows() == A.num_cols());
-        assert(block_size > 0);
+        // In every build (issue 925): bs = 0 divided by zero below.
+        detail::require_square(A, "block_diagonal");
+        if (block_size == 0)
+            ::mtl::detail::throw_or_abort(std::invalid_argument("block_diagonal: block_size must be at least 1"));
         nb_ = (n_ + bs_ - 1) / bs_;  // number of blocks (last may be smaller)
         extract_and_factor(A);
     }
 
     template <typename VecX, typename VecB>
     void solve(VecX& x, const VecB& b) const {
+        // One pair of block vectors per call, not per block (issue 925); a
+        // smaller last block takes vectors of its own size.
+        const size_type full = std::min(bs_, n_);
+        vec::dense_vector<value_type> bsub_full(full), xsub_full(full);
         for (size_type blk = 0; blk < nb_; ++blk) {
             size_type start = blk * bs_;
             size_type end   = std::min(start + bs_, n_);
             size_type bsize = end - start;
 
-            // Extract sub-vector of b
-            vec::dense_vector<value_type> bsub(bsize);
-            vec::dense_vector<value_type> xsub(bsize);
+            vec::dense_vector<value_type> bsub_last, xsub_last;
+            if (bsize != full) {
+                bsub_last = vec::dense_vector<value_type>(bsize);
+                xsub_last = vec::dense_vector<value_type>(bsize);
+            }
+            auto& bsub = (bsize == full) ? bsub_full : bsub_last;
+            auto& xsub = (bsize == full) ? xsub_full : xsub_last;
             for (size_type i = 0; i < bsize; ++i)
                 bsub(i) = b(start + i);
 
@@ -60,13 +74,20 @@ public:
         // M is block DIAGONAL, so M^H is block diagonal with each block
         // conjugate-transposed -- the blocks stay independent and no coupling
         // appears between them.
+        const size_type full = std::min(bs_, n_);
+        vec::dense_vector<value_type> bsub_full(full), xsub_full(full);
         for (size_type blk = 0; blk < nb_; ++blk) {
             size_type start = blk * bs_;
             size_type end   = std::min(start + bs_, n_);
             size_type bsize = end - start;
 
-            vec::dense_vector<value_type> bsub(bsize);
-            vec::dense_vector<value_type> xsub(bsize);
+            vec::dense_vector<value_type> bsub_last, xsub_last;
+            if (bsize != full) {
+                bsub_last = vec::dense_vector<value_type>(bsize);
+                xsub_last = vec::dense_vector<value_type>(bsize);
+            }
+            auto& bsub = (bsize == full) ? bsub_full : bsub_last;
+            auto& xsub = (bsize == full) ? xsub_full : xsub_last;
             for (size_type i = 0; i < bsize; ++i)
                 bsub(i) = b(start + i);
 
@@ -93,8 +114,13 @@ private:
                 for (size_type j = 0; j < bsize; ++j)
                     B(i, j) = A(start + i, start + j);
 
-            // Factor in place
-            lu_factor(B, pivots_[blk]);
+            // Factor in place. A singular block has no inverse: lu_factor's
+            // nonzero return was dropped, and solve() gave inf and NaN
+            // silently, for [[1,1],[1,1]] with bs = 2 (issue 925).
+            if (lu_factor(B, pivots_[blk]) != 0)
+                ::mtl::detail::throw_or_abort(std::runtime_error(
+                    "block_diagonal: diagonal block " + std::to_string(blk) + " (rows "
+                    + std::to_string(start) + " to " + std::to_string(end - 1) + ") is singular"));
             blocks_[blk] = std::move(B);
         }
     }

@@ -13,11 +13,25 @@
 //     transfer builders reject sizes they cannot pair;
 //   - the smoothers on coordinate2D and ell_matrix match compressed2D and
 //     sweep in O(nnz).
+//
+// And those of issue 925 (QA sweep #913):
+//
+//   - ic_0 and ildl reject a zero, missing or (ic_0, real) negative pivot;
+//   - block_diagonal rejects a singular block, bs = 0 and a non-square A, and
+//     solves with a partial last block, bs > n and a compressed2D;
+//   - ilu_0, ilut, ssor, ic_0, ildl and multigrid reject bad shapes in every
+//     build; ilut keeps no U fill for orig_u = 0 and fill = 0;
+//   - power_iteration with n = 0; arnoldi's smallest selectors, subspace < k,
+//     a zero v0 and k > n;
+//   - the W-cycle reduces the residual, with and without smoothing steps.
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <complex>
+#include <string>
+#include <utility>
 #include <cstddef>
 #include <limits>
 #include <numbers>
@@ -333,4 +347,244 @@ TEST_CASE("smoothers on coordinate2D sweep in O(nnz)", "[itl][smoother][cost][86
     const double small = t(2000), large = t(8000);
     INFO("t(2000) = " << small << " s, t(8000) = " << large << " s");
     CHECK(large < 16.0 * std::max(small, 1e-5));
+}
+
+// --- issue 925 ---------------------------------------------------------------------------
+
+TEST_CASE("ic_0 and ildl reject a zero, missing or negative pivot (issue 925)", "[itl][pc][925]") {
+    // IC(0) on [[1,2],[2,1]]: the second pivot is 1 - 4 = -3 and its square
+    // root NaN. On [[0,1],[1,1]] the first pivot is 0. ILDL on [[0,1],[1,1]]:
+    // d_0 = 0 divides L(1,0). All three were constructed without complaint and
+    // solve() returned NaN.
+    const csr negative = make(2, {{0, 0, 1.0}, {0, 1, 2.0}, {1, 0, 2.0}, {1, 1, 1.0}});
+    const csr zero     = make(2, {{0, 0, 0.0}, {0, 1, 1.0}, {1, 0, 1.0}, {1, 1, 1.0}});
+    const csr missing  = make(2, {{0, 1, 1.0}, {1, 0, 1.0}, {1, 1, 1.0}});
+    CHECK_THROWS_AS(itl::pc::ic_0<double>(negative), std::runtime_error);
+    CHECK_THROWS_AS(itl::pc::ic_0<double>(zero), std::runtime_error);
+    CHECK_THROWS_AS(itl::pc::ic_0<double>(missing), std::runtime_error);
+    CHECK_THROWS_AS((itl::pc::ic_0<double, mat::parameters<>, double>(negative)), std::runtime_error);
+    CHECK_THROWS_AS(itl::pc::ildl<double>(zero), std::runtime_error);
+    CHECK_THROWS_AS(itl::pc::ildl<double>(missing), std::runtime_error);
+    CHECK_THROWS_AS((itl::pc::ildl<double, mat::parameters<>, double>(zero)), std::runtime_error);
+    // ILDL is for indefinite matrices: d = (1, -3) is fine, and exact here.
+    const itl::pc::ildl<double> L(negative);
+    vec_t x(2), b(2);
+    b(0) = 5.0; b(1) = 4.0;   // A (1, 2) = (5, 4)
+    L.solve(x, b);
+    CHECK(std::abs(x(0) - 1.0) < 1e-14);
+    CHECK(std::abs(x(1) - 2.0) < 1e-14);
+    // The message names the row.
+    try {
+        itl::pc::ic_0<double> M(negative);
+        FAIL("ic_0 accepted a negative pivot");
+    } catch (const std::runtime_error& e) {
+        CHECK(std::string(e.what()).find("row 1") != std::string::npos);
+    }
+    // A complex symmetric A has no sign: IC(0) of [[1,2],[2,1]] in complex is
+    // L = [[1,0],[2,sqrt(-3)]], and its solve is exact.
+    using C    = std::complex<double>;
+    using ccsr = mat::compressed2D<C>;
+    ccsr Ac(2, 2);
+    {
+        mat::inserter<ccsr> ins(Ac);
+        ins[0][0] << C(1.0); ins[0][1] << C(2.0); ins[1][0] << C(2.0); ins[1][1] << C(1.0);
+    }
+    const itl::pc::ic_0<C> Mc(Ac);
+    vec::dense_vector<C> xc(2), bc(2);
+    bc(0) = C(5.0); bc(1) = C(4.0);
+    Mc.solve(xc, bc);
+    CHECK(std::abs(xc(0) - C(1.0)) < 1e-14);
+    CHECK(std::abs(xc(1) - C(2.0)) < 1e-14);
+}
+
+TEST_CASE("block_diagonal: a singular block, bad arguments and block layouts (issue 925)",
+          "[itl][pc][block_diagonal][925]") {
+    using D = mat::dense2D<double>;
+    // [[1,1],[1,1]] with bs = 2 gave -inf and inf, silently.
+    D S(2, 2);
+    S(0, 0) = S(0, 1) = S(1, 0) = S(1, 1) = 1.0;
+    CHECK_THROWS_AS(itl::pc::block_diagonal<D>(S, 2), std::runtime_error);
+    CHECK_THROWS_AS(itl::pc::block_diagonal<D>(S, 0), std::invalid_argument);
+    D R(2, 3);
+    CHECK_THROWS_AS(itl::pc::block_diagonal<D>(R, 1), std::invalid_argument);
+
+    // A block-diagonal A (blocks of 3 and a last block of 2, n = 8) is its own
+    // preconditioner: M^-1 b solves A x = b, for bs = 3, and for bs > n.
+    const std::size_t n = 8;
+    D A(n, n);
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) A(i, j) = 0.0;
+    for (std::size_t blk = 0; blk * 3 < n; ++blk)
+        for (std::size_t i = blk * 3; i < std::min(n, blk * 3 + 3); ++i)
+            for (std::size_t j = blk * 3; j < std::min(n, blk * 3 + 3); ++j)
+                A(i, j) = (i == j) ? 5.0 + double(i) : 1.0 / double(1 + i + 2 * j);
+    const vec_t b = ramp(n);
+    auto residual = [&](const vec_t& x) {
+        double r = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            double s = 0;
+            for (std::size_t j = 0; j < n; ++j) s += A(i, j) * x(j);
+            r = std::max(r, std::abs(s - b(i)));
+        }
+        return r;
+    };
+    for (const std::size_t bs : {3u, 100u}) {
+        INFO("bs = " << bs);
+        const itl::pc::block_diagonal<D> M(A, bs);
+        vec_t x(n, 0.0);
+        M.solve(x, b);
+        CHECK(residual(x) < 1e-13);
+        vec_t y(n, 0.0);
+        M.adjoint_solve(y, b);   // A^T y = b
+        double r = 0;
+        for (std::size_t i = 0; i < n; ++i) {
+            double s = 0;
+            for (std::size_t j = 0; j < n; ++j) s += A(j, i) * y(j);
+            r = std::max(r, std::abs(s - b(i)));
+        }
+        CHECK(r < 1e-13);
+    }
+    // compressed2D, the same matrix.
+    entries e;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j)
+            if (A(i, j) != 0.0) e.emplace_back(i, j, A(i, j));
+    const csr As = make(n, e);
+    const itl::pc::block_diagonal<csr> Ms(As, 3);
+    vec_t xs(n, 0.0);
+    Ms.solve(xs, b);
+    CHECK(residual(xs) < 1e-13);
+}
+
+TEST_CASE("the preconditioners and multigrid reject bad shapes in every build (issue 925)",
+          "[itl][pc][mg][925]") {
+    // The checks were assert-only: a non-square A indexed ilu_0's work arrays,
+    // sized by rows, by column, in a release build.
+    csr R(2, 3);
+    {
+        mat::inserter<csr> ins(R);
+        ins[0][0] << 1.0; ins[1][1] << 1.0; ins[1][2] << 1.0;
+    }
+    CHECK_THROWS_AS(itl::pc::ilu_0<double>(R), std::invalid_argument);
+    CHECK_THROWS_AS(itl::pc::ilut<double>(R), std::invalid_argument);
+    CHECK_THROWS_AS(itl::pc::ic_0<double>(R), std::invalid_argument);
+    CHECK_THROWS_AS(itl::pc::ildl<double>(R), std::invalid_argument);
+    CHECK_THROWS_AS(itl::pc::ssor<csr>(R), std::invalid_argument);
+
+    const std::size_t nf = 15, nc = 7;
+    const csr Af = make(nf, tridiagonal_entries(nf, 2.0, -1.0));
+    const csr Rt = itl::mg::make_restriction_1d(nf);
+    const csr Pt = itl::mg::make_prolongation_1d(nc);
+    const csr Ac = mtl::spgemm(Rt, mtl::spgemm(Af, Pt));
+    auto sf = [](const csr& L) { return itl::smoother::gauss_seidel<csr>(L); };
+    auto cs = [](vec_t&, const vec_t&) {};
+    using MG = itl::mg::multigrid<double>;
+    CHECK_THROWS_AS(MG({Af}, {}, {}, sf, cs), std::invalid_argument);              // one level
+    CHECK_THROWS_AS(MG({Af, Ac}, {}, {Pt}, sf, cs), std::invalid_argument);        // no restrictor
+    CHECK_THROWS_AS(MG({Af, Ac}, {Pt}, {Pt}, sf, cs), std::invalid_argument);      // R is P's shape
+    CHECK_THROWS_AS(MG({Af, Ac}, {Rt}, {Rt}, sf, cs), std::invalid_argument);      // P is R's shape
+    CHECK_NOTHROW(MG({Af, Ac}, {Rt}, {Pt}, sf, cs));
+}
+
+TEST_CASE("ilut keeps no U fill for a row with no upper part and fill = 0 (issue 925)",
+          "[itl][pc][ilut][925]") {
+    // Row 1 stores only A(1,0): orig_u = 0. Eliminating column 0 fills U(1,1)
+    // = -1 and U(1,2) = -1. With fill = 0 at most orig_u + fill - 1 = -1, so
+    // no strictly upper entry, survives; the count wrapped to SIZE_MAX and
+    // U(1,2) was kept. With b = (0, 0, 1): x(2) = 1, x(1) = -U(1,2) x(2) / U(1,1),
+    // so x(1) is 0 without U(1,2) and -1 with it.
+    const csr A = make(3, {{0, 0, 1.0}, {0, 1, 1.0}, {0, 2, 1.0}, {1, 0, 1.0}, {2, 2, 1.0}});
+    const itl::pc::ilut<double> M(A, 0, 0.0);
+    vec_t x(3), b(3, 0.0);
+    b(2) = 1.0;
+    M.solve(x, b);
+    CHECK(x(2) == 1.0);
+    CHECK(x(1) == 0.0);
+    // fill = 1 keeps one U entry, the diagonal, so x(1) is still 0. fill = 2
+    // keeps U(1,2): the factorization is the exact LU.
+    const itl::pc::ilut<double> F1(A, 1, 0.0);
+    F1.solve(x, b);
+    CHECK(x(1) == 0.0);
+    const itl::pc::ilut<double> F(A, 2, 0.0);
+    F.solve(x, b);
+    CHECK(x(1) == -1.0);
+}
+
+TEST_CASE("power_iteration on an empty operator (issue 925)", "[itl][eigen][925]") {
+    // n = 0 returned with `value` never written; reading it was undefined.
+    const csr Z(0, 0);
+    const auto r = itl::power_iteration(Z, vec_t(0));
+    CHECK(r.value == 0.0);
+    CHECK_FALSE(r.converged);
+    CHECK(r.iterations == 0);
+    CHECK(r.vector.size() == 0);
+}
+
+TEST_CASE("arnoldi: smallest selectors and argument edges (issue 925)", "[itl][eigen][925]") {
+    // diag(-5, 1, 2, 3, 4) as a general operator: smallest magnitude 1,
+    // smallest algebraic (real part) -5.
+    const csr A = make(5, {{0, 0, -5.0}, {1, 1, 1.0}, {2, 2, 2.0}, {3, 3, 3.0}, {4, 4, 4.0}});
+    const vec_t v0 = ramp(5);
+    const auto sm = itl::arnoldi(A, v0, 1, itl::eigen_which::smallest_magnitude, 5);
+    REQUIRE(sm.values.size() == 1);
+    CHECK(std::abs(sm.values(0) - std::complex<double>(1.0)) < 1e-10);
+    const auto sa = itl::arnoldi(A, v0, 1, itl::eigen_which::smallest_algebraic, 5);
+    REQUIRE(sa.values.size() == 1);
+    CHECK(std::abs(sa.values(0) - std::complex<double>(-5.0)) < 1e-10);
+    // k > n: at most n pairs.
+    const auto all = itl::arnoldi(A, v0, 9, itl::eigen_which::largest_magnitude, 5);
+    CHECK(all.values.size() <= 5);
+    CHECK(all.values.size() >= 1);
+    // subspace < k: k is cut to the subspace.
+    const auto cut = itl::arnoldi(A, v0, 4, itl::eigen_which::largest_magnitude, 2);
+    CHECK(cut.values.size() <= 2);
+    // A zero v0 is replaced by a nonzero start, and the run is finite.
+    const auto z = itl::arnoldi(A, vec_t(5, 0.0), 1, itl::eigen_which::largest_magnitude, 5);
+    for (std::size_t i = 0; i < z.values.size(); ++i) {
+        CHECK(std::isfinite(z.values(i).real()));
+        CHECK(std::isfinite(z.values(i).imag()));
+    }
+    // Too small a subspace to converge on the dominant pair: converged false.
+    const csr T = make(40, tridiagonal_entries(40, 4.0, -1.0));
+    const auto nc = itl::arnoldi(T, ramp(40), 1, itl::eigen_which::largest_magnitude, 3, 1e-14);
+    CHECK_FALSE(nc.converged);
+}
+
+TEST_CASE("multigrid: the W-cycle reduces the residual (issue 925)", "[itl][mg][925]") {
+    // wcycle was only checked not to throw. Three levels of 1D Poisson, so the
+    // W-cycle recurses twice at level 1 and once, now, at the coarsest.
+    const std::size_t n0 = 31, n1 = 15, n2 = 7;
+    const csr A0 = make(n0, tridiagonal_entries(n0, 2.0, -1.0));
+    const csr R0 = itl::mg::make_restriction_1d(n0), P0 = itl::mg::make_prolongation_1d(n1);
+    const csr A1 = mtl::spgemm(R0, mtl::spgemm(A0, P0));
+    const csr R1 = itl::mg::make_restriction_1d(n1), P1 = itl::mg::make_prolongation_1d(n2);
+    const csr A2 = mtl::spgemm(R1, mtl::spgemm(A1, P1));
+    auto sf = [](const csr& L) { return itl::smoother::gauss_seidel<csr>(L); };
+    int coarse_solves = 0;
+    auto cs = [A2, &coarse_solves](vec_t& x, const vec_t& b) {
+        ++coarse_solves;
+        itl::pc::identity<csr> I(A2);
+        itl::basic_iteration<double> it(b, 1000, 1e-14);
+        itl::cg(A2, x, b, I, it);
+    };
+    const vec_t b = ramp(n0);
+    auto resid = [&](const vec_t& x) {
+        const vec_t Ax = A0 * x;
+        double r = 0;
+        for (std::size_t i = 0; i < n0; ++i) r += (b(i) - Ax(i)) * (b(i) - Ax(i));
+        return std::sqrt(r);
+    };
+    for (const auto& [pre, post] : {std::pair{2, 2}, std::pair{0, 2}, std::pair{2, 0}}) {
+        INFO("nu_pre = " << pre << ", nu_post = " << post);
+        const itl::mg::multigrid<double> mg({A0, A1, A2}, {R0, R1}, {P0, P1}, sf, cs, pre, post);
+        vec_t x(n0, 0.0);
+        const double r0 = resid(x);
+        coarse_solves = 0;
+        mg.wcycle(x, b);
+        // Level 1 visits the coarsest level twice, each visit one solve.
+        CHECK(coarse_solves == 2);
+        for (int c = 1; c < 4; ++c) mg.wcycle(x, b);
+        INFO("residual after 4 W-cycles: " << resid(x) / r0);   // 2.5e-7, 1.5e-4, 1.2e-3
+        CHECK(resid(x) < 1e-2 * r0);
+    }
 }

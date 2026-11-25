@@ -9,6 +9,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/itl/eigen/eigen_common.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/math/identity.hpp>
 
 namespace mtl::itl {
 
@@ -46,6 +47,9 @@ eigenpair<T> power_iteration(const LinearOp& A, vec::dense_vector<T> v0,
 
     eigenpair<T> result;
     result.vector = v0;
+    // n = 0: no eigenpair. result.value was left uninitialized and reading it
+    // was undefined behaviour (issue 925); it is zero, and not converged.
+    result.value = math::zero<T>();
     if (n == 0) return result;
 
     // Normalize the start vector.
