@@ -89,11 +89,13 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     value_type beta = m_norm(v, z, w);
 
     // ||r0||_{M^-1} = 0: r0 = 0, or an M^-1 that maps r0 to 0. The iteration
-    // object records either, rather than keeping the residual and finished
-    // state of an earlier solve (issue 924).
+    // object records the residual, rather than keeping the state of an
+    // earlier solve (issue 924). An r0 that meets the tolerance (atol) has
+    // converged; any other is a breakdown, since the Lanczos process cannot
+    // start.
     if (beta == zero) {
-        if (r0_norm == decltype(r0_norm)(0)) iter.finished(r0_norm);
-        else iter.fail(2, "minres breakdown: ||r0||_M == 0 for r0 != 0");
+        if (!iter.finished(r0_norm))
+            iter.fail(2, "minres breakdown: ||r0||_M == 0 for an unconverged r0");
         return iter;
     }
 

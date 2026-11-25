@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <limits>
 #include <utility>
+#include <cmath>
+#include <mtl/concepts/scalar.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/norms.hpp>
 #include <mtl/math/pow2_scaling.hpp>
@@ -94,8 +96,20 @@ private:
                 const int ex = pow2::exponent(nx);
                 if (ex + k > limits::max_exponent - 2) k = limits::max_exponent - 2 - ex;
             }
-            // The clamps can undo the scaling (a small b with a huge x).
-            if (k == 0 || (e < 0 && k < 0)) return;
+            // s x must not underflow either: dividing by s again on exit
+            // must give back every entry of x, also when the solver makes no
+            // step. Scaling down (a huge b) stops where the smallest nonzero
+            // entry of x would leave the normal range.
+            if (k < 0) {
+                int emin = 0;
+                bool any = false;
+                for (size_type i = 0; i < x_.size(); ++i)
+                    note_min_exponent(x_(i), emin, any);
+                if (any && emin + k < limits::min_exponent - 1) k = limits::min_exponent - 1 - emin;
+            }
+            // The clamps can undo the scaling (a small b with a huge x, a huge
+            // b with a tiny entry of x).
+            if (k == 0 || (e < 0 && k < 0) || (e > 0 && k > 0)) return;
             const mag_type s = pow2::scale(mag_type(1), k);
             inv_ = pow2::scale(mag_type(1), -k);
             const value_type sv = value_type(s);
@@ -105,6 +119,26 @@ private:
                 x_(i) *= sv;
             active_ = true;
         }
+    }
+
+    // The smallest exponent among the nonzero parts of v (real and imaginary
+    // parts of a complex v, which are scaled separately).
+    static void note_min_exponent(const value_type& v, int& emin, bool& any) {
+        if constexpr (is_complex_v<value_type>) {
+            note_part(mag_type(v.real()), emin, any);
+            note_part(mag_type(v.imag()), emin, any);
+        } else {
+            note_part(mag_type(v), emin, any);
+        }
+    }
+
+    static void note_part(const mag_type& part, int& emin, bool& any) {
+        using std::abs;
+        const mag_type a = abs(part);
+        if (!(a > mag_type(0)) || !(a <= std::numeric_limits<mag_type>::max())) return;
+        const int e = math::pow2_scaling<mag_type>::exponent(a);
+        if (!any || e < emin) emin = e;
+        any = true;
     }
 
     VecX&       x_;

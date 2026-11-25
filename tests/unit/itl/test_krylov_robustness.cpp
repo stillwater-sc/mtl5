@@ -114,11 +114,14 @@ vec::dense_vector<C> complex_rhs(std::size_t n) {
 template <typename T>
 mat::compressed2D<T> tridiag(std::size_t n) {
     mat::compressed2D<T> A(n, n);
-    mat::inserter<mat::compressed2D<T>> ins(A);
-    for (std::size_t i = 0; i < n; ++i) {
-        if (i > 0) ins[i][i - 1] << T(-1);
-        ins[i][i] << T(4);
-        if (i + 1 < n) ins[i][i + 1] << T(-1);
+    {
+        // The inserter finalizes A when it goes out of scope, before the return.
+        mat::inserter<mat::compressed2D<T>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (i > 0) ins[i][i - 1] << T(-1);
+            ins[i][i] << T(4);
+            if (i + 1 < n) ins[i][i + 1] << T(-1);
+        }
     }
     return A;
 }
@@ -361,6 +364,32 @@ TEST_CASE("The power-of-two scaling is exact (issue 924)", "[itl][krylov][scalin
     }
 }
 
+TEST_CASE("Scaling a huge b gives x0 back exactly (issue 924)", "[itl][krylov][scaling][924]") {
+    // b = 1e30 in float is scaled down by about 2^-100. x0's entry 1e-37 would
+    // underflow to 0 at that scale and not come back when x is scaled up on
+    // exit; the scale stops where it stays normal. With max_iter = 0 no solver
+    // makes a step, so x must be x0, bit for bit.
+    using M  = mat::compressed2D<float>;
+    using V  = vec::dense_vector<float>;
+    using It = itl::basic_iteration<float>;
+    const std::size_t n = 4;
+    const M A = tridiag<float>(n);
+    const itl::pc::identity<M> I(A);
+    V b(n), x0(n, 0.0f);
+    for (std::size_t i = 0; i < n; ++i) b(i) = 1e30f * float(1 + i);
+    x0(0) = 1e-37f;
+    x0(2) = -3.0f;
+    for (const auto& s : all_solvers<M, V, itl::pc::identity<M>, It>()) {
+        INFO(s.name);
+        V x = x0;
+        It iter(b, 0, 1e-5f);
+        (void)s.run(A, x, b, I, iter);
+        bool same = true;
+        for (std::size_t i = 0; i < n; ++i) same = same && (x(i) == x0(i));
+        CHECK(same);
+    }
+}
+
 TEST_CASE("x may alias b (issue 924)", "[itl][krylov][alias][924]") {
     // The solvers re-read b in their true-residual checks after writing x:
     // cg(A, x, x, M, iter) on a 4x4 SPD system returned error 1 and x ~ 6e12.
@@ -485,6 +514,14 @@ TEST_CASE("minres records a zero M-norm residual (issue 924)", "[itl][krylov][mi
         CHECK(itl::minres(A, x, zero_b, I, reused) == 0);
         CHECK(reused.is_finished());
         CHECK(reused.resid() == 0.0);
+    }
+    SECTION("M^-1 maps r0 to 0, r0 within atol: converged") {
+        const zero_pc Z;
+        V x(4, 0.0);
+        itl::basic_iteration<double> iter(b, 100, 1e-12, 10.0);   // ||b|| = 2 <= atol
+        CHECK(itl::minres(A, x, b, Z, iter) == 0);
+        CHECK(iter.is_finished());
+        CHECK(iter.resid() == 2.0);
     }
     SECTION("M^-1 maps r0 to 0: a breakdown") {
         const zero_pc Z;
