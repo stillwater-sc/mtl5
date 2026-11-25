@@ -86,6 +86,8 @@ struct cholesky_numeric {
                 "the symbolic analysis");
         lower_solve_schedule           fsched = build_lower_solve_schedule(L);            // may throw
         lower_transpose_solve_schedule bsched = build_lower_transpose_solve_schedule(L);  // may throw
+        // Checked once here, so the solves skip the pass (issue 926).
+        detail::require_nonzero_diagonal(L, false, L.values, "cholesky_numeric::set_factor");  // may throw
         L_ = std::move(L);                                                                // noexcept
         fwd_sched_ = std::move(fsched);                                                   // noexcept
         bwd_sched_ = std::move(bsched);                                                   // noexcept
@@ -125,13 +127,13 @@ struct cholesky_numeric {
         // stores only structure and reads L_'s values at solve time, so an
         // in-place same-pattern re-factorization is reflected automatically.
         // Serial and byte-identical at MTL5_NUM_THREADS=1.
-        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w);
+        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w, diagonal_check::done_by_caller);
 
         // Step 3: Back solve: L^T * z = y.
         // Level-scheduled (parallel, bit-identical to dense_lower_transpose_solve);
         // the schedule is bound to L_ and reads its values at solve time. Serial
         // and byte-identical at MTL5_NUM_THREADS=1.
-        level_scheduled_lower_transpose_solve<Accumulator>(L_, bwd_sched_, w);
+        level_scheduled_lower_transpose_solve<Accumulator>(L_, bwd_sched_, w, diagonal_check::done_by_caller);
 
         // Step 4: Apply inverse permutation: x = P^T * z
         for (std::size_t i = 0; i < n; ++i)

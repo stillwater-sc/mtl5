@@ -136,6 +136,11 @@ void trmv_upper_rows(const M& A, VX& x, typename M::size_type i, bool unit_diag)
             // GCC on x86-64, a contiguous column-major A: sweep_fixed_rows<W>,
             // as in mult_rows_interleaved (#898). Otherwise the loop below.
             if constexpr (row_kernel_fixed_rows_v<acc_type, M>) {
+                // keep_scalar (#776) applies only to a row-major A, so the old
+                // loop's calls were no-ops on this column-major path, and
+                // sweep_fixed_rows needs none (issue 926). Should keep_scalar
+                // ever cover a column-major A, this stops the build.
+                static_assert(!keep_scalar_triangular_v<acc_type, M, W>);
                 if (static_cast<std::size_t>(n - (i0 + W)) >= row_kernel_fixed_rows_min_columns) {
                     sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(n), static_cast<std::size_t>(i0),
                                         static_cast<std::size_t>(i0 + W), static_cast<std::size_t>(n),
@@ -180,6 +185,11 @@ void trmv_lower_rows(const M& A, VX& x, typename M::size_type ii, bool unit_diag
             // GCC on x86-64, a contiguous column-major A: sweep_fixed_rows<W>
             // (#898). Otherwise the loop below.
             if constexpr (row_kernel_fixed_rows_v<acc_type, M>) {
+                // keep_scalar (#776) applies only to a row-major A, so the old
+                // loop's calls were no-ops on this column-major path, and
+                // sweep_fixed_rows needs none (issue 926). Should keep_scalar
+                // ever cover a column-major A, this stops the build.
+                static_assert(!keep_scalar_triangular_v<acc_type, M, W>);
                 if (static_cast<std::size_t>(r0) >= row_kernel_fixed_rows_min_columns) {
                     sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(A.num_rows()),
                                         static_cast<std::size_t>(r0), 0, static_cast<std::size_t>(r0),

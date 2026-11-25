@@ -91,6 +91,10 @@ struct lu_numeric {
                 "lu_numeric::set_factor: factor dimensions do not match the symbolic analysis");
         lower_solve_schedule fsched = build_lower_solve_schedule(L);   // may throw
         upper_solve_schedule usched = build_upper_solve_schedule(U);   // may throw
+        // The diagonals are checked here, once, so the solves skip the pass
+        // (diagonal_check::done_by_caller, issue 926).
+        detail::require_nonzero_diagonal(L, false, L.values, "lu_numeric::set_factor");   // may throw
+        detail::require_nonzero_diagonal(U, true, U.values, "lu_numeric::set_factor");    // may throw
         L_ = std::move(L);            // noexcept
         U_ = std::move(U);            // noexcept
         fwd_sched_ = std::move(fsched);  // noexcept
@@ -121,6 +125,8 @@ struct lu_numeric {
             throw std::invalid_argument(
                 "lu_numeric::set_factor_values: value count does not match the installed "
                 "factor pattern (use set_factor for a pattern change)");
+        detail::require_nonzero_diagonal(L_, false, Lvals, "lu_numeric::set_factor_values");   // may throw
+        detail::require_nonzero_diagonal(U_, true, Uvals, "lu_numeric::set_factor_values");    // may throw
         L_.values = std::move(Lvals);   // noexcept
         U_.values = std::move(Uvals);   // noexcept
     }
@@ -173,11 +179,11 @@ struct lu_numeric {
 
         // Step 2: Forward solve: L * z = w. Level-scheduled (parallel,
         // bit-identical to dense_lower_solve); serial at MTL5_NUM_THREADS=1.
-        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w);
+        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w, diagonal_check::done_by_caller);
 
         // Step 3: Back solve: U * y = z. Level-scheduled (parallel, bit-identical
         // to dense_upper_solve); serial at MTL5_NUM_THREADS=1.
-        level_scheduled_upper_solve<Accumulator>(U_, up_sched_, w);
+        level_scheduled_upper_solve<Accumulator>(U_, up_sched_, w, diagonal_check::done_by_caller);
 
         // Step 4: Apply column permutation: x = Q * y
         // Q maps new col -> old col, so x[q[i]] = y[i]
@@ -289,6 +295,14 @@ lu_numeric<Value> sparse_lu_numeric(
     using std::abs;  // ADL: also find abs() for custom number types (e.g. posit/cfloat)
     using AT = accumulator_traits<Acc, Value>;  // numeric workspace policy
     size_type n = sym.n;
+    // Row and node indices are stored as int32 below (pinv, xi): a larger n
+    // would wrap them (issue 907). Rejected first, as supernodal_lu_numeric
+    // does, before the checks that would need an A and a permutation of that
+    // size, so a test can reach it (issue 926).
+    if (n > static_cast<size_type>(std::numeric_limits<std::int32_t>::max()))
+        throw std::invalid_argument(
+            "sparse_lu_numeric: n = " + std::to_string(n)
+            + " exceeds the int32 index range of the factorization");
     if (A.num_rows() != n || A.num_cols() != n) {
         throw std::invalid_argument(
             "sparse_lu_numeric: matrix dimensions ("
@@ -303,13 +317,6 @@ lu_numeric<Value> sparse_lu_numeric(
     if (!(threshold > Value{0} && threshold <= Value{1})) {
         throw std::invalid_argument("sparse_lu_numeric: threshold must be in (0, 1]");
     }
-    // Row and node indices are stored as int32 below (pinv, xi): a larger n
-    // would wrap them. Rejected up front, as supernodal_lu_numeric does
-    // (issue 907).
-    if (n > static_cast<size_type>(std::numeric_limits<std::int32_t>::max()))
-        throw std::invalid_argument(
-            "sparse_lu_numeric: n = " + std::to_string(n)
-            + " exceeds the int32 index range of the factorization");
 
     // Column-permute A (apply the fill-reducing ordering) and convert to CSC.
     auto AQ = util::column_permute(A, sym.col_perm);

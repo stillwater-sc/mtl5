@@ -209,3 +209,40 @@ TEST_CASE("repeated refactor is stable across many value updates",
         REQUIRE(residual_inf(A, x, b) < 1e-10);
     }
 }
+
+TEST_CASE("set_factor and set_factor_values reject a zero diagonal at install (issue 926)",
+          "[sparse][lu][refactor][schedule][926]") {
+    // The factor classes check their diagonals once, when values go in, and
+    // their level-scheduled solves skip the per-solve O(n) pass. So a zero
+    // diagonal is rejected here, where it was reported by the next solve, and
+    // a rejected install leaves the factor and its solve as they were.
+    const std::size_t n = 12;
+    auto A = tridiag(n, 4.0);
+    auto num = sparse::factorization::sparse_lu_numeric(A, sparse::factorization::sparse_lu_symbolic(A));
+    vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
+    num.solve(x, b);
+    const vec::dense_vector<double> x_before = x;
+
+    // set_factor_values, U's diagonal (last in each column) zeroed.
+    auto Lx = num.factorL().values;
+    auto Ux = num.factorU().values;
+    Ux[num.factorU().col_ptr[5] - 1] = 0.0;   // U(4,4)
+    REQUIRE_THROWS_AS(num.set_factor_values(Lx, Ux), std::runtime_error);
+    // L's diagonal (first in each column).
+    Ux = num.factorU().values;
+    Lx[num.factorL().col_ptr[3]] = 0.0;       // L(3,3)
+    REQUIRE_THROWS_AS(num.set_factor_values(Lx, Ux), std::runtime_error);
+    vec::dense_vector<double> y(n, 0.0);
+    num.solve(y, b);
+    for (std::size_t i = 0; i < n; ++i) REQUIRE(y(i) == x_before(i));   // unchanged
+
+    // set_factor, on a fresh factor object.
+    sparse::factorization::lu_numeric<double> fresh;
+    fresh.symbolic = num.symbolic;
+    fresh.row_perm = num.row_perm;
+    fresh.row_pinv = num.row_pinv;
+    auto U = num.factorU();
+    U.values[U.col_ptr[1] - 1] = 0.0;         // U(0,0)
+    REQUIRE_THROWS_AS(fresh.set_factor(num.factorL(), U), std::runtime_error);
+    REQUIRE_FALSE(fresh.has_factor());
+}

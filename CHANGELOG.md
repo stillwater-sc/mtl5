@@ -76,6 +76,25 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **`owned_csr`** (the smoothers' copy of an `ell_matrix`) sizes its inserter's slots to the widest row, where rows wider than 5 overflowed into a `std::map`.
   - **Tests:** `test_pc_eigen_edges.cpp` (pivots, `block_diagonal` layouts, shapes, the ilut wrap, `power_iteration` at n = 0, arnoldi's smallest selectors and argument edges, W-cycle convergence with and without smoothing steps); `test_pc_sparse_cost.cpp` (the banded build cost).
 
+- **Follow-ups on the commits of QA sweep #913's range** (issue 926): mostly tests, and three costs.
+  - **Panel LU (#195):**
+    - `supernodal_lu_numeric` no longer runs a pre-pass at column 0. That pre-pass could apply nothing, and it turned panels off for the next 16.
+    - `panel_x` (16 n accumulators, 128 MB for double at n = 1e6) is allocated by the first pre-pass, not up front.
+    - The new `supernodal_lu_factor::panel_updates` counts the supernode updates the pre-passes applied.
+    - The panel test now runs matrices that take that path at every width, and checks that they do: before, dense_unsym is one supernode and the others closed few. New sections run panels with `threshold < 1`, a `long double` accumulator and pivot perturbation, each bit-identical to panel = 1.
+  - **Level-scheduled solves:** `lu_numeric`, `supernodal_lu_factor` and `cholesky_numeric` check their diagonals once, in `set_factor` and `set_factor_values`. Their solves skip the per-solve O(n) pass (`diagonal_check::done_by_caller`). A zero diagonal is now rejected at install, and a rejected install leaves the factor unchanged. The free level-scheduled solves still check on every call by default.
+  - **The int32 limit** of `sparse_lu_numeric` and `supernodal_lu_numeric` is checked first, so a test reaches it without an A of 2^31 rows.
+  - **`supernodal_ldlt_solve_refined`** documents that it has no pivot perturbation to forward: `supernodal_ldlt_numeric` takes none.
+  - **Tests:**
+    - Sparse QR: a dense row, an arrow, 80 random least-squares solves checked by their normal equations, already-reduced columns (beta = 0) and sign flips (beta = 2), and an empty column.
+    - The perturbed refined LU solve, checked against the exact x.
+    - `reach()`'s cost on a node with many children.
+    - `frobenius_norm<Accumulator>`'s column-major thread split and its row fallback for one column, each on more than one thread.
+    - syrk and syr2k on the blocked path, at k = 0 and 1, with an asymmetric C and a `long double` accumulator.
+    - symv strips with a strided x.
+    - Eigenvector k against eigenvalue k in `eigen()`'s order.
+    - `static_assert`s that `keep_scalar` (#776) is a no-op on the `sweep_fixed_rows` branch of 68d1835, which drops its calls.
+
 ## [5.25.0] - 2026-11-24
 
 One feature since 5.24.1 (#920), so it is a minor release: a nested dissection ordering. MAJOR stays at 5.

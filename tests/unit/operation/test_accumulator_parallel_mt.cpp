@@ -36,6 +36,8 @@
 
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/mat/dense2D.hpp>
+#include <mtl/tag/orientation.hpp>
+#include <mtl/mat/parameter.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
@@ -103,6 +105,29 @@ void accumulator_add_product(mergeless_acc& a, const V& m, const V& v) {
 }
 template <typename R>
 R accumulator_value(const mergeless_acc& a, std::type_identity<R>) { return static_cast<R>(a.sum); }
+
+// Records the magnitudes in the order they are added, and merges by
+// concatenation (issue 926): the pool's chunks are contiguous and merged in
+// order, so the merged record is the walk the split made.
+struct record_acc {
+    std::vector<double> seen;
+};
+inline void accumulator_clear(record_acc& a) { a.seen.clear(); }
+template <std::same_as<double> V>
+void accumulator_assign(record_acc& a, const V& v) { a.seen.assign(1, v); }
+template <std::same_as<double> V>
+void accumulator_add_product(record_acc& a, const V& m, const V&) { a.seen.push_back(m); }
+inline std::vector<double>& last_record() { static std::vector<double> r; return r; }
+template <typename R>
+R accumulator_value(const record_acc& a, std::type_identity<R>) {
+    last_record() = a.seen;
+    double s = 0;
+    for (double x : a.seen) s += x * x;
+    return static_cast<R>(s);
+}
+inline void accumulator_merge(record_acc& a, const record_acc& b) {
+    a.seen.insert(a.seen.end(), b.seen.begin(), b.seen.end());
+}
 
 } // namespace exactlib
 
@@ -251,4 +276,49 @@ TEST_CASE("a rounding accumulator: deterministic for the thread count, close to 
     for (std::size_t i = 0; i < n; ++i)
         serial += static_cast<long double>(x(i)) * static_cast<long double>(y(i));
     REQUIRE(std::abs(a - serial) <= 1e-12L * std::abs(serial) + 1e-12L);
+}
+
+// The column-major paths of frobenius_norm<Accumulator> (issue 926). The test
+// above is row-major. A column-major matrix is split by columns, each walked
+// top to bottom (issue 909); with fewer columns than the team has threads it
+// is split by rows instead (#911 review), or a 1e6 x 1 matrix ran on one.
+TEST_CASE("frobenius_norm with an accumulator on column-major matrices: column chunks and the row fallback",
+          "[operation][accumulator][mt][926]") {
+    using cm = mtl::mat::dense2D<double, mtl::mat::parameters<mtl::tag::col_major>>;
+    SECTION("many columns: split by columns, in storage order") {
+        const std::size_t rows = 150, cols = 140;
+        const auto flat = int_vector(rows * cols, 5);
+        cm m(rows, cols);
+        std::int64_t ss = 0;
+        for (std::size_t c = 0; c < cols; ++c)
+            for (std::size_t r = 0; r < rows; ++r) {
+                m(r, c) = flat(c * rows + r);
+                ss += static_cast<std::int64_t>(m(r, c)) * static_cast<std::int64_t>(m(r, c));
+            }
+        threads_seen_and_reset();
+        REQUIRE(mtl::frobenius_norm<exact_acc, double>(m) == std::sqrt(static_cast<double>(ss)));
+        const std::size_t threads = threads_seen_and_reset();
+        (void)mtl::frobenius_norm<exactlib::record_acc, double>(m);
+        const auto& seen = exactlib::last_record();
+        REQUIRE(seen.size() == rows * cols);
+        bool in_order = true;
+        for (std::size_t c = 0; c < cols && in_order; ++c)
+            for (std::size_t r = 0; r < rows; ++r)
+                if (seen[c * rows + r] != std::abs(m(r, c))) { in_order = false; break; }   // |a| is added
+        CHECK(in_order);
+        if (pool_is_threaded()) REQUIRE(threads > 1);
+    }
+    SECTION("a 1e6 x 1 matrix: split by rows across the team") {
+        const std::size_t rows = 1000000;
+        cm m(rows, 1);
+        std::int64_t ss = 0;
+        for (std::size_t r = 0; r < rows; ++r) {
+            m(r, 0) = double(static_cast<int>(r % 2001) - 1000);
+            ss += static_cast<std::int64_t>(m(r, 0)) * static_cast<std::int64_t>(m(r, 0));
+        }
+        threads_seen_and_reset();
+        REQUIRE(mtl::frobenius_norm<exact_acc, double>(m) == std::sqrt(static_cast<double>(ss)));
+        const std::size_t threads = threads_seen_and_reset();
+        if (pool_is_threaded()) REQUIRE(threads > 1);
+    }
 }

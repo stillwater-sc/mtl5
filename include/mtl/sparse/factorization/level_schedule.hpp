@@ -156,10 +156,36 @@ lower_solve_schedule build_lower_solve_schedule(
 /// re-factorization is picked up), using the positions cached in the schedule.
 /// Bit-identical to dense_lower_solve; the rows of each level are solved in
 /// parallel on the thread pool (serial when MTL5_NUM_THREADS=1).
+/// Who checks the triangular factor's diagonal for zeros. The level-scheduled
+/// solves check it on every call (issue 907), an O(n) strided pass before the
+/// solve: a caller may change the values after the schedule was built. The
+/// factor classes (lu_numeric, supernodal_lu_factor, cholesky_numeric) check
+/// it once, when values are installed (set_factor, set_factor_values), and
+/// pass done_by_caller, so their solves skip the pass (issue 926).
+enum class diagonal_check { every_solve, done_by_caller };
+
+namespace detail {
+
+/// The check the solves skip under done_by_caller, for a factor's install:
+/// the diagonal stored first (lower) or last (upper) in each column is nonzero.
+template <typename Value, typename SizeType>
+void require_nonzero_diagonal(const util::csc_matrix<Value, SizeType>& T, bool diagonal_last,
+                              const std::vector<Value>& values, const char* fn) {
+    const auto n = static_cast<std::size_t>(T.ncols);
+    for (std::size_t j = 0; j < n; ++j) {
+        const auto b = static_cast<std::size_t>(T.col_ptr[j]), e = static_cast<std::size_t>(T.col_ptr[j + 1]);
+        if (b == e) continue;   // an empty column: the schedule build rejects it
+        if (values[diagonal_last ? e - 1 : b] == Value{0}) zero_diagonal(fn, j);
+    }
+}
+
+} // namespace detail
+
 template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
                                  const lower_solve_schedule& s,
-                                 std::vector<Value>& x)
+                                 std::vector<Value>& x,
+                                 diagonal_check check = diagonal_check::every_solve)
 {
     assert(s.n == static_cast<std::size_t>(L.ncols) &&
            s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
@@ -169,9 +195,10 @@ void level_scheduled_lower_solve(const util::csc_matrix<Value, SizeType>& L,
     // (issue 907): the schedule fixes the pattern, but values installed later
     // with the same pattern (set_factor_values) can put a zero there, and
     // the division would give inf, where the serial solve throws.
-    for (std::size_t j = 0; j < s.n; ++j)
-        if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
-            detail::zero_diagonal("level_scheduled_lower_solve", j);
+    if (check == diagonal_check::every_solve)
+        for (std::size_t j = 0; j < s.n; ++j)
+            if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
+                detail::zero_diagonal("level_scheduled_lower_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -280,7 +307,8 @@ lower_transpose_solve_schedule build_lower_transpose_solve_schedule(
 template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeType>& L,
                                            const lower_transpose_solve_schedule& s,
-                                           std::vector<Value>& x)
+                                           std::vector<Value>& x,
+                                           diagonal_check check = diagonal_check::every_solve)
 {
     assert(s.n == static_cast<std::size_t>(L.ncols) &&
            s.built_nnz == static_cast<std::size_t>(L.nnz()) &&
@@ -290,9 +318,10 @@ void level_scheduled_lower_transpose_solve(const util::csc_matrix<Value, SizeTyp
     // (issue 907): the schedule fixes the pattern, but values installed later
     // with the same pattern (set_factor_values) can put a zero there, and
     // the division would give inf, where the serial solve throws.
-    for (std::size_t j = 0; j < s.n; ++j)
-        if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
-            detail::zero_diagonal("level_scheduled_lower_transpose_solve", j);
+    if (check == diagonal_check::every_solve)
+        for (std::size_t j = 0; j < s.n; ++j)
+            if (L.values[static_cast<std::size_t>(L.col_ptr[j])] == Value{0})
+                detail::zero_diagonal("level_scheduled_lower_transpose_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];
@@ -435,7 +464,8 @@ upper_solve_schedule build_upper_solve_schedule(
 template <typename Accumulator = void, typename Value, typename SizeType>
 void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
                                  const upper_solve_schedule& s,
-                                 std::vector<Value>& x)
+                                 std::vector<Value>& x,
+                                 diagonal_check check = diagonal_check::every_solve)
 {
     assert(s.n == static_cast<std::size_t>(U.ncols) &&
            s.built_nnz == static_cast<std::size_t>(U.nnz()) &&
@@ -445,9 +475,10 @@ void level_scheduled_upper_solve(const util::csc_matrix<Value, SizeType>& U,
     // (issue 907): the schedule fixes the pattern, but values installed later
     // with the same pattern (set_factor_values) can put a zero there, and
     // the division would give inf, where the serial solve throws.
-    for (std::size_t j = 0; j < s.n; ++j)
-        if (U.values[static_cast<std::size_t>(U.col_ptr[j + 1] - 1)] == Value{0})
-            detail::zero_diagonal("level_scheduled_upper_solve", j);
+    if (check == diagonal_check::every_solve)
+        for (std::size_t j = 0; j < s.n; ++j)
+            if (U.values[static_cast<std::size_t>(U.col_ptr[j + 1] - 1)] == Value{0})
+                detail::zero_diagonal("level_scheduled_upper_solve", j);
     const std::size_t nlevels = s.level_ptr.empty() ? 0 : s.level_ptr.size() - 1;
     for (std::size_t l = 0; l < nlevels; ++l) {
         const std::size_t lb = s.level_ptr[l];

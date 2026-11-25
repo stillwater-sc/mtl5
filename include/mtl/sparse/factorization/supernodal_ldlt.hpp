@@ -500,6 +500,13 @@ void supernodal_ldlt_solve(
 /// iterative_refine loop. `FactorValue` is the only required template argument:
 ///   supernodal_ldlt_solve_refined<float>(A, x, b, ordering);
 ///   supernodal_ldlt_solve_refined<float, double>(A, x, b, ordering);  // wider Acc
+///
+/// No pivot perturbation: supernodal_lu_solve_refined takes a `pivot_perturb`
+/// floor for a pivot that cancels to zero in the low precision (#185), but
+/// supernodal_ldlt_numeric has no such option to forward, so a zero pivot in
+/// the FactorValue copy throws std::runtime_error here, as the factorization
+/// does (issue 926).
+/// Use the LU driver with a floor for a symmetric matrix that needs one.
 template <typename FactorValue, typename Accumulator = FactorValue,
           typename Residual, typename Parameters, typename Ordering>
 refine_result supernodal_ldlt_solve_refined(

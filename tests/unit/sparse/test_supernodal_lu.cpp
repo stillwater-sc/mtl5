@@ -1,4 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
+#include <string>
+#include <cstdint>
 
 #include <cstring>
 #include <utility>
@@ -361,6 +363,30 @@ TEST_CASE("Supernodal LU refined solve with zero-pivot perturbation (#185)",
         REQUIRE(std::isfinite(x(1)));
         REQUIRE(std::isfinite(rr.rel_residual));
     }
+    SECTION("on, a floor near the true pivot: refinement recovers the double solution (issue 926)") {
+        // The section above checks only that the solve is finite: with a true
+        // pivot of 1e-9 and a floor of 1e-6, each refinement step removes
+        // about 1e-3 of the error. Here the true pivot is 3e-8, below float's
+        // resolution of 1 (so the float copy is singular), and the floor is
+        // 3e-8: refinement contracts by |1 - pivot / floor| and converges.
+        // x = (2 - 1/d, 1/d) for b = (2, 3).
+        const double d = 3e-8;
+        mat::compressed2D<double> B(2, 2);
+        { mat::inserter<mat::compressed2D<double>> ins(B);
+          ins[0][0] << 1.0; ins[0][1] << 1.0;
+          ins[1][0] << 1.0; ins[1][1] << 1.0 + d; }
+        REQUIRE(static_cast<float>(1.0 + d) == 1.0f);
+        refine_options o; o.max_iter = 30; o.rel_tol = 1e-12;
+        vec::dense_vector<double> x(2, 0.0);
+        auto rr = factorization::supernodal_lu_solve_refined<float, double>(B, x, b, ordering::colamd{}, o, 3e-8f);
+        CHECK(rr.num_perturbed == 1);
+        CHECK(rr.converged);
+        CHECK(rr.rel_residual <= 1e-12);
+        CHECK(rel_residual(B, x, b) <= 1e-12);
+        const double x1 = 1.0 / d, x0 = 2.0 - x1;
+        CHECK(std::abs(x(0) - x0) <= 1e-7 * std::abs(x0));
+        CHECK(std::abs(x(1) - x1) <= 1e-7 * x1);
+    }
     SECTION("on, well-conditioned: it never fires and the accuracy is unchanged") {
         auto C = convdiff(7);
         const std::size_t n = C.num_rows();
@@ -407,6 +433,47 @@ TEST_CASE("Supernodal LU panel update gives the column-at-a-time factors (#195)"
             REQUIRE(same_bits(f, ref));
         }
         REQUIRE(same_bits(factorization::supernodal_lu_numeric(A, sym), ref));   // the default panel
+    }
+    // The cases above are small: dense_unsym is one supernode, so no supernode
+    // is closed before a panel, and the others closed few, so the comparison
+    // could pass without the panel path running (issue 926). These run it at
+    // every width, many supernodes per panel; panel_updates counts them. A
+    // supernode applied out of order would change the bits.
+    for (auto&& [name, A] : {std::pair{"random_unsym(400)", random_unsym(400, 0.05, 7)},
+                             std::pair{"convdiff(30)", convdiff(30)}}) {
+        INFO(name);
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        const auto ref = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, false, 0.0, 1);
+        REQUIRE(ref.panel_updates == 0);
+        for (std::size_t panel : {std::size_t{2}, std::size_t{7}, std::size_t{16}, std::size_t{64}}) {
+            INFO("panel = " << panel);
+            const auto f = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, false, 0.0, panel);
+            CHECK(f.panel_updates > 0);
+            REQUIRE(same_bits(f, ref));
+        }
+    }
+    SECTION("threshold < 1, an accumulator, and pivot perturbation, through panels (issue 926)") {
+        const auto A = random_unsym(400, 0.05, 11);
+        auto sym = factorization::supernodal_lu_symbolic_analyze(A, ordering::colamd{});
+        {
+            const auto ref = factorization::supernodal_lu_numeric(A, sym, 0.1, 64, false, 0.0, 1);
+            const auto f   = factorization::supernodal_lu_numeric(A, sym, 0.1, 64, false, 0.0, 16);
+            CHECK(f.panel_updates > 0);
+            REQUIRE(same_bits(f, ref));
+        }
+        {
+            const auto ref = factorization::supernodal_lu_numeric<long double>(A, sym, 1.0, 64, false, 0.0, 1);
+            const auto f   = factorization::supernodal_lu_numeric<long double>(A, sym, 1.0, 64, false, 0.0, 16);
+            CHECK(f.panel_updates > 0);
+            REQUIRE(same_bits(f, ref));
+        }
+        {
+            const auto ref = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, true, 1e-12, 1);
+            const auto f   = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, true, 1e-12, 16);
+            CHECK(f.panel_updates > 0);
+            CHECK(f.num_perturbed == ref.num_perturbed);
+            REQUIRE(same_bits(f, ref));
+        }
     }
     SECTION("a panel outside [1, 64] is rejected") {
         auto A = dense_unsym(4);
@@ -605,4 +672,18 @@ TEST_CASE("Supernodal threshold pivoting keeps a nonzero pivot when threshold * 
     const auto& U = num.factorU();
     for (std::size_t k = 0; k < 2; ++k)          // U(k,k) is stored last in column k
         REQUIRE(U.values[U.col_ptr[k + 1] - 1] != 0.0);
+}
+
+TEST_CASE("supernodal_lu_numeric rejects n beyond the int32 index range (issue 926)",
+          "[sparse][lu][supernodal][926]") {
+    // As for sparse_lu_numeric: the check comes first, so a 2x2 A reaches it.
+    mat::compressed2D<double> A(2, 2);
+    factorization::supernodal_lu_symbolic sym;
+    sym.n = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) + 1;
+    try {
+        (void)factorization::supernodal_lu_numeric(A, sym);
+        FAIL("supernodal_lu_numeric accepted n = 2^31");
+    } catch (const std::invalid_argument& e) {
+        CHECK(std::string(e.what()).find("32-bit") != std::string::npos);
+    }
 }

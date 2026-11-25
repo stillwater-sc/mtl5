@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <random>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <mtl/mat/dense2D.hpp>
@@ -248,4 +249,40 @@ TEST_CASE("General eigen: eigenvalues match eigenvalue() as a set", "[operation]
         INFO("eigen() value " << k << " = " << eigs(k));
         REQUIRE(found);
     }
+}
+
+TEST_CASE("General eigen: eigenvector k belongs to eigenvalue k in the Schur run's order (issue 926)",
+          "[operation][eigen][894][926]") {
+    // eigen() returns its own Schur run's order (#894), which need not keep a
+    // conjugate pair adjacent or put lambda before conj(lambda). The test above
+    // compares the eigenvalues as a set; this checks each column against the
+    // eigenvalue at its own index, A v_k = lambda_k v_k, on the #894 matrix and
+    // on random matrices with several complex pairs.
+    {
+        mat::dense2D<double> A(3, 3);
+        A(0,0) = 4; A(0,1) = 1; A(0,2) = -1;
+        A(1,0) = 2; A(1,1) = 3; A(1,2) =  0;
+        A(2,0) = 1; A(2,1) = 0; A(2,2) =  2;
+        auto [eigs, V] = eigen(A);
+        CHECK(max_eigen_residual(A, eigs, V) < 1e-10);
+    }
+    int pairs_seen = 0;
+    for (unsigned seed = 1; seed <= 12; ++seed) {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<double> u(-1.0, 1.0);
+        const std::size_t n = 5 + seed % 6;
+        mat::dense2D<double> A(n, n);
+        double norm = 0;
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j) { A(i, j) = u(rng); norm = std::max(norm, std::abs(A(i, j))); }
+        auto [eigs, V] = eigen(A);
+        REQUIRE(eigs.size() == n);
+        INFO("seed " << seed << ", n = " << n);
+        CHECK(max_eigen_residual(A, eigs, V) < 1e-9 * norm * double(n));
+        for (std::size_t k = 0; k < n; ++k) {
+            CHECK_THAT(col_norm(V, k), Catch::Matchers::WithinAbs(1.0, 1e-10));
+            if (eigs(k).imag() > 1e-8) ++pairs_seen;
+        }
+    }
+    CHECK(pairs_seen >= 12);   // the cases do exercise complex pairs
 }
