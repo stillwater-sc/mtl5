@@ -1,8 +1,7 @@
 # Pedagogical examples 
 
-Based on my deep knowledge of the phases implemented and the numerical methods literature:
-Here are 2 pedagogical example proposals per phase (Phases 3-7). Each is grounded in a real 
-numerical methods problem that showcases the MTL5 functionality introduced in that phase.
+Here are 2 pedagogical example proposals per phase (Phases 3 through 7). Each example is grounded in an 
+historical numerical problem that showcases the MTL5 functionality introduced in that phase.
 
 ---
 ## Phase 3: Basic Iterative Solvers (CG, BiCGSTAB, Iteration Control, Preconditioners)
@@ -12,7 +11,7 @@ numerical methods problem that showcases the MTL5 functionality introduced in th
 Numerical goal: Solve the 1D Poisson equation -u''(x) = f(x) on [0,1] with Dirichlet boundary conditions using finite differences. 
 This produces a symmetric positive-definite (SPD) tridiagonal system Au = b.
 
-Why pedagogical: This is the "hello world" of PDE numerical methods — every numerical analysis textbook (Trefethen & Bau, LeVeque) 
+This is the "hello world" of PDE numerical methods — every numerical analysis textbook (Trefethen & Bau, LeVeque) 
 starts here. Students see how continuous math becomes Ax = b, and why iterative solvers matter (direct methods are O(n^3), CG is O(n*sqrt(kappa))).
 
 MTL5 features demonstrated:
@@ -28,8 +27,8 @@ MTL5 features demonstrated:
 Numerical goal: Solve -epsilon * u''(x) + u'(x) = f(x) (convection-diffusion) with central differences. 
 The upwind convection term makes the matrix non-symmetric, so CG cannot be used — this motivates BiCGSTAB.
 
-Why pedagogical: Demonstrates why we need multiple solvers. Students first try CG (it fails or diverges), 
-then switch to BiCGSTAB. Shows iteration control: 
+Demonstrates why we need different solvers. We first try CG, which will fail or diverge, 
+then switch to BiCGSTAB, which is able to solve this system of equations. Shows iteration control: 
 
   - basic_iteration for silent runs, 
   - noisy_iteration for debugging, 
@@ -48,10 +47,10 @@ MTL5 features demonstrated:
 
 ### Example 4A: 2D Laplacian on a Grid (Sparse Assembly + GMRES)
 
-  Numerical goal: Solve the 2D Poisson equation -Delta u = f on the unit square using a 5-point stencil finite difference scheme. This produces a large,
+  Numerical goal: Solve the 2D Poisson equation, -Δu = f, on the unit square using a 5-point stencil finite difference scheme. This produces a large,
   sparse, banded SPD system. Assembly via the inserter pattern demonstrates real-world sparse matrix construction.
 
-  Why pedagogical: The 2D Laplacian is the canonical sparse systems benchmark (Saad, "Iterative Methods for Sparse Linear Systems"). Students see how the
+  The 2D Laplacian is the canonical sparse systems benchmark (Saad, "Iterative Methods for Sparse Linear Systems"). Students see how the
   inserter builds CRS row-by-row, why sparse storage matters (a 100x100 grid = 10,000 unknowns but only ~50,000 nonzeros vs 10^8 dense entries), and how
   GMRES handles this.
 
@@ -68,7 +67,7 @@ MTL5 features demonstrated:
   Numerical goal: Solve a small diagonally-dominant system using classical iterative methods (Jacobi, Gauss-Seidel, SOR) and study convergence rates.
   Demonstrates the spectral radius concept: Jacobi < Gauss-Seidel < SOR(optimal omega).
 
-  Why pedagogical: Directly from Golub & Van Loan Chapter 10 and Saad Chapter 4. Students see that smoothers are solvers (just slow ones), motivating why
+  Directly from Golub & Van Loan, Chapter 10, and Saad, Chapter 4. We see that smoothers are solvers, albeit slow ones, motivating why
   they're used as building blocks in multigrid. The SOR omega sweep is a classic homework exercise made interactive.
 
   MTL5 features demonstrated:
@@ -83,11 +82,11 @@ MTL5 features demonstrated:
 
   Example 5A: Least Squares Curve Fitting via QR
 
-  Numerical goal: Fit a polynomial to noisy data points using the overdetermined system V * c = y where V is a Vandermonde matrix. Compare normal equations
-  (V^T V c = V^T y via Cholesky) vs QR factorization — demonstrating why QR is numerically superior.
+  Numerical goal: Fit a polynomial to noisy data points using the overdetermined system Vc = y, where V is a Vandermonde matrix. Compare normal equations
+  (V^T V c = V^T y via Cholesky) vs. QR factorization—demonstrating why QR is numerically superior.
 
-  Why pedagogical: This is Trefethen & Bau Lecture 11 and Golub & Van Loan Section 5.3. The Vandermonde matrix is notoriously ill-conditioned, making it a
-  perfect stress test. Students see the normal equations give wrong answers at high polynomial degree while QR remains stable.
+  This is Trefethen & Bau Lecture 11 and Golub & Van Loan Section 5.3. The Vandermonde matrix is notoriously ill-conditioned, making it a
+  perfect stress test. We see the normal equations give incorrect answers at high polynomial degree while QR remains stable.
 
   MTL5 features demonstrated:
   - dense2D Vandermonde matrix construction
@@ -102,7 +101,7 @@ MTL5 features demonstrated:
   Numerical goal: Given a well-conditioned SPD system, solve it using LU (general), Cholesky (SPD-exploiting), and QR (orthogonal). Compare operation counts,
    accuracy, and applicability. Then show a non-SPD system where Cholesky fails but LU/QR work.
 
-  Why pedagogical: Directly addresses the "which factorization when?" question from Golub & Van Loan Chapter 3-5. Students build intuition for the
+  Directly addresses the "which factorization when?" question from Golub & Van Loan Chapter 3-5. We build intuition for the
   factorization decision tree that every practicing numerical analyst uses.
 
   MTL5 features demonstrated:
@@ -127,16 +126,16 @@ lambda_k = 4 sin^2(k*pi/(2n)),
 
 providing exact verification. Then extend to a 2D membrane using the Kronecker product.
 
-Why pedagogical: Strang's "Linear Algebra and Its Applications" Chapter 6 — eigenvalues as 
+Strang's "Linear Algebra and Its Applications" Chapter 6 — eigenvalues as 
 physical vibration modes is the most intuitive introduction to spectral methods. 
-The Kronecker product for 2D is from Golub & Van Loan Section 4.8.
+The Kronecker product for 2D is from Golub & Van Loan, Section 4.8.
 
 MTL5 features demonstrated:
 
   - eigenvalue_symmetric() on the tridiagonal Laplacian
   - Verification against analytical eigenvalues
   - kron() to build 2D Laplacian from 1D (I kron T + T kron I)
-  - eigenvalue() (general) on non-symmetric perturbation showing complex eigenvalues
+  - eigenvalue() (general) on a non-symmetric perturbation showing complex eigenvalues
   - svd() to verify singular values equal absolute eigenvalues for symmetric matrices
 
 ### Example 6B: Principal Component Analysis (PCA) via SVD
@@ -145,7 +144,7 @@ Numerical goal: Perform PCA on a small dataset — compute SVD of the centered d
 extract principal components, and project data onto reduced dimensions. 
 Compare with eigendecomposition of the covariance matrix.
 
-Why pedagogical: PCA/SVD is ubiquitous in data science and appears in Trefethen & Bau Lecture 4-5. 
+PCA/SVD is ubiquitous in data science and appears in Trefethen & Bau Lecture 4-5. 
 It makes the abstract SVD concrete: U gives sample coordinates, V gives feature loadings, 
 Sigma gives variance explained. Two approaches (SVD of data vs eigendecomposition of covariance) 
 connect Phase 5 and Phase 6.
@@ -154,7 +153,7 @@ MTL5 features demonstrated:
 
   - svd() — U, S, V decomposition
   - eigenvalue_symmetric() on X^T * X covariance matrix
-  - Dense matrix arithmetic: centering, trans(), matrix multiply
+  - Dense matrix arithmetic: centering, trans(), and matrix multiplication
   - Verification: U * diag(S) * V^T ≈ X
   - Truncated reconstruction showing information loss
 
@@ -172,8 +171,8 @@ Numerical goal: Build the same sparse matrix (2D Laplacian) in three formats:
 
 Compare storage costs and access patterns. Then write/read the matrix via Matrix Market format.
 
-Why pedagogical: Saad Chapter 3 "Sparse Matrix Computations" — understanding sparse formats is 
-prerequisite to efficient large-scale computing. Students see that format choice depends on the 
+Saad Chapter 3 "Sparse Matrix Computations" — understanding sparse formats is a 
+prerequisite to efficient large-scale computing. We see that format choice depends on the 
 operation (assembly → COO, matvec → CRS/ELL, I/O → Matrix Market).
 
 MTL5 features demonstrated:
@@ -190,13 +189,13 @@ MTL5 features demonstrated:
 Numerical goal: Start with a full dense matrix from a finite element assembly, 
 then demonstrate how views reduce storage and computation. Show: 
 
-  1. hermitian view stores only upper triangle, 
+  1. Hermitian view stores only the upper triangle, 
   2. banded view extracts tridiagonal structure, 
   3. map view extracts a subproblem. 
 
-Apply CG to the hermitian-viewed matrix.
+Apply CG to the Hermitian-viewed matrix.
 
-Why pedagogical: Views are a key abstraction in modern matrix libraries (MATLAB's triu, band; 
+Views are a key abstraction in modern matrix libraries (MATLAB's triu, band; 
 Julia's Symmetric, view). Students learn that you don't always need to copy/transform data — views 
 provide zero-cost abstractions. Golub & Van Loan Section 1.2.7 on exploiting structure.
 
