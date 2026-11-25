@@ -424,7 +424,8 @@ TEST_CASE("block_diagonal: a singular block, bad arguments and block layouts (is
         for (std::size_t i = 0; i < n; ++i) {
             double s = 0;
             for (std::size_t j = 0; j < n; ++j) s += A(i, j) * x(j);
-            r = std::max(r, std::abs(s - b(i)));
+            const double d = std::abs(s - b(i));
+            if (!(d <= r)) r = d;   // a NaN propagates (std::max would drop it)
         }
         return r;
     };
@@ -440,7 +441,8 @@ TEST_CASE("block_diagonal: a singular block, bad arguments and block layouts (is
         for (std::size_t i = 0; i < n; ++i) {
             double s = 0;
             for (std::size_t j = 0; j < n; ++j) s += A(j, i) * y(j);
-            r = std::max(r, std::abs(s - b(i)));
+            const double d = std::abs(s - b(i));
+            if (!(d <= r)) r = d;
         }
         CHECK(r < 1e-13);
     }
@@ -508,6 +510,21 @@ TEST_CASE("ilut keeps no U fill for a row with no upper part and fill = 0 (issue
     const itl::pc::ilut<double> F(A, 2, 0.0);
     F.solve(x, b);
     CHECK(x(1) == -1.0);
+}
+
+TEST_CASE("ilut with fill = SIZE_MAX keeps every entry (issue 925)", "[itl][pc][ilut][925]") {
+    // orig + fill wrapped for fill = SIZE_MAX, a natural "no limit": row 0 of
+    // this A has orig_u = 3, so max_u wrapped to 1 and U(0,2) was dropped. With
+    // no truncation and no dropping, ILUT is the exact LU and M^-1 b solves
+    // A x = b: x = (1, -1, 1) for b = A x.
+    const csr A = make(3, {{0, 0, 1.0}, {0, 1, 1.0}, {0, 2, 1.0}, {1, 0, 1.0}, {2, 2, 1.0}});
+    const itl::pc::ilut<double> M(A, std::numeric_limits<std::size_t>::max(), 0.0);
+    vec_t x(3), b(3);
+    b(0) = 1.0; b(1) = 1.0; b(2) = 1.0;   // A (1, -1, 1)
+    M.solve(x, b);
+    CHECK(x(0) == 1.0);
+    CHECK(x(1) == -1.0);
+    CHECK(x(2) == 1.0);
 }
 
 TEST_CASE("power_iteration on an empty operator (issue 925)", "[itl][eigen][925]") {

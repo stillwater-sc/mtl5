@@ -23,6 +23,7 @@
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <algorithm>
 #include <cassert>
+#include <limits>
 #include <cmath>
 #include <functional>
 #include <type_traits>
@@ -128,6 +129,11 @@ public:
     }
 
 private:
+    /// a + b, or SIZE_MAX where the sum would wrap.
+    static size_type sat_add(size_type a, size_type b) {
+        return a > std::numeric_limits<size_type>::max() - b ? std::numeric_limits<size_type>::max() : a + b;
+    }
+
     static constexpr bool accumulated = !std::is_void_v<Accumulator>;
     using acc_type = std::conditional_t<accumulated, Accumulator, value_type>;
     using AT = math::accumulator_traits<acc_type, value_type>;
@@ -310,7 +316,9 @@ private:
             }
 
             // Truncate L: keep at most (orig_l + fill_) largest entries
-            size_type max_l = orig_l + fill_;
+            // Saturating: a fill of SIZE_MAX ("no limit") wrapped orig + fill
+            // to a small count and truncated the row (#931 review).
+            const size_type max_l = sat_add(orig_l, fill_);
             if (l_entries.size() > max_l) {
                 std::partial_sort(l_entries.begin(), l_entries.begin() + static_cast<std::ptrdiff_t>(max_l),
                                   l_entries.end(),
@@ -337,7 +345,8 @@ private:
             // A row with no stored diagonal or upper entry (orig_u = 0) and
             // fill = 0 keeps none: orig_u + fill_ - 1 wrapped to SIZE_MAX
             // there, and every fill-in entry of U was kept (issue 925).
-            const size_type max_u = (orig_u + fill_ > 0) ? orig_u + fill_ - 1 : size_type(0);
+            const size_type u_allow = sat_add(orig_u, fill_);
+            const size_type max_u = u_allow > 0 ? u_allow - 1 : size_type(0);
             if (u_entries.size() > max_u) {
                 std::partial_sort(u_entries.begin(),
                                   u_entries.begin() + static_cast<std::ptrdiff_t>(max_u),
