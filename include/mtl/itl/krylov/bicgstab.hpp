@@ -6,6 +6,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
 
 namespace mtl::itl {
 
@@ -27,6 +28,10 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
     using size_type  = typename VecX::size_type;
     const size_type n = x.size();
 
+    // b's own copy, scaled near 1 when ||b|| is extreme (scaled_rhs.hpp, issue 924).
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, true);
+    const auto& bs = rhs.b();
+
     // Workspace vectors
     vec::dense_vector<value_type> r(n), r_star(n), p(n), phat(n);
     vec::dense_vector<value_type> v(n), s(n), shat(n), t(n);
@@ -37,7 +42,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, Ax);
         for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - Ax(i);
+            r(i) = bs(i) - Ax(i);
     };
 
     value_type rho_1 = value_type(1);
@@ -64,7 +69,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         }
         rho_1 = alpha = omega = value_type(1);
 
-        while (!iter.finished(r)) {
+        while (!iter.finished(rhs.norm(r))) {
             ++iter;
             r_is_true = false;
 
@@ -103,7 +108,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
             // tested on the full step's r, so the last allowed iteration is not
             // cut to the half step x += alpha phat (issue 866). The true
             // residual then decides, below.
-            if (iter.converged_now(mtl::two_norm(s))) {
+            if (iter.converged_now(rhs.norm(s))) {
                 // x += alpha * phat
                 for (size_type i = 0; i < n; ++i)
                     x(i) += alpha * phat(i);
@@ -146,7 +151,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
         if (r_is_true) return iter;
         true_residual();
         r_is_true = true;
-        if (iter.finished(r)) return iter;
+        if (iter.finished(rhs.norm(r))) return iter;
     }
 }
 

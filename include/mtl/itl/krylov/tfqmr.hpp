@@ -8,6 +8,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
 
 namespace mtl::itl {
 
@@ -48,20 +49,29 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using std::sqrt;
     const size_type n = x.size();
 
+    // b's own copy, scaled near 1 when ||b|| is extreme (scaled_rhs.hpp, issue 924).
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, true);
+    const auto& bs = rhs.b();
+
     // u1 = u_m and u2 = u_{m+1}; y1, y2 their preconditioned images M^-1 u;
     // Au1, Au2 = A y1, A y2.
     vec::dense_vector<value_type> r_star(n), w(n), d(n), v(n);
     vec::dense_vector<value_type> u1(n), u2(n), y1(n), y2(n), Au1(n), Au2(n);
 
+    // tau, theta and the rotation's c are real, magnitudes, also for a complex
+    // system; eta = c^2 alpha and rho are scalars of the system. As value_type,
+    // a complex tau went to iter.finished(Real), and tfqmr did not compile for
+    // complex (issue 924).
+    using mag_type = typename detail::scaled_rhs<VecX, VecB>::mag_type;
+    mag_type tau = mag_type(0), theta = mag_type(0);
+    value_type eta = value_type(0), rho = value_type(0);
 
-    value_type tau = value_type(0), theta = value_type(0), eta = value_type(0), rho = value_type(0);
-
-    // w = b - A x, the true residual; returns its norm.
+    // w = b - A x, the true residual; returns its norm in the units of b.
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, Au1);
         for (size_type i = 0; i < n; ++i)
-            w(i) = b(i) - Au1(i);
-        return mtl::two_norm(w);
+            w(i) = bs(i) - Au1(i);
+        return rhs.norm(w);
     };
 
     // (Re)start the recurrences from w = b - A x: u_0 = r* = w, d = 0,
@@ -76,8 +86,8 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         apply_operator<Accumulator>(A, y1, Au1);
         for (size_type i = 0; i < n; ++i)
             v(i) = Au1(i);
-        tau   = mtl::two_norm(w);
-        theta = value_type(0);
+        tau   = mag_type(mtl::two_norm(w));
+        theta = mag_type(0);
         eta   = value_type(0);
         rho   = mtl::dot<Accumulator, value_type>(r_star, w);
     };
@@ -88,13 +98,13 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
                          const vec::dense_vector<value_type>& Au, value_type alpha) {
         for (size_type i = 0; i < n; ++i)
             w(i) -= alpha * Au(i);
-        const value_type factor = theta * theta * eta / alpha;
+        const value_type factor = value_type(theta * theta) * eta / alpha;
         for (size_type i = 0; i < n; ++i)
             d(i) = y(i) + factor * d(i);
-        theta = mtl::two_norm(w) / tau;
-        const value_type c = value_type(1) / sqrt(value_type(1) + theta * theta);
+        theta = mag_type(mtl::two_norm(w)) / tau;
+        const mag_type c = mag_type(1) / sqrt(mag_type(1) + theta * theta);
         tau *= theta * c;
-        eta = c * c * alpha;
+        eta = value_type(c * c) * alpha;
         for (size_type i = 0; i < n; ++i)
             x(i) += eta * d(i);
     };
@@ -111,7 +121,7 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     restart();
     for (;;) {
         bool tau_done = false;
-        while (!tau_done && !iter.finished(tau)) {
+        while (!tau_done && !iter.finished(rhs.unscale(tau))) {
             ++iter;
 
             // rho is tested where it is used: a zero rho_new from the last
@@ -131,7 +141,7 @@ int tfqmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
             // First half-step, along u_m.
             half_step(y1, Au1, alpha);
-            if (iter.finished(tau)) { tau_done = true; break; }
+            if (iter.finished(rhs.unscale(tau))) { tau_done = true; break; }
 
             // Second half-step, along u_{m+1} = u_m - alpha v_m.
             for (size_type i = 0; i < n; ++i)

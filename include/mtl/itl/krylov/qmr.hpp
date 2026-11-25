@@ -10,6 +10,8 @@
 #include <mtl/operation/trans.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl::itl {
 
@@ -26,19 +28,25 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using size_type  = typename VecX::size_type;
     using std::sqrt;
     using std::abs;
+    using conj_t = functor::scalar::conj<value_type>;
     const size_type n = x.size();
+
+    // b's own copy, scaled near 1 when ||b|| is extreme (scaled_rhs.hpp, issue 924).
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, true);
+    const auto& bs = rhs.b();
 
     vec::dense_vector<value_type> r(n), v_tilde(n), w_tilde(n);
     vec::dense_vector<value_type> v(n), w(n), y(n), z(n);
     vec::dense_vector<value_type> p(n), q(n), d(n), s(n), p_tilde(n), z_tilde(n);
 
     vec::dense_vector<value_type> Ax(n), Atq(n);
+    vec::dense_vector<value_type> tmp(is_complex_v<value_type> ? n : size_type(0));   // apply_adjoint's conj(x)
 
     // r = b - A x, the true residual.
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, Ax);
         for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - Ax(i);
+            r(i) = bs(i) - Ax(i);
     };
 
     // Left preconditioning, i.e. the split M = M1*M2 with M1 = M and M2 = I
@@ -87,7 +95,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // iteration object is past its first (it made cg return NaN, issue 866),
         // and so is a restart.
         bool first_step = true;
-        while (!iter.finished(r)) {
+        while (!iter.finished(rhs.norm(r))) {
             ++iter;
             r_is_true = false;
             const bool first = first_step;
@@ -126,8 +134,10 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
                     q(i) = z_tilde(i);
                 }
             } else {
+                // The w side of the Lanczos process runs on A^H, with the
+                // conjugate coefficients (issue 924; Freund & Nachtigal 1991).
                 value_type pcoeff = xi * delta / epsilon;
-                value_type qcoeff = rho * delta / epsilon;
+                value_type qcoeff = conj_t::apply(rho * delta / epsilon);
                 for (size_type i = 0; i < n; ++i) {
                     p(i) = y(i) - pcoeff * p(i);
                     q(i) = z_tilde(i) - qcoeff * q(i);
@@ -154,10 +164,12 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
             value_type rho_new = mtl::two_norm(y);
 
-            // w_tilde = A^T * q - beta * w
-            apply_transpose<Accumulator>(A, q, Atq);
+            // w_tilde = A^H * q - conj(beta) * w. A^T did not converge on a
+            // complex non-Hermitian system (issue 924).
+            apply_adjoint<Accumulator>(A, q, Atq, tmp);
+            const value_type cbeta = conj_t::apply(beta);
             for (size_type i = 0; i < n; ++i)
-                w_tilde(i) = Atq(i) - beta * w(i);
+                w_tilde(i) = Atq(i) - cbeta * w(i);
 
             // z = M2^-T w~ = w~ for left preconditioning; the adjoint solve is
             // applied to z~ at the top of the next iteration.
@@ -203,7 +215,7 @@ int qmr(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         if (r_is_true) return iter;
         true_residual();
         r_is_true = true;
-        if (iter.finished(r)) return iter;
+        if (iter.finished(rhs.norm(r))) return iter;
     }
 }
 

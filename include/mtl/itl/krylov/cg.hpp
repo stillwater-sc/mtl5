@@ -6,6 +6,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
 
 namespace mtl::itl {
 
@@ -31,6 +32,10 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using size_type  = typename VecX::size_type;
     const size_type n = x.size();
 
+    // b's own copy, scaled near 1 when ||b|| is extreme (scaled_rhs.hpp, issue 924).
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, true);
+    const auto& bs = rhs.b();
+
     // Workspace vectors
     vec::dense_vector<value_type> r(n), z(n), p(n), q(n);
 
@@ -40,7 +45,7 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, Ax);
         for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - Ax(i);
+            r(i) = bs(i) - Ax(i);
     };
 
     value_type rho{}, rho_1{};
@@ -63,8 +68,15 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // iteration object is past its first (it made cg return NaN, issue 866),
         // and so is a restart.
         bool first_step = true;
-        while (!iter.finished(r)) {
+        while (!iter.finished(rhs.norm(r))) {
             ++iter;
+            // rho = r^H M^-1 r is zero for an r that has not converged only
+            // when M is singular or indefinite: alpha would be 0 and the next
+            // beta 0 / 0 (issue 924).
+            if (rho == value_type(0)) {
+                iter.fail(2, "cg breakdown: rho == 0");
+                return iter;
+            }
             r_is_true = false;
             const bool first = first_step;
             first_step = false;
@@ -115,7 +127,7 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         if (r_is_true) return iter;
         true_residual();
         r_is_true = true;
-        if (iter.finished(r)) return iter;
+        if (iter.finished(rhs.norm(r))) return iter;
     }
 }
 

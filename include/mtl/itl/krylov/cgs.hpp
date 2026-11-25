@@ -7,6 +7,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
 
 namespace mtl::itl {
 
@@ -28,6 +29,10 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using size_type  = typename VecX::size_type;
     const size_type n = x.size();
 
+    // b's own copy, scaled near 1 when ||b|| is extreme (scaled_rhs.hpp, issue 924).
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, true);
+    const auto& bs = rhs.b();
+
     // Workspace vectors
     vec::dense_vector<value_type> r(n), rtilde(n), p(n), phat(n);
     vec::dense_vector<value_type> u(n), uhat(n), q(n), vhat(n), qhat(n);
@@ -37,7 +42,7 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, Ax);
         for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - Ax(i);
+            r(i) = bs(i) - Ax(i);
     };
 
     value_type rho_1 = value_type(0);
@@ -62,7 +67,7 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // reused iteration object is past its first (it made cg return NaN,
         // issue 866), and so is a restart.
         bool first_step = true;
-        while (!iter.finished(r)) {
+        while (!iter.finished(rhs.norm(r))) {
             ++iter;
             r_is_true = false;
             const bool first = first_step;
@@ -132,7 +137,7 @@ int cgs(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         if (r_is_true) return iter;
         true_residual();
         r_is_true = true;
-        if (iter.finished(r)) return iter;
+        if (iter.finished(rhs.norm(r))) return iter;
     }
 }
 

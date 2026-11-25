@@ -167,6 +167,7 @@ itl/krylov/qmr.hpp                  bench   krylov/qmr+
 itl/krylov/tfqmr.hpp                bench   krylov/tfqmr+
 itl/krylov/idr_s.hpp                bench   krylov/idr_s*
 itl/krylov/apply_operator.hpp       via     krylov/cg+           # the A*x every solver calls
+itl/krylov/scaled_rhs.hpp           via     krylov/cg+           # the copy of b every solver takes
 
 # -- preconditioners, smoothers, multigrid --------------------------------------
 itl/pc/diagonal.hpp                 bench   pc/diagonal/

@@ -37,6 +37,12 @@ itl::cg(A, x, b, M, iter);      // run the algorithm
 int err = iter;                 // 0 = converged, 1 = max_iter exceeded
 ```
 
+The other codes are a solver's breakdown (2 to 5, described in each solver) and
+6 (`basic_iteration::non_finite`), a NaN or Inf residual. A NaN in b stops the
+solve at its first test instead of running to `max_iter` (issue 924). Each solver
+works on its own copy of `b`, so `x` may alias `b`. The dot-product solvers scale
+an extreme `b` by an exact power of two (`krylov/scaled_rhs.hpp`).
+
 Four collaborators — **operator** `A`, **solution/rhs** vectors, **preconditioner**
 `M`, **iteration** `iter` — each varying independently. Swap `cg`→`gmres` for a
 different Krylov method, `A` sparse→dense→matrix-free, `M` `identity`→`ilu_0` for a
@@ -89,8 +95,10 @@ the payoff of the whole abstraction:
   with `A * x` — a stencil applied on the fly, an operator that never materializes
   its entries — is a valid `LinearOp`. This is the headline capability of a Krylov
   library, and here it costs nothing: it is simply the absence of any requirement
-  beyond `A * x`. BiCG and QMR also apply `Aᵀ`; a matrix-free operator provides it
-  as `trans(A)`, found by argument-dependent lookup, through `apply_transpose`.
+  beyond `A * x`. BiCG and QMR also apply the adjoint `Aᴴ` (`Aᵀ` for a real
+  type). A matrix-free operator provides `trans(A)`, found by argument-dependent
+  lookup. `apply_adjoint` forms `Aᴴ x = conj(Aᵀ conj(x))` from it for a complex type
+  (issue 924).
   (Between the accumulator rollout, #254, and #278 the solvers called
   `mtl::mult` directly, which is constrained to `Matrix`, so a matrix-free
   operator did not compile. `tests/unit/itl/test_krylov_matrix_free.cpp` now

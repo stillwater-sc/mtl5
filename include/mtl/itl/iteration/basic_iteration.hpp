@@ -1,6 +1,7 @@
 #pragma once
 // MTL5 -- Basic iteration controller for Krylov solvers
 #include <cmath>
+#include <limits>
 #include <string>
 #include <stdexcept>
 #include <mtl/concepts/vector.hpp>
@@ -10,6 +11,10 @@ namespace mtl::itl {
 
 /// Convergence controller: tracks iteration count, residual, and tolerance.
 /// Convergence test: resid <= rtol * norm_r0  ||  resid <= atol
+///
+/// Error codes: 0 converged, 1 max_iter reached, 2 to 5 a solver's breakdown
+/// (see the solver), and `non_finite` (6) when a residual handed to finished()
+/// is NaN or infinite.
 template <typename Real>
 class basic_iteration {
 public:
@@ -51,9 +56,21 @@ public:
         return finished(mtl::two_norm(r));
     }
 
+    /// Error code of a residual that is NaN or infinite.
+    static constexpr int non_finite = 6;
+
     /// Test convergence given scalar residual norm
     bool finished(Real r) {
         resid_ = r;
+        // A NaN fails every comparison, so converged() never held and only
+        // max_iter stopped a solver: cg with a NaN in b ran 100000 iterations
+        // and returned the generic error 1 (issue 924). A residual norm is not
+        // negative, so this is NaN or +Inf.
+        if (!(r <= std::numeric_limits<Real>::max())) {
+            error_ = non_finite;
+            is_finished_ = true;
+            return true;
+        }
         if (converged(r)) {
             error_ = 0;
             is_finished_ = true;
@@ -99,7 +116,8 @@ public:
     /// second solve is past its first iteration (issue 866).
     bool first() const { return i_ <= 1; }
 
-    /// Error code: 0 = converged, 1 = max_iter exceeded
+    /// Error code: 0 = converged, 1 = max_iter exceeded, 2-5 breakdown,
+    /// 6 = non-finite residual
     operator int() const { return error_code(); }
 
     int error_code() const { return error_; }
