@@ -468,8 +468,20 @@ TEST_CASE("Supernodal LU panel update gives the column-at-a-time factors (#195)"
             REQUIRE(same_bits(f, ref));
         }
         {
-            const auto ref = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, true, 1e-12, 1);
-            const auto f   = factorization::supernodal_lu_numeric(A, sym, 1.0, 64, true, 1e-12, 16);
+            // Row 399 a copy of row 200: singular, so one pivot collapses to
+            // rounding and the perturbation fires, with panels running.
+            std::vector<std::vector<std::pair<std::size_t, double>>> rows(400);
+            for (std::size_t i = 0; i < 400; ++i)
+                for (std::size_t p = A.ref_major()[i]; p < A.ref_major()[i + 1]; ++p)
+                    rows[i].push_back({A.ref_minor()[p], A.ref_data()[p]});
+            rows[399] = rows[200];
+            mat::compressed2D<double> S(400, 400);
+            { mat::inserter<mat::compressed2D<double>> ins(S);
+              for (std::size_t i = 0; i < 400; ++i) for (const auto& [j, v] : rows[i]) ins[i][j] << v; }
+            auto ssym = factorization::supernodal_lu_symbolic_analyze(S, ordering::colamd{});
+            const auto ref = factorization::supernodal_lu_numeric(S, ssym, 1.0, 64, false, 1e-10, 1);
+            const auto f   = factorization::supernodal_lu_numeric(S, ssym, 1.0, 64, false, 1e-10, 16);
+            REQUIRE(ref.num_perturbed > 0);
             CHECK(f.panel_updates > 0);
             CHECK(f.num_perturbed == ref.num_perturbed);
             REQUIRE(same_bits(f, ref));

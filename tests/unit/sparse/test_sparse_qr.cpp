@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <random>
 #include <string>
@@ -419,7 +420,12 @@ double normal_residual(const mat::compressed2D<double>& A, const vec::dense_vect
     for (std::size_t i = 0; i < m; ++i)
         for (auto k = st[i]; k < st[i + 1]; ++k) g[ix[k]] += dv[k] * r[i];
     double ng = 0.0;
-    for (std::size_t j = 0; j < n; ++j) { ng = std::max(ng, std::abs(g[j])); nx = std::max(nx, std::abs(x(j))); }
+    for (std::size_t j = 0; j < n; ++j) {
+        // A NaN or Inf in x or the gradient fails: std::max would drop a NaN.
+        if (!std::isfinite(x(j)) || !std::isfinite(g[j])) return std::numeric_limits<double>::infinity();
+        ng = std::max(ng, std::abs(g[j]));
+        nx = std::max(nx, std::abs(x(j)));
+    }
     return ng / (fro2 * nx + std::sqrt(fro2) * nb);
 }
 

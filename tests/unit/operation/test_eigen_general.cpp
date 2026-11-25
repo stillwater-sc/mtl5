@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <complex>
 #include <vector>
 
@@ -30,6 +31,10 @@ double max_eigen_residual(const mat::dense2D<double>& A,
             for (std::size_t j = 0; j < n; ++j)
                 axi += cplx(A(i, j), 0.0) * V(j, k);
             axi -= eigs(k) * V(i, k);
+            // A NaN or Inf in an eigenvalue or vector fails: std::max would
+            // drop a NaN and leave the residual at its finite maximum.
+            if (!std::isfinite(axi.real()) || !std::isfinite(axi.imag()))
+                return std::numeric_limits<double>::infinity();
             worst = std::max(worst, std::abs(axi));
         }
     }

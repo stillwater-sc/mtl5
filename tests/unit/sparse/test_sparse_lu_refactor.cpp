@@ -223,15 +223,25 @@ TEST_CASE("set_factor and set_factor_values reject a zero diagonal at install (i
     num.solve(x, b);
     const vec::dense_vector<double> x_before = x;
 
-    // set_factor_values, U's diagonal (last in each column) zeroed.
-    auto Lx = num.factorL().values;
-    auto Ux = num.factorU().values;
-    Ux[num.factorU().col_ptr[5] - 1] = 0.0;   // U(4,4)
+    // set_factor_values, U's diagonal (last in each column) zeroed. The
+    // companion array is changed too, so a partial install would show.
+    const auto L0 = num.factorL().values;
+    const auto U0 = num.factorU().values;
+    auto Lx = L0;
+    auto Ux = U0;
+    Lx[num.factorL().col_ptr[1] - 1] += 1.0;   // the last entry of L's column 0, a valid value
+    Ux[num.factorU().col_ptr[5] - 1] = 0.0;    // U(4,4)
     REQUIRE_THROWS_AS(num.set_factor_values(Lx, Ux), std::runtime_error);
-    // L's diagonal (first in each column).
-    Ux = num.factorU().values;
-    Lx[num.factorL().col_ptr[3]] = 0.0;       // L(3,3)
+    REQUIRE(num.factorL().values == L0);
+    REQUIRE(num.factorU().values == U0);
+    // L's diagonal (first in each column), with U changed elsewhere.
+    Lx = L0;
+    Ux = U0;
+    Ux[0] += 1.0;                              // U(0,0), still nonzero
+    Lx[num.factorL().col_ptr[3]] = 0.0;        // L(3,3)
     REQUIRE_THROWS_AS(num.set_factor_values(Lx, Ux), std::runtime_error);
+    REQUIRE(num.factorL().values == L0);
+    REQUIRE(num.factorU().values == U0);
     vec::dense_vector<double> y(n, 0.0);
     num.solve(y, b);
     for (std::size_t i = 0; i < n; ++i) REQUIRE(y(i) == x_before(i));   // unchanged
