@@ -384,7 +384,10 @@ TEMPLATE_TEST_CASE("symv strips with a strided x are bit-identical to the old lo
                     REQUIRE(std::fabs(double(u(i)) - double(w(i))) <= 1e-4 * (1 + std::fabs(double(w(i)))));
                 else
                     REQUIRE(identical(u(i), w(i)));
-                REQUIRE(identical(u(i), d(i)));   // the same as with a dense_vector x
+                // The same bits as a dense_vector x, where that is not handed
+                // to BLAS ?symv (a strided x never is: it is not BLAS-dense).
+                if constexpr (!detail::symv_dispatches_blas_v<void, M, V, V>)
+                    REQUIRE(identical(u(i), d(i)));
             }
         }
     }
