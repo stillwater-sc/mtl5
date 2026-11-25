@@ -420,6 +420,38 @@ TEST_CASE("Scaling a tiny b respects both bounds on x (issue 924)", "[itl][krylo
     }
 }
 
+TEST_CASE("Scaling bounds x by its parts, not its modulus (issue 924)", "[itl][krylov][scaling][complex][924]") {
+    // complex<float> x0(0) = max + max i: its modulus overflows to inf,
+    // which gave no overflow bound, so b = (2^-100, 0) scaled x by 2^100 and
+    // both parts became inf (#927 review). The parts bound the scale at
+    // 2^-1, the opposite direction, so nothing is scaled. With max_iter = 0,
+    // x must be x0, bit for bit.
+    using CF = std::complex<float>;
+    using M  = mat::compressed2D<CF>;
+    using V  = vec::dense_vector<CF>;
+    using It = itl::basic_iteration<float>;
+    M A(2, 2);
+    {
+        mat::inserter<M> ins(A);
+        ins[0][0] << CF(1.0f);
+        ins[1][1] << CF(1.0f);
+    }
+    const itl::pc::identity<M> I(A);
+    const float big = std::numeric_limits<float>::max();   // 2^127 (2 - 2^-23)
+    V b(2, CF(0.0f)), x0(2, CF(0.0f));
+    b(0)  = CF(std::ldexp(1.0f, -100));
+    x0(0) = CF(big, big);
+    x0(1) = CF(0.0f, 3.0f);
+    for (const auto& s : all_solvers<M, V, itl::pc::identity<M>, It>()) {
+        INFO(s.name);
+        V x = x0;
+        It iter(1.0f, 0, 1e-5f);
+        (void)s.run(A, x, b, I, iter);
+        CHECK(x(0) == x0(0));
+        CHECK(x(1) == x0(1));
+    }
+}
+
 TEST_CASE("x may alias b (issue 924)", "[itl][krylov][alias][924]") {
     // The solvers re-read b in their true-residual checks after writing x:
     // cg(A, x, x, M, iter) on a 4x4 SPD system returned error 1 and x ~ 6e12.

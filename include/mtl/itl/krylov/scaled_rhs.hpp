@@ -102,17 +102,18 @@ private:
             const int k0 = -e;
             int lo = limits::min_exponent;
             int hi = limits::max_exponent - 2;
-            const mag_type nx = mtl::infinity_norm(x_);
-            if (nx > mag_type(0) && nx <= limits::max()) {
-                const int ex = pow2::exponent(nx);
-                hi = std::min(hi, limits::max_exponent - 2 - ex);
-            }
-            int emin = 0;
+            // Both bounds come from the finite nonzero parts of x, the real
+            // and imaginary parts of a complex entry separately: they are what
+            // the scaling multiplies. A modulus can overflow where its parts
+            // do not (|max + max i| in float), and then gave no bound.
+            int emin = 0, emax = 0;
             bool any = false;
             for (size_type i = 0; i < x_.size(); ++i)
-                note_min_exponent(x_(i), emin, any);
-            if (any)
+                note_exponents(x_(i), emin, emax, any);
+            if (any) {
+                hi = std::min(hi, limits::max_exponent - 2 - emax);
                 lo = std::max(lo, emin >= limits::min_exponent - 1 ? limits::min_exponent - 1 - emin : 0);
+            }
             if (lo > hi) return;
             const int k = std::clamp(k0, lo, hi);
             if (k == 0 || (k0 > 0) != (k > 0)) return;
@@ -127,23 +128,25 @@ private:
         }
     }
 
-    // The smallest exponent among the nonzero parts of v (real and imaginary
-    // parts of a complex v, which are scaled separately).
-    static void note_min_exponent(const value_type& v, int& emin, bool& any) {
+    // The smallest and largest exponents among the finite nonzero parts of v
+    // (the real and imaginary parts of a complex v, which are scaled
+    // separately). A NaN or Inf part is unchanged by the scaling.
+    static void note_exponents(const value_type& v, int& emin, int& emax, bool& any) {
         if constexpr (is_complex_v<value_type>) {
-            note_part(mag_type(v.real()), emin, any);
-            note_part(mag_type(v.imag()), emin, any);
+            note_part(mag_type(v.real()), emin, emax, any);
+            note_part(mag_type(v.imag()), emin, emax, any);
         } else {
-            note_part(mag_type(v), emin, any);
+            note_part(mag_type(v), emin, emax, any);
         }
     }
 
-    static void note_part(const mag_type& part, int& emin, bool& any) {
+    static void note_part(const mag_type& part, int& emin, int& emax, bool& any) {
         using std::abs;
         const mag_type a = abs(part);
         if (!(a > mag_type(0)) || !(a <= std::numeric_limits<mag_type>::max())) return;
         const int e = math::pow2_scaling<mag_type>::exponent(a);
         if (!any || e < emin) emin = e;
+        if (!any || e > emax) emax = e;
         any = true;
     }
 
