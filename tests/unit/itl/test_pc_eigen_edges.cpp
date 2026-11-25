@@ -425,7 +425,10 @@ TEST_CASE("block_diagonal: a singular block, bad arguments and block layouts (is
             double s = 0;
             for (std::size_t j = 0; j < n; ++j) s += A(i, j) * x(j);
             const double d = std::abs(s - b(i));
-            if (!(d <= r)) r = d;   // a NaN propagates (std::max would drop it)
+            // A NaN or Inf term is the result: std::max dropped a NaN, and a
+            // later finite term must not overwrite it (#931 review).
+            if (!std::isfinite(d)) return d;
+            r = std::max(r, d);
         }
         return r;
     };
@@ -437,14 +440,18 @@ TEST_CASE("block_diagonal: a singular block, bad arguments and block layouts (is
         CHECK(residual(x) < 1e-13);
         vec_t y(n, 0.0);
         M.adjoint_solve(y, b);   // A^T y = b
-        double r = 0;
-        for (std::size_t i = 0; i < n; ++i) {
-            double s = 0;
-            for (std::size_t j = 0; j < n; ++j) s += A(j, i) * y(j);
-            const double d = std::abs(s - b(i));
-            if (!(d <= r)) r = d;
-        }
-        CHECK(r < 1e-13);
+        auto adjoint_residual = [&] {
+            double r = 0;
+            for (std::size_t i = 0; i < n; ++i) {
+                double s = 0;
+                for (std::size_t j = 0; j < n; ++j) s += A(j, i) * y(j);
+                const double d = std::abs(s - b(i));
+                if (!std::isfinite(d)) return d;   // as in residual()
+                r = std::max(r, d);
+            }
+            return r;
+        };
+        CHECK(adjoint_residual() < 1e-13);
     }
     // compressed2D, the same matrix.
     entries e;
