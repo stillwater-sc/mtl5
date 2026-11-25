@@ -20,6 +20,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
 #include <mtl/concepts/matrix.hpp>
 #include <mtl/math/identity.hpp>
 
@@ -178,6 +179,11 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
             ::mtl::detail::throw_or_abort(std::invalid_argument("idr_s: each shadow vector must have length n"));
     detail::idrs_orthonormalize<Accumulator>(P);
 
+    // b's own copy, so x may alias b (issue 924). idr_s scales its own dot
+    // products (#874), so the copy is not scaled.
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, false);
+    const auto& bs = rhs.b();
+
     const value_type zero = math::zero<value_type>();
     const value_type one  = math::one<value_type>();
 
@@ -198,7 +204,7 @@ int idr_s(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter,
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, t);
         for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - t(i);
+            r(i) = bs(i) - t(i);
     };
 
     // Minimal-residual smoothing (Alg. 913): rs <- rs - gamma (rs - r),

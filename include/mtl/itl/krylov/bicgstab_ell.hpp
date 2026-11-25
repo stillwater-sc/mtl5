@@ -10,6 +10,9 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
+#include <mtl/detail/exceptions.hpp>
+#include <stdexcept>
 #include <mtl/math/identity.hpp>
 
 namespace mtl::itl {
@@ -36,6 +39,16 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
     const size_type n = x.size();
     const auto zero = math::zero<value_type>();
     const auto one  = math::one<value_type>();
+
+    // ell = 0 has no BiCG part and no polynomial: the MR part read gamma(1) of
+    // a vector of size 1 and returned error 3 with x = 0 (issue 924). gmres and
+    // idr_s reject the equivalent.
+    if (ell < 1)
+        ::mtl::detail::throw_or_abort(std::invalid_argument("bicgstab_ell: ell must be at least 1"));
+
+    // b's own copy, scaled near 1 when ||b|| is extreme (scaled_rhs.hpp, issue 924).
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, true);
+    const auto& bs = rhs.b();
 
     // Workspace: r_hat[0..ell] and u_hat[0..ell]
     std::vector<vec::dense_vector<value_type>> r_hat(ell + 1, vec::dense_vector<value_type>(n));
@@ -79,16 +92,16 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
     if (mtl::two_norm(x) != zero) {
         apply_operator<Accumulator>(A, x, y);
         for (size_type i = 0; i < n; ++i)
-            r_hat[0](i) = b(i) - y(i);
+            r_hat[0](i) = bs(i) - y(i);
     } else {
         for (size_type i = 0; i < n; ++i)
-            r_hat[0](i) = b(i);
+            r_hat[0](i) = bs(i);
     }
     value_type norm_r0 = mtl::two_norm(r_hat[0]);
     // An exact x0: the controller still records it (a reused one kept the
     // error and residual of its last solve).
     if (norm_r0 == zero) {
-        iter.finished(r_hat[0]);
+        iter.finished(rhs.norm(r_hat[0]));
         return iter;
     }
 
@@ -104,7 +117,7 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
     for (;;) {
         start(norm_r0);
         bool converged_early = false;
-        while (!converged_early && !iter.finished(r_hat[0])) {
+        while (!converged_early && !iter.finished(rhs.norm(r_hat[0]))) {
             ++iter;
             r_is_true = false;
             rho_0 = -omega * rho_0;
@@ -146,7 +159,7 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
                 // j > 0, judging a vector that is not the residual (issue 866).
                 // Only convergence: the iteration limit is tested once per
                 // cycle. The true residual then decides, below.
-                if (iter.converged_now(r_hat[0])) {
+                if (iter.converged_now(rhs.norm(r_hat[0]))) {
                     converged_early = true;
                     break;
                 }
@@ -157,16 +170,20 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
             }
             if (converged_early) break;
 
-            // Modified Gram-Schmidt (MR part)
+            // Modified Gram-Schmidt (MR part). The dots conjugate their first
+            // argument, so the projection of r_j on r_i is r_i^H r_j / sigma_i
+            // and gamma'_j = r_j^H r_0 / sigma_j. The arguments were the other
+            // way round, which is the same for a real system and the conjugate
+            // coefficient for a complex one (issue 924).
             for (std::size_t j = 1; j <= ell; ++j) {
                 for (std::size_t i = 1; i < j; ++i) {
                     if (sigma(i) == zero) continue;
-                    tau(i, j) = mtl::dot<Accumulator, value_type>(r_hat[j], r_hat[i]) / sigma(i);
+                    tau(i, j) = mtl::dot<Accumulator, value_type>(r_hat[i], r_hat[j]) / sigma(i);
                     for (size_type k = 0; k < n; ++k)
                         r_hat[j](k) -= tau(i, j) * r_hat[i](k);
                 }
                 sigma(j) = mtl::dot<Accumulator, value_type>(r_hat[j], r_hat[j]);
-                gamma_a(j) = mtl::dot<Accumulator, value_type>(r_hat[0], r_hat[j]) / sigma(j);
+                gamma_a(j) = mtl::dot<Accumulator, value_type>(r_hat[j], r_hat[0]) / sigma(j);
             }
 
             gamma(ell) = gamma_a(ell);
@@ -221,9 +238,9 @@ int bicgstab_ell(const LinearOp& A, VecX& x, const VecB& b, const PC& M,
         if (r_is_true) return iter;
         apply_operator<Accumulator>(A, x, y);
         for (size_type i = 0; i < n; ++i)
-            r_hat[0](i) = b(i) - y(i);
+            r_hat[0](i) = bs(i) - y(i);
         r_is_true = true;
-        if (iter.finished(r_hat[0])) return iter;
+        if (iter.finished(rhs.norm(r_hat[0]))) return iter;
         norm_r0 = mtl::two_norm(r_hat[0]);
         if (norm_r0 == zero) return iter;
     }

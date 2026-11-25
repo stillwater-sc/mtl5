@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <mtl/concepts/linear_operator.hpp>
 #include <mtl/concepts/matrix.hpp>
+#include <mtl/concepts/scalar.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/operation/trans.hpp>
 
@@ -53,6 +55,31 @@ void apply_transpose(const LinearOp& A, const VecIn& x, VecOut& y) {
         const auto w = At * x;
         for (std::size_t i = 0; i < static_cast<std::size_t>(y.size()); ++i)
             y(i) = w(i);
+    }
+}
+
+/// y = A^H * x, the adjoint, for the shadow recurrences of bicg and qmr.
+///
+/// The solvers' dot products conjugate their first argument, so the shadow
+/// sequence must be built with A^H. With A^T, bicg and qmr did not converge on
+/// a complex non-Hermitian system: 200 iterations at a residual of 2.1 where
+/// cgs and gmres took 3 (issue 924). For a real element type this is
+/// apply_transpose. For a complex one it is A^H x = conj(A^T conj(x)), which
+/// needs only the transpose, so a matrix-free operator still provides just
+/// trans(A). `tmp` holds conj(x): x's size for a complex type, unused otherwise.
+template <typename Accumulator = void, typename LinearOp, typename VecIn, typename VecOut, typename VecTmp>
+void apply_adjoint(const LinearOp& A, const VecIn& x, VecOut& y, VecTmp& tmp) {
+    using value_type = typename VecOut::value_type;
+    if constexpr (!is_complex_v<value_type>) {
+        apply_transpose<Accumulator>(A, x, y);
+    } else {
+        using conj_t = functor::scalar::conj<value_type>;
+        const std::size_t n = static_cast<std::size_t>(x.size());
+        for (std::size_t i = 0; i < n; ++i)
+            tmp(i) = conj_t::apply(x(i));
+        apply_transpose<Accumulator>(A, tmp, y);
+        for (std::size_t i = 0; i < static_cast<std::size_t>(y.size()); ++i)
+            y(i) = conj_t::apply(y(i));
     }
 }
 

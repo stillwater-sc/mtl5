@@ -10,6 +10,7 @@
 #include <mtl/operation/norms.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/pow2_scaling.hpp>
 
@@ -38,6 +39,11 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
 
     const size_type n = x.size();
     const auto zero = math::zero<value_type>();
+
+    // b's own copy, so x may alias b (issue 924). minres scales its own dot
+    // products (#671), so the copy is not scaled.
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, false);
+    const auto& bs = rhs.b();
 
     // Preconditioned Lanczos in the M^{-1} inner product (Paige & Saunders;
     // Greenbaum, Iterative Methods, Sec. 8.2). With M SPD this is MINRES on
@@ -77,12 +83,21 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // Initial residual: r = b - A*x
     apply_operator<Accumulator>(A, x, w);
     for (size_type i = 0; i < n; ++i)
-        v(i) = b(i) - w(i);
+        v(i) = bs(i) - w(i);
     const auto r0_norm = mtl::two_norm(v);
     M.solve(z, v);
     value_type beta = m_norm(v, z, w);
 
-    if (beta == zero) return iter;
+    // ||r0||_{M^-1} = 0: r0 = 0, or an M^-1 that maps r0 to 0. The iteration
+    // object records the residual, rather than keeping the state of an
+    // earlier solve (issue 924). An r0 that meets the tolerance (atol) has
+    // converged; any other is a breakdown, since the Lanczos process cannot
+    // start.
+    if (beta == zero) {
+        if (!iter.finished(r0_norm))
+            iter.fail(2, "minres breakdown: ||r0||_M == 0 for an unconverged r0");
+        return iter;
+    }
 
     for (size_type i = 0; i < n; ++i) {
         v(i) /= beta;
@@ -108,7 +123,7 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, w);
         for (size_type i = 0; i < n; ++i)
-            w(i) = b(i) - w(i);
+            w(i) = bs(i) - w(i);
         return mtl::two_norm(w);
     };
 

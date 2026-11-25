@@ -32,6 +32,32 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     The level structure takes 3 to 4 times AMD's time. Choose it when the ordering time matters more than the fill.
   - Tests: `test_nested_dissection.cpp`. Docs: `docs/algorithms/nested-dissection.md`.
 
+### Fixed
+
+- **Krylov solvers: complex systems, extreme scales, aliasing and non-finite input** (issue 924, from QA sweep #913).
+  - **Complex systems:**
+    - `bicg` and `qmr` now build their shadow sequence with A^H and the conjugate coefficients. They used A^T, and on a complex non-Hermitian system they stopped at `max_iter` with a residual near 2.
+    - `tfqmr` now compiles for complex value types: `tau` and `theta` are magnitudes.
+    - The MR part of `bicgstab_ell` now conjugates the right side of its dots. BiCGSTAB(1) took 47 iterations where BiCGSTAB takes 21 (n = 40).
+    - The new `apply_adjoint` computes A^H x as conj(A^T conj(x)), so a matrix-free operator still provides only `trans(A)`.
+  - **Scaling and aliasing** (`krylov/scaled_rhs.hpp`):
+    - Every solver now works on its own copy of b. Before, `cg(A, x, x, M, iter)` returned x ≈ 6e12.
+    - When ‖b‖ lies outside [2^-E, 2^E], cg, bicg, bicgstab, cgs, qmr, tfqmr, bicgstab_ell and gmres solve A (s x) = s b, with s an exact power of two. E is a quarter of the type's `max_exponent`.
+    - In float, b = 1e-30 had made `dot(p, A p)` underflow, giving a false breakdown with x = 0, and b = 1e30 had made it overflow to NaN.
+    - Inside the band nothing changes. Outside it, the result is the unscaled iteration's bit for bit, which a test checks at 2^-600 in double.
+    - minres and idr_s, which already scale their own dots, take the copy only.
+  - **Non-finite residuals:** `basic_iteration::finished` returns the new error code 6 (`non_finite`) for a NaN or Inf residual. Before, a NaN in b ran all `max_iter` iterations and returned error 1.
+  - **gmres:**
+    - A zero diagonal entry of the Hessenberg factor in a breakdown no longer writes NaN into x. Its column is dropped, and an unconverged cycle reports breakdown (2).
+    - The basis and work vectors are allocated once per solve, not once per restart cycle and Arnoldi step.
+  - **Other checks:**
+    - `bicgstab_ell` throws `invalid_argument` for ell = 0.
+    - `cg` and `bicg` report rho = 0 for an unconverged residual as a breakdown, where it had become a 0/0.
+    - `minres` now records a zero M-norm residual: converged when r0 = 0, breakdown otherwise. It no longer returns stale iteration state.
+  - **Tests:**
+    - `test_krylov_robustness.cpp`: complex solves for every solver, float scaling, exact power-of-two scaling, aliasing, NaN and Inf input, singular gmres, empty systems, and `basic_iteration` directly.
+    - The regression tier gains BiCG and a complex shifted convection-diffusion system.
+
 ## [5.25.0] - 2026-11-24
 
 One feature since 5.24.1 (#920), so it is a minor release: a nested dissection ordering. MAJOR stays at 5.

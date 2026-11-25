@@ -1,11 +1,13 @@
 // Regression tier for the Krylov solvers that had none (issue 866): cgs, qmr,
-// tfqmr, minres, idr_s and bicgstab_ell, at 4900-10000 unknowns. Each solve
+// tfqmr, minres, idr_s and bicgstab_ell, at 4900-10000 unknowns; bicg, and a
+// complex system for the solvers with a shadow sequence (issue 924). Each solve
 // is judged by its true relative residual ||b - A x|| / ||b||, not the
 // solver's own estimate.
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
 #include <cmath>
+#include <complex>
 #include <cstddef>
 #include <iomanip>
 #include <iostream>
@@ -181,4 +183,58 @@ TEST_CASE("Krylov family regression: 2D Laplacian, no PC", "[regression][itl][kr
         [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::minres(M, x, b, P, it); }, 20000);
     run("QMR", "none", "Laplacian-2D", A, pc,
         [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::qmr(M, x, b, P, it); }, 20000);
+}
+
+TEST_CASE("Krylov family regression: BiCG on 2D convection-diffusion", "[regression][itl][krylov]") {
+    // bicg had no regression test (issue 924).
+    const csr A = convdiff_2d(100);   // n = 10000
+    const itl::pc::ilu_0<double> ilu(A);
+    // Without a PC (or with Jacobi, which is 1/4 I here) BiCG diverges on this
+    // operator, as QMR, CGS and TFQMR stall there; BiCGSTAB converges in 284.
+    run("BiCG", "ILU(0)", "ConvDiff-2D", A, ilu,
+        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::bicg(M, x, b, P, it); }, 5000);
+}
+
+TEST_CASE("Krylov family regression: complex shifted convection-diffusion", "[regression][itl][krylov][complex]") {
+    // A complex shift i of the convection-diffusion operator's diagonal:
+    // non-Hermitian. bicg and qmr built the shadow sequence with A^T and did
+    // not converge on a complex system; tfqmr did not compile for one
+    // (issue 924). CGS is left out: it diverges here (and at shift 0.5i,
+    // where TFQMR stalls too), as it does on the real operator.
+    using C    = std::complex<double>;
+    using ccsr = mat::compressed2D<C>;
+    using cvec = vec::dense_vector<C>;
+    const std::size_t k = 70, n = k * k;
+    const csr R = convdiff_2d(k);
+    ccsr A(n, n);
+    {
+        const auto& rp = R.ref_major(); const auto& ci = R.ref_minor(); const auto& d = R.ref_data();
+        mat::inserter<ccsr> ins(A);
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t p = rp[i]; p < rp[i + 1]; ++p)
+                ins[i][ci[p]] << (ci[p] == i ? C(d[p], 1.0) : C(d[p], 0.0));
+    }
+    const itl::pc::diagonal<ccsr> jac(A);
+    auto solve = [&](const char* name, auto&& f) {
+        cvec b(n, C(1.0, 0.5)), x(n, C(0.0));
+        itl::basic_iteration<double> iter(b, 5000, 1e-10);
+        const int err = f(A, x, b, jac, iter);
+        cvec Ax = A * x;
+        double r2 = 0.0, b2 = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            r2 += std::norm(b(i) - Ax(i));
+            b2 += std::norm(b(i));
+        }
+        const double rr = std::sqrt(r2 / b2);
+        report(name, "Jacobi", "ConvDiff-C", n, iter.iterations(), rr);
+        CHECK(err == 0);
+        CHECK(rr < 1e-8);
+    };
+    solve("BiCG",        [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::bicg(M, x, b, P, it); });
+    solve("QMR",         [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::qmr(M, x, b, P, it); });
+    solve("TFQMR",       [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::tfqmr(M, x, b, P, it); });
+    solve("BiCGSTAB",    [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::bicgstab(M, x, b, P, it); });
+    solve("BiCGSTAB(2)", [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::bicgstab_ell(M, x, b, P, it, 2); });
+    solve("GMRES(30)",   [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::gmres(M, x, b, P, it, 30); });
+    solve("IDR(4)",      [](auto& M, auto& x, auto& b, auto& P, auto& it) { return itl::idr_s(M, x, b, P, it, 4); });
 }

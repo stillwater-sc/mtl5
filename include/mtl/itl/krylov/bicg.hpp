@@ -8,6 +8,8 @@
 #include <mtl/operation/trans.hpp>
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
+#include <mtl/itl/krylov/scaled_rhs.hpp>
+#include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl::itl {
 
@@ -29,7 +31,12 @@ template <typename Accumulator = void,
 int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     using value_type = typename VecX::value_type;
     using size_type  = typename VecX::size_type;
+    using conj_t     = functor::scalar::conj<value_type>;
     const size_type n = x.size();
+
+    // b's own copy, scaled near 1 when ||b|| is extreme (scaled_rhs.hpp, issue 924).
+    detail::scaled_rhs<VecX, VecB> rhs(x, b, true);
+    const auto& bs = rhs.b();
 
     // Workspace: 8 vectors
     vec::dense_vector<value_type> r(n), r_tilde(n);
@@ -38,12 +45,13 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     vec::dense_vector<value_type> q(n), q_tilde(n);
 
     vec::dense_vector<value_type> Ax(n);
+    vec::dense_vector<value_type> tmp(is_complex_v<value_type> ? n : size_type(0));   // apply_adjoint's conj(x)
 
     // r = b - A x, the true residual.
     auto true_residual = [&]() {
         apply_operator<Accumulator>(A, x, Ax);
         for (size_type i = 0; i < n; ++i)
-            r(i) = b(i) - Ax(i);
+            r(i) = bs(i) - Ax(i);
     };
 
     value_type rho{}, rho_1{};
@@ -62,7 +70,7 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         for (size_type i = 0; i < n; ++i)
             r_tilde(i) = r(i);  // shadow residual = r initially
 
-        // z = M^{-1} r,  z_tilde = M^{-T} r_tilde
+        // z = M^{-1} r,  z_tilde = M^{-H} r_tilde
         M.solve(z, r);
         M.adjoint_solve(z_tilde, r_tilde);
 
@@ -81,8 +89,16 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // iteration object is past its first (it made cg return NaN, issue 866),
         // and so is a restart.
         bool first_step = true;
-        while (!iter.finished(r)) {
+        while (!iter.finished(rhs.norm(r))) {
             ++iter;
+            // rho == 0 with r not converged is a Lanczos breakdown: alpha
+            // would be 0 and the next beta 0 / 0. Tested here, where the loop
+            // has already found that r has not converged, so it covers the
+            // first step of a pass too (issue 924).
+            if (rho == value_type(0)) {
+                iter.fail(2, "bicg breakdown: rho == 0");
+                return iter;
+            }
             r_is_true = false;
             const bool first = first_step;
             first_step = false;
@@ -93,18 +109,21 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
                     p_tilde(i) = z_tilde(i);
                 }
             } else {
-                value_type beta = rho / rho_1;
+                // The shadow sequence takes the conjugate coefficients: it is
+                // the BiCG of A^H, so that p~^H A p_j = 0 for j < k (issue 924).
+                const value_type beta  = rho / rho_1;
+                const value_type cbeta = conj_t::apply(beta);
                 for (size_type i = 0; i < n; ++i) {
                     p(i) = z(i) + beta * p(i);
-                    p_tilde(i) = z_tilde(i) + beta * p_tilde(i);
+                    p_tilde(i) = z_tilde(i) + cbeta * p_tilde(i);
                 }
             }
 
             // q = A * p
             apply_operator<Accumulator>(A, p, q);
 
-            // q_tilde = A^T * p_tilde
-            apply_transpose<Accumulator>(A, p_tilde, q_tilde);
+            // q_tilde = A^H * p_tilde (issue 924: A^T did not converge for complex)
+            apply_adjoint<Accumulator>(A, p_tilde, q_tilde, tmp);
 
             // p~^T A p == 0 is a breakdown: alpha was rho / 0 (issue 866).
             const value_type ptq = mtl::dot<Accumulator, value_type>(p_tilde, q);
@@ -122,26 +141,22 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             for (size_type i = 0; i < n; ++i)
                 r(i) -= alpha * q(i);
 
-            // r_tilde -= alpha * q_tilde
+            // r_tilde -= conj(alpha) * q_tilde
+            const value_type calpha = conj_t::apply(alpha);
             for (size_type i = 0; i < n; ++i)
-                r_tilde(i) -= alpha * q_tilde(i);
+                r_tilde(i) -= calpha * q_tilde(i);
 
-            // z = M^{-1} r, z_tilde = M^{-T} r_tilde
+            // z = M^{-1} r, z_tilde = M^{-H} r_tilde
             M.solve(z, r);
             M.adjoint_solve(z_tilde, r_tilde);
 
             rho_1 = rho;
             rho = mtl::dot<Accumulator, value_type>(r_tilde, z);   // z^T r~, see above (#392)
-
-            // rho == 0 is ambiguous between a true Lanczos breakdown and exact
-            // convergence (r == 0 drives z == z_tilde == 0, hence rho == 0).
-            // Only treat it as breakdown if we have not actually converged --
-            // otherwise a solver that lands on the exact solution in one step
-            // (e.g. 1x1 systems) gets misreported as failed.
-            if (rho == value_type(0) && !iter.finished(r)) {
-                iter.fail(2, "bicg breakdown: rho == 0");
-                return iter;
-            }
+            // rho == 0 is ambiguous between a Lanczos breakdown and exact
+            // convergence (r == 0 drives z == z_tilde == 0). The test at the
+            // top of the loop runs after the convergence test, so a solver that
+            // lands on the exact solution in one step (a 1x1 system) is not
+            // reported as failed.
         }
 
         // Converged by the recurrence, or at the limit: the true residual
@@ -149,7 +164,7 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         if (r_is_true) return iter;
         true_residual();
         r_is_true = true;
-        if (iter.finished(r)) return iter;
+        if (iter.finished(rhs.norm(r))) return iter;
     }
 }
 
