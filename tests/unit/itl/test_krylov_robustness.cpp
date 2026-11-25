@@ -390,6 +390,36 @@ TEST_CASE("Scaling a huge b gives x0 back exactly (issue 924)", "[itl][krylov][s
     }
 }
 
+TEST_CASE("Scaling a tiny b respects both bounds on x (issue 924)", "[itl][krylov][scaling][924]") {
+    // b = (2^-100, 0) wants a scale of 2^100. x0 = (2^127, 2^-149): 2^127
+    // allows at most 2^-1 before it overflows, and the subnormal 2^-149 allows
+    // no scaling down. The range is empty, so nothing is scaled. Clamping to
+    // one bound and then the other picked 2^23, and x(0) became inf (#927
+    // review). With max_iter = 0, x must be x0, bit for bit.
+    using M  = mat::compressed2D<float>;
+    using V  = vec::dense_vector<float>;
+    using It = itl::basic_iteration<float>;
+    M A(2, 2);
+    {
+        mat::inserter<M> ins(A);
+        ins[0][0] << 1.0f;
+        ins[1][1] << 1.0f;
+    }
+    const itl::pc::identity<M> I(A);
+    V b(2, 0.0f), x0(2);
+    b(0)  = std::ldexp(1.0f, -100);
+    x0(0) = std::ldexp(1.0f, 127);
+    x0(1) = std::numeric_limits<float>::denorm_min();
+    for (const auto& s : all_solvers<M, V, itl::pc::identity<M>, It>()) {
+        INFO(s.name);
+        V x = x0;
+        It iter(b, 0, 1e-5f);
+        (void)s.run(A, x, b, I, iter);
+        CHECK(x(0) == x0(0));
+        CHECK(x(1) == x0(1));
+    }
+}
+
 TEST_CASE("x may alias b (issue 924)", "[itl][krylov][alias][924]") {
     // The solvers re-read b in their true-residual checks after writing x:
     // cg(A, x, x, M, iter) on a 4x4 SPD system returned error 1 and x ~ 6e12.

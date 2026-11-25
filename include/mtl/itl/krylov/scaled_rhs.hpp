@@ -1,5 +1,6 @@
 #pragma once
 // MTL5 -- A Krylov solver's own copy of b, scaled by an exact power of two (#924)
+#include <algorithm>
 #include <cstddef>
 #include <limits>
 #include <utility>
@@ -86,30 +87,35 @@ private:
             if (!(nb > mag_type(0)) || !(nb <= limits::max())) return;
             const int e = pow2::exponent(nb);
             if (e >= -band && e <= band) return;
-            int k = -e;
-            // 2^k and 2^-k must be normal values of the type.
-            if (k < limits::min_exponent) k = limits::min_exponent;
-            if (k > limits::max_exponent - 2) k = limits::max_exponent - 2;
-            // s x must not overflow: a starting guess far larger than b.
+            // k must lie in [lo, hi]:
+            //   - 2^k and 2^-k are normal values of the type;
+            //   - s x does not overflow (a starting guess far larger than b):
+            //     the largest exponent of x plus k stays below max_exponent - 1;
+            //   - s x does not underflow, so that dividing by s on exit gives
+            //     back every entry of x, also when the solver makes no step:
+            //     the smallest nonzero part of x stays normal, and a subnormal
+            //     part of x allows only k >= 0 (scaling it up is exact).
+            // The overflow bound and the underflow bound are both kept: a
+            // clamp to one must not break the other (#927 review). An empty
+            // range, or one that reverses the direction, leaves the system
+            // unscaled. An x = 0 sets neither bound.
+            const int k0 = -e;
+            int lo = limits::min_exponent;
+            int hi = limits::max_exponent - 2;
             const mag_type nx = mtl::infinity_norm(x_);
             if (nx > mag_type(0) && nx <= limits::max()) {
                 const int ex = pow2::exponent(nx);
-                if (ex + k > limits::max_exponent - 2) k = limits::max_exponent - 2 - ex;
+                hi = std::min(hi, limits::max_exponent - 2 - ex);
             }
-            // s x must not underflow either: dividing by s again on exit
-            // must give back every entry of x, also when the solver makes no
-            // step. Scaling down (a huge b) stops where the smallest nonzero
-            // entry of x would leave the normal range.
-            if (k < 0) {
-                int emin = 0;
-                bool any = false;
-                for (size_type i = 0; i < x_.size(); ++i)
-                    note_min_exponent(x_(i), emin, any);
-                if (any && emin + k < limits::min_exponent - 1) k = limits::min_exponent - 1 - emin;
-            }
-            // The clamps can undo the scaling (a small b with a huge x, a huge
-            // b with a tiny entry of x).
-            if (k == 0 || (e < 0 && k < 0) || (e > 0 && k > 0)) return;
+            int emin = 0;
+            bool any = false;
+            for (size_type i = 0; i < x_.size(); ++i)
+                note_min_exponent(x_(i), emin, any);
+            if (any)
+                lo = std::max(lo, emin >= limits::min_exponent - 1 ? limits::min_exponent - 1 - emin : 0);
+            if (lo > hi) return;
+            const int k = std::clamp(k0, lo, hi);
+            if (k == 0 || (k0 > 0) != (k > 0)) return;
             const mag_type s = pow2::scale(mag_type(1), k);
             inv_ = pow2::scale(mag_type(1), -k);
             const value_type sv = value_type(s);
