@@ -14,6 +14,7 @@
 //   - empty systems; basic_iteration's first(), operator++(int), converged_now.
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -283,7 +284,12 @@ TEST_CASE("BiCGSTAB(1) on a complex system tracks BiCGSTAB (issue 924)",
         itl::basic_iteration<double> it_ell(b, 2000, 1e-10), it_ref(b, 2000, 1e-10);
         REQUIRE(itl::bicgstab_ell(A, x, b, I, it_ell, 1) == 0);
         REQUIRE(itl::bicgstab(A, y, b, I, it_ref) == 0);
-        CHECK(std::abs(it_ell.iterations() - it_ref.iterations()) <= 1);
+        // The counts depend on rounding (contraction differs by platform: 2
+        // apart on macOS ARM64 at n = 40), so the margin is a quarter of the
+        // reference, at least 3. The wrong coefficient took 19 at n = 12 and
+        // 47 at n = 40, against bounds of 16 and 26.
+        const int margin = std::max(3, it_ref.iterations() / 4);
+        CHECK(std::abs(it_ell.iterations() - it_ref.iterations()) <= margin);
     }
 }
 
