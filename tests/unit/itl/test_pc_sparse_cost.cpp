@@ -111,6 +111,39 @@ TEST_CASE("ic_0 and ildl apply in O(nnz) (#732)", "[itl][pc][732]") {
     CHECK(ld_ratio < max_ratio);
 }
 
+/// The SPD band matrix of half-bandwidth w: 2w + 1 on the diagonal, -1 off it.
+/// Diagonally dominant, so IC(0) and ILDL exist.
+sparse band(std::size_t n, std::size_t w) {
+    sparse A(n, n);
+    {
+        mat::inserter<sparse> ins(A, 2 * w + 1);
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t lo = i >= w ? i - w : 0, hi = std::min(n - 1, i + w);
+            for (std::size_t j = lo; j <= hi; ++j) ins[i][j] << (i == j ? double(2 * w + 1) : -1.0);
+        }
+    }
+    return A;
+}
+
+TEST_CASE("ic_0 and ildl set up in O(n w^2), not O(n w^3) (issue 925)", "[itl][pc][925]") {
+    // Each L(i,j) is the sum over the columns k < j that rows i and j share.
+    // Both loops scanned row j from its start for every k of row i: O(w^3) per
+    // row. A merge of the two sorted rows is O(w^2) per row, which is the work
+    // of the pattern itself. From w = 16 to w = 128 (8x) the merge takes ~64x
+    // as long and the old loops took ~512x (0.056, 0.41, 2.71 s at w = 50,
+    // 100, 200, n = 2000). The bound is 160x, a factor of 2.5 or more from
+    // either.
+    const std::size_t n = 2000;
+    const sparse narrow = band(n, 16), wide = band(n, 128);
+    const double ic  = best_of(3, [&] { const itl::pc::ic_0<double> M(wide); (void)M; })
+                     / best_of(3, [&] { const itl::pc::ic_0<double> M(narrow); (void)M; });
+    const double ld  = best_of(3, [&] { const itl::pc::ildl<double> M(wide); (void)M; })
+                     / best_of(3, [&] { const itl::pc::ildl<double> M(narrow); (void)M; });
+    INFO("setup time ratio for an 8x wider band: ic_0 " << ic << ", ildl " << ld);
+    CHECK(ic < 160.0);
+    CHECK(ld < 160.0);
+}
+
 TEST_CASE("ilu_0 and ilut set up in O(nnz) (#733)", "[itl][pc][733]") {
     const double ilu_ratio = setup_time<itl::pc::ilu_0<double>>(g_large) / setup_time<itl::pc::ilu_0<double>>(g_small);
     const double ilut_ratio = setup_time<itl::pc::ilut<double>>(g_large) / setup_time<itl::pc::ilut<double>>(g_small);

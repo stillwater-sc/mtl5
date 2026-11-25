@@ -38,10 +38,13 @@ mat::compressed2D<Value> to_compressed(const mat::ell_matrix<Value, Parameters>&
     using size_type = typename mat::ell_matrix<Value, Parameters>::size_type;
     mat::compressed2D<Value> C(A.num_rows(), A.num_cols());
     {
-        mat::inserter<mat::compressed2D<Value>> ins(C);
+        const size_type w = A.max_width();
+        // A slot per stored entry of the widest row: the default of 5 sent
+        // every entry past the fifth of a row through the inserter's
+        // std::map overflow (issue 925).
+        mat::inserter<mat::compressed2D<Value>> ins(C, w > 0 ? w : size_type(1));
         const auto& idx = A.ref_indices();
         const auto& val = A.ref_data();
-        const size_type w = A.max_width();
         for (size_type r = 0; r < A.num_rows(); ++r)
             for (size_type k = 0; k < w; ++k) {
                 const size_type c = idx[r * w + k];

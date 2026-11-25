@@ -66,6 +66,8 @@
 // below zero and its square root is NaN -- and only configuration 3 still
 // applies M^-1, as only it factors Hilbert(9) by dense Cholesky (#594).
 #include <catch2/catch_test_macros.hpp>
+
+#include <stdexcept>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
@@ -529,12 +531,12 @@ TEST_CASE("[586:pc] incomplete factorizations: the ordering follows the reductio
     SECTION("dense pattern, Hilbert(9): only the exact accumulator keeps IC(0)") {
         const auto A = hilbert_sparse(9);
         vec::dense_vector<float> b(9, 1.0f);
-        const double c1 = pc_residual<itl::pc::ic_0<float, P, float>>(A, b);
-        const double c2 = pc_residual<itl::pc::ic_0<float, P, fma>>(A, b);
+        // A pivot goes negative in float and with fma. That gave NaN from
+        // solve(); the constructor now rejects it (issue 925).
+        CHECK_THROWS_AS((pc_residual<itl::pc::ic_0<float, P, float>>(A, b)), std::runtime_error);
+        CHECK_THROWS_AS((pc_residual<itl::pc::ic_0<float, P, fma>>(A, b)), std::runtime_error);
         const double c3 = pc_residual<itl::pc::ic_0<float, P, exact>>(A, b);
-        INFO("ic_0 Hilbert(9): " << c1 << " / " << c2 << " / " << c3);
-        CHECK(!(c1 < 1.0));          // NaN: a pivot goes negative
-        CHECK(!(c2 < 1.0));
+        INFO("ic_0 Hilbert(9), exact: " << c3);
         CHECK(c3 < 1e-3);
     }
 }

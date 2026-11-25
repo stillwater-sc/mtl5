@@ -37,6 +37,8 @@
 #include <mtl/math/identity.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <mtl/functor/scalar/conj.hpp>
+#include <mtl/itl/detail/sorted_row_merge.hpp>
+#include <mtl/itl/detail/zero_diagonal.hpp>
 
 namespace mtl::itl::pc {
 
@@ -54,8 +56,12 @@ class ic_0 {
     using value_type  = Value;
     using size_type   = typename matrix_type::size_type;
 public:
+    /// Throws (through throw_or_abort) for a non-square A, and for a pivot
+    /// that is zero, missing or, for a real Value, negative (issue 925). A
+    /// complex Value models a complex symmetric A, which has no sign, so only
+    /// a zero pivot is rejected there.
     explicit ic_0(const matrix_type& A) : n_(A.num_rows()) {
-        assert(A.num_rows() == A.num_cols());
+        detail::require_square(A, "ic_0");
         factorize(A);
     }
 
@@ -172,17 +178,10 @@ private:
             for (auto& [j, val] : l_rows[i]) {
                 if (j == i) continue; // handle diagonal separately
                 auto sum = math::zero<value_type>();
-                // Sum L(i,k)*L(j,k) for k < j
-                for (const auto& [ik, iv] : l_rows[i]) {
-                    if (ik >= j) break;
-                    for (const auto& [jk, jv] : l_rows[j]) {
-                        if (jk == ik) {
-                            sum += iv * jv;
-                            break;
-                        }
-                        if (jk > ik) break;
-                    }
-                }
+                // Sum L(i,k)*L(j,k) for k < j: one merge of the two sorted rows
+                // (issue 925), the same products in the same order.
+                detail::for_common_columns(l_rows[i], l_rows[j], j,
+                    [&](const value_type& iv, const value_type& jv, std::size_t) { sum += iv * jv; });
                 val = (val - sum) / l_diag_[j];
             }
 
@@ -196,6 +195,7 @@ private:
                     sum_sq += v * v;
                 }
             }
+            check_pivot(diag_val - sum_sq, i, has_diag(l_rows[i], i));
             l_diag_[i] = sqrt(diag_val - sum_sq);
 
             // Update diagonal entry in l_rows
@@ -261,16 +261,8 @@ private:
             for (auto& [j, val] : l_rows[i]) {
                 if (j == i) continue;
                 AT::assign(acc, val);
-                for (const auto& [ik, iv] : l_rows[i]) {
-                    if (ik >= j) break;
-                    for (const auto& [jk, jv] : l_rows[j]) {
-                        if (jk == ik) {
-                            AT::add_product(acc, -iv, jv);
-                            break;
-                        }
-                        if (jk > ik) break;
-                    }
-                }
+                detail::for_common_columns(l_rows[i], l_rows[j], j,
+                    [&](const value_type& iv, const value_type& jv, std::size_t) { AT::add_product(acc, -iv, jv); });
                 val = AT::template value<value_type>(acc) / l_diag_[j];
             }
 
@@ -279,10 +271,31 @@ private:
                 if (j == i) AT::assign(acc, v);
             for (const auto& [j, v] : l_rows[i])
                 if (j != i) AT::add_product(acc, -v, v);
-            l_diag_[i] = sqrt(AT::template value<value_type>(acc));
+            const value_type pivot = AT::template value<value_type>(acc);
+            check_pivot(pivot, i, has_diag(l_rows[i], i));
+            l_diag_[i] = sqrt(pivot);
 
             for (auto& [j, v] : l_rows[i])
                 if (j == i) { v = l_diag_[i]; break; }
+        }
+    }
+
+    using row_type = std::vector<std::pair<size_type, value_type>>;
+
+    static bool has_diag(const row_type& row, size_type i) {
+        return !row.empty() && row.back().first == i;
+    }
+
+    /// The pivot under the square root of L(i,i): A's diagonal must be stored,
+    /// and the pivot nonzero, and positive for a real Value. IC(0) on
+    /// [[1,2],[2,1]] and on [[0,1],[1,1]] was constructed without complaint,
+    /// and solve() returned NaN (issue 925).
+    static void check_pivot(const value_type& pivot, size_type i, bool stored) {
+        if (!stored || pivot == math::zero<value_type>())
+            detail::throw_zero_diagonal("ic_0", i);
+        if constexpr (!is_complex_v<value_type>) {
+            if (!(pivot > math::zero<value_type>()))
+                detail::throw_nonpositive_pivot("ic_0", i);
         }
     }
 

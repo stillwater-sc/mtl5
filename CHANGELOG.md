@@ -58,6 +58,24 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - `test_krylov_robustness.cpp`: complex solves for every solver, float scaling, exact power-of-two scaling, aliasing, NaN and Inf input, singular gmres, empty systems, and `basic_iteration` directly.
     - The regression tier gains BiCG and a complex shifted convection-diffusion system.
 
+- **Preconditioners, multigrid and power iteration: unchecked pivots, a cubic build, bad shapes** (issue 925, from QA sweep #913).
+  - **`ic_0` and `ildl` reject a bad pivot at construction**, as the other incomplete factorizations have done since issue 867. Before, IC(0) on [[1,2],[2,1]] or [[0,1],[1,1]], and ILDL on [[0,1],[1,1]], built without complaint and `solve()` returned NaN.
+    - `ic_0` throws for a zero or missing pivot, and, for a real type, a negative one: `std::runtime_error`, naming the row.
+    - A complex `ic_0` models a complex symmetric A, which has no sign, so only a zero pivot is rejected there.
+    - `ildl` throws for a zero or missing pivot. A negative one is fine, since ILDL is for indefinite matrices.
+    - IC(0) in plain float on Hilbert(9) now throws where it gave NaN (`test_pc_accumulator.cpp`).
+  - **`ic_0` and `ildl` build in O(n w^2), not O(n w^3)**, for bandwidth w. Each L(i,j) took its shared columns k < j by rescanning row j for every k of row i. One merge of the two sorted rows (`itl/detail/sorted_row_merge.hpp`) visits the same pairs in the same order, so the factors are bit-identical. From w = 16 to 128 at n = 2000, the build time grows 39x for ic_0 and 46x for ildl, where it grew 404x and 420x.
+  - **`block_diagonal`:**
+    - throws for a singular diagonal block, where it dropped `lu_factor`'s error and `solve()` gave inf;
+    - throws for `block_size == 0` and for a non-square A;
+    - allocates one pair of block vectors per solve, not per block.
+  - **Shape checks in every build:** `ilu_0`, `ilut`, `ssor`, `ic_0`, `ildl` and `block_diagonal` reject a non-square A, and `multigrid` rejects a hierarchy whose transfer counts or dimensions do not match its levels. All throw `invalid_argument`. These checks were assert-only: a non-square A indexed `ilu_0`'s work arrays, which are sized by rows, by column.
+  - **`ilut`:** a row with no stored diagonal or upper entry, factored with `fill = 0`, keeps no strictly upper fill. `orig_u + fill - 1` wrapped to SIZE_MAX there, so every fill entry of U was kept.
+  - **`multigrid::wcycle`** solves the coarsest level once per visit from the level above, not twice: the coarse solver is exact, and the second solve repeated it.
+  - **`power_iteration`** with n = 0 returns value 0, not converged. Before, its value was never written.
+  - **`owned_csr`** (the smoothers' copy of an `ell_matrix`) sizes its inserter's slots to the widest row, where rows wider than 5 overflowed into a `std::map`.
+  - **Tests:** `test_pc_eigen_edges.cpp` (pivots, `block_diagonal` layouts, shapes, the ilut wrap, `power_iteration` at n = 0, arnoldi's smallest selectors and argument edges, W-cycle convergence with and without smoothing steps); `test_pc_sparse_cost.cpp` (the banded build cost).
+
 ## [5.25.0] - 2026-11-24
 
 One feature since 5.24.1 (#920), so it is a minor release: a nested dissection ordering. MAJOR stays at 5.
