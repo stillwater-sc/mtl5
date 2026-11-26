@@ -150,3 +150,107 @@ TEST_CASE("GMRES on a complex non-Hermitian system", "[itl][gmres][853]") {
     }
     CHECK(std::sqrt(r2 / b2) < 1e-10);
 }
+
+namespace {
+// 100 x (2-D Laplacian on a k x k grid, plus 0.3 on the superdiagonal):
+// non-symmetric, with 400 on the diagonal (issue 936).
+mat::compressed2D<double> scaled_convective_laplacian(std::size_t k) {
+    const std::size_t n = k * k;
+    mat::compressed2D<double> A(n, n);
+    mat::inserter<mat::compressed2D<double>> ins(A, 6);
+    for (std::size_t i = 0; i < k; ++i)
+        for (std::size_t j = 0; j < k; ++j) {
+            const std::size_t r = i * k + j;
+            ins[r][r] << 400.0;
+            if (i > 0)     ins[r][r - k] << -100.0;
+            if (i + 1 < k) ins[r][r + k] << -100.0;
+            if (j > 0)     ins[r][r - 1] << -100.0;
+            if (j + 1 < k)      ins[r][r + 1] << -70.0;
+            else if (r + 1 < n) ins[r][r + 1] << 30.0;
+        }
+    return A;
+}
+
+template <typename Matrix, typename Vector>
+double true_relative_residual(const Matrix& A, const Vector& x, const Vector& b) {
+    Vector Ax(b.size()), r(b.size());
+    mult(A, x, Ax);
+    for (std::size_t i = 0; i < b.size(); ++i) r(i) = b(i) - Ax(i);
+    return two_norm(r) / two_norm(b);
+}
+
+// A preconditioner that maps every vector to zero: a singular M.
+struct zero_pc {
+    template <typename VecOut, typename VecIn>
+    void solve(VecOut& out, const VecIn&) const {
+        for (std::size_t i = 0; i < out.size(); ++i) out(i) = 0.0;
+    }
+};
+} // namespace
+
+TEST_CASE("GMRES with a preconditioner converges on the true residual", "[itl][gmres][936]") {
+    // GMRES is left-preconditioned and tested ||M^{-1}(b - A x)|| against
+    // rtol * ||b||. With the diagonal preconditioner (400 I here) it returned
+    // 0 at a true relative residual of 3.5e-6 for rtol 1e-8, and relresid()
+    // reported the preconditioned 8.7e-9.
+    using Mat = mat::compressed2D<double>;
+    const auto A = scaled_convective_laplacian(12);
+    const std::size_t n = A.num_rows();
+    vec::dense_vector<double> b(n, 1.0);
+    const double rtol = 1e-8;
+
+    auto check = [&](const auto& M) {
+        vec::dense_vector<double> x(n, 0.0);
+        itl::basic_iteration<double> iter(b, 1000, rtol);
+        const int info = itl::gmres(A, x, b, M, iter, 30);
+        const double rel = true_relative_residual(A, x, b);
+        INFO("iterations " << iter.iterations() << ", relresid " << iter.relresid() << ", true " << rel);
+        CHECK(info == 0);
+        CHECK(rel <= rtol);
+        // relresid() reports the residual the decision was made on.
+        CHECK_THAT(iter.relresid(), Catch::Matchers::WithinRel(rel, 1e-6));
+    };
+    SECTION("identity") { check(itl::pc::identity<Mat>(A)); }
+    SECTION("diagonal") { check(itl::pc::diagonal<Mat>(A)); }
+}
+
+TEST_CASE("GMRES with a diagonal preconditioner and short restarts", "[itl][gmres][936]") {
+    // A restart after a false convergence by the preconditioned estimate
+    // must still make progress: the estimate is scaled to the true residual,
+    // so a restarted cycle does not open below the tolerance and stall at one
+    // step per cycle. The diagonal is not constant here, so the scale is
+    // only an estimate and the true residual decides.
+    using Mat = mat::compressed2D<double>;
+    const std::size_t n = 200;
+    Mat A(n, n);
+    {
+        mat::inserter<Mat> ins(A, 3);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 2.0 + 1000.0 * double(i % 7);
+            if (i > 0)     ins[i][i - 1] << -1.5;
+            if (i + 1 < n) ins[i][i + 1] << -0.5;
+        }
+    }
+    vec::dense_vector<double> b(n, 1.0), x(n, 0.0);
+    itl::pc::diagonal<Mat> M(A);
+    itl::basic_iteration<double> iter(b, 2000, 1e-10);
+    const int info = itl::gmres(A, x, b, M, iter, 5);
+    const double rel = true_relative_residual(A, x, b);
+    INFO("iterations " << iter.iterations() << ", true " << rel);
+    CHECK(info == 0);
+    CHECK(rel <= 1e-10);
+    CHECK(iter.iterations() < 200);
+}
+
+TEST_CASE("GMRES with a preconditioner that maps the residual to zero breaks down", "[itl][gmres][936]") {
+    // An unconverged b - A x with M^{-1}(b - A x) == 0 (a singular M) made the
+    // first basis vector 0 / 0. It is a breakdown now, error 2.
+    mat::dense2D<double> A(2, 2);
+    A(0, 0) = 2; A(0, 1) = 1; A(1, 0) = 0; A(1, 1) = 3;
+    vec::dense_vector<double> b = {1.0, 1.0}, x(2, 0.0);
+    itl::basic_iteration<double> iter(b, 50, 1e-10);
+    const int info = itl::gmres(A, x, b, zero_pc{}, iter, 2);
+    CHECK(info == 2);
+    CHECK(std::isfinite(x(0)));
+    CHECK(std::isfinite(x(1)));
+}
