@@ -1,0 +1,138 @@
+---
+// 5A: polynomial least-squares fits of rising degree, by the normal equations
+// (Cholesky) and by QR, with their residuals and the condition numbers.
+// Data: examples/phase05_dense_decompositions/least_squares_qr.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/least_squares_qr.json';
+import traceUrl from '../../data/traces/least_squares_qr.json?url';
+import { fmt } from './lib/plot.js';
+
+type Fit = { degree: number; cholesky_info: number; residual_normal: number | null; residual_qr: number; cond_V_svd: number; cond_VtV_eig: number };
+const fits = trace.fits as Fit[];
+const firstFail = fits.find((f) => f.cholesky_info !== 0);
+const lastOk = [...fits].reverse().find((f) => f.cholesky_info === 0)!;
+const top = fits[fits.length - 1];
+const agrees = (f: Fit) => f.residual_normal !== null && Math.abs(f.residual_normal - f.residual_qr) <= 1e-6 * f.residual_qr;
+let agreeUpTo = 0;
+for (const f of fits) {
+  if (!agrees(f)) break;
+  agreeUpTo = f.degree;
+}
+const stalled = fits.filter((f) => f.degree > agreeUpTo + 1 && f.residual_normal !== null).map((f) => f.residual_normal as number);
+const maxEig = Math.max(...fits.map((f) => f.cond_VtV_eig));
+---
+
+<AnimationShell
+  kind="leastsquares"
+  trace={traceUrl}
+  title="Normal equations against QR, degree by degree"
+  label="Polynomial fits of rising degree to twenty points, by the normal equations and by QR, with their residuals and the condition numbers of V and V transpose V on log axes."
+  height={330}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>normal equations (Cholesky)</span>
+    <span><i style="background: var(--ex-c2)"></i>QR</span>
+    <span><i style="background: var(--ex-c3)"></i>cond(V)²</span>
+  </div>
+  <p>
+    Left: the {trace.m} data points, sin x plus a small deterministic perturbation, and the fitted polynomial of
+    each degree. Top right: the residual ‖y − Vc‖ of each method. Bottom right: cond(V) from V's singular values
+    (grey), its square, which is what the normal equations face, and cond(VᵀV) as the example estimates it,
+    from the eigenvalues of the computed VᵀV (dashed).
+  </p>
+  <p>
+    The two methods' residuals agree to six digits up to degree {agreeUpTo}. Past that, the normal equations'
+    residual stalls between {fmt(Math.min(...stalled), 2)} and {fmt(Math.max(...stalled), 2)} up to degree {lastOk.degree}, while QR's keeps falling, to {fmt(top.residual_qr, 2)}
+    at degree {top.degree}. From degree {firstFail?.degree} on, Cholesky stops at a non-positive pivot: VᵀV is no
+    longer positive definite in floating point. Its true condition number, cond(V)², is {fmt(top.cond_V_svd ** 2, 2)}
+    at degree {top.degree}. The eigenvalue estimate never exceeds {fmt(maxEig, 2)}, because the smallest computed
+    eigenvalue is rounding noise. The curves themselves look alike: both fits pass close to the points, and
+    the difference is in the digits.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { leastSquaresModel } from './lib/models.js';
+  import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, drawAxes, svg, clear, fmt, fmtPow10 } from './lib/plot.js';
+
+  mountAll('[data-ex="leastsquares"]', (root, trace) => {
+    const model = leastSquaresModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+    const axes = svg('g');
+    el.append(axes);
+    const degrees = model.fits.map((f) => f.degree);
+
+    const fitBox = { left: 46, right: 300, top: 24, bottom: 296 };
+    const fx = scaleLinear([0, Math.PI], [fitBox.left, fitBox.right]);
+    const fy = scaleLinear([-0.3, 1.3], [fitBox.bottom, fitBox.top]);
+    drawAxes(axes, fitBox, fx, fy, { xTicks: [0, 1, 2, 3], yTicks: [0, 0.5, 1], xLabel: 'x', yLabel: 'y' });
+    const clipId = 'leastsquares-clip';
+    const defs = svg('defs');
+    const clip = svg('clipPath', { id: clipId });
+    clip.append(svg('rect', { x: fitBox.left, y: fitBox.top, width: fitBox.right - fitBox.left, height: fitBox.bottom - fitBox.top }));
+    defs.append(clip);
+    el.append(defs);
+    const curveN = el.appendChild(svg('path', { class: 'ex-series ex-c1', 'clip-path': `url(#${clipId})`, 'stroke-width': 3, 'stroke-opacity': 0.6 }));
+    const curveQ = el.appendChild(svg('path', { class: 'ex-series ex-c2', 'clip-path': `url(#${clipId})`, 'stroke-width': 1.5 }));
+    model.x_data.forEach((x, i) => el.append(svg('circle', { cx: fx(x), cy: fy(model.y_data[i]), r: 3, class: 'ex-muted' })));
+    const note = el.appendChild(svg('text', { x: fitBox.left + 8, y: fitBox.top + 14, class: 'ex-text' }));
+
+    const res = { left: 384, right: 630, top: 24, bottom: 140 };
+    const rx = scaleLinear([degrees[0], degrees[degrees.length - 1]], [res.left, res.right]);
+    const rDom = logDomain(model.fits.flatMap((f) => [f.residual_normal ?? NaN, f.residual_qr]));
+    const ry = scaleLog(rDom, [res.bottom, res.top]);
+    drawAxes(axes, res, rx, ry, { xTicks: niceTicks([degrees[0], degrees[degrees.length - 1]], 5), yTicks: logTicks(rDom, 5), yFmt: fmtPow10, yLabel: 'residual ‖y − Vc‖' });
+    const okNormal = model.fits.filter((f) => f.residual_normal !== null);
+    el.append(svg('path', { d: linePath(okNormal.map((f) => f.degree), okNormal.map((f) => f.residual_normal), rx, ry), class: 'ex-series ex-c1', 'stroke-width': 1.5 }));
+    el.append(svg('path', { d: linePath(degrees, model.fits.map((f) => f.residual_qr), rx, ry), class: 'ex-series ex-c2', 'stroke-width': 1.5 }));
+
+    const cond = { left: 384, right: 630, top: 180, bottom: 296 };
+    const cx = scaleLinear([degrees[0], degrees[degrees.length - 1]], [cond.left, cond.right]);
+    const sq = model.fits.map((f) => f.cond_V_svd ** 2);
+    const cDom = logDomain([...sq, ...model.fits.map((f) => f.cond_V_svd)]);
+    const cy = scaleLog(cDom, [cond.bottom, cond.top]);
+    drawAxes(axes, cond, cx, cy, { xTicks: niceTicks([degrees[0], degrees[degrees.length - 1]], 5), yTicks: logTicks(cDom, 5), yFmt: fmtPow10, xLabel: 'degree', yLabel: 'condition number' });
+    el.append(svg('path', { d: linePath(degrees, model.fits.map((f) => f.cond_V_svd), cx, cy), class: 'ex-series', stroke: 'var(--ex-muted)', 'stroke-width': 1.5 }));
+    el.append(svg('path', { d: linePath(degrees, sq, cx, cy), class: 'ex-series ex-c3', 'stroke-width': 1.5 }));
+    el.append(svg('path', { d: linePath(degrees, model.fits.map((f) => f.cond_VtV_eig), cx, cy), class: 'ex-series', stroke: 'var(--ex-muted)', 'stroke-dasharray': '4 3', 'stroke-width': 1.5 }));
+    const eps = cy(1 / 2.220446049250313e-16);
+    el.append(svg('line', { x1: cond.left, x2: cond.right, y1: eps, y2: eps, class: 'ex-cursor' }));
+    el.append(svg('text', { x: cond.left + 4, y: eps - 3, class: 'ex-tick' }, '1/ε'));
+
+    const cursors = [[rx, res], [cx, cond]].map(([s, b]) => ({ s, line: el.appendChild(svg('line', { y1: b.top, y2: b.bottom, class: 'ex-cursor' })) }));
+    const marks = [
+      el.appendChild(svg('circle', { r: 3.5, class: 'ex-fill1' })),
+      el.appendChild(svg('circle', { r: 3.5, class: 'ex-fill2' })),
+    ];
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 1100,
+      tweenMs: 0,
+      render(k) {
+        const f = model.fits[k];
+        curveQ.setAttribute('d', linePath(model.x_fine, f.curve_qr, fx, fy));
+        curveN.setAttribute('d', f.curve_normal ? linePath(model.x_fine, f.curve_normal, fx, fy) : '');
+        note.textContent = f.cholesky_info === 0 ? `degree ${f.degree}` : `degree ${f.degree}: Cholesky failed (step ${f.cholesky_info})`;
+        for (const c of cursors) {
+          c.line.setAttribute('x1', c.s(f.degree));
+          c.line.setAttribute('x2', c.s(f.degree));
+        }
+        marks[0].style.display = f.residual_normal === null ? 'none' : '';
+        if (f.residual_normal !== null) {
+          marks[0].setAttribute('cx', rx(f.degree));
+          marks[0].setAttribute('cy', ry(f.residual_normal));
+        }
+        marks[1].setAttribute('cx', rx(f.degree));
+        marks[1].setAttribute('cy', ry(f.residual_qr));
+      },
+      label(k) {
+        const f = model.fits[k];
+        const n = f.residual_normal === null ? `Cholesky failed at step ${f.cholesky_info}` : `normal equations ${fmt(f.residual_normal)}`;
+        return `Degree ${f.degree}: residual ${n}, QR ${fmt(f.residual_qr)}; cond(V) ${fmt(f.cond_V_svd, 2)}.`;
+      },
+    });
+  });
+</script>

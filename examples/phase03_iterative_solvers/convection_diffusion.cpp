@@ -15,6 +15,10 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <vector>
+
+#include "../common/replay.hpp"
+#include "../common/trace.hpp"
 
 using namespace mtl;
 
@@ -32,7 +36,15 @@ mat::dense2D<double> build_conv_diff(std::size_t n, double epsilon) {
     return A;
 }
 
-int main() {
+/// The exact solution of -eps u'' + u' = 1, u(0) = u(1) = 0: a straight line
+/// u = x that bends down to zero in a boundary layer of width ~eps at x = 1.
+double exact_solution(double x, double eps) {
+    return x - (std::exp((x - 1.0) / eps) - std::exp(-1.0 / eps)) / (1.0 - std::exp(-1.0 / eps));
+}
+
+int main(int argc, char** argv) {
+    example_trace::trace trace(argc, argv, "3B convection-diffusion");
+
     std::cout << "=============================================================\n";
     std::cout << " Phase 3B: Convection-Diffusion - CG vs BiCGSTAB\n";
     std::cout << "=============================================================\n\n";
@@ -150,6 +162,82 @@ int main() {
         std::cout << "\n";
     }
 
+    // -- Across epsilon -----------------------------------------------------
+    // The same comparison as epsilon shrinks, both solvers unpreconditioned.
+    // The cell Peclet number h / (2 eps) passing 1 is where central
+    // differences start to oscillate next to the boundary layer.
+    std::cout << "=== Across epsilon (no preconditioner) ===\n";
+    std::cout << std::setw(8) << "epsilon" << std::setw(12) << "cell Pe" << std::setw(16)
+              << "CG iters/code" << std::setw(22) << "BiCGSTAB iters/code" << '\n';
+    const std::vector<double> sweep = {1.0, 0.1, 0.03, 0.01};
+    auto runs = example_trace::value::array();
+    for (double e : sweep) {
+        auto Ae = build_conv_diff(n, e);
+        itl::pc::identity<mat::dense2D<double>> Ie(Ae);
+        vec::dense_vector<double> xc(n, 0.0), xb(n, 0.0);
+        itl::basic_iteration<double> ic(b, 500, 1.0e-8), ib(b, 500, 1.0e-8);
+        const int cc = itl::cg(Ae, xc, b, Ie, ic);
+        const int cb = itl::bicgstab(Ae, xb, b, Ie, ib);
+        const double pe = h / (2.0 * e);
+        std::cout << std::fixed << std::setw(8) << std::setprecision(2) << e << std::setw(12)
+                  << std::setprecision(3) << pe << std::setw(12) << ic.iterations() << " / " << cc
+                  << std::setw(18) << ib.iterations() << " / " << cb << '\n';
+        if (!trace) continue;
+
+        // Replay: every BiCGSTAB step, and CG's first K steps (CG runs to the
+        // 500-step cap, so its tail adds nothing to the picture).
+        const int kb = ib.iterations();
+        const int K = std::min(500, std::max(40, 2 * kb));
+        auto run = example_trace::value::object();
+        run["epsilon"] = e;
+        run["cell_peclet"] = example_trace::value::rounded(pe, 6);
+        auto history = [&](const char* name, int steps, int total, int code, double final_res, auto solve) {
+            auto o = example_trace::value::object();
+            o["name"] = name;
+            o["iterations"] = total;
+            o["code"] = code;
+            o["final_residual"] = example_trace::value::rounded(final_res, 6);
+            auto it = example_trace::value::array(), rs = example_trace::value::array();
+            for (int k = 0; k <= steps; ++k) {
+                auto x = example_trace::iterate_after(b, k, solve);
+                it.push_back(example_trace::value::numbers(example_trace::to_std(x), 4));
+                rs.push_back(example_trace::value::rounded(example_trace::true_residual(Ae, x, b), 5));
+            }
+            o["iterates"] = it;
+            o["residual"] = rs;
+            return o;
+        };
+        auto solvers = example_trace::value::array();
+        solvers.push_back(history("cg", K, ic.iterations(), cc, example_trace::true_residual(Ae, xc, b),
+                                  [&](auto& x, auto& it) { itl::cg(Ae, x, b, Ie, it); }));
+        solvers.push_back(history("bicgstab", kb, kb, cb, example_trace::true_residual(Ae, xb, b),
+                                  [&](auto& x, auto& it) { itl::bicgstab(Ae, x, b, Ie, it); }));
+        run["solvers"] = solvers;
+        std::vector<double> xs(n), ue(n), fine_x, fine_u;
+        for (std::size_t i = 0; i < n; ++i) {
+            xs[i] = (i + 1) * h;
+            ue[i] = exact_solution(xs[i], e);
+        }
+        for (int i = 0; i <= 300; ++i) {
+            fine_x.push_back(i / 300.0);
+            fine_u.push_back(exact_solution(i / 300.0, e));
+        }
+        run["exact_on_grid"] = example_trace::value::numbers(ue, 6);
+        run["exact_x"] = example_trace::value::numbers(fine_x, 5);
+        run["exact_u"] = example_trace::value::numbers(fine_u, 5);
+        runs.push_back(run);
+    }
+    std::cout << "\n";
+
+    if (trace) {
+        trace["n"] = n;
+        trace["tolerance"] = 1.0e-8;
+        std::vector<double> xs(n);
+        for (std::size_t i = 0; i < n; ++i) xs[i] = (i + 1) * h;
+        trace["x"] = example_trace::value::numbers(xs, 6);
+        trace["runs"] = runs;
+    }
+
     // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. CG requires the matrix to be SPD (Symmetric Positive Definite).\n";
@@ -163,5 +251,5 @@ int main() {
     std::cout << "   - cyclic: monitoring long runs\n";
     std::cout << "   - noisy: debugging convergence issues\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

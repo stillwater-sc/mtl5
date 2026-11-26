@@ -1,0 +1,130 @@
+---
+// 4B: what Jacobi and Gauss-Seidel sweeps do to a smooth and an oscillatory
+// error, the residual of Jacobi, Gauss-Seidel and SOR(omega_opt) sweep by
+// sweep, and SOR's residual across omega.
+// Data: examples/phase04_sparse_assembly/smoother_convergence.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/smoother_convergence.json';
+import traceUrl from '../../data/traces/smoother_convergence.json?url';
+import { fmt } from './lib/plot.js';
+
+type Hist = { name: string; omega: number; residual: number[] };
+const hist = trace.residuals as Hist[];
+const at = (h: Hist) => h.residual[trace.sweeps];
+const jac = hist[0];
+const gs = hist[1];
+const opt = hist[hist.length - 1];
+const sm = trace.smoothing;
+const [lo, hi] = sm.modes;
+---
+
+<AnimationShell
+  kind="smoother"
+  trace={traceUrl}
+  title="Smoothers: fast on oscillations, slow on everything else"
+  label="Four panels: the error of Jacobi and Gauss-Seidel sweeps, the amplitudes of its smooth and oscillatory modes, the residual of Jacobi, Gauss-Seidel and optimal SOR per sweep, and SOR's residual across omega."
+  height={340}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>Jacobi</span>
+    <span><i style="background: var(--ex-c2)"></i>Gauss-Seidel</span>
+    <span><i style="background: var(--ex-c3)"></i>SOR, ω = {fmt(trace.omega_opt, 4)}</span>
+  </div>
+  <p>
+    Top left: the error after each sweep, starting from the exact discrete solution plus a smooth error
+    (mode {lo}) and an oscillatory one (mode {hi} of {trace.n}). Bottom left: the two modes' amplitudes, solid
+    for mode {lo}, dashed for mode {hi}. Top right: the residual of each method from x = 0. Bottom right: SOR's
+    residual after {trace.sweeps} sweeps for each ω, which does not change from frame to frame.
+  </p>
+  <p>
+    Gauss-Seidel cuts mode {hi} from {fmt(sm.gauss_seidel.high_mode[0], 2)} to {fmt(Math.abs(sm.gauss_seidel.high_mode[10]), 2)}
+    in 10 sweeps, while mode {lo} only goes from {fmt(sm.gauss_seidel.low_mode[0], 2)} to {fmt(sm.gauss_seidel.low_mode[10], 3)}.
+    Undamped Jacobi flips mode {hi}'s sign every sweep and shrinks it more slowly. That is why these methods
+    are smoothers: a coarser grid sees the smooth error as oscillatory, which is multigrid's idea. As solvers on
+    their own they are slow: after {trace.sweeps} sweeps the residual is {fmt(at(jac), 3)} for Jacobi and
+    {fmt(at(gs), 3)} for Gauss-Seidel. SOR at ω = 2/(1 + sin πh) = {fmt(trace.omega_opt, 4)} reaches
+    {fmt(at(opt), 2)}, and the ω sweep's smallest residual is at ω = {fmt(trace.best_omega, 4)}.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { smootherModel, smootherFrame } from './lib/models.js';
+  import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, drawAxes, svg, clear, fmt, fmtPow10 } from './lib/plot.js';
+
+  mountAll('[data-ex="smoother"]', (root, trace) => {
+    const model = smootherModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+    const N = model.count - 1;
+    const axes = svg('g');
+    el.append(axes);
+
+    // Top left: the error profiles.
+    const err = { left: 50, right: 300, top: 22, bottom: 130 };
+    const ex = scaleLinear([0, 1], [err.left, err.right]);
+    const ey = scaleLinear([-0.045, 0.045], [err.bottom, err.top]);
+    drawAxes(axes, err, ex, ey, { xTicks: [0, 0.5, 1], yTicks: [-0.04, 0, 0.04], yLabel: 'error e(x)' });
+    const profiles = ['ex-c1', 'ex-c2'].map((c) => el.appendChild(svg('path', { class: `ex-series ${c}`, 'stroke-width': 1.5 })));
+
+    // Bottom left: mode amplitudes.
+    const amp = { left: 50, right: 300, top: 185, bottom: 300 };
+    const ax = scaleLinear([0, N], [amp.left, amp.right]);
+    const sj = model.smoothing.jacobi;
+    const sg = model.smoothing.gauss_seidel;
+    const ampAll = [sj.low_mode, sj.high_mode, sg.low_mode, sg.high_mode].flat().map(Math.abs);
+    const aDom = logDomain(ampAll);
+    const ay = scaleLog(aDom, [amp.bottom, amp.top]);
+    drawAxes(axes, amp, ax, ay, { xTicks: niceTicks([0, N], 4), yTicks: logTicks(aDom, 5), yFmt: fmtPow10, xLabel: 'sweep', yLabel: '|mode amplitude|' });
+    const ampSeries = [
+      [sj.low_mode, 'ex-c1', ''],
+      [sj.high_mode, 'ex-c1', '4 3'],
+      [sg.low_mode, 'ex-c2', ''],
+      [sg.high_mode, 'ex-c2', '4 3'],
+    ].map(([data, c, dash]) => ({ data: data.map(Math.abs), path: el.appendChild(svg('path', { class: `ex-series ${c}`, 'stroke-width': 1.5, 'stroke-dasharray': dash || undefined })) }));
+
+    // Top right: residuals per sweep.
+    const res = { left: 384, right: 630, top: 22, bottom: 130 };
+    const rx = scaleLinear([0, N], [res.left, res.right]);
+    const shown = [model.residuals[0], model.residuals[1], model.residuals[model.residuals.length - 1]];
+    const rDom = logDomain(shown.flatMap((h) => h.residual));
+    const ry = scaleLog(rDom, [res.bottom, res.top]);
+    drawAxes(axes, res, rx, ry, { xTicks: niceTicks([0, N], 4), yTicks: logTicks(rDom, 4), yFmt: fmtPow10, yLabel: '‖b − A x‖ / ‖b‖' });
+    const resSeries = shown.map((h, i) => ({ h, path: el.appendChild(svg('path', { class: `ex-series ex-c${i + 1}`, 'stroke-width': 1.5 })) }));
+
+    // Bottom right: the omega sweep (static).
+    const om = { left: 384, right: 630, top: 185, bottom: 300 };
+    const ox = scaleLinear([0, 2], [om.left, om.right]);
+    const oDom = logDomain(model.omega_sweep_residual);
+    const oy = scaleLog(oDom, [om.bottom, om.top]);
+    drawAxes(axes, om, ox, oy, { xTicks: [0, 0.5, 1, 1.5, 2], yTicks: logTicks(oDom, 4), yFmt: fmtPow10, xLabel: 'ω', yLabel: `SOR after ${N} sweeps` });
+    el.append(svg('path', { d: linePath(model.omega_sweep, model.omega_sweep_residual, ox, oy), class: 'ex-series ex-c3', 'stroke-width': 1.5 }));
+    const bx = ox(model.omega_opt);
+    el.append(svg('line', { x1: bx, x2: bx, y1: om.top, y2: om.bottom, class: 'ex-cursor' }));
+    el.append(svg('text', { x: bx - 4, y: om.top + 10, 'text-anchor': 'end', class: 'ex-tick' }, `ω_opt ${fmt(model.omega_opt, 4)}`));
+
+    const cursors = [rx, ax].map((s, i) => el.appendChild(svg('line', { y1: i === 0 ? res.top : amp.top, y2: i === 0 ? res.bottom : amp.bottom, class: 'ex-cursor' })));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 160,
+      tweenMs: 120,
+      render(k, t) {
+        const f = smootherFrame(model, k, t);
+        profiles[0].setAttribute('d', linePath(model.x, f.jacobi, ex, ey));
+        profiles[1].setAttribute('d', linePath(model.x, f.gaussSeidel, ex, ey));
+        const ks = Array.from({ length: k + 1 }, (_, j) => j);
+        for (const s of ampSeries) s.path.setAttribute('d', linePath(ks, s.data.slice(0, k + 1), ax, ay));
+        for (const s of resSeries) s.path.setAttribute('d', linePath(ks, s.h.residual.slice(0, k + 1), rx, ry));
+        cursors[0].setAttribute('x1', rx(k));
+        cursors[0].setAttribute('x2', rx(k));
+        cursors[1].setAttribute('x1', ax(k));
+        cursors[1].setAttribute('x2', ax(k));
+      },
+      label(k) {
+        const s = model.smoothing;
+        return `Sweep ${k}: Gauss-Seidel mode ${s.modes[1]} ${fmt(Math.abs(s.gauss_seidel.high_mode[k]))}, mode ${s.modes[0]} ${fmt(s.gauss_seidel.low_mode[k])}; residuals Jacobi ${fmt(shown[0].residual[k])}, Gauss-Seidel ${fmt(shown[1].residual[k])}, SOR ${fmt(shown[2].residual[k])}.`;
+      },
+    });
+  });
+</script>

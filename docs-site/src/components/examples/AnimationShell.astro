@@ -32,6 +32,7 @@ const { kind, trace, title, label, width = 640, height = 300 } = Astro.props;
     <input type="range" min="0" max="0" value="0" step="1" data-ex-scrub aria-label="Frame" />
     <span class="exfig-counter" data-ex-counter>–</span>
   </div>
+  <slot name="options" />
   <p class="exfig-status" data-ex-status role="status" aria-live="polite">Loading the trace…</p>
   <figcaption class="exfig-caption"><slot /></figcaption>
 </figure>
@@ -118,6 +119,20 @@ const { kind, trace, title, label, width = 640, height = 300 } = Astro.props;
     color: var(--ex-muted);
     min-width: 4.5rem;
     text-align: right;
+  }
+  .exfig-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.8rem;
+    align-items: center;
+    margin-top: 0.4rem;
+    font-size: var(--sl-text-sm);
+  }
+  .exfig-options label {
+    display: inline-flex;
+    gap: 0.25rem;
+    align-items: center;
+    cursor: pointer;
   }
   .exfig-status {
     margin: 0.35rem 0 0;

@@ -39,8 +39,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - 2B, Cuthill-McKee bandwidth reduction (`bandwidth_reduction.cpp`): permutation vectors, `symmetric_permute`, `mapped(A, p, p)`, RCM. Bandwidth goes from 128 to 12 on a scrambled 12 × 12 grid.
   - **3A** (the heat equation) has its animation: both CG runs' iterates and true residuals, step by step.
   - **Traces.** With `--trace <file>`, an example writes what it computed as JSON (`examples/common/trace.hpp`). Without the flag its output is unchanged. The traces are committed in `docs-site/src/data/traces/`, and `tools/regen_example_traces.sh` rebuilds and rewrites them.
-  - **The animations** are Astro components in `docs-site/src/components/examples/`, inline SVG with no new npm dependencies. Each has play, step and scrub controls. With reduced motion an animation rests on its final frame. Each works in both themes and has a text alternative with its trace's key numbers. `docs-site/tests/` checks what each animation draws against its trace (114 tests), and `examples/common/test_trace.cpp` (CTest) tests the trace writer.
+  - **The animations** are Astro components in `docs-site/src/components/examples/`, inline SVG with no new npm dependencies. Each has play, step and scrub controls. With reduced motion an animation rests on its final frame. Each works in both themes and has a text alternative with its trace's key numbers. `docs-site/tests/` checks what each animation draws against its trace (145 tests), and `examples/common/test_trace.cpp` (CTest) tests the trace writer.
   - The page moved from `docs/modernization/examples.md` to `docs/site/modernization/examples.mdx`, so that it can embed the components.
+  - **3B to 5B** (the second PR) have their animations:
+    - 3B: CG against BiCGSTAB at four values of ε (a selector). BiCGSTAB converges at every ε, while CG reaches its 500-step limit, with a residual of 2440 at ε = 0.01. The converged solution overshoots because the cell Péclet number exceeds 1.
+    - 4A: the inserter filling the grid matrix, then GMRES(5), GMRES(20) and CG. GMRES(5) slows after its first restart.
+    - 4B: what Jacobi and Gauss-Seidel sweeps do to a smooth and an oscillatory error mode. The SOR residual across ω has its smallest value at ω_opt = 1.884.
+    - 5A: least-squares fits by degree. The normal equations stall between 3e-5 and 1.2e-4, and Cholesky fails from degree 15, while QR reaches 1.2e-10. The plot sets cond(V)² against the saturating eigenvalue estimate.
+    - 5B: LU, Cholesky and QR one elimination step at a time, rebuilt from MTL5's factors, with textbook flop counts. Cholesky's pivot of −2.4 on the indefinite matrix stops it.
+    - `convection_diffusion` and `smoother_convergence` print new sections (an ε sweep, an ω sweep, and the smoothing experiment). `least_squares_qr` and `solve_three_ways` print what they printed before.
 
 ### Fixed
 
