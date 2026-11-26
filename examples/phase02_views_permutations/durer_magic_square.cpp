@@ -283,5 +283,5 @@ int main(int argc, char** argv) {
             mv.push_back(o);
         }
     }
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

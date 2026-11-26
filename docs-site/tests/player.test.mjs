@@ -1,7 +1,7 @@
 // The animation shell's timeline and plot helpers (#933).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { advance, clampFrame } from '../src/components/examples/lib/player.js';
+import { advance, clampFrame, resumeFrom } from '../src/components/examples/lib/player.js';
 import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, lerpArray, ease, fmt } from '../src/components/examples/lib/plot.js';
 
 const opts = { count: 5, frameMs: 100, tweenMs: 40 };
@@ -88,4 +88,17 @@ test('tweening helpers', () => {
   assert.equal(fmt(1.30e-12, 2), '1.3e-12');
   assert.equal(fmt(774.3412, 4), '774.3');
   assert.equal(fmt(0), '0');
+});
+
+test('Play resumes a paused tween where it stopped', () => {
+  const o = { count: 3, tweenMs: 1600 };
+  // Paused 400 ms into a 1600 ms tween: resuming keeps the 400 ms ...
+  assert.deepEqual(resumeFrom({ frame: 1, elapsed: 400 }, o), { frame: 1, elapsed: 400, restarted: false });
+  // ... so the next tick is still mid-tween, not settled.
+  const s = advance({ frame: 1, elapsed: 400 }, 16, { ...o, frameMs: 2600 });
+  assert.ok(s.t < 1);
+});
+
+test('Play at the last frame replays from frame 0, settled', () => {
+  assert.deepEqual(resumeFrom({ frame: 2, elapsed: 9999 }, { count: 3, tweenMs: 1600 }), { frame: 0, elapsed: 1600, restarted: true });
 });

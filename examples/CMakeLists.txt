@@ -1,6 +1,10 @@
 # Auto-discover example sources organized by phase subdirectories.
 # Each .cpp file becomes target "example_<filename_stem>".
 
+# The trace writer the pedagogical examples use for the docs-site animations
+# (#933). Its self-test is registered with CTest.
+compile_all("true" "example" "Examples/common" "MTL5::mtl5" "common/test_trace.cpp")
+
 file(GLOB INTRO_SRC "intro/*.cpp")
 compile_all("false" "example" "Examples/intro" "MTL5::mtl5" ${INTRO_SRC})
 

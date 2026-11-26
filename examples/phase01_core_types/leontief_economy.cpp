@@ -202,5 +202,5 @@ int main(int argc, char** argv) {
         trace["max_column_sum"] = example_trace::value::rounded(max_colsum, 6);
         trace["tolerance"] = tol;
     }
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

@@ -260,5 +260,5 @@ int main(int argc, char** argv) {
         unb["galvanometer_amps"] = example_trace::value::rounded(i5_unbalanced, 8);
         trace["mesh"] = mesh_rows;
     }
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

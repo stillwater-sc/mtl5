@@ -189,5 +189,5 @@ int main(int argc, char** argv) {
     std::cout << "4. For production use, sparse storage (compressed2D) would\n";
     std::cout << "   reduce memory from O(n^2) to O(n) for this tridiagonal system.\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

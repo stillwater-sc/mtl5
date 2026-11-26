@@ -18,6 +18,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <deque>
 #include <fstream>
 #include <initializer_list>
 #include <iostream>
@@ -34,10 +36,15 @@ namespace example_trace {
 
 /// A JSON value: null, bool, number, string, array or object. Objects keep
 /// their keys in insertion order, so a trace reads in the order it was built.
+///
+/// Arrays and objects are deques, not vectors: a reference returned by [] or
+/// push_back stays valid while more members or elements are added, so
+/// `auto& a = v["a"]; v["b"] = ...; a = ...;` is safe. With a vector the second
+/// insertion could reallocate and leave `a` dangling.
 class value {
 public:
-    using array_t  = std::vector<value>;
-    using object_t = std::vector<std::pair<std::string, value>>;
+    using array_t  = std::deque<value>;
+    using object_t = std::deque<std::pair<std::string, value>>;
 
     value() = default;
     value(std::nullptr_t) {}
@@ -206,16 +213,28 @@ public:
     trace(const trace&) = delete;
     trace& operator=(const trace&) = delete;
 
-    ~trace() {
-        if (!enabled()) return;
+    /// Write the trace (when enabled) and return main's exit status:
+    /// EXIT_FAILURE if the file could not be opened or written, so a script
+    /// that regenerates traces does not keep a stale one. Call it as
+    /// `return trace.close();` at the end of main.
+    int close() {
+        if (!enabled() || closed_) return EXIT_SUCCESS;
+        closed_ = true;
         std::ofstream out(path_);
+        if (out) {
+            root_.write(out);
+            out << '\n';
+            out.close();
+        }
         if (!out) {
             std::cerr << "trace: cannot write " << path_ << '\n';
-            return;
+            return EXIT_FAILURE;
         }
-        root_.write(out);
-        out << '\n';
+        return EXIT_SUCCESS;
     }
+
+    /// A trace that main did not close (an early return) is still written.
+    ~trace() { close(); }
 
     bool enabled() const { return !path_.empty(); }
     explicit operator bool() const { return enabled(); }
@@ -225,6 +244,7 @@ public:
 private:
     std::string path_;
     value root_ = value::object();
+    bool closed_ = false;
 };
 
 } // namespace example_trace

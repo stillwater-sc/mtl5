@@ -30,6 +30,16 @@ export function advance(state, dt, { count, frameMs, tweenMs }) {
   return { frame, elapsed, t, done };
 }
 
+/**
+ * Where Play starts from. At the last frame it replays from frame 0, shown
+ * settled (elapsed = tweenMs). Anywhere else it resumes with the stored
+ * elapsed time, so a tween paused halfway finishes instead of jumping.
+ */
+export function resumeFrom({ frame, elapsed }, { count, tweenMs }) {
+  if (frame >= count - 1) return { frame: 0, elapsed: tweenMs, restarted: true };
+  return { frame, elapsed, restarted: false };
+}
+
 /** Whether the reader asked the system for less motion. */
 export function prefersReducedMotion() {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
@@ -74,6 +84,9 @@ export function createPlayer(root, { count, render, label, frameMs = 300, tweenM
 
   function setPlaying(on) {
     playing = on;
+    // The status line is a polite live region, so a step or a scrub is
+    // announced; it is silenced while playing, which would announce every frame.
+    if (status) status.setAttribute('aria-live', on ? 'off' : 'polite');
     play.textContent = on ? 'Pause' : 'Play';
     play.setAttribute('aria-pressed', on ? 'true' : 'false');
     root.toggleAttribute('data-playing', on);
@@ -108,12 +121,10 @@ export function createPlayer(root, { count, render, label, frameMs = 300, tweenM
 
   play.addEventListener('click', () => {
     if (playing) return setPlaying(false);
-    if (frame >= count - 1) {
-      frame = 0;
-      elapsed = 0;
-      show(1);
-    }
-    elapsed = Math.max(elapsed, tween);   // the current frame is already settled
+    const from = resumeFrom({ frame, elapsed }, { count, tweenMs: tween });
+    frame = from.frame;
+    elapsed = from.elapsed;
+    if (from.restarted) show(1);
     setPlaying(true);
   });
   back.addEventListener('click', () => jump(frame - 1));
@@ -157,6 +168,7 @@ export function mountAll(selector, setup) {
       .then((trace) => setup(root, trace))
       .catch((err) => {
         const status = root.querySelector('[data-ex-status]');
+        if (status) status.setAttribute('aria-live', 'polite');
         if (status) status.textContent = `The animation could not load its data (${err.message}); the description below has its numbers.`;
       });
   }
