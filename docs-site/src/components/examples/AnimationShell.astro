@@ -1,0 +1,161 @@
+---
+// The shared shell of the example animations (#933): a figure with an SVG
+// the example's script draws into, the player controls, a status line, and a
+// caption holding the text alternative. The player is ./lib/player.js.
+//
+//   kind      the data-ex value the figure's script mounts on
+//   trace     URL of the trace JSON (import it with ?url)
+//   title     the figure's heading
+//   label     aria-label of the drawing: one line on what it shows
+//   width, height   the SVG viewBox
+interface Props {
+  kind: string;
+  trace: string;
+  title: string;
+  label: string;
+  width?: number;
+  height?: number;
+}
+const { kind, trace, title, label, width = 640, height = 300 } = Astro.props;
+---
+
+<figure class="exfig not-content" data-ex={kind} data-trace={trace}>
+  <div class="exfig-head">
+    <strong class="exfig-title">{title}</strong>
+    <slot name="legend" />
+  </div>
+  <svg class="exfig-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label} data-ex-svg></svg>
+  <div class="exfig-controls">
+    <button type="button" data-ex-back aria-label="Previous frame">◀</button>
+    <button type="button" data-ex-play aria-pressed="false">Play</button>
+    <button type="button" data-ex-fwd aria-label="Next frame">▶</button>
+    <input type="range" min="0" max="0" value="0" step="1" data-ex-scrub aria-label="Frame" />
+    <span class="exfig-counter" data-ex-counter>–</span>
+  </div>
+  <p class="exfig-status" data-ex-status>Loading the trace…</p>
+  <figcaption class="exfig-caption"><slot /></figcaption>
+</figure>
+
+<style is:global>
+  .exfig {
+    --ex-c1: var(--sl-color-blue);
+    --ex-c2: var(--sl-color-orange);
+    --ex-c3: var(--sl-color-green);
+    --ex-c4: var(--sl-color-purple);
+    --ex-c5: var(--sl-color-red);
+    --ex-line: var(--sl-color-gray-5);
+    --ex-faint: var(--sl-color-gray-6);
+    --ex-muted: var(--sl-color-gray-3);
+    border: 1px solid var(--sl-color-hairline);
+    border-radius: 0.5rem;
+    padding: 0.75rem 0.9rem 0.6rem;
+    margin: 1.25rem 0 1.75rem;
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+  }
+  .exfig-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.3rem;
+    font-size: var(--sl-text-sm);
+  }
+  .exfig-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.9rem;
+    color: var(--ex-muted);
+    font-size: var(--sl-text-xs);
+  }
+  .exfig-legend i {
+    display: inline-block;
+    width: 0.9rem;
+    height: 0.2rem;
+    margin-right: 0.3rem;
+    vertical-align: middle;
+    border-radius: 0.1rem;
+  }
+  .exfig-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-family: var(--sl-font-system-mono, ui-monospace, monospace);
+  }
+  .exfig-controls {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-top: 0.4rem;
+  }
+  .exfig-controls button {
+    font: inherit;
+    font-size: var(--sl-text-sm);
+    min-width: 2.2rem;
+    padding: 0.15rem 0.55rem;
+    color: var(--sl-color-text);
+    background: var(--sl-color-gray-6);
+    border: 1px solid var(--ex-line);
+    border-radius: 0.3rem;
+    cursor: pointer;
+  }
+  .exfig-controls button[data-ex-play] {
+    min-width: 4.2rem;
+  }
+  .exfig-controls button:focus-visible,
+  .exfig-controls input:focus-visible {
+    outline: 2px solid var(--sl-color-accent);
+    outline-offset: 2px;
+  }
+  .exfig-controls input[type='range'] {
+    flex: 1;
+    accent-color: var(--sl-color-accent);
+  }
+  .exfig-counter {
+    font-variant-numeric: tabular-nums;
+    font-size: var(--sl-text-xs);
+    color: var(--ex-muted);
+    min-width: 4.5rem;
+    text-align: right;
+  }
+  .exfig-status {
+    margin: 0.35rem 0 0;
+    min-height: 1.4em;
+    font-size: var(--sl-text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+  .exfig-caption {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    font-size: var(--sl-text-sm);
+    color: var(--ex-muted);
+  }
+  .exfig-caption p {
+    margin: 0.3rem 0;
+  }
+
+  /* Elements the figures' scripts create. */
+  .exfig .ex-axis { stroke: var(--ex-muted); stroke-width: 1; }
+  .exfig .ex-grid { stroke: var(--ex-faint); stroke-width: 1; }
+  .exfig .ex-tick { fill: var(--ex-muted); font-size: 10px; }
+  .exfig .ex-label { fill: var(--sl-color-text); font-size: 11px; }
+  .exfig .ex-text { fill: var(--sl-color-text); font-size: 12px; }
+  .exfig .ex-muted { fill: var(--ex-muted); }
+  .exfig .ex-series { fill: none; stroke-width: 2; stroke-linejoin: round; }
+  .exfig .ex-ghost { fill: none; stroke: var(--ex-line); stroke-width: 1.5; stroke-dasharray: 4 3; }
+  .exfig .ex-cursor { stroke: var(--ex-muted); stroke-width: 1; stroke-dasharray: 2 3; }
+  .exfig .ex-c1 { stroke: var(--ex-c1); }
+  .exfig .ex-c2 { stroke: var(--ex-c2); }
+  .exfig .ex-c3 { stroke: var(--ex-c3); }
+  .exfig .ex-fill1 { fill: var(--ex-c1); }
+  .exfig .ex-fill2 { fill: var(--ex-c2); }
+  .exfig .ex-fill3 { fill: var(--ex-c3); }
+  .exfig .ex-fill4 { fill: var(--ex-c4); }
+  .exfig .ex-fill5 { fill: var(--ex-c5); }
+  .exfig .ex-cell { fill: var(--sl-color-gray-6); stroke: var(--ex-line); stroke-width: 1; }
+  .exfig .ex-cell-on { fill: var(--sl-color-accent-low); stroke: var(--sl-color-accent); stroke-width: 2; }
+  .exfig .ex-cell-new { fill: var(--sl-color-orange-low); stroke: var(--ex-c2); stroke-width: 2; }
+  .exfig .ex-bad { fill: var(--sl-color-red-low); stroke: var(--ex-c5); stroke-width: 2; }
+</style>

@@ -1,0 +1,269 @@
+{
+  "example": "2A Durer's magic square",
+  "generator": "examples/common/trace.hpp; refresh with tools/regen_example_traces.sh",
+  "n": 4,
+  "magic_constant": 34,
+  "square": [
+    [16,3,2,13],
+    [5,10,11,8],
+    [9,6,7,12],
+    [4,15,14,1]
+  ],
+  "groups": [
+    {
+      "name": "row 0",
+      "view": "mapped(M, {0}, all)",
+      "cells": [
+        [0,0],
+        [0,1],
+        [0,2],
+        [0,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "row 1",
+      "view": "mapped(M, {1}, all)",
+      "cells": [
+        [1,0],
+        [1,1],
+        [1,2],
+        [1,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "row 2",
+      "view": "mapped(M, {2}, all)",
+      "cells": [
+        [2,0],
+        [2,1],
+        [2,2],
+        [2,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "row 3",
+      "view": "mapped(M, {3}, all)",
+      "cells": [
+        [3,0],
+        [3,1],
+        [3,2],
+        [3,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "column 0",
+      "view": "row 0 of trans(M)",
+      "cells": [
+        [0,0],
+        [1,0],
+        [2,0],
+        [3,0]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "column 1",
+      "view": "row 1 of trans(M)",
+      "cells": [
+        [0,1],
+        [1,1],
+        [2,1],
+        [3,1]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "column 2",
+      "view": "row 2 of trans(M)",
+      "cells": [
+        [0,2],
+        [1,2],
+        [2,2],
+        [3,2]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "column 3",
+      "view": "row 3 of trans(M)",
+      "cells": [
+        [0,3],
+        [1,3],
+        [2,3],
+        [3,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "diagonal",
+      "view": "M(i, i)",
+      "cells": [
+        [0,0],
+        [1,1],
+        [2,2],
+        [3,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "anti-diagonal",
+      "view": "diagonal of J * M, J the reversal",
+      "cells": [
+        [3,0],
+        [2,1],
+        [1,2],
+        [0,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "top-left quadrant",
+      "view": "mapped(M, {0, 1}, {0, 1})",
+      "cells": [
+        [0,0],
+        [0,1],
+        [1,0],
+        [1,1]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "top-right quadrant",
+      "view": "mapped(M, {0, 1}, {2, 3})",
+      "cells": [
+        [0,2],
+        [0,3],
+        [1,2],
+        [1,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "bottom-left quadrant",
+      "view": "mapped(M, {2, 3}, {0, 1})",
+      "cells": [
+        [2,0],
+        [2,1],
+        [3,0],
+        [3,1]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "bottom-right quadrant",
+      "view": "mapped(M, {2, 3}, {2, 3})",
+      "cells": [
+        [2,2],
+        [2,3],
+        [3,2],
+        [3,3]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "centre block",
+      "view": "mapped(M, {1, 2}, {1, 2})",
+      "cells": [
+        [1,1],
+        [1,2],
+        [2,1],
+        [2,2]
+      ],
+      "sum": 34
+    },
+    {
+      "name": "four corners",
+      "view": "mapped(M, {0, 3}, {0, 3})",
+      "cells": [
+        [0,0],
+        [0,3],
+        [3,0],
+        [3,3]
+      ],
+      "sum": 34
+    }
+  ],
+  "rearrangements": [
+    {
+      "name": "transpose",
+      "how": "trans(M)",
+      "result": [
+        [16,5,9,4],
+        [3,10,6,15],
+        [2,11,7,14],
+        [13,8,12,1]
+      ],
+      "magic": true
+    },
+    {
+      "name": "flip rows",
+      "how": "J * M",
+      "result": [
+        [4,15,14,1],
+        [9,6,7,12],
+        [5,10,11,8],
+        [16,3,2,13]
+      ],
+      "magic": true
+    },
+    {
+      "name": "flip columns",
+      "how": "reorder_cols(M, {3, 2, 1, 0})",
+      "result": [
+        [13,2,3,16],
+        [8,11,10,5],
+        [12,7,6,9],
+        [1,14,15,4]
+      ],
+      "magic": true
+    },
+    {
+      "name": "rotate a quarter turn",
+      "how": "trans(J * M)",
+      "result": [
+        [4,9,5,16],
+        [15,6,10,3],
+        [14,7,11,2],
+        [1,12,8,13]
+      ],
+      "magic": true
+    },
+    {
+      "name": "rotate a half turn",
+      "how": "reorder(M, {3, 2, 1, 0})",
+      "result": [
+        [1,14,15,4],
+        [12,7,6,9],
+        [8,11,10,5],
+        [13,2,3,16]
+      ],
+      "magic": true
+    },
+    {
+      "name": "swap pairs symmetrically",
+      "how": "reorder(M, {1, 0, 3, 2})",
+      "result": [
+        [10,5,8,11],
+        [3,16,13,2],
+        [15,4,1,14],
+        [6,9,12,7]
+      ],
+      "magic": true
+    },
+    {
+      "name": "swap rows 0 and 1",
+      "how": "P * M, P = {1, 0, 2, 3}",
+      "result": [
+        [5,10,11,8],
+        [16,3,2,13],
+        [9,6,7,12],
+        [4,15,14,1]
+      ],
+      "magic": false
+    }
+  ]
+}

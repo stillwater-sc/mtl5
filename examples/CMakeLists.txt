@@ -10,6 +10,9 @@ compile_all("false" "example" "Examples/phase01_core_types" "MTL5::mtl5" ${PHASE
 file(GLOB PHASE02_SRC "phase02_basic_operations/*.cpp")
 compile_all("false" "example" "Examples/phase02_basic_operations" "MTL5::mtl5" ${PHASE02_SRC})
 
+file(GLOB PHASE02_VIEWS_SRC "phase02_views_permutations/*.cpp")
+compile_all("false" "example" "Examples/phase02_views_permutations" "MTL5::mtl5" ${PHASE02_VIEWS_SRC})
+
 file(GLOB PHASE03_SRC "phase03_iterative_solvers/*.cpp")
 compile_all("false" "example" "Examples/phase03_iterative_solvers" "MTL5::mtl5" ${PHASE03_SRC})
 
