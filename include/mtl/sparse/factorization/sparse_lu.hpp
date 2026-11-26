@@ -60,6 +60,45 @@ struct lu_symbolic {
     std::size_t n{0};                    // matrix dimension
 };
 
+namespace detail {
+/// Folds |u_kk| over U's diagonal (the last entry of each column) into
+/// [lo, hi]; `seen` says whether lo and hi hold a value yet. At a NaN pivot it
+/// stops and returns false, with lo set to that NaN.
+template <typename Value, typename SizeType>
+bool lu_fold_pivots(const util::csc_matrix<Value, SizeType>& U, Value& lo, Value& hi, bool& seen) {
+    using std::abs;
+    for (SizeType k = 0; k < U.ncols; ++k) {
+        if (U.col_ptr[k + 1] == U.col_ptr[k]) continue;
+        const Value a = abs(U.values[U.col_ptr[k + 1] - 1]);
+        if (!(a == a)) { lo = a; return false; }
+        if (!seen) { lo = a; hi = a; seen = true; }
+        else { if (a < lo) lo = a; if (a > hi) hi = a; }
+    }
+    return true;
+}
+
+/// min(g, min over U's columns k of amax_of(k) / max_i |U(i, k)|), where
+/// amax_of(k) is the largest |entry| of the factored matrix's column that
+/// became U's column k. A NaN, in U or in a ratio, is returned as it is.
+template <typename Value, typename SizeType, typename ColMax>
+Value lu_rgrowth(const util::csc_matrix<Value, SizeType>& U, ColMax&& amax_of, Value g = Value{1}) {
+    using std::abs;
+    for (SizeType k = 0; k < U.ncols; ++k) {
+        Value umax{0};
+        for (SizeType p = U.col_ptr[k]; p < U.col_ptr[k + 1]; ++p) {
+            const Value a = abs(U.values[p]);
+            if (!(a == a)) return a;
+            if (a > umax) umax = a;
+        }
+        if (umax == Value{0}) continue;   // not in an installed factor: its diagonal is nonzero
+        const Value r = amax_of(static_cast<std::size_t>(k)) / umax;
+        if (!(r == r)) return r;
+        if (r < g) g = r;
+    }
+    return g;
+}
+} // namespace detail
+
 /// Result of numeric LU factorization.
 /// Contains L (unit lower triangular) and U (upper triangular) in CSC,
 /// plus the row and column permutations.
@@ -104,6 +143,49 @@ struct lu_numeric {
 
     /// True once factors (and their coupled schedules) have been installed.
     bool has_factor() const { return has_factor_; }
+
+    /// A cheap estimate of the reciprocal condition number: min |u_kk| /
+    /// max |u_kk| over U's diagonal, as SuiteSparse's klu_rcond. It costs O(n).
+    /// It is a crude first check, not a bound: a small value means U's pivots
+    /// span many orders of magnitude. 1 for n = 0; NaN if a pivot is NaN.
+    /// \throws std::logic_error if no factor is installed (n > 0).
+    Value rcond() const {
+        if (symbolic.n == 0) return Value{1};
+        require_factor("lu_numeric::rcond");
+        Value lo{0}, hi{0};
+        bool seen = false;
+        if (!detail::lu_fold_pivots(U_, lo, hi, seen)) return lo;   // NaN
+        return lo / hi;
+    }
+
+    /// The reciprocal pivot growth: the minimum over U's columns k of
+    /// max_i |A(i, q[k])| / max_i |U(i, k)|, capped at 1, as SuiteSparse's
+    /// klu_rgrowth. Near 1 means the pivots fit A; a tiny value means elements
+    /// of U grew far past A's, and the factorization (a refactorization, which
+    /// keeps an earlier pivot sequence, above all) cannot be trusted. It costs
+    /// O(nnz(A) + nnz(U)). `A` must be the matrix this factorization is of.
+    /// 1 for n = 0; NaN if A or U holds a NaN.
+    /// \throws std::invalid_argument if A's dimensions are not n x n.
+    /// \throws std::logic_error      if no factor is installed (n > 0).
+    template <typename Parameters>
+    Value rgrowth(const mat::compressed2D<Value, Parameters>& A) const {
+        using std::abs;
+        const std::size_t n = symbolic.n;
+        if (A.num_rows() != n || A.num_cols() != n)
+            throw std::invalid_argument(
+                "lu_numeric::rgrowth: matrix dimensions do not match the factorization");
+        if (n == 0) return Value{1};
+        require_factor("lu_numeric::rgrowth");
+        std::vector<Value> amax(n, Value{0});   // by A's column
+        const auto& ci  = A.ref_minor();
+        const auto& dat = A.ref_data();
+        for (std::size_t k = 0; k < A.nnz(); ++k) {
+            const Value a = abs(dat[k]);
+            if (!(a == a)) return a;
+            if (a > amax[ci[k]]) amax[ci[k]] = a;
+        }
+        return detail::lu_rgrowth(U_, [&](std::size_t k) { return amax[symbolic.col_perm[k]]; });
+    }
 
     /// Install recomputed VALUES on the already-installed factor pattern, keeping
     /// the existing solve schedules. The schedules are value-agnostic -- they cache
@@ -192,6 +274,11 @@ struct lu_numeric {
     }
 
 private:
+    void require_factor(const char* who) const {
+        if (!has_factor_)
+            throw std::logic_error(std::string(who) + ": no factor installed");
+    }
+
     util::csc_matrix<Value> L_;          // unit lower triangular factor (CSC), diagonal first
     util::csc_matrix<Value> U_;          // upper triangular factor (CSC), diagonal last
     lower_solve_schedule    fwd_sched_;  // forward (L z = w) schedule, bound to L_
@@ -590,7 +677,11 @@ lu_numeric<Value> sparse_lu_numeric(
 /// installed only after the last column succeeds, so a throw leaves `fac` exactly
 /// as it was -- still solvable with its previous values.
 ///
-/// \throws std::runtime_error if a reused pivot is numerically zero for the new
+/// A reused pivot that the new values make tiny but not zero is accepted, and
+/// the solve can then be wrong (issue 946). Check `fac.rgrowth(A)` afterwards:
+/// a tiny value means the kept pivots no longer fit; factor afresh.
+///
+/// \throws std::runtime_error if a reused pivot is exactly zero for the new
 ///         values (the prior pivot sequence is no longer valid).
 /// \throws std::invalid_argument if A has an entry outside the factor's pattern.
 template <typename Value, typename Parameters>

@@ -7,6 +7,14 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Pivot growth and rcond for native KLU and sparse LU** (issue 946). `native_klu_refactor` keeps the earlier pivot sequence. A pivot that the new values make exactly zero throws. One they make tiny but not zero was accepted: `num_perturbed` stayed 0, and the solve could be wrong in every digit. Two checks, after SuiteSparse's `klu_rgrowth` and `klu_rcond`, let a caller detect this and factor afresh:
+  - **`klu_numeric::rgrowth()`** is the reciprocal pivot growth: the minimum, over the columns of every diagonal block, of max |B(:, j)| / max |U(:, j)|, capped at 1. It costs O(nnz(B) + nnz(U)). The issue's 2 × 2 example (pivot on 2, refactored with 1e-20 in its place) gives about 1e-20 after the refactor, and more than 0.1 when factored afresh. On SuiteSparse's `adder_dcop_01` → `_02` circuit sequence, measured through mtl5-python, the block growth max |U| / max |B| was 1.7 for a fresh factorization and 4.4e35 for the refactor.
+  - **`klu_numeric::rcond()`** is min |u_kk| / max |u_kk| over every block's U, in O(n). It is a cruder check.
+  - **`lu_numeric::rgrowth(A)` and `lu_numeric::rcond()`** do the same for `sparse_lu_numeric` and `sparse_lu_refactor`.
+  - A NaN in the values gives a NaN rather than a good-looking growth.
+  - The refactors' comments now describe this failure.
+  - Not done: `condest()` (Hager–Higham, which needs a transposed solve) and an opt-in growth threshold on `native_klu_refactor`.
+  - Tests: `test_native_klu.cpp` ([946]) and `test_shim_genericity.cpp`.
 - **Multilevel separators for nested dissection** (issue 922): `nested_dissection` takes a separator method, `nd_separator::multilevel` (the new default) or `nd_separator::level_structure` (the 5.25.0 behaviour). Write `nested_dissection{nd_separator::level_structure}`, or `nested_dissection{cutoff, balance, method}`. There is still no external dependency.
   - **The multilevel separator** (`multilevel_separator.hpp`) works in METIS's style:
     - It coarsens by heavy-edge matching in a random order, down to about 100 vertices.

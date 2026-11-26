@@ -516,3 +516,117 @@ TEST_CASE("lu_numeric::solve with a caller workspace (issue 908)", "[sparse][lu]
         for (std::size_t i = 0; i < n; ++i) REQUIRE(x1(i) == x2(i));
     }
 }
+
+// Issue 946: a refactorization that keeps a pivot the new values made tiny,
+// but not zero, returns normally and solves wrongly. rgrowth() and rcond()
+// are how a caller finds out, as klu_rgrowth and klu_rcond in SuiteSparse.
+namespace {
+using csr946 = mat::compressed2D<double>;
+
+// [[a00, 1], [1, 1]], one irreducible 2 x 2 block.
+csr946 two_by_two(double a00) {
+    csr946 A(2, 2);
+    mat::inserter<csr946> ins(A);
+    ins[0][0] << a00; ins[0][1] << 1.0; ins[1][0] << 1.0; ins[1][1] << 1.0;
+    return A;
+}
+
+// [[5, 1, 0], [0, a11, 1], [0, 1, 1]]: a 1 x 1 block, then the 2 x 2 one.
+csr946 two_blocks(double a11) {
+    csr946 A(3, 3);
+    mat::inserter<csr946> ins(A);
+    ins[0][0] << 5.0; ins[0][1] << 1.0;
+    ins[1][1] << a11; ins[1][2] << 1.0;
+    ins[2][1] << 1.0; ins[2][2] << 1.0;
+    return A;
+}
+
+double max_error_from_ones(const vec::dense_vector<double>& x) {
+    double e = 0.0;
+    for (std::size_t i = 0; i < x.size(); ++i) e = std::max(e, std::abs(x(i) - 1.0));
+    return e;
+}
+} // namespace
+
+TEST_CASE("native_klu: rgrowth and rcond expose a refactor on stale pivots (issue 946)",
+          "[sparse][klu][946]") {
+    using sparse::factorization::native_klu_refactor;
+
+    SECTION("the issue's 2 x 2 repro") {
+        const auto A1 = two_by_two(2.0), A2 = two_by_two(1e-20);
+        vec::dense_vector<double> b(2), x(2, 0.0);
+        b(0) = 1e-20 + 1.0; b(1) = 2.0;   // x = (1, 1)
+
+        const auto fac = native_klu_factor(A1);
+        CHECK(fac.rgrowth() > 0.1);
+        CHECK(fac.rcond() > 0.1);
+
+        const auto re = native_klu_refactor(A2, fac);
+        re.solve(x, b);
+        REQUIRE(re.num_perturbed == 0);              // nothing else says so
+        REQUIRE(max_error_from_ones(x) > 0.5);       // the solve is wrong
+        CHECK(re.rgrowth() < 1e-15);
+        CHECK(re.rcond() < 1e-30);
+
+        const auto fresh = native_klu_factor(A2);
+        fresh.solve(x, b);
+        REQUIRE(max_error_from_ones(x) < 1e-15);
+        CHECK(fresh.rgrowth() > 0.1);
+        CHECK(fresh.rcond() > 0.1);
+    }
+
+    SECTION("values perturbed by 1% keep the growth of a fresh factorization") {
+        const auto fac = native_klu_factor(two_by_two(2.0));
+        const auto re  = native_klu_refactor(two_by_two(2.02), fac);
+        CHECK(re.rgrowth() > 0.1);
+        CHECK(re.rgrowth() <= 1.0);
+    }
+
+    SECTION("the bad block need not be the first: the minimum is over all blocks") {
+        const auto fac = native_klu_factor(two_blocks(2.0));
+        REQUIRE(fac.nblocks() == 2);
+        CHECK(fac.rgrowth() > 0.1);
+        const auto re = native_klu_refactor(two_blocks(1e-20), fac);
+        CHECK(re.rgrowth() < 1e-15);
+        CHECK(re.rcond() < 1e-30);
+        CHECK(native_klu_factor(two_blocks(1e-20)).rgrowth() > 0.1);
+    }
+
+    SECTION("a NaN in the values is reported as NaN, not as a good growth") {
+        const auto fac = native_klu_factor(two_blocks(2.0));
+        const auto re  = native_klu_refactor(two_blocks(std::nan("")), fac);
+        CHECK(std::isnan(re.rgrowth()));
+        CHECK(std::isnan(re.rcond()));
+    }
+
+    SECTION("an empty matrix") {
+        const auto fac = native_klu_factor(csr946(0, 0));
+        CHECK(fac.rgrowth() == 1.0);
+        CHECK(fac.rcond() == 1.0);
+    }
+}
+
+TEST_CASE("lu_numeric: rgrowth and rcond, by hand (issue 946)", "[sparse][lu][946]") {
+    namespace fz = sparse::factorization;
+    // Natural order, pivot on 2: U = [[2, 1], [0, 0.5]]. Every column's largest
+    // entry is A's own, so the growth is 1, and rcond = 0.5 / 2.
+    const auto A1 = two_by_two(2.0);
+    auto lu = fz::sparse_lu_numeric(A1, fz::sparse_lu_symbolic(A1));
+    REQUIRE(lu.row_perm[0] == 0);
+    CHECK(lu.rgrowth(A1) == 1.0);
+    CHECK(lu.rcond() == 0.25);
+
+    // Refactored with 1e-20 in the pivot's place: U = [[1e-20, 1], [0, 1 - 1e20]].
+    // Column 1: max|A| = 1 over max|U| = 1e20. rcond = 1e-20 / 1e20.
+    const auto A2 = two_by_two(1e-20);
+    fz::sparse_lu_refactor_in_place(A2, lu);
+    CHECK_THAT(lu.rgrowth(A2), Catch::Matchers::WithinRel(1e-20, 1e-12));
+    CHECK_THAT(lu.rcond(), Catch::Matchers::WithinRel(1e-40, 1e-12));
+
+    REQUIRE_THROWS_AS(lu.rgrowth(csr946(3, 3)), std::invalid_argument);
+
+    fz::lu_numeric<double> none;
+    none.symbolic.n = 2;
+    REQUIRE_THROWS_AS(none.rcond(), std::logic_error);
+    REQUIRE_THROWS_AS(none.rgrowth(A1), std::logic_error);
+}
