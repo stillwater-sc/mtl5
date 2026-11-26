@@ -195,8 +195,8 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 | Example | Description |
 |---------|-------------|
-| `krylov_comparison.cpp` | CGS, QMR, TFQMR, IDR(s) convergence on non-symmetric systems |
-| `multigrid_poisson.cpp` | 3-level geometric multigrid V-cycle for 1D Poisson |
+| `krylov_comparison.cpp` | CGS and BiCGSTAB(ℓ) with identity, Jacobi and ILU(0) on 2-D convection–diffusion; MINRES against CG on the Helmholtz operator; why MINRES needs an SPD preconditioner |
+| `multigrid_poisson.cpp` | Geometric multigrid for 1-D Poisson: a full hierarchy, size-independent cycle counts, and the symmetric V-cycle CG needs |
 
 ---
 
