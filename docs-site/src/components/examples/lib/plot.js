@@ -133,11 +133,25 @@ export function fmtPow10(x) {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/**
+ * SVG presentation attributes that the shell's CSS classes also set. A CSS
+ * rule beats a presentation attribute, so `.ex-series { stroke-width: 2 }`
+ * would silently override `stroke-width="3"`; these are applied as inline
+ * styles instead, which beat the class.
+ */
+const STYLED = { 'stroke-width': 'strokeWidth', 'stroke-dasharray': 'strokeDasharray' };
+
+/** Set one attribute, as an inline style when a class could override it. */
+export function setAttr(el, k, v) {
+  if (STYLED[k]) el.style[STYLED[k]] = v === undefined || v === null ? '' : String(v);
+  else if (v !== undefined && v !== null) el.setAttribute(k, String(v));
+}
+
 /** Create an SVG element with attributes and optional text. */
 export function svg(tag, attrs = {}, text) {
   const el = document.createElementNS(SVG_NS, tag);
   for (const [k, v] of Object.entries(attrs)) {
-    if (v !== undefined && v !== null) el.setAttribute(k, String(v));
+    if (v !== undefined && v !== null) setAttr(el, k, v);
   }
   if (text !== undefined) el.textContent = String(text);
   return el;

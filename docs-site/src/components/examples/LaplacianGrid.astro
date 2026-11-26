@@ -1,0 +1,130 @@
+---
+// 4A: the inserter filling the 5-point Laplacian grid row by grid row, then
+// GMRES(5), GMRES(20) and CG solving it, step by step.
+// Data: examples/phase04_sparse_assembly/laplacian_2d.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/laplacian_2d.json';
+import traceUrl from '../../data/traces/laplacian_2d.json?url';
+import { fmt } from './lib/plot.js';
+
+type Solver = { name: string; restart: number; iterations: number; residual: number[] };
+const [g5, g20, cg] = trace.solvers as Solver[];
+const firstRestart = g5.residual[g5.restart + 1];
+const same = g20.residual[g5.restart + 1];
+---
+
+<AnimationShell
+  kind="laplacian"
+  trace={traceUrl}
+  title="Assembling the grid, then solving it"
+  label="A spy plot of the 100 by 100 grid Laplacian filling as the inserter adds rows, then heat maps of two GMRES solutions converging, with all residuals on a log axis."
+  height={300}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>GMRES({g5.restart})</span>
+    <span><i style="background: var(--ex-c2)"></i>GMRES({g20.restart})</span>
+    <span><i style="background: var(--ex-c3)"></i>CG</span>
+  </div>
+  <p>
+    The first {trace.n} frames fill the {trace.N} × {trace.N} matrix of a {trace.n} × {trace.n} grid, one grid row
+    ({trace.n} matrix rows) at a time: five entries per row, fewer at the boundary, {trace.nnz} in all. Then the
+    left panel shows the GMRES({g5.restart}) and GMRES({g20.restart}) iterates as heat maps on the grid, and the
+    right panel each solver's true residual on a log axis.
+  </p>
+  <p>
+    GMRES({g20.restart}) and CG converge in {g20.iterations} and {cg.iterations} steps, and GMRES({g5.restart}) in
+    {g5.iterations}. Up to step {g5.restart} the two GMRES runs are the same method. GMRES({g5.restart}) then
+    restarts, throws away its Krylov basis, and slows: at step {g5.restart + 1} its residual is {fmt(firstRestart, 2)}
+    against {fmt(same, 2)} for GMRES({g20.restart}). Each restart, marked on the axis, is a kink in its curve. The
+    three answers agree to {fmt(trace.max_difference, 2)}.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { laplacianModel, laplacianFrame } from './lib/models.js';
+  import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, drawAxes, svg, clear, fmt, fmtPow10 } from './lib/plot.js';
+
+  mountAll('[data-ex="laplacian"]', (root, trace) => {
+    const model = laplacianModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+
+    // Left: the spy plot (assembly) and the two heat maps (solve).
+    const spy = { left: 20, top: 20, size: 250 };
+    const ss = scaleLinear([0, model.N], [0, spy.size]);
+    const spyG = el.appendChild(svg('g'));
+    spyG.append(svg('rect', { x: spy.left, y: spy.top, width: spy.size, height: spy.size, class: 'ex-cell' }));
+    const dots = model.nonzeros.map(([r, c]) => spyG.appendChild(svg('rect', { x: spy.left + ss(c), y: spy.top + ss(r), width: 2.3, height: 2.3, class: 'ex-fill1' })));
+    const spyText = spyG.appendChild(svg('text', { x: spy.left, y: 292, class: 'ex-text' }));
+
+    const heatG = el.appendChild(svg('g'));
+    const cell = 12;
+    const maps = [0, 1].map((m) => {
+      const x0 = 20 + m * 140;
+      const y0 = 40;
+      heatG.append(svg('text', { x: x0, y: y0 - 8, class: 'ex-label' }, model.solvers[m].name));
+      const cells = [];
+      for (let k = 0; k < model.N; ++k) {
+        const r = Math.floor(k / model.n);
+        const c = k % model.n;
+        cells.push(heatG.appendChild(svg('rect', { x: x0 + c * cell, y: y0 + (model.n - 1 - r) * cell, width: cell - 0.5, height: cell - 0.5, class: m === 0 ? 'ex-fill1' : 'ex-fill2' })));
+      }
+      return cells;
+    });
+    const uMax = Math.max(...model.solvers[2].iterates[model.solvers[2].iterations]);
+    const heatText = heatG.appendChild(svg('text', { x: 20, y: 192, class: 'ex-tick', 'font-size': 11 }, 'shade: u(x, y), 0 to max'));
+
+    // Right: residuals.
+    const right = { left: 360, right: 630, top: 24, bottom: 250 };
+    const kx = scaleLinear([0, model.steps - 1], [right.left, right.right]);
+    const rDom = logDomain([...model.solvers.flatMap((s) => s.residual), model.tolerance]);
+    const ry = scaleLog(rDom, [right.bottom, right.top]);
+    const axes = svg('g');
+    drawAxes(axes, right, kx, ry, { xTicks: niceTicks([0, model.steps - 1], 4), yTicks: logTicks(rDom, 6), yFmt: fmtPow10, xLabel: 'step k', yLabel: '‖b − A u‖ / ‖b‖' });
+    el.append(axes);
+    const restart = model.solvers[0].restart;
+    for (let k = restart; k < model.steps; k += restart) {
+      el.append(svg('line', { x1: kx(k), x2: kx(k), y1: right.bottom, y2: right.bottom - 5, class: 'ex-c1', 'stroke-width': 1.5 }));
+    }
+    const cls = ['ex-c1', 'ex-c2', 'ex-c3'];
+    const fills = ['ex-fill1', 'ex-fill2', 'ex-fill3'];
+    const hist = cls.map((c) => el.appendChild(svg('path', { class: `ex-series ${c}`, 'stroke-width': 1.5 })));
+    const dot = fills.map((f) => el.appendChild(svg('circle', { r: 3.2, class: f })));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 160,
+      tweenMs: 110,
+      render(f, t) {
+        const s = laplacianFrame(model, f, t);
+        const assembling = s.phase === 'assembly';
+        spyG.style.display = assembling ? '' : 'none';
+        heatG.style.display = assembling ? 'none' : '';
+        if (assembling) {
+          dots.forEach((d, q) => (d.style.display = model.nonzeros[q][0] < s.rows ? '' : 'none'));
+          spyText.textContent = `rows 0–${s.rows - 1} inserted: ${s.filled} nonzeros`;
+        } else {
+          [0, 1].forEach((m) => maps[m].forEach((c, k) => c.setAttribute('fill-opacity', Math.max(0, Math.min(1, s.solvers[m].u[k] / uMax)).toFixed(3))));
+        }
+        const k = assembling ? -1 : s.step;
+        model.solvers.forEach((sv, i) => {
+          const upto = Math.min(k, sv.iterations);
+          const ks = Array.from({ length: upto + 1 }, (_, j) => j);
+          hist[i].setAttribute('d', upto < 0 ? '' : linePath(ks, sv.residual.slice(0, upto + 1), kx, ry));
+          dot[i].style.display = upto < 0 ? 'none' : '';
+          if (upto >= 0) {
+            dot[i].setAttribute('cx', kx(upto));
+            dot[i].setAttribute('cy', ry(sv.residual[upto]));
+          }
+        });
+        heatText.textContent = 'shade: u(x, y), from 0 to its maximum';
+      },
+      label(f) {
+        const s = laplacianFrame(model, f);
+        if (s.phase === 'assembly') return `Inserting grid row ${f}: matrix rows up to ${s.rows - 1}, ${s.filled} nonzeros so far.`;
+        return `Step ${s.step}: ` + s.solvers.map((v) => (v.done ? `${v.name} converged at ${v.step}` : `${v.name} ${fmt(v.residual)}`)).join('; ') + '.';
+      },
+    });
+  });
+</script>

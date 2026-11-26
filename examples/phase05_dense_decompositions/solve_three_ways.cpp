@@ -14,6 +14,11 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "../common/trace.hpp"
 
 using namespace mtl;
 
@@ -36,7 +41,156 @@ double residual_norm(const mat::dense2D<double>& A,
     return two_norm(r);
 }
 
-int main() {
+
+// -- Step-by-step states, for the docs-site animation (--trace) -------------
+// MTL5's factorizations return their factors, not their intermediate working
+// matrices. Each intermediate state is determined by the factors, so it is
+// rebuilt from them here: the animation shows the elimination MTL5 did.
+
+using grid = std::vector<std::vector<double>>;
+
+grid to_grid(const mat::dense2D<double>& M) {
+    grid g(M.num_rows(), std::vector<double>(M.num_cols()));
+    for (std::size_t i = 0; i < M.num_rows(); ++i)
+        for (std::size_t j = 0; j < M.num_cols(); ++j) g[i][j] = M(i, j);
+    return g;
+}
+
+// LU with partial pivoting, after k steps, in the row order the algorithm
+// holds at that point: rows < k hold U (with L's multipliers left of the
+// diagonal), rows >= k hold the multipliers and the Schur complement.
+// lu_factor's final rows are in the order after all n swaps; the swaps
+// pivot[k..n-1] are undone, last first, to get the order after k swaps.
+grid lu_state(const mat::dense2D<double>& LU, const std::vector<std::size_t>& pivot,
+              const mat::dense2D<double>& A, std::size_t k) {
+    const std::size_t n = A.num_rows();
+    std::vector<std::size_t> row(n);   // row[i] = original row in final position i
+    for (std::size_t i = 0; i < n; ++i) row[i] = i;
+    for (std::size_t s = 0; s < n; ++s) std::swap(row[s], row[pivot[s]]);
+    grid W(n, std::vector<double>(n));
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < n; ++j) {
+            if (i < k || j < k) {
+                W[i][j] = LU(i, j);                              // U rows, L multipliers
+            } else {
+                double s2 = A(row[i], j);                        // Schur complement
+                for (std::size_t p = 0; p < k; ++p) s2 -= LU(i, p) * LU(p, j);
+                W[i][j] = s2;
+            }
+        }
+    for (std::size_t s = n; s-- > k;) std::swap(W[s], W[pivot[s]]);
+    return W;
+}
+
+// Cholesky after k columns: L's columns < k in the lower triangle, and the
+// Schur complement A22 - L21 L21^T in the trailing block (lower half shown).
+grid cholesky_state(const mat::dense2D<double>& L, const mat::dense2D<double>& A, std::size_t k) {
+    const std::size_t n = A.num_rows();
+    grid W(n, std::vector<double>(n, 0.0));
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j <= i; ++j) {
+            if (j < k) {
+                W[i][j] = L(i, j);
+            } else {
+                double s2 = A(i, j);
+                for (std::size_t p = 0; p < k; ++p) s2 -= L(i, p) * L(j, p);
+                W[i][j] = s2;
+            }
+        }
+    return W;
+}
+
+// QR after k Householder reflections: H_{k-1} ... H_0 A, with each H_j built
+// from the reflector qr_factor stored (v = [1; QR(j+1:, j)], tau(j)).
+grid qr_state(const mat::dense2D<double>& QR, const vec::dense_vector<double>& tau,
+              const mat::dense2D<double>& A, std::size_t k) {
+    const std::size_t n = A.num_rows();
+    grid W = to_grid(A);
+    for (std::size_t j = 0; j < k; ++j) {
+        std::vector<double> v(n, 0.0);
+        v[j] = 1.0;
+        for (std::size_t i = j + 1; i < n; ++i) v[i] = QR(i, j);
+        for (std::size_t c = 0; c < n; ++c) {
+            double d = 0.0;
+            for (std::size_t i = j; i < n; ++i) d += v[i] * W[i][c];
+            for (std::size_t i = j; i < n; ++i) W[i][c] -= tau(j) * v[i] * d;
+        }
+    }
+    return W;
+}
+
+// Textbook flop counts of step k on an n x n matrix (m = n - k rows left).
+double lu_flops(std::size_t n, std::size_t k) {
+    const double m = static_cast<double>(n - k);
+    return (m - 1) + 2.0 * (m - 1) * (m - 1);                 // multipliers + rank-1 update
+}
+double cholesky_flops(std::size_t n, std::size_t k) {
+    const double m = static_cast<double>(n - k);
+    return 1 + (m - 1) + (m - 1) * m;                         // sqrt + divisions + half update
+}
+double qr_flops(std::size_t n, std::size_t k) {
+    const double m = static_cast<double>(n - k);
+    return 3.0 * m + 4.0 * m * (m - 1);                       // reflector + apply to m - 1 columns
+}
+
+example_trace::value grid_value(const grid& g) {
+    auto rows = example_trace::value::array();
+    for (const auto& r : g) rows.push_back(example_trace::value::numbers(r, 6));
+    return rows;
+}
+
+// Every state of the three factorizations of A, for one part of the example.
+example_trace::value factor_states(const char* name, const mat::dense2D<double>& A) {
+    const std::size_t n = A.num_rows();
+    auto part = example_trace::value::object();
+    part["name"] = name;
+    part["matrix"] = grid_value(to_grid(A));
+
+    mat::dense2D<double> LU(A);
+    std::vector<std::size_t> pivot;
+    const int lu_info = lu_factor(LU, pivot);
+    mat::dense2D<double> L(A);
+    const int chol_info = cholesky_factor(L);
+    mat::dense2D<double> QR(A);
+    vec::dense_vector<double> tau;
+    const int qr_info = qr_factor(QR, tau);
+
+    // Cholesky stops at the failing pivot: its columns before it are valid.
+    const std::size_t chol_steps = chol_info == 0 ? n : static_cast<std::size_t>(chol_info - 1);
+    auto method = [&](const char* m, int info, std::size_t steps, auto state, auto flops) {
+        auto o = example_trace::value::object();
+        o["method"] = m;
+        o["info"] = info;
+        auto states = example_trace::value::array();
+        auto cost = example_trace::value::array();
+        double total = 0.0;
+        for (std::size_t k = 0; k <= steps; ++k) {
+            states.push_back(grid_value(state(k)));
+            cost.push_back(total);
+            if (k < steps) total += flops(n, k);
+        }
+        o["states"] = states;
+        o["flops"] = cost;
+        return o;
+    };
+    auto methods = example_trace::value::array();
+    auto lu = method("LU", lu_info, n, [&](std::size_t k) { return lu_state(LU, pivot, A, k); }, lu_flops);
+    lu["pivot"] = example_trace::value::numbers(pivot);
+    methods.push_back(lu);
+    auto ch = method("Cholesky", chol_info, chol_steps, [&](std::size_t k) { return cholesky_state(L, A, k); }, cholesky_flops);
+    if (chol_info != 0) {
+        // The pivot that failed: the Schur complement's diagonal entry.
+        ch["failed_pivot"] = example_trace::value::rounded(cholesky_state(L, A, chol_steps)[chol_steps][chol_steps], 8);
+    }
+    methods.push_back(ch);
+    methods.push_back(method("QR", qr_info, n, [&](std::size_t k) { return qr_state(QR, tau, A, k); }, qr_flops));
+    part["methods"] = methods;
+    return part;
+}
+
+int main(int argc, char** argv) {
+    example_trace::trace trace(argc, argv, "5B solving Ax = b three ways");
+
     std::cout << "=============================================================\n";
     std::cout << " Phase 5B: Solving Ax=b - LU vs Cholesky vs QR\n";
     std::cout << "=============================================================\n\n";
@@ -211,6 +365,32 @@ int main() {
                   << residual_norm(A_indef, x, b_indef) << "\n\n";
     }
 
+    if (trace) {
+        trace["n"] = n;
+        auto parts = example_trace::value::array();
+        parts.push_back(factor_states("SPD", A_spd));
+        parts.push_back(factor_states("indefinite", A_indef));
+        trace["parts"] = parts;
+        // The same counts summed for larger n: the leading terms 2n^3/3,
+        // n^3/3 and 4n^3/3 take over from the lower-order ones.
+        auto table = example_trace::value::array();
+        for (std::size_t m : {4, 10, 100, 1000}) {
+            double l = 0, c = 0, q = 0;
+            for (std::size_t k = 0; k < m; ++k) {
+                l += lu_flops(m, k);
+                c += cholesky_flops(m, k);
+                q += qr_flops(m, k);
+            }
+            auto row = example_trace::value::object();
+            row["n"] = m;
+            row["lu"] = l;
+            row["cholesky"] = c;
+            row["qr"] = q;
+            table.push_back(row);
+        }
+        trace["flops_by_n"] = table;
+    }
+
     // ======================================================================
     // Part 3: Preconditioner Preview (ILU(0) and IC(0) on sparse SPD)
     // ======================================================================
@@ -273,5 +453,5 @@ int main() {
     std::cout << "For iterative methods on sparse systems:\n";
     std::cout << "  SPD -> CG + IC(0)    Non-symmetric -> BiCGSTAB + ILU(0)\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

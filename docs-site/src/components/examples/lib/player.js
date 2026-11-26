@@ -57,7 +57,8 @@ export function prefersReducedMotion() {
  *   frameMs:  how long each frame is held while playing
  *   tweenMs:  how much of that is the tween from the previous frame
  */
-export function createPlayer(root, { count, render, label, frameMs = 300, tweenMs = 0 }) {
+export function createPlayer(root, { count: initialCount, render, label, frameMs = 300, tweenMs = 0 }) {
+  let count = initialCount;
   const play = root.querySelector('[data-ex-play]');
   const back = root.querySelector('[data-ex-back]');
   const fwd = root.querySelector('[data-ex-fwd]');
@@ -151,7 +152,22 @@ export function createPlayer(root, { count, render, label, frameMs = 300, tweenM
     io.observe(root);
   }
 
-  return { show, jump, get frame() { return frame; } };
+  /**
+   * Switch to a different run with `newCount` frames (a figure's option such
+   * as 3B's epsilon): stop, and show its first frame, or its last with
+   * reduced motion. render and label read the figure's current run.
+   */
+  function reset(newCount) {
+    setPlaying(false);
+    count = newCount;
+    scrub.max = String(Math.max(0, count - 1));
+    scrub.disabled = count <= 1;
+    frame = reduced ? count - 1 : 0;
+    elapsed = frameMs;
+    show(1);
+  }
+
+  return { show, jump, reset, get frame() { return frame; } };
 }
 
 /**

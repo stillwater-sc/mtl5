@@ -25,6 +25,11 @@ examples=(
     "example_durer_magic_square:durer_magic_square"
     "example_bandwidth_reduction:bandwidth_reduction"
     "example_heat_equation_1d:heat_equation_1d"
+    "example_convection_diffusion:convection_diffusion"
+    "example_laplacian_2d:laplacian_2d"
+    "example_smoother_convergence:smoother_convergence"
+    "example_least_squares_qr:least_squares_qr"
+    "example_solve_three_ways:solve_three_ways"
 )
 
 if [ ! -f "$build/CMakeCache.txt" ]; then

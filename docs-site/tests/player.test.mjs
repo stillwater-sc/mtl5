@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { advance, clampFrame, resumeFrom } from '../src/components/examples/lib/player.js';
-import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, lerpArray, ease, fmt } from '../src/components/examples/lib/plot.js';
+import { svg, setAttr, scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, lerpArray, ease, fmt } from '../src/components/examples/lib/plot.js';
 
 const opts = { count: 5, frameMs: 100, tweenMs: 40 };
 
@@ -108,4 +108,31 @@ test('Play paused during the last frame\'s tween finishes it instead of restarti
   assert.deepEqual(resumeFrom({ frame: 2, elapsed: 400 }, o), { frame: 2, elapsed: 400, restarted: false });
   // Settled exactly at the end counts as finished.
   assert.equal(resumeFrom({ frame: 2, elapsed: 1600 }, o).restarted, true);
+});
+
+// A stand-in for document.createElementNS, enough for svg() and setAttr().
+function fakeDocument() {
+  return {
+    createElementNS: (ns, tag) => ({
+      tag,
+      attrs: {},
+      style: {},
+      setAttribute(k, v) { this.attrs[k] = v; },
+    }),
+  };
+}
+
+test('stroke-width and stroke-dasharray become inline styles, which beat the shell\'s classes', () => {
+  globalThis.document = fakeDocument();
+  try {
+    const el = svg('path', { class: 'ex-series', 'stroke-width': 3, 'stroke-dasharray': '4 3', d: 'M0,0' });
+    assert.equal(el.style.strokeWidth, '3');
+    assert.equal(el.style.strokeDasharray, '4 3');
+    assert.equal(el.attrs['stroke-width'], undefined);
+    assert.equal(el.attrs.class, 'ex-series');
+    setAttr(el, 'stroke-width', 4);
+    assert.equal(el.style.strokeWidth, '4');
+  } finally {
+    delete globalThis.document;
+  }
 });

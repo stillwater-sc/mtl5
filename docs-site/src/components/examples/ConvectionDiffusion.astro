@@ -1,0 +1,136 @@
+---
+// 3B: CG and BiCGSTAB on the same non-symmetric system, step by step, for a
+// chosen epsilon, against the exact solution with its boundary layer.
+// Data: examples/phase03_iterative_solvers/convection_diffusion.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/convection_diffusion.json';
+import traceUrl from '../../data/traces/convection_diffusion.json?url';
+import { fmt } from './lib/plot.js';
+
+type Solver = { iterations: number; code: number; final_residual: number; iterates: number[][] };
+type Run = { epsilon: number; cell_peclet: number; solvers: Solver[]; exact_on_grid: number[] };
+const runs = trace.runs as Run[];
+const first = runs[0];
+const last = runs[runs.length - 1];
+const worst = (r: Run) => {
+  const u = r.solvers[1].iterates[r.solvers[1].iterates.length - 1];
+  return Math.max(...u.map((v, i) => Math.abs(v - r.exact_on_grid[i])));
+};
+const peak = (r: Run) => Math.max(...r.solvers[1].iterates[r.solvers[1].iterates.length - 1]);
+---
+
+<AnimationShell
+  kind="convection"
+  trace={traceUrl}
+  title="CG against BiCGSTAB as symmetry breaks"
+  label="The convection-diffusion solution u(x) as CG and BiCGSTAB iterate, beside their residuals on a log axis, for a chosen epsilon."
+  height={290}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>CG</span>
+    <span><i style="background: var(--ex-c2)"></i>BiCGSTAB</span>
+    <span><i style="background: var(--ex-line)"></i>exact solution</span>
+  </div>
+  <div class="exfig-options" slot="options" role="radiogroup" aria-label="epsilon">
+    <span>ε =</span>
+    {runs.map((r, i) => (
+      <label><input type="radio" name="convection-eps" value={i} checked={i === runs.length - 1} /> {r.epsilon}</label>
+    ))}
+  </div>
+  <p>
+    Left: u(x) after each step of CG and of BiCGSTAB, with the exact solution of −εu″ + u′ = 1 dashed.
+    The exact solution is nearly the line u = x, and it drops to zero in a boundary layer of width about ε at
+    x = 1. Right: each solver's true residual on a log axis. Choose ε to change the problem.
+  </p>
+  <p>
+    On n = {trace.n} points BiCGSTAB converges at every ε, in {first.solvers[1].iterations} steps at ε = {first.epsilon}
+    and {last.solvers[1].iterations} at ε = {last.epsilon}. CG stops at its 500-step limit every time. At ε = {first.epsilon}
+    the matrix is nearly symmetric and CG gets close, to a residual of {fmt(first.solvers[0].final_residual, 2)}. At
+    ε = {last.epsilon} its relative residual ends at {fmt(last.solvers[0].final_residual, 3)}, far above the 1 it started from.
+    The animation shows CG's first {last.solvers[0].iterates.length - 1} steps. At ε = {last.epsilon} the cell Péclet number
+    h/(2ε) is {fmt(last.cell_peclet, 3)}, above 1, so the central differences themselves oscillate: the converged
+    discrete solution overshoots to {fmt(peak(last), 3)} next to the layer and is {fmt(worst(last), 2)} away from the exact
+    curve. That error is the discretization's, not the solver's.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { convectionModel, convectionFrame } from './lib/models.js';
+  import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, drawAxes, svg, clear, fmt, fmtPow10 } from './lib/plot.js';
+
+  mountAll('[data-ex="convection"]', (root, trace) => {
+    const model = convectionModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    const left = { left: 46, right: 300, top: 24, bottom: 250 };
+    const right = { left: 384, right: 630, top: 24, bottom: 250 };
+    const sx = scaleLinear([0, 1], [left.left, left.right]);
+    const sy = scaleLinear([-0.3, 1.4], [left.bottom, left.top]);
+    const radios = [...root.querySelectorAll('input[name="convection-eps"]')];
+    let run = model.runs[Number(radios.find((r) => r.checked)?.value ?? model.runs.length - 1)];
+    let parts;
+
+    function build() {
+      clear(el);
+      const kx = scaleLinear([0, run.count - 1], [right.left, right.right]);
+      const rDom = logDomain([...run.cg.residual, ...run.bicgstab.residual, model.tolerance]);
+      const ry = scaleLog(rDom, [right.bottom, right.top]);
+      const axes = svg('g');
+      drawAxes(axes, left, sx, sy, { xTicks: niceTicks([0, 1], 5), yTicks: niceTicks([-0.2, 1.4], 4), xLabel: 'x', yLabel: 'u(x)' });
+      drawAxes(axes, right, kx, ry, { xTicks: niceTicks([0, run.count - 1], 4), yTicks: logTicks(rDom, 6), yFmt: fmtPow10, xLabel: 'step k', yLabel: '‖b − A u‖ / ‖b‖' });
+      el.append(axes);
+      const clipId = `${root.dataset.ex}-clip`;
+      const defs = svg('defs');
+      const clip = svg('clipPath', { id: clipId });
+      clip.append(svg('rect', { x: left.left, y: left.top, width: left.right - left.left, height: left.bottom - left.top }));
+      defs.append(clip);
+      el.append(defs);
+      el.append(svg('path', { d: linePath(run.exact_x, run.exact_u, sx, sy), class: 'ex-ghost', 'clip-path': `url(#${clipId})` }));
+      const tolY = ry(model.tolerance);
+      el.append(svg('line', { x1: right.left, x2: right.right, y1: tolY, y2: tolY, class: 'ex-cursor' }));
+      el.append(svg('text', { x: right.right, y: tolY - 4, 'text-anchor': 'end', class: 'ex-tick' }, 'tolerance'));
+      const cls = ['ex-c1', 'ex-c2'];
+      const fills = ['ex-fill1', 'ex-fill2'];
+      parts = {
+        kx,
+        ry,
+        profiles: cls.map((c) => el.appendChild(svg('path', { class: `ex-series ${c}`, 'clip-path': `url(#${clipId})` }))),
+        histories: cls.map((c) => el.appendChild(svg('path', { class: `ex-series ${c}`, 'stroke-width': 1.5 }))),
+        dots: fills.map((f) => el.appendChild(svg('circle', { r: 3.5, class: f }))),
+        cursor: el.appendChild(svg('line', { y1: right.top, y2: right.bottom, class: 'ex-cursor' })),
+      };
+    }
+
+    build();
+    const player = createPlayer(root, {
+      count: run.count,
+      frameMs: 140,
+      tweenMs: 100,
+      render(k, t) {
+        const state = convectionFrame(run, k, t);
+        const series = [run.cg, run.bicgstab];
+        state.forEach((s, i) => {
+          parts.profiles[i].setAttribute('d', linePath(model.x, s.u, sx, sy));
+          const ks = Array.from({ length: s.step + 1 }, (_, j) => j);
+          parts.histories[i].setAttribute('d', linePath(ks, series[i].residual.slice(0, s.step + 1), parts.kx, parts.ry));
+          parts.dots[i].setAttribute('cx', parts.kx(s.step));
+          parts.dots[i].setAttribute('cy', parts.ry(s.residual));
+        });
+        parts.cursor.setAttribute('x1', parts.kx(k));
+        parts.cursor.setAttribute('x2', parts.kx(k));
+      },
+      label(k) {
+        const [cg, bi] = convectionFrame(run, k);
+        const b = bi.done ? `BiCGSTAB converged at step ${bi.step}` : `BiCGSTAB residual ${fmt(bi.residual)}`;
+        return `ε = ${run.epsilon}, step ${k}: CG residual ${fmt(cg.residual)}; ${b}.`;
+      },
+    });
+    for (const r of radios) {
+      r.addEventListener('change', () => {
+        run = model.runs[Number(r.value)];
+        build();
+        player.reset(run.count);
+      });
+    }
+  });
+</script>

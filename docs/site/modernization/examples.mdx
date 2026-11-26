@@ -8,6 +8,11 @@ import KirchhoffBridge from '../../../components/examples/KirchhoffBridge.astro'
 import DurerSquare from '../../../components/examples/DurerSquare.astro';
 import BandwidthReduction from '../../../components/examples/BandwidthReduction.astro';
 import HeatEquation from '../../../components/examples/HeatEquation.astro';
+import ConvectionDiffusion from '../../../components/examples/ConvectionDiffusion.astro';
+import LaplacianGrid from '../../../components/examples/LaplacianGrid.astro';
+import SmootherConvergence from '../../../components/examples/SmootherConvergence.astro';
+import LeastSquares from '../../../components/examples/LeastSquares.astro';
+import ThreeWays from '../../../components/examples/ThreeWays.astro';
 
 {/*
   Source: docs/site/modernization/examples.mdx, copied verbatim by
@@ -164,6 +169,10 @@ MTL5 features demonstrated:
   - All three iteration controllers: basic_iteration, noisy_iteration, cyclic_iteration
   - itl::pc::diagonal preconditioner
 
+Program: `examples/phase03_iterative_solvers/convection_diffusion.cpp`
+
+<ConvectionDiffusion />
+
   ---
 ## Phase 4: Sparse Matrices, Inserter, GMRES, BiCG, Smoothers
 
@@ -184,6 +193,10 @@ MTL5 features demonstrated:
   - itl::pc::diagonal preconditioning
   - noisy_iteration showing convergence history
 
+Program: `examples/phase04_sparse_assembly/laplacian_2d.cpp`
+
+<LaplacianGrid />
+
 ### Example 4B: Stationary Iteration: Smoothers as Standalone Solvers
 
   Numerical goal: Solve a small diagonally-dominant system using classical iterative methods (Jacobi, Gauss-Seidel, SOR) and study convergence rates.
@@ -198,6 +211,10 @@ MTL5 features demonstrated:
   - Residual reduction tracking over multiple sweeps
   - SOR with varying omega (0.5, 1.0, 1.2, 1.5, optimal) — tabulated convergence comparison
   - Sparse vs dense specialization (same API, different performance)
+
+Program: `examples/phase04_sparse_assembly/smoother_convergence.cpp`
+
+<SmootherConvergence />
 
   ---
 ### Phase 5: Direct Factorizations (LU, QR, LQ, Cholesky, Triangular Solvers, ILU/IC)
@@ -218,6 +235,10 @@ MTL5 features demonstrated:
   - trans() view for V^T * V
   - Side-by-side numerical comparison showing conditioning effects
 
+Program: `examples/phase05_dense_decompositions/least_squares_qr.cpp`
+
+<LeastSquares />
+
 ### Example 5B: Solving Ax=b Three Ways: LU vs Cholesky vs QR
 
   Numerical goal: Given a well-conditioned SPD system, solve it using LU (general), Cholesky (SPD-exploiting), and QR (orthogonal). Compare operation counts,
@@ -232,6 +253,10 @@ MTL5 features demonstrated:
   - qr_factor() + qr_solve()
   - inv() as the "never do this in practice" baseline
   - ILU(0) and IC(0) as approximate factorizations for preconditioning preview
+
+Program: `examples/phase05_dense_decompositions/solve_three_ways.cpp`
+
+<ThreeWays />
 
 ---
 

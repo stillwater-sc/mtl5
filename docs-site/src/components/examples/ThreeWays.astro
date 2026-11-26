@@ -1,0 +1,127 @@
+---
+// 5B: LU, Cholesky and QR eliminating the same 4 x 4 matrix step by step,
+// with a running flop count; then the indefinite matrix, where Cholesky stops.
+// Data: examples/phase05_dense_decompositions/solve_three_ways.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/solve_three_ways.json';
+import traceUrl from '../../data/traces/solve_three_ways.json?url';
+import { fmt } from './lib/plot.js';
+
+type Method = { method: string; info: number; flops: number[]; failed_pivot?: number };
+const [spd, indef] = trace.parts as { name: string; methods: Method[] }[];
+const total = (m: Method) => m.flops[m.flops.length - 1];
+const chol = indef.methods.find((m) => m.method === 'Cholesky')!;
+const big = trace.flops_by_n[trace.flops_by_n.length - 1];
+---
+
+<AnimationShell
+  kind="threeways"
+  trace={traceUrl}
+  title="LU, Cholesky and QR, one step at a time"
+  label="Three 4 by 4 grids showing LU, Cholesky and QR eliminating the same matrix column by column, with flop counts, first for an SPD matrix and then an indefinite one where Cholesky fails."
+  height={262}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--sl-color-accent)"></i>finished factor</span>
+    <span><i style="background: var(--ex-c2)"></i>LU's row swap</span>
+    <span><i style="background: var(--ex-c5)"></i>a failed pivot</span>
+  </div>
+  <p>
+    Each step finishes one column. LU (with partial pivoting) leaves a row of U and a column of multipliers,
+    and swaps rows to bring the largest pivot up. Cholesky leaves a column of L and works only on the lower
+    triangle. QR applies one Householder reflection, which zeroes the column below the diagonal. The unshaded
+    block is what is left to eliminate. The intermediate matrices are rebuilt from the factors that MTL5's
+    <code>lu_factor</code>, <code>cholesky_factor</code> and <code>qr_factor</code> return. The flop counts are the
+    textbook ones.
+  </p>
+  <p>
+    On the SPD matrix the three take {total(spd.methods[0])}, {total(spd.methods[1])} and {total(spd.methods[2])} flops.
+    At n = 4 the lower-order terms dominate; at n = {big.n} the same counts give {fmt(big.lu, 3)},
+    {fmt(big.cholesky, 3)} and {fmt(big.qr, 3)}, the 2 : 1 : 4 of 2n³/3, n³/3 and 4n³/3. On the indefinite
+    matrix (two diagonal entries lowered to 0.1), LU and QR finish, but Cholesky's pivot at step {chol.info} is
+    {fmt(chol.failed_pivot ?? 0, 3)}. It would need its square root, so <code>cholesky_factor</code> returns {chol.info}.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { factorModel, factorFrame } from './lib/models.js';
+  import { svg, clear, fmt } from './lib/plot.js';
+
+  mountAll('[data-ex="threeways"]', (root, trace) => {
+    const model = factorModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+    const n = model.n;
+    const cw = 46;
+    const ch = 30;
+    const x0s = [16, 228, 440];
+    const y0 = 44;
+    const panels = x0s.map((x0, p) => {
+      const title = el.appendChild(svg('text', { x: x0, y: 28, class: 'ex-text' }));
+      const cells = [];
+      for (let i = 0; i < n; ++i) {
+        cells.push([]);
+        for (let j = 0; j < n; ++j) {
+          const box = el.appendChild(svg('rect', { x: x0 + j * cw + 1, y: y0 + i * ch + 1, width: cw - 2, height: ch - 2, rx: 3, class: 'ex-cell' }));
+          const text = el.appendChild(svg('text', { x: x0 + j * cw + cw / 2, y: y0 + i * ch + ch / 2 + 4, 'text-anchor': 'middle', class: 'ex-tick', 'font-size': 10.5 }));
+          cells[i].push({ box, text });
+        }
+      }
+      const cost = el.appendChild(svg('text', { x: x0, y: y0 + n * ch + 22, class: 'ex-text' }));
+      const status = el.appendChild(svg('text', { x: x0, y: y0 + n * ch + 42, class: 'ex-tick', 'font-size': 11 }));
+      return { title, cells, cost, status, p };
+    });
+    const part = el.appendChild(svg('text', { x: 16, y: 12, class: 'ex-label' }));
+
+    function paint(panel, m, k) {
+      for (let i = 0; i < n; ++i)
+        for (let j = 0; j < n; ++j) {
+          const c = panel.cells[i][j];
+          const v = m.state[i][j];
+          let cls = 'ex-cell';
+          let show = true;
+          if (m.method === 'LU') {
+            if (i < m.step && j >= i) cls = 'ex-cell-on';          // a finished row of U
+            else if (j < Math.min(i, m.step)) cls = 'ex-cell-l';   // multipliers (L)
+          } else if (m.method === 'Cholesky') {
+            if (j > i) show = false;                               // upper triangle unused
+            else if (j < m.step) cls = 'ex-cell-on';               // a finished column of L
+          } else {
+            if (i < m.step && j >= i) cls = 'ex-cell-on';          // a finished row of R
+            else if (j < m.step && i > j) cls = 'ex-cell-l';       // zeroed by a reflection
+          }
+          if (m.method === 'LU' && k > 0 && k <= n && m.pivot && (i === k - 1 || i === m.pivot[k - 1]) && m.pivot[k - 1] !== k - 1 && j >= k - 1) cls = 'ex-cell-new';
+          if (m.failed && i === m.step && j === m.step) cls = 'ex-bad';
+          c.box.setAttribute('class', show ? cls : 'ex-hidden');
+          c.text.textContent = show ? fmt(Math.abs(v) < 1e-12 ? 0 : v, 3) : '';
+        }
+      panel.title.textContent = m.method;
+      panel.cost.textContent = `${m.flops} flops`;
+      panel.status.textContent = m.failed
+        ? `pivot ${fmt(m.failedPivot, 3)} ≤ 0: not SPD, info = ${m.step + 1}`
+        : m.step >= n ? 'done' : `step ${m.step} of ${n}`;
+    }
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 1300,
+      tweenMs: 0,
+      render(f) {
+        const s = factorFrame(model, f);
+        part.textContent = s.part === 'SPD' ? 'SPD matrix' : 'indefinite matrix: A(0,0) = A(1,1) = 0.1';
+        s.methods.forEach((m, p) => paint(panels[p], m, s.k));
+      },
+      label(f) {
+        const s = factorFrame(model, f);
+        const parts = s.methods.map((m) => (m.failed ? `${m.method} failed (pivot ${fmt(m.failedPivot, 3)})` : `${m.method} ${m.flops} flops`));
+        return `${s.part === 'SPD' ? 'SPD' : 'Indefinite'} matrix, after ${s.k} step${s.k === 1 ? '' : 's'}: ${parts.join(', ')}.`;
+      },
+    });
+  });
+</script>
+
+<style is:global>
+  .exfig .ex-cell-l { fill: var(--sl-color-blue-low); stroke: var(--ex-line); stroke-width: 1; }
+  .exfig .ex-hidden { fill: none; stroke: none; }
+</style>

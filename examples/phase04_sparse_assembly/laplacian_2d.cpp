@@ -8,17 +8,23 @@
 //
 // Physics: steady-state heat equation in 2D:
 //   -Laplacian(u) = f on [0,1]^2, u = 0 on boundary
-// Known solution: u(x,y) = sin(pi*x)*sin(pi*y)
+// with f = 1, so every eigenmode of the Laplacian is excited.
 
 #include <mtl/mtl.hpp>
 #include <iostream>
 #include <iomanip>
 #include <cmath>
 #include <numbers>
+#include <vector>
+
+#include "../common/replay.hpp"
+#include "../common/trace.hpp"
 
 using namespace mtl;
 
-int main() {
+int main(int argc, char** argv) {
+    example_trace::trace trace(argc, argv, "4A 2D Laplacian, sparse assembly and GMRES");
+
     std::cout << "=============================================================\n";
     std::cout << " Phase 4A: 2D Laplacian - Sparse Assembly + GMRES\n";
     std::cout << "=============================================================\n\n";
@@ -28,7 +34,6 @@ int main() {
     const std::size_t n = 10;  // 10x10 interior grid
     const std::size_t N = n * n;
     const double h = 1.0 / (n + 1);
-    const double pi = std::numbers::pi;
 
     std::cout << "Grid: " << n << "x" << n << " interior points = " << N << " unknowns\n";
     std::cout << "Grid spacing h = " << h << "\n\n";
@@ -133,6 +138,48 @@ int main() {
               << std::scientific << max_diff << "\n";
     std::cout << "(All solvers converge to the same answer.)\n\n";
 
+    // -- Trace for the docs-site animation (only with --trace <file>) -----
+    if (trace) {
+        trace["n"] = n;
+        trace["N"] = N;
+        trace["nnz"] = A.nnz();
+        trace["tolerance"] = 1.0e-8;
+        // The nonzeros in the order the inserter's rows hold them: row r is
+        // grid point (r % n, r / n), so ten matrix rows fill per grid row.
+        auto nz = example_trace::value::array();
+        const auto& starts = A.ref_major();
+        const auto& cols = A.ref_minor();
+        for (std::size_t r = 0; r < N; ++r)
+            for (auto k = starts[r]; k < starts[r + 1]; ++k)
+                nz.push_back(example_trace::value::numbers(std::vector<std::size_t>{r, cols[k]}));
+        trace["nonzeros"] = nz;
+        auto solvers = example_trace::value::array();
+        auto history = [&](const char* name, int restart, int iterations, int code, auto solve) {
+            auto o = example_trace::value::object();
+            o["name"] = name;
+            o["restart"] = restart;
+            o["iterations"] = iterations;
+            o["code"] = code;
+            auto it = example_trace::value::array(), rs = example_trace::value::array();
+            for (int k = 0; k <= iterations; ++k) {
+                auto x = example_trace::iterate_after(b, k, solve);
+                it.push_back(example_trace::value::numbers(example_trace::to_std(x), 4));
+                rs.push_back(example_trace::value::rounded(example_trace::true_residual(A, x, b), 5));
+            }
+            o["iterates"] = it;
+            o["residual"] = rs;
+            return o;
+        };
+        solvers.push_back(history("GMRES(5)", 5, iter1.iterations(), info1,
+                                  [&](auto& x, auto& it) { itl::gmres(A, x, b, no_pc, it, 5); }));
+        solvers.push_back(history("GMRES(20)", 20, iter2.iterations(), info2,
+                                  [&](auto& x, auto& it) { itl::gmres(A, x, b, no_pc, it, 20); }));
+        solvers.push_back(history("CG", 0, iter3.iterations(), info3,
+                                  [&](auto& x, auto& it) { itl::cg(A, x, b, no_pc, it); }));
+        trace["solvers"] = solvers;
+        trace["max_difference"] = example_trace::value::rounded(max_diff, 3);
+    }
+
     // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. The inserter pattern: create inserter in a scope, fill with\n";
@@ -146,5 +193,5 @@ int main() {
     std::cout << "4. The 5-point stencil gives O(h^2) accuracy. Higher-order\n";
     std::cout << "   stencils (9-point) give O(h^4) but denser matrices.\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

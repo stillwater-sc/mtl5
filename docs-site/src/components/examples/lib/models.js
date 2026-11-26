@@ -166,3 +166,113 @@ export function heatFrame(model, k, t = 1) {
     return { name: r.name, step, u, residual: r.residual[step], converged: k >= r.iterations };
   });
 }
+
+// ── 3B convection-diffusion ───────────────────────────────────────────────
+
+/**
+ * One run per epsilon. Frame k is step k of both solvers: CG is replayed for
+ * as many steps as the trace holds (it runs to the 500-step cap), BiCGSTAB
+ * until it converges, then rests.
+ */
+export function convectionModel(trace) {
+  const runs = trace.runs.map((r) => {
+    const [cg, bicgstab] = r.solvers;
+    return { ...r, cg, bicgstab, count: cg.iterates.length };
+  });
+  return { x: trace.x, tolerance: trace.tolerance, runs };
+}
+
+/** Each solver's iterate and residual at step k of a run, tweened from k - 1. */
+export function convectionFrame(run, k, t = 1) {
+  return [run.cg, run.bicgstab].map((s) => {
+    const last = s.iterates.length - 1;
+    const step = Math.min(k, last);
+    const moving = k > 0 && k <= last;
+    const u = moving ? lerpArray(s.iterates[step - 1], s.iterates[step], t) : s.iterates[step];
+    return { name: s.name, step, u, residual: s.residual[step], done: k >= last };
+  });
+}
+
+// ── 4A 2D Laplacian ───────────────────────────────────────────────────────
+
+/**
+ * Frames: the inserter filling the matrix one grid row (n matrix rows) at a
+ * time, then the three solvers step by step, each resting once converged.
+ */
+export function laplacianModel(trace) {
+  const assembly = trace.n;   // one frame per grid row
+  const steps = Math.max(...trace.solvers.map((s) => s.iterations)) + 1;
+  return { ...trace, assembly, steps, count: assembly + steps };
+}
+
+/** The frame's phase: assembly (rows filled so far) or solve (step k). */
+export function laplacianFrame(model, f, t = 1) {
+  if (f < model.assembly) {
+    const rows = (f + 1) * model.n;
+    const filled = model.nonzeros.filter(([r]) => r < rows).length;
+    return { phase: 'assembly', rows, filled };
+  }
+  const k = f - model.assembly;
+  const solvers = model.solvers.map((s) => {
+    const step = Math.min(k, s.iterations);
+    const moving = k > 0 && k <= s.iterations;
+    const u = moving ? lerpArray(s.iterates[step - 1], s.iterates[step], t) : s.iterates[step];
+    return { name: s.name, step, u, residual: s.residual[step], done: k >= s.iterations };
+  });
+  return { phase: 'solve', step: k, solvers };
+}
+
+// ── 4B smoothers ──────────────────────────────────────────────────────────
+
+/** Frame k is sweep k of every method and of the smoothing experiment. */
+export function smootherModel(trace) {
+  return { ...trace, count: trace.sweeps + 1 };
+}
+
+/** The amplitude of sine mode `mode` in a grid function e on x = (i+1)h. */
+export function modeAmplitude(e, mode) {
+  const n = e.length;
+  let a = 0;
+  for (let i = 0; i < n; ++i) a += e[i] * Math.sin((mode * Math.PI * (i + 1)) / (n + 1));
+  return (2 * a) / (n + 1);
+}
+
+/** Error profiles at sweep k, tweened from k - 1. */
+export function smootherFrame(model, k, t = 1) {
+  const pick = (s) => (k > 0 ? lerpArray(s.errors[k - 1], s.errors[k], t) : s.errors[0]);
+  return { jacobi: pick(model.smoothing.jacobi), gaussSeidel: pick(model.smoothing.gauss_seidel) };
+}
+
+// ── 5A least squares ──────────────────────────────────────────────────────
+
+/** Frame per polynomial degree. */
+export function leastSquaresModel(trace) {
+  return { ...trace, count: trace.fits.length };
+}
+
+// ── 5B three factorizations ───────────────────────────────────────────────
+
+/**
+ * Frames: for each part (SPD, then indefinite), the states after 0..n steps.
+ * A method that stopped early (Cholesky on the indefinite matrix) holds its
+ * last state and is marked failed from the step it could not take.
+ */
+export function factorModel(trace) {
+  const frames = [];
+  for (const part of trace.parts) {
+    for (let k = 0; k <= trace.n; ++k) frames.push({ part, k });
+  }
+  return { n: trace.n, frames, count: frames.length, flopsByN: trace.flops_by_n };
+}
+
+/** Each method's state, cost and status at a frame. */
+export function factorFrame(model, f) {
+  const { part, k } = model.frames[f];
+  const methods = part.methods.map((m) => {
+    const last = m.states.length - 1;
+    const step = Math.min(k, last);
+    const failed = m.info !== 0 && k > last;
+    return { method: m.method, step, state: m.states[step], flops: m.flops[step], failed, failedPivot: m.failed_pivot, pivot: m.pivot };
+  });
+  return { part: part.name, k, matrix: part.matrix, methods };
+}
