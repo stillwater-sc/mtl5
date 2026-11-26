@@ -13,6 +13,7 @@ import LaplacianGrid from '../../../components/examples/LaplacianGrid.astro';
 import SmootherConvergence from '../../../components/examples/SmootherConvergence.astro';
 import LeastSquares from '../../../components/examples/LeastSquares.astro';
 import ThreeWays from '../../../components/examples/ThreeWays.astro';
+import HilbertSweep from '../../../components/examples/HilbertSweep.astro';
 import VibratingString from '../../../components/examples/VibratingString.astro';
 import PcaSvd from '../../../components/examples/PcaSvd.astro';
 import SparseFormats from '../../../components/examples/SparseFormats.astro';
@@ -246,21 +247,26 @@ Program: `examples/phase05_dense_decompositions/least_squares_qr.cpp`
 ### Example 5B: Solving Ax=b Three Ways: LU vs Cholesky vs QR
 
   Numerical goal: Given a well-conditioned SPD system, solve it using LU (general), Cholesky (SPD-exploiting), and QR (orthogonal). Compare operation counts,
-   accuracy, and applicability. Then show a non-SPD system where Cholesky fails but LU/QR work.
+   accuracy, and applicability. Then show a non-SPD system where Cholesky fails but LU/QR work, and sweep the Hilbert matrix, where the
+   explicit inverse loses to all three factorizations. The test matrices come from MTL5's generators: `lehmer`, `wilkinson`, `hilbert`
+   and `laplacian_1d`.
 
   Directly addresses the "which factorization when?" question from Golub & Van Loan Chapter 3-5. We build intuition for the
   factorization decision tree that every practicing numerical analyst uses.
 
   MTL5 features demonstrated:
   - lu_factor() + lu_solve() (with partial pivoting)
-  - cholesky() + triangular solvers
+  - cholesky_factor() + cholesky_solve()
   - qr_factor() + qr_solve()
   - inv() as the "never do this in practice" baseline
+  - condition_number() and eigenvalue_symmetric() to show why each matrix behaves as it does
   - ILU(0) and IC(0) as approximate factorizations for preconditioning preview
 
 Program: `examples/phase05_dense_decompositions/solve_three_ways.cpp`
 
 <ThreeWays />
+
+<HilbertSweep />
 
 ---
 

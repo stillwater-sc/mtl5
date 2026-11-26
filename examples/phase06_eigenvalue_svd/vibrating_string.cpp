@@ -173,8 +173,30 @@ int main(int argc, char** argv) {
                   << std::setw(16) << eigs_gen(k).imag() << "\n";
     }
 
-    std::cout << "\nOne asymmetric entry is not enough: these eigenvalues are still real.\n";
-    std::cout << "Make the whole operator lopsided instead, as convection does (example 3B):\n";
+    std::cout << "\nOne asymmetric entry of 0.5 is not enough: these eigenvalues are still real.\n";
+    // Expanding along row 0, the corner entry s adds s times its cofactor to
+    // the characteristic polynomial, and that cofactor is the product of the
+    // three -1 subdiagonal entries times (-1)^(0+3), which is 1. With
+    // mu = lambda - 2: det(B - lambda I) = mu^4 - 3 mu^2 + 1 + s. The quartic
+    // is even in mu, with both minima at mu^2 = 3/2 and value -5/4, so the
+    // roots are real exactly when -1 <= s <= 5/4, and at s = 5/4 both pairs
+    // meet at once (issue 938).
+    std::cout << "For this 4 x 4 matrix, det(B - lambda I) = mu^4 - 3 mu^2 + 1 + s, with\n";
+    std::cout << "mu = lambda - 2 and s = B(0,3). The roots are real exactly for -1 <= s <= 5/4:\n";
+    std::cout << std::setw(8) << "s" << std::setw(18) << "max |Im lambda|" << "\n";
+    for (double s_corner : {0.5, 1.0, 1.25, 1.3, 2.0}) {
+        mat::dense2D<double> Bs(B);
+        Bs(0, n2d - 1) = s_corner;
+        auto ev = eigenvalue(Bs);
+        double im = 0.0;
+        for (std::size_t k = 0; k < ev.size(); ++k) im = std::max(im, std::abs(ev(k).imag()));
+        std::cout << std::fixed << std::setprecision(2) << std::setw(8) << s_corner << std::scientific
+                  << std::setprecision(3) << std::setw(18) << im << "\n";
+    }
+    std::cout << "(At s = 5/4 the eigenvalues are double, 2 +- sqrt(3/2); rounding splits\n";
+    std::cout << "a double root by about sqrt(eps), so its imaginary part need not be 0.)\n\n";
+    std::cout << "A large corner entry is one way to leave the real axis. The other is to\n";
+    std::cout << "make the whole operator lopsided, as convection does (example 3B):\n";
     std::cout << "subdiagonal -(1+d), superdiagonal -(1-d). The eigenvalues are\n";
     std::cout << "2 - 2 sqrt(1 - d^2) cos(k pi / (n+1)): real for d < 1, complex for d > 1.\n\n";
     std::cout << std::setw(8) << "d" << std::setw(18) << "max |Im lambda|" << std::setw(18)
