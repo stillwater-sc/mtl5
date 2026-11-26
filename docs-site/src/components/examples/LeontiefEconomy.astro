@@ -1,0 +1,108 @@
+---
+// 1A: rounds of production filling each sector's gross output, x = d + A d
+// + A^2 d + ..., and the residual of (I - A) x = d falling round by round.
+// Data: examples/phase01_core_types/leontief_economy.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/leontief_economy.json';
+import traceUrl from '../../data/traces/leontief_economy.json?url';
+import { fmt } from './lib/plot.js';
+
+const rounds = trace.rounds.length - 1;
+const ratio = trace.residual[2] / trace.residual[1];
+const sum = (v: number[]) => v.reduce((a, b) => a + b, 0);
+const mining = trace.sectors.indexOf('Mining');
+---
+
+<AnimationShell
+  kind="leontief"
+  trace={traceUrl}
+  title="Rounds of production"
+  label="Bar chart of five sectors' gross output growing round by round as indirect demand is added, with the residual on a log axis."
+  height={250}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>final demand d</span>
+    <span><i style="background: var(--ex-c2)"></i>inputs made for other sectors</span>
+    <span><i style="background: var(--ex-line)"></i>converged x</span>
+  </div>
+  <p>
+    Each bar is a sector's gross output. Round 0 delivers the final demand d; round k adds Aᵏd, the
+    inputs that the previous round used up. The dashed outline is the converged output. The small plot
+    is the residual ‖d − (I − A)x‖ / ‖d‖ after each round.
+  </p>
+  <p>
+    The residual shrinks by a factor of about {fmt(ratio, 2)} per round, and {rounds} rounds reach
+    {fmt(trace.tolerance)}. Every column of A sums to at most {fmt(trace.max_column_sum, 2)}. Total
+    output is {fmt(sum(trace.output), 4)} for a final demand of {fmt(sum(trace.demand), 4)}, so the
+    economy-wide multiplier is {fmt(trace.multiplier, 3)}. Mining has the largest multiplier,
+    {fmt(trace.output[mining] / trace.demand[mining], 3)}: consumers buy little of it, but the other
+    sectors use a lot.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { leontiefModel, leontiefFrame } from './lib/models.js';
+  import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, linePath, drawAxes, svg, clear, fmt, fmtPow10 } from './lib/plot.js';
+
+  mountAll('[data-ex="leontief"]', (root, trace) => {
+    const model = leontiefModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+
+    const bars = { left: 110, right: 420, top: 22, bottom: 212 };
+    const res = { left: 492, right: 630, top: 22, bottom: 212 };
+    const n = model.sectors.length;
+    const sx = scaleLinear([0, model.maxOutput * 1.08], [bars.left, bars.right]);
+    const rowH = (bars.bottom - bars.top) / n;
+    const barH = rowH * 0.58;
+    const kx = scaleLinear([0, model.count - 1], [res.left, res.right]);
+    const rDom = logDomain(model.residual);
+    const ry = scaleLog(rDom, [res.bottom, res.top]);
+
+    const axes = svg('g');
+    drawAxes(axes, { ...bars, top: bars.top - 4 }, sx, () => 0, { xTicks: niceTicks([0, model.maxOutput], 4), xLabel: 'gross output (billions)' });
+    drawAxes(axes, res, kx, ry, { xTicks: niceTicks([0, model.count - 1], 3), yTicks: logTicks(rDom, 5), yFmt: fmtPow10, xLabel: 'round', yLabel: 'residual' });
+    el.append(axes);
+
+    const demand = [];
+    const indirect = [];
+    const labels = [];
+    for (let i = 0; i < n; ++i) {
+      const y = bars.top + i * rowH + (rowH - barH) / 2;
+      el.append(svg('text', { x: bars.left - 8, y: y + barH / 2 + 4, 'text-anchor': 'end', class: 'ex-text' }, model.sectors[i]));
+      el.append(svg('rect', { x: bars.left, y, width: sx(model.final[i]) - bars.left, height: barH, class: 'ex-ghost' }));
+      demand.push(el.appendChild(svg('rect', { x: bars.left, y, height: barH, class: 'ex-fill1' })));
+      indirect.push(el.appendChild(svg('rect', { y, height: barH, class: 'ex-fill2' })));
+      labels.push(el.appendChild(svg('text', { y: y + barH / 2 + 4, class: 'ex-tick' })));
+    }
+    const hist = el.appendChild(svg('path', { class: 'ex-series ex-c1', 'stroke-width': 1.5 }));
+    const dot = el.appendChild(svg('circle', { r: 3.5, class: 'ex-fill1' }));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 450,
+      tweenMs: 300,
+      render(k, t) {
+        const { output, residual } = leontiefFrame(model, k, t);
+        for (let i = 0; i < n; ++i) {
+          const d = Math.min(model.demand[i], output[i]);
+          demand[i].setAttribute('width', sx(d) - bars.left);
+          indirect[i].setAttribute('x', sx(d));
+          indirect[i].setAttribute('width', Math.max(0, sx(output[i]) - sx(d)));
+          labels[i].setAttribute('x', sx(Math.max(output[i], model.final[i])) + 6);
+          labels[i].textContent = fmt(output[i], 4);
+        }
+        const ks = Array.from({ length: k + 1 }, (_, j) => j);
+        hist.setAttribute('d', linePath(ks, model.residual.slice(0, k + 1), kx, ry));
+        dot.setAttribute('cx', kx(k));
+        dot.setAttribute('cy', ry(residual));
+      },
+      label(k) {
+        const total = model.cumulative[k].reduce((a, b) => a + b, 0);
+        const what = k === 0 ? 'final demand only' : `demand plus ${k} round${k > 1 ? 's' : ''} of inputs`;
+        return `Round ${k}: ${what}, total output ${fmt(total, 4)}, residual ${fmt(model.residual[k])}.`;
+      },
+    });
+  });
+</script>

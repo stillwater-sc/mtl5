@@ -1,7 +1,125 @@
-# Pedagogical examples 
+---
+title: Pedagogical examples
+description: Two examples per phase, each built on a historical numerical problem, with animations that replay the numbers MTL5 computes.
+---
 
-Here are 2 pedagogical example proposals per phase (Phases 3 through 7). Each example is grounded in an 
-historical numerical problem that showcases the MTL5 functionality introduced in that phase.
+import LeontiefEconomy from '../../../components/examples/LeontiefEconomy.astro';
+import KirchhoffBridge from '../../../components/examples/KirchhoffBridge.astro';
+import DurerSquare from '../../../components/examples/DurerSquare.astro';
+import BandwidthReduction from '../../../components/examples/BandwidthReduction.astro';
+import HeatEquation from '../../../components/examples/HeatEquation.astro';
+
+{/*
+  Source: docs/site/modernization/examples.mdx, copied verbatim by
+  docs-site/sync-content.mjs. The animations are in
+  docs-site/src/components/examples/; each replays a trace that its example
+  program writes with --trace (docs-site/src/data/traces/, refreshed by
+  tools/regen_example_traces.sh), and docs-site/tests/ checks what they draw
+  against those traces.
+*/}
+
+Here are two pedagogical examples per phase, from Phase 1 through Phase 7, as a gentle and progressive
+introduction to MTL5. Each example is grounded in a historical numerical problem that showcases the
+MTL5 functionality introduced in that phase. The programs are in `examples/`, one directory per phase.
+
+Where an example has an animation, it replays the numbers the example program computes: the program
+writes them with `--trace <file>`, and the page draws them. Each animation has play, step and scrub
+controls, and with reduced motion it rests on its final frame.
+
+---
+## Phase 1: Containers (dense2D, dense_vector, compressed2D, the Inserter)
+
+### Example 1A: Leontief's Input-Output Economy
+
+Numerical goal: Find the gross output x that each sector of an economy must produce so that, after
+supplying what the other sectors consume, the final demand d is left over: x = d + Ax, or (I − A)x = d.
+The example solves it the way Leontief explained it, as rounds of production, x = d + Ad + A²d + ...
+
+Wassily Leontief built input-output tables of the American economy for 1919 and 1929 ("The Structure
+of American Economy", 1941), and they won him the 1973 Nobel prize in economics. The rounds of
+production are the first iterative method most readers meet: each round needs only a matrix-vector
+product, and it converges because every column of A sums to less than one.
+
+MTL5 features demonstrated:
+
+  - dense2D and dense_vector from initializer lists
+  - element access A(i, j), num_rows(), num_cols(), size()
+  - value semantics: a copy is a deep copy
+  - the same matrix in row-major and column-major storage
+  - A * v and += as the only operations the rounds need
+
+Program: `examples/phase01_core_types/leontief_economy.cpp`
+
+<LeontiefEconomy />
+
+### Example 1B: Kirchhoff's Laws and the Wheatstone Bridge
+
+Numerical goal: Assemble the conductance matrix L of a resistor network, so that Kirchhoff's current
+law reads L v = i for the node voltages v. Each resistor adds a 2 × 2 "stamp" to L, and the matrix is
+the sum of its stamps.
+
+Gustav Kirchhoff stated his circuit laws in 1845. The network is the Wheatstone bridge, which Samuel
+Christie invented in 1833 and Charles Wheatstone made famous in 1843 for measuring an unknown
+resistance. Summing stamps is how every circuit simulator and finite element code assembles its
+matrix, and the bridge is small enough to show every entry.
+
+MTL5 features demonstrated:
+
+  - compressed2D assembled with an inserter and update_plus, so repeated stamps add up
+  - a second inserter amending the finished matrix
+  - the CRS arrays behind it: ref_major(), ref_minor(), ref_data()
+  - sparse against dense storage as the network grows to a 64 × 64 mesh
+
+Program: `examples/phase01_core_types/kirchhoff_network.cpp`
+
+<KirchhoffBridge />
+
+---
+## Phase 2: Views and Permutations (trans, mapped, permutation_matrix, reorder)
+
+### Example 2A: Dürer's Magic Square, Through Views
+
+Numerical goal: Verify the claims of the magic square in Dürer's engraving Melencolia I (1514):
+every row, column and diagonal sums to 34, and so do the quadrants, the centre block and the four
+corners. Then find which rearrangements of the square keep it magic.
+
+A 4 × 4 square is small enough to see every cell, and checking its sums needs exactly the operations
+views provide: a column is a row of the transpose, a quadrant or the four corners are sub-matrices,
+and the anti-diagonal is the diagonal of the row-reversed square. None of them copies an element.
+
+MTL5 features demonstrated:
+
+  - trans(M) as a transposed view
+  - mapped(M, rows, cols) for contiguous and scattered sub-matrices
+  - permutation_matrix: P * M reorders rows; reorder(M, p) is P M Pᵀ
+  - views are live: they read the matrix as it is now
+  - one generic is_magic() that takes the matrix and every view of it
+
+Program: `examples/phase02_views_permutations/durer_magic_square.cpp`
+
+<DurerSquare />
+
+### Example 2B: Cuthill-McKee: Renumbering a Mesh
+
+Numerical goal: Take the matrix of a 12 × 12 grid whose nodes were numbered in a scrambled order, and
+find a numbering that brings its nonzeros back next to the diagonal. Measure the bandwidth and the
+profile before and after.
+
+Elizabeth Cuthill and James McKee (1969) proposed numbering the nodes breadth-first from a corner, so
+that neighbours get nearby numbers. Alan George (1971) found that reversing the order (Reverse
+Cuthill-McKee) also reduces fill in a later factorization. Renumbering is a permutation, applied to
+rows and columns together.
+
+MTL5 features demonstrated:
+
+  - permutation vectors p[new] = old: invert_permutation, compose_permutations, is_valid_permutation
+  - sparse::util::symmetric_permute for B = P A Pᵀ
+  - mapped(A, p, p) as the same matrix without building it
+  - sparse::ordering::rcm on the scrambled matrix
+
+Program: `examples/phase02_views_permutations/bandwidth_reduction.cpp`
+
+<BandwidthReduction />
 
 ---
 ## Phase 3: Basic Iterative Solvers (CG, BiCGSTAB, Iteration Control, Preconditioners)
@@ -21,6 +139,10 @@ MTL5 features demonstrated:
   - itl::cg() with noisy_iteration to watch convergence
   - itl::pc::diagonal preconditioner vs itl::pc::identity (no preconditioner)
   - Comparison: how many iterations with/without diagonal preconditioning
+
+Program: `examples/phase03_iterative_solvers/heat_equation_1d.cpp`
+
+<HeatEquation />
 
 ### Example 3B: Convection-Diffusion: When Symmetry Breaks
 
@@ -65,7 +187,7 @@ MTL5 features demonstrated:
 ### Example 4B: Stationary Iteration: Smoothers as Standalone Solvers
 
   Numerical goal: Solve a small diagonally-dominant system using classical iterative methods (Jacobi, Gauss-Seidel, SOR) and study convergence rates.
-  Demonstrates the spectral radius concept: Jacobi < Gauss-Seidel < SOR(optimal omega).
+  Demonstrates the spectral radius concept: Jacobi &lt; Gauss-Seidel &lt; SOR(optimal omega).
 
   Directly from Golub & Van Loan, Chapter 10, and Saad, Chapter 4. We see that smoothers are solvers, albeit slow ones, motivating why
   they're used as building blocks in multigrid. The SOR omega sweep is a classic homework exercise made interactive.

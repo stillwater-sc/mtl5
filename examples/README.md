@@ -2,6 +2,20 @@
 
 A progressive tutorial through the Matrix Template Library, organized by implementation phase. Each phase builds on the previous ones, introducing new types, operations, and solver techniques. Start at Phase 1 and work forward, or jump directly to the phase that matches your interest.
 
+## Animations and traces
+
+Examples 1A, 1B, 2A, 2B and 3A have animations on the docs site's
+[pedagogical examples page](../docs/site/modernization/examples.mdx). Each program
+accepts `--trace <file>` and writes the numbers it computed as JSON (see
+`common/trace.hpp`); without the flag its output is unchanged. After a change that
+moves those numbers, refresh the committed traces with
+
+```bash
+tools/regen_example_traces.sh build
+```
+
+and run `npm test` in `docs-site/`.
+
 ## Building
 
 ```bash
@@ -35,6 +49,8 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 |---------|-------------|
 | `vectors_and_matrices.cpp` | Dense/sparse construction, element access, inserter pattern, math identities |
 | `concepts_and_traits.cpp` | Concept hierarchy, category traits, mixed-type expressions, custom number types |
+| `leontief_economy.cpp` | Example 1A: Leontief's input-output economy solved as rounds of production; initializer lists, value semantics, row- and column-major storage |
+| `kirchhoff_network.cpp` | Example 1B: a Wheatstone bridge's conductance matrix assembled from Kirchhoff stamps; `update_plus`, amending inserters, the CRS arrays |
 
 ---
 
@@ -46,6 +62,17 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 |---------|-------------|
 | `norms_and_products.cpp` | Vector norms, dot products, dense/sparse matvec, element-wise ops, transposed multiply |
 | `matrix_arithmetic.cpp` | Matrix add/subtract, scalar scaling, matrix-matrix multiply, trace, diagonal, dense-sparse consistency |
+
+---
+
+## phase02_views_permutations/
+
+**Views and permutations.** Matrices that present part of another matrix, or a rearrangement of it, without copying an element: `trans()`, `mapped()` for any sub-matrix, `permutation_matrix`, `reorder()` and the sparse permutation utilities. Pedagogical examples 2A and 2B of the [examples page](../docs/site/modernization/examples.mdx).
+
+| Example | Description |
+|---------|-------------|
+| `durer_magic_square.cpp` | Example 2A: the sums of Durer's 1514 magic square read through views; which permutations keep it magic |
+| `bandwidth_reduction.cpp` | Example 2B: Cuthill-McKee renumbering of a scrambled grid; permutation vectors, `symmetric_permute`, `mapped(A, p, p)`, bandwidth and profile |
 
 ---
 

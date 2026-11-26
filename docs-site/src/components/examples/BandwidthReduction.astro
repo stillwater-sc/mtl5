@@ -1,0 +1,98 @@
+---
+// 2B: one grid Laplacian under three numberings. Every nonzero slides to its
+// position under the next numbering, and the band |i - j| <= bandwidth is
+// shaded. Data: examples/phase02_views_permutations/bandwidth_reduction.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/bandwidth_reduction.json';
+import traceUrl from '../../data/traces/bandwidth_reduction.json?url';
+
+const by = Object.fromEntries(trace.orderings.map((o: { name: string }) => [o.name, o]));
+---
+
+<AnimationShell
+  kind="bandwidth"
+  trace={traceUrl}
+  title="Renumbering a mesh"
+  label="Spy plot of a 144-unknown grid Laplacian whose nonzeros slide between three numberings, beside the grid coloured by node number."
+  height={312}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>nonzero</span>
+    <span><i style="background: var(--sl-color-accent); opacity: 0.35"></i>the band |i − j| ≤ bandwidth</span>
+  </div>
+  <p>
+    Left: the {trace.n} × {trace.n} matrix of a {trace.m} × {trace.m} grid, one dot per nonzero. Right:
+    the grid, each node shaded by its number, from faint (0) to full colour ({trace.n - 1}). The frames are
+    the same matrix under three numberings: row by row, a shuffle such as a mesh generator might
+    produce, and reverse Cuthill-McKee computed from the shuffled matrix alone.
+  </p>
+  <p>
+    Bandwidth max |i − j|: {by.natural.bandwidth} row by row, {by.shuffled.bandwidth} shuffled,
+    {by.rcm.bandwidth} after RCM. The profile, the entries a skyline solver stores, is
+    {by.natural.profile}, {by.shuffled.profile} and {by.rcm.profile}. RCM's numbering spreads from a
+    corner of the grid in diagonal wavefronts, the breadth-first levels of the matrix's graph.
+    <code>symmetric_permute(A, p)</code> and the view <code>mapped(A, p, p)</code> agree on every entry:
+    {trace.views_agree ? 'yes' : 'no'}.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { bandwidthModel, bandwidthFrame } from './lib/models.js';
+  import { scaleLinear, svg, clear, ease } from './lib/plot.js';
+
+  const NAMES = { natural: 'row by row', shuffled: 'mesh generator (shuffled)', rcm: 'reverse Cuthill-McKee' };
+
+  mountAll('[data-ex="bandwidth"]', (root, trace) => {
+    const model = bandwidthModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+
+    const spy = { left: 20, top: 20, size: 260 };
+    const s = scaleLinear([0, model.n], [0, spy.size]);
+    el.append(svg('rect', { x: spy.left, y: spy.top, width: spy.size, height: spy.size, class: 'ex-cell' }));
+    const band = el.appendChild(svg('polygon', { fill: 'var(--sl-color-accent)', 'fill-opacity': 0.2 }));
+    const dots = model.nonzeros.map(() => el.appendChild(svg('rect', { width: 2.4, height: 2.4, class: 'ex-fill1' })));
+
+    const grid = { left: 330, top: 20, cell: 260 / model.m };
+    const nodes = [];
+    for (let k = 0; k < model.n; ++k) {
+      const r = Math.floor(k / model.m);
+      const c = k % model.m;
+      nodes.push(el.appendChild(svg('rect', { x: grid.left + c * grid.cell + 0.5, y: grid.top + r * grid.cell + 0.5, width: grid.cell - 1, height: grid.cell - 1, class: 'ex-fill1' })));
+    }
+    const title = el.appendChild(svg('text', { x: 20, y: 305, class: 'ex-text' }));
+    const stats = el.appendChild(svg('text', { x: 330, y: 305, class: 'ex-tick', 'font-size': 11 }));
+
+    function setBand(bw) {
+      const L = spy.left;
+      const T = spy.top;
+      const z = spy.size;
+      const w = Math.min(z, s(bw + 0.5));
+      band.setAttribute('points', [[L, T], [L + w, T], [L + z, T + z - w], [L + z, T + z], [L + z - w, T + z], [L, T + w]].map((p) => p.join(',')).join(' '));
+    }
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 2600,
+      tweenMs: 1600,
+      render(k, t) {
+        const e = ease(t);
+        const { indexOf, ordering } = bandwidthFrame(model, k, e);
+        model.nonzeros.forEach(([i, j], q) => {
+          dots[q].setAttribute('x', spy.left + s(indexOf[j]) + 0.2);
+          dots[q].setAttribute('y', spy.top + s(indexOf[i]) + 0.2);
+        });
+        const prevBw = model.orderings[Math.max(0, k - 1)].bandwidth;
+        setBand(k === 0 ? ordering.bandwidth : prevBw + (ordering.bandwidth - prevBw) * e);
+        indexOf.forEach((idx, node) => nodes[node].setAttribute('fill-opacity', (0.08 + 0.92 * (idx / (model.n - 1))).toFixed(3)));
+        title.textContent = NAMES[ordering.name] ?? ordering.name;
+        stats.textContent = `bandwidth ${ordering.bandwidth} · profile ${ordering.profile}`;
+      },
+      label(k) {
+        const o = model.orderings[k];
+        return `${NAMES[o.name] ?? o.name}: bandwidth ${o.bandwidth}, profile ${o.profile}.`;
+      },
+    });
+  });
+</script>

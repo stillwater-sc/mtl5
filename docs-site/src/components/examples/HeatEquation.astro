@@ -1,0 +1,108 @@
+---
+// 3A: CG's iterates settling onto the steady-state temperature of the rod,
+// with and without the diagonal preconditioner, and their true residuals.
+// Data: examples/phase03_iterative_solvers/heat_equation_1d.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/heat_equation_1d.json';
+import traceUrl from '../../data/traces/heat_equation_1d.json?url';
+import { fmt } from './lib/plot.js';
+
+const [plain, jacobi] = trace.runs;
+const peak = (r) => Math.max(...r.residual);
+const last = jacobi.residual[jacobi.iterations];
+const before = jacobi.residual[jacobi.iterations - 10];
+const profile = jacobi.iterates[jacobi.iterations];
+const hottest = trace.x[profile.indexOf(Math.max(...profile))];
+---
+
+<AnimationShell
+  kind="heat"
+  trace={traceUrl}
+  title="CG on the rod, step by step"
+  label="Two CG runs on the 1D heat equation: the temperature profile u(x) after each step, and the residual on a log axis."
+  height={290}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>no preconditioner</span>
+    <span><i style="background: var(--ex-c2)"></i>diagonal (Jacobi)</span>
+    <span><i style="background: var(--ex-line)"></i>converged profile</span>
+  </div>
+  <p>
+    Left: the temperature u(x) along the rod after each CG step, starting from u = 0. The conductivity
+    rises from 1 at the left end to 100 at the right, so heat leaves the left half slowly and the
+    hottest point sits at x ≈ {fmt(hottest, 2)}, not in the middle. Right: the true residual
+    ‖b − A u‖ / ‖b‖ of each run, on a log axis.
+  </p>
+  <p>
+    Without a preconditioner CG takes <strong>{plain.iterations}</strong> steps to reach
+    {fmt(trace.tolerance)}; with diag(A) as the preconditioner it takes <strong>{jacobi.iterations}</strong>.
+    There are n = {trace.n} unknowns, and the diagonal varies by a factor of {fmt(trace.diagonal_ratio)}.
+    The two answers differ by {fmt(trace.max_difference)}. Neither residual falls steadily: they rise to
+    {fmt(peak(plain), 2)} and {fmt(peak(jacobi), 2)} times their starting value first, because CG
+    minimizes the error in the A-norm, not the residual. The preconditioned run is still at
+    {fmt(before, 2)} ten steps before the end, then reaches {fmt(last, 2)} at step n = {trace.n}, as CG
+    does in exact arithmetic.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { heatModel, heatFrame } from './lib/models.js';
+  import { scaleLinear, scaleLog, logDomain, logTicks, niceTicks, extent, linePath, drawAxes, svg, clear, fmt, fmtPow10 } from './lib/plot.js';
+
+  mountAll('[data-ex="heat"]', (root, trace) => {
+    const model = heatModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+
+    const left = { left: 46, right: 300, top: 24, bottom: 250 };
+    const right = { left: 384, right: 630, top: 24, bottom: 250 };
+    const final = model.runs[1].iterates[model.runs[1].iterations];
+    const uMax = extent(model.runs.flatMap((r) => r.iterates.flat()))[1];
+    const sx = scaleLinear([0, 1], [left.left, left.right]);
+    const sy = scaleLinear([0, uMax * 1.05], [left.bottom, left.top]);
+    const kx = scaleLinear([0, model.count - 1], [right.left, right.right]);
+    const rDom = logDomain(model.runs.flatMap((r) => r.residual));
+    const ry = scaleLog(rDom, [right.bottom, right.top]);
+
+    const axes = svg('g');
+    drawAxes(axes, left, sx, sy, { xTicks: niceTicks([0, 1], 5), yTicks: niceTicks([0, uMax], 4), xLabel: 'x along the rod', yLabel: 'u(x)' });
+    drawAxes(axes, right, kx, ry, { xTicks: niceTicks([0, model.count - 1], 5), yTicks: logTicks(rDom, 6), yFmt: fmtPow10, xLabel: 'CG step k', yLabel: '‖b − A u‖ / ‖b‖' });
+    el.append(axes);
+    el.append(svg('path', { d: linePath(model.x, final, sx, sy), class: 'ex-ghost' }));
+    const tolY = ry(model.tolerance);
+    el.append(svg('line', { x1: right.left, x2: right.right, y1: tolY, y2: tolY, class: 'ex-cursor' }));
+    el.append(svg('text', { x: right.right, y: tolY - 4, 'text-anchor': 'end', class: 'ex-tick' }, 'tolerance'));
+
+    const cls = ['ex-c1', 'ex-c2'];
+    const fills = ['ex-fill1', 'ex-fill2'];
+    const profiles = model.runs.map((_, i) => el.appendChild(svg('path', { class: `ex-series ${cls[i]}` })));
+    const histories = model.runs.map((_, i) => el.appendChild(svg('path', { class: `ex-series ${cls[i]}`, 'stroke-width': 1.5 })));
+    const dots = model.runs.map((_, i) => el.appendChild(svg('circle', { r: 3.5, class: fills[i] })));
+    const cursor = el.appendChild(svg('line', { y1: right.top, y2: right.bottom, class: 'ex-cursor' }));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 110,
+      tweenMs: 90,
+      render(k, t) {
+        const state = heatFrame(model, k, t);
+        state.forEach((s, i) => {
+          profiles[i].setAttribute('d', linePath(model.x, s.u, sx, sy));
+          const r = model.runs[i];
+          const ks = Array.from({ length: s.step + 1 }, (_, j) => j);
+          histories[i].setAttribute('d', linePath(ks, r.residual.slice(0, s.step + 1), kx, ry));
+          dots[i].setAttribute('cx', kx(s.step));
+          dots[i].setAttribute('cy', ry(s.residual));
+        });
+        cursor.setAttribute('x1', kx(k));
+        cursor.setAttribute('x2', kx(k));
+      },
+      label(k) {
+        const s = heatFrame(model, k);
+        const part = (x, name) => `${name} ${x.converged ? `converged at step ${x.step}` : `residual ${fmt(x.residual)}`}`;
+        return `Step ${k}: ${part(s[0], 'no preconditioner')}; ${part(s[1], 'diagonal')}.`;
+      },
+    });
+  });
+</script>

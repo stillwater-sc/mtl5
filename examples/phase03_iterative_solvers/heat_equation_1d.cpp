@@ -15,10 +15,61 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <string>
+
+#include "../common/trace.hpp"
 
 using namespace mtl;
 
-int main() {
+namespace {
+
+// The CG iterate after exactly k steps from x0 = 0: a run capped at k
+// iterations follows the same recurrence as the full run, so its x is the
+// full run's x_k. Used only for the --trace output.
+template <typename Matrix, typename PC>
+vec::dense_vector<double> cg_iterate(const Matrix& A, const vec::dense_vector<double>& b,
+                                     const PC& M, int k) {
+    vec::dense_vector<double> x(b.size(), 0.0);
+    if (k == 0) return x;
+    itl::basic_iteration<double> it(b, k, 0.0);
+    itl::cg(A, x, b, M, it);
+    return x;
+}
+
+double true_residual(const mat::dense2D<double>& A, const vec::dense_vector<double>& x,
+                     const vec::dense_vector<double>& b) {
+    vec::dense_vector<double> r(b - A * x);
+    return two_norm(r) / two_norm(b);
+}
+
+// One solver's history: the iterate and the true relative residual
+// ||b - A x_k|| / ||b|| at every step k = 0 .. iterations.
+template <typename PC>
+example_trace::value cg_history(const char* name, const mat::dense2D<double>& A,
+                                const vec::dense_vector<double>& b, const PC& M,
+                                int iterations) {
+    auto h = example_trace::value::object();
+    h["name"] = name;
+    h["iterations"] = iterations;
+    auto& frames = h["iterates"];
+    auto& resid = h["residual"];
+    frames = example_trace::value::array();
+    resid = example_trace::value::array();
+    for (int k = 0; k <= iterations; ++k) {
+        auto x = cg_iterate(A, b, M, k);
+        std::vector<double> u(x.size());
+        for (std::size_t i = 0; i < x.size(); ++i) u[i] = x(i);
+        frames.push_back(example_trace::value::numbers(u, 4));
+        resid.push_back(example_trace::value::rounded(true_residual(A, x, b), 6));
+    }
+    return h;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    example_trace::trace trace(argc, argv, "3A heat equation on a 1D rod");
+
     std::cout << "=============================================================\n";
     std::cout << " Phase 3A: 1D Heat Equation - CG with Preconditioning\n";
     std::cout << "=============================================================\n\n";
@@ -106,6 +157,25 @@ int main() {
     std::cout << "\nMax difference between solutions: " << std::scientific << max_diff << "\n";
     std::cout << "(Both methods converge to the same answer.)\n\n";
 
+    // -- Trace for the docs-site animation (only with --trace <file>) -----
+    if (trace) {
+        std::vector<double> xs(n), kx(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            xs[i] = (i + 1) * h;
+            kx[i] = k(xs[i]);
+        }
+        trace["n"] = n;
+        trace["tolerance"] = 1.0e-10;
+        trace["x"] = example_trace::value::numbers(xs, 6);
+        trace["conductivity"] = example_trace::value::numbers(kx, 6);
+        trace["diagonal_ratio"] = example_trace::value::rounded(A(n-1, n-1) / A(0, 0), 6);
+        trace["max_difference"] = example_trace::value::rounded(max_diff, 3);
+        auto& runs = trace["runs"];
+        runs = example_trace::value::array();
+        runs.push_back(cg_history("identity", A, b, no_pc, iter1.iterations()));
+        runs.push_back(cg_history("diagonal", A, b, jac_pc, iter2.iterations()));
+    }
+
     // -- Commentary -------------------------------------------------------
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. CG works because the variable-coefficient Laplacian is SPD.\n";
@@ -119,5 +189,5 @@ int main() {
     std::cout << "4. For production use, sparse storage (compressed2D) would\n";
     std::cout << "   reduce memory from O(n^2) to O(n) for this tridiagonal system.\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

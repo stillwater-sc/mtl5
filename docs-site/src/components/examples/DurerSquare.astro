@@ -1,0 +1,128 @@
+---
+// 2A: Dürer's square seen through views. Each group of cells a view selects
+// is highlighted with its sum; then each rearrangement moves the numbers to
+// their new places. Data: examples/phase02_views_permutations/durer_magic_square.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/durer_magic_square.json';
+import traceUrl from '../../data/traces/durer_magic_square.json?url';
+
+const magicMoves = trace.rearrangements.filter((r: { magic: boolean }) => r.magic).length;
+const broken = trace.rearrangements.find((r: { magic: boolean }) => !r.magic);
+---
+
+<AnimationShell
+  kind="durer"
+  trace={traceUrl}
+  title="Melencolia I, through views"
+  label="Dürer's 4 by 4 magic square with the cells of each view highlighted and summed, then the numbers moving under transposes and permutations."
+  height={250}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--sl-color-accent)"></i>cells the view reads</span>
+    <span><i style="background: var(--ex-c5)"></i>a line that no longer sums to {trace.magic_constant}</span>
+  </div>
+  <p>
+    The first {trace.groups.length} frames each highlight the cells that one view reads, with the
+    MTL5 expression that selects them and their sum. Rows are rows of <code>mapped(M, &#123;i&#125;, all)</code>,
+    columns are rows of <code>trans(M)</code>, and the anti-diagonal is the diagonal of the row-reversed
+    J M. The quadrants, the centre block and the four corners are 2 × 2 <code>mapped</code> views.
+    All {trace.groups.length} sum to {trace.magic_constant}.
+  </p>
+  <p>
+    The last {trace.rearrangements.length} frames move each number to its place under a
+    rearrangement. {magicMoves} of them keep the square magic: the symmetries of the square, and the
+    symmetric swap of row and column pairs. "{broken?.name}" ({broken?.how}) keeps every row and column
+    sum but breaks both diagonals, which are then drawn in red.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { durerModel, isMagic } from './lib/models.js';
+  import { svg, clear, lerp, ease } from './lib/plot.js';
+
+  mountAll('[data-ex="durer"]', (root, trace) => {
+    const model = durerModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+
+    const x0 = 40;
+    const y0 = 22;
+    const s = 50;
+    const cellX = (j) => x0 + j * s;
+    const cellY = (i) => y0 + i * s;
+    const n = model.square.length;
+
+    const boxes = [];
+    for (let i = 0; i < n; ++i) {
+      boxes.push([]);
+      for (let j = 0; j < n; ++j) boxes[i].push(el.appendChild(svg('rect', { x: cellX(j) + 2, y: cellY(i) + 2, width: s - 4, height: s - 4, rx: 4, class: 'ex-cell' })));
+    }
+    const nums = new Map();
+    for (const row of model.square) {
+      for (const v of row) nums.set(v, el.appendChild(svg('text', { 'text-anchor': 'middle', class: 'ex-text', 'font-size': 17 }, v)));
+    }
+    const place = (v, i, j) => {
+      const t = nums.get(v);
+      t.setAttribute('x', cellX(j) + s / 2);
+      t.setAttribute('y', cellY(i) + s / 2 + 6);
+    };
+
+    const info = { x: 270, y: 50 };
+    const title = el.appendChild(svg('text', { x: info.x, y: info.y, class: 'ex-text', 'font-size': 15 }));
+    const expr = el.appendChild(svg('text', { x: info.x, y: info.y + 26, class: 'ex-label' }));
+    const result = el.appendChild(svg('text', { x: info.x, y: info.y + 60, class: 'ex-text', 'font-size': 15 }));
+    const sums = el.appendChild(svg('text', { x: info.x, y: info.y + 90, class: 'ex-tick', 'font-size': 11 }));
+
+    function lineSums(m) {
+      const rows = m.map((r) => r.reduce((a, b) => a + b, 0));
+      const cols = m[0].map((_, j) => m.reduce((a, r) => a + r[j], 0));
+      const diag = m.reduce((a, r, i) => a + r[i], 0);
+      const anti = m.reduce((a, r, i) => a + r[n - 1 - i], 0);
+      return { rows, cols, diag, anti };
+    }
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 1500,
+      tweenMs: 900,
+      render(k, t) {
+        const f = model.frames[k];
+        for (const row of boxes) for (const b of row) b.setAttribute('class', 'ex-cell');
+        title.textContent = f.name;
+        expr.textContent = f.view;
+        if (f.kind === 'group') {
+          for (const [i, j] of f.cells) boxes[i][j].setAttribute('class', 'ex-cell-on');
+          model.square.forEach((row, i) => row.forEach((v, j) => place(v, i, j)));
+          result.textContent = `sum = ${f.cells.map(([i, j]) => model.square[i][j]).join(' + ')} = ${f.sum}`;
+          sums.textContent = '';
+          return;
+        }
+        // A rearrangement: tween from the square (or the previous result) to this result.
+        const prev = model.frames[k - 1];
+        const fromGrid = prev.kind === 'move' ? prev.result : model.square;
+        const from = new Map();
+        fromGrid.forEach((row, i) => row.forEach((v, j) => from.set(v, [i, j])));
+        const e = ease(t);
+        for (const m of f.moves) {
+          const [fi, fj] = from.get(m.value);
+          const [ti, tj] = m.to;
+          place(m.value, lerp(fi, ti, e), lerp(fj, tj, e));
+        }
+        const ls = lineSums(f.result);
+        if (t >= 1 && !f.magic) {
+          if (ls.diag !== model.target) for (let i = 0; i < n; ++i) boxes[i][i].setAttribute('class', 'ex-bad');
+          if (ls.anti !== model.target) for (let i = 0; i < n; ++i) boxes[i][n - 1 - i].setAttribute('class', 'ex-bad');
+        }
+        const ok = isMagic(f.result, model.target);
+        result.textContent = ok ? `still magic: every line sums to ${model.target}` : 'not magic';
+        sums.textContent = `rows ${ls.rows.join(' ')} · columns ${ls.cols.join(' ')} · diagonals ${ls.diag} ${ls.anti}`;
+      },
+      label(k) {
+        const f = model.frames[k];
+        if (f.kind === 'group') return `${f.name}, read through ${f.view}: sum ${f.sum}.`;
+        return `${f.name} (${f.view}): ${f.magic ? 'still magic' : 'not magic; the diagonals no longer sum to ' + model.target}.`;
+      },
+    });
+  });
+</script>

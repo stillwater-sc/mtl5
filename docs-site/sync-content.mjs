@@ -41,6 +41,7 @@ const SITE_FILES = {
   'site/index.mdx': 'index.mdx',
   'site/contributing/index.md': 'contributing/index.md',
   'site/algorithms/givens-householder-explorer.mdx': 'algorithms/givens-householder-explorer.mdx',
+  'site/modernization/examples.mdx': 'modernization/examples.mdx',
 };
 
 // ── Synced docs (source path relative to docs/ → dest relative to content/docs/) ──
@@ -150,7 +151,6 @@ const FILE_MAP = {
   'modernization/advanced-itl-components.md':                  'modernization/advanced-itl-components.md',
   'modernization/mtl4-modernization.md':                       'modernization/mtl4-modernization.md',
   'modernization/element-wise-transcendental-functions.md':    'modernization/element-wise-transcendental-functions.md',
-  'modernization/examples.md':                                 'modernization/examples.md',
   'modernization/vector-and-insertion-utilities.md':           'modernization/vector-and-insertion-utilities.md',
 
   // ── Examples ────────────────────────────────────────────────────

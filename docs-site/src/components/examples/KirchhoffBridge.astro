@@ -1,0 +1,172 @@
+---
+// 1B: the Wheatstone bridge's conductance matrix assembled stamp by stamp,
+// its CRS arrays, and the node voltages, balanced and then amended.
+// Data: examples/phase01_core_types/kirchhoff_network.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/kirchhoff_network.json';
+import traceUrl from '../../data/traces/kirchhoff_network.json?url';
+import { fmt } from './lib/plot.js';
+
+const big = trace.mesh[trace.mesh.length - 1];
+const stored = trace.crs.values.length;
+---
+
+<AnimationShell
+  kind="kirchhoff"
+  trace={traceUrl}
+  title="Stamping a Wheatstone bridge"
+  label="A four-node resistor bridge beside its 4 by 4 conductance matrix, filled one resistor stamp at a time, then its compressed row arrays and node voltages."
+  height={262}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c2)"></i>this step's stamp</span>
+    <span>values in millisiemens</span>
+  </div>
+  <p>
+    Each resistor of conductance g between nodes a and b adds g to L(a,a) and L(b,b) and subtracts g
+    from L(a,b) and L(b,a). The inserter uses <code>update_plus</code>, so stamps that land on the same
+    entry add up: L(1,1) collects R1, R2 and R5. After the five stamps the matrix has {stored} stored
+    entries. (0,3) and (3,0) are never stored, because no resistor joins nodes 0 and 3. Compressed row
+    storage keeps three arrays: where each row starts, the column of each entry, and its value.
+  </p>
+  <p>
+    With R1/R2 = R3/R4 the bridge is balanced: both middle nodes sit at {fmt(trace.balanced.v1, 5)} V and
+    no current flows through the galvanometer R5. A second inserter then amends the finished matrix:
+    one more stamp of the conductance difference changes R4 to {trace.unbalanced.r4_ohms} Ω, and
+    {fmt(trace.unbalanced.galvanometer_amps * 1000, 3)} mA flows through R5. On a {big.m} × {big.m} mesh the
+    same storage holds {big.nnz} entries in {fmt(big.crs_bytes / 1024, 3)} KiB, where a dense matrix would
+    need {fmt(big.dense_bytes / 1048576, 3)} MiB.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { kirchhoffModel } from './lib/models.js';
+  import { svg, clear, fmt } from './lib/plot.js';
+
+  const CX = 160;   // the bridge's centre line
+  const NODE = [
+    [CX, 34],
+    [CX - 88, 128],
+    [CX + 88, 128],
+    [CX, 222],
+  ];
+
+  mountAll('[data-ex="kirchhoff"]', (root, trace) => {
+    const model = kirchhoffModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+
+    // The circuit.
+    const wires = model.resistors.map((r) => {
+      const [x1, y1] = NODE[r.a];
+      const [x2, y2] = NODE[r.b];
+      const line = el.appendChild(svg('line', { x1, y1, x2, y2, class: 'ex-axis', 'stroke-width': 2 }));
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      const off = r.name === 'R5' ? [0, -9] : [mx < CX ? -14 : 14, 0];
+      const text = el.appendChild(svg('text', { x: mx + off[0], y: my + off[1], 'text-anchor': mx < CX ? 'end' : mx > CX ? 'start' : 'middle', class: 'ex-tick' }));
+      return { line, text, r };
+    });
+    const volts = NODE.map(([x, y], i) => {
+      el.append(svg('circle', { cx: x, cy: y, r: 11, class: 'ex-cell' }));
+      el.append(svg('text', { x, y: y + 4, 'text-anchor': 'middle', class: 'ex-text' }, i));
+      return el.appendChild(svg('text', { x: x + (i === 1 ? -14 : 14), y: y + (i === 0 ? -2 : i === 3 ? 6 : 22), 'text-anchor': i === 1 ? 'end' : 'start', class: 'ex-tick' }));
+    });
+    el.append(svg('text', { x: CX, y: 14, 'text-anchor': 'middle', class: 'ex-tick' }, `+${model.volts} V`));
+    el.append(svg('text', { x: CX, y: 250, 'text-anchor': 'middle', class: 'ex-tick' }, 'ground'));
+    const current = el.appendChild(svg('text', { x: CX, y: 148, 'text-anchor': 'middle', class: 'ex-tick' }));
+
+    // The matrix.
+    const mx0 = 356;
+    const my0 = 26;
+    const cw = 68;
+    const ch = 28;
+    for (let j = 0; j < 4; ++j) el.append(svg('text', { x: mx0 + j * cw + cw / 2, y: my0 - 6, 'text-anchor': 'middle', class: 'ex-tick' }, `col ${j}`));
+    const cells = [];
+    for (let i = 0; i < 4; ++i) {
+      el.append(svg('text', { x: mx0 - 6, y: my0 + i * ch + ch / 2 + 4, 'text-anchor': 'end', class: 'ex-tick' }, `row ${i}`));
+      cells.push(
+        [0, 1, 2, 3].map((j) => ({
+          box: el.appendChild(svg('rect', { x: mx0 + j * cw + 1, y: my0 + i * ch + 1, width: cw - 2, height: ch - 2, rx: 3, class: 'ex-cell' })),
+          text: el.appendChild(svg('text', { x: mx0 + j * cw + cw / 2, y: my0 + i * ch + ch / 2 + 4, 'text-anchor': 'middle', class: 'ex-text' })),
+        })),
+      );
+    }
+
+    // The CRS arrays, shown from the 'crs' frame on.
+    const crs = el.appendChild(svg('g'));
+    const rowsOf = [];
+    trace.crs.starts.forEach((s, i) => {
+      for (let k = s; k < (trace.crs.starts[i + 1] ?? s); ++k) rowsOf[k] = i;
+    });
+    const arrays = [
+      ['starts', trace.crs.starts.map(String), () => 'ex-cell'],
+      ['columns', trace.crs.columns.map(String), (k) => `ex-cell row${rowsOf[k]}`],
+      ['values', trace.crs.values.map((v) => fmt(v * 1000, 2)), (k) => `ex-cell row${rowsOf[k]}`],
+    ];
+    const bw = 20;
+    arrays.forEach(([name, vals, cls], a) => {
+      const y = 158 + a * 34;
+      crs.append(svg('text', { x: mx0 - 6, y: y + 15, 'text-anchor': 'end', class: 'ex-tick' }, name));
+      vals.forEach((v, k) => {
+        crs.append(svg('rect', { x: mx0 + k * bw, y, width: bw - 2, height: 22, rx: 2, class: cls(k), 'fill-opacity': 1 }));
+        crs.append(svg('text', { x: mx0 + k * bw + (bw - 2) / 2, y: y + 15, 'text-anchor': 'middle', class: 'ex-tick', 'font-size': 8.5 }, v));
+      });
+    });
+
+    const fmtCell = (v) => (v === 0 ? '·' : fmt(v * 1000, 3));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 1400,
+      tweenMs: 0,
+      render(k) {
+        const f = model.frames[k];
+        const changed = new Set(f.changed.map(([i, j]) => `${i},${j}`));
+        for (let i = 0; i < 4; ++i)
+          for (let j = 0; j < 4; ++j) {
+            const c = cells[i][j];
+            const v = f.matrix[i][j];
+            c.text.textContent = fmtCell(v);
+            c.box.setAttribute('class', changed.has(`${i},${j}`) ? 'ex-cell-new' : v !== 0 ? 'ex-cell-on' : 'ex-cell');
+          }
+        const stamped = f.kind === 'empty' ? 0 : f.kind === 'stamp' ? f.resistor + 1 : model.resistors.length;
+        wires.forEach((w, idx) => {
+          const active = idx === f.resistor;
+          const present = idx < stamped;
+          w.line.setAttribute('class', active ? 'ex-series ex-c2' : present ? 'ex-series ex-c1' : 'ex-ghost');
+          w.line.setAttribute('stroke-width', active ? 4 : 2);
+          const ohms = f.kind === 'amended' && idx === 3 ? f.solution.r4_ohms : w.r.ohms;
+          w.text.textContent = `${w.r.name} ${ohms} Ω`;
+        });
+        crs.style.display = f.kind === 'crs' ? '' : 'none';
+        const sol = f.solution;
+        volts.forEach((t, i) => {
+          if (!sol || i === 0) return (t.textContent = '');   // node 0 is labelled +V already
+          const v = i === 0 ? model.volts : i === 3 ? 0 : i === 1 ? sol.v1 : sol.v2;
+          t.textContent = `${fmt(v, 4)} V`;
+        });
+        current.textContent = sol ? `I(R5) = ${fmt(sol.galvanometer_amps * 1000, 3)} mA` : '';
+      },
+      label(k) {
+        const f = model.frames[k];
+        if (f.kind === 'empty') return 'An empty 4 × 4 matrix: nothing is stored yet.';
+        if (f.kind === 'stamp') {
+          const r = model.resistors[f.resistor];
+          return `Stamp ${r.name} (${r.ohms} Ω, g = ${fmt(r.siemens * 1000, 3)} mS) between nodes ${r.a} and ${r.b}: four entries change.`;
+        }
+        if (f.kind === 'crs') return `Compressed: ${model.crs.values.length} values, ${model.crs.columns.length} column indices, ${model.crs.starts.length} row starts.`;
+        if (f.kind === 'balanced') return `Balanced: v1 = v2 = ${fmt(f.solution.v1, 5)} V, so no current flows through R5.`;
+        return `Amended: R4 = ${f.solution.r4_ohms} Ω, stamped as the difference. v1 = ${fmt(f.solution.v1, 4)} V, v2 = ${fmt(f.solution.v2, 4)} V.`;
+      },
+    });
+  });
+</script>
+
+<style is:global>
+  .exfig .ex-cell.row0 { fill: var(--sl-color-blue-low); }
+  .exfig .ex-cell.row1 { fill: var(--sl-color-orange-low); }
+  .exfig .ex-cell.row2 { fill: var(--sl-color-green-low); }
+  .exfig .ex-cell.row3 { fill: var(--sl-color-purple-low); }
+</style>

@@ -31,6 +31,16 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     
     The level structure takes 3 to 4 times AMD's time. Choose it when the ordering time matters more than the fill.
   - Tests: `test_nested_dissection.cpp`. Docs: `docs/algorithms/nested-dissection.md`.
+- **Animated pedagogical examples, and Phases 1 and 2** (issue 933, first of three PRs). The pedagogical examples page now starts at Phase 1, and its examples have animations embedded beside them that replay the numbers MTL5 computes.
+  - **Four new examples**, each with a program, a description on the page, and an animation:
+    - 1A, Leontief's input-output economy (`examples/phase01_core_types/leontief_economy.cpp`): initializer lists, value semantics, row- and column-major storage, the production rounds x = d + Ad + A²d + ...
+    - 1B, Kirchhoff's laws and the Wheatstone bridge (`kirchhoff_network.cpp`): stamping with `update_plus`, amending a finished matrix with a second inserter, the CRS arrays.
+    - 2A, Dürer's magic square through views (`examples/phase02_views_permutations/durer_magic_square.cpp`): `trans`, `mapped` for scattered sub-matrices, `permutation_matrix` and `reorder`.
+    - 2B, Cuthill-McKee bandwidth reduction (`bandwidth_reduction.cpp`): permutation vectors, `symmetric_permute`, `mapped(A, p, p)`, RCM. Bandwidth goes from 128 to 12 on a scrambled 12 × 12 grid.
+  - **3A** (the heat equation) has its animation: both CG runs' iterates and true residuals, step by step.
+  - **Traces.** With `--trace <file>`, an example writes what it computed as JSON (`examples/common/trace.hpp`). Without the flag its output is unchanged. The traces are committed in `docs-site/src/data/traces/`, and `tools/regen_example_traces.sh` rebuilds and rewrites them.
+  - **The animations** are Astro components in `docs-site/src/components/examples/`, inline SVG with no new npm dependencies. Each has play, step and scrub controls. With reduced motion an animation rests on its final frame. Each works in both themes and has a text alternative with its trace's key numbers. `docs-site/tests/` checks what each animation draws against its trace (114 tests), and `examples/common/test_trace.cpp` (CTest) tests the trace writer.
+  - The page moved from `docs/modernization/examples.md` to `docs/site/modernization/examples.mdx`, so that it can embed the components.
 
 ### Fixed
 
