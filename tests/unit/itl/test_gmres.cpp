@@ -309,3 +309,28 @@ TEST_CASE("GMRES: a singular breakdown is reported only if the true residual has
     CHECK(rel <= rtol);
     CHECK_THAT(iter.relresid(), Catch::Matchers::WithinRel(rel, 1e-12));
 }
+
+namespace {
+// out = 1e-310 * in: a preconditioner whose output is tiny but not zero.
+struct tiny_pc {
+    template <typename VecOut, typename VecIn>
+    void solve(VecOut& out, const VecIn& in) const {
+        for (std::size_t i = 0; i < out.size(); ++i) out(i) = 1e-310 * in(i);
+    }
+};
+} // namespace
+
+TEST_CASE("GMRES with a preconditioner that scales by 1e-310 still converges", "[itl][gmres][936]") {
+    // ||r0|| / ||M^{-1} r0|| = 1e310 overflowed: every scaled estimate was
+    // inf, each cycle kept one column, and gmres ran to its iteration limit.
+    mat::dense2D<double> A(2, 2);
+    A(0, 0) = 1; A(0, 1) = 0; A(1, 0) = 0; A(1, 1) = 2;
+    vec::dense_vector<double> b = {1.0, 1.0}, x(2, 0.0);
+    itl::basic_iteration<double> iter(b, 100, 1e-10);
+    const int info = itl::gmres(A, x, b, tiny_pc{}, iter, 2);
+    const double rel = true_relative_residual(A, x, b);
+    INFO("info " << info << ", iterations " << iter.iterations() << ", true " << rel);
+    CHECK(info == 0);
+    CHECK(rel <= 1e-10);
+    CHECK(iter.iterations() <= 10);
+}

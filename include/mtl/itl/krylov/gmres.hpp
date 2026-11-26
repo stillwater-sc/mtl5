@@ -105,8 +105,16 @@ int gmres_cycle(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& it
     // the cycle's opening ratio ||r0|| / ||M^{-1} r0|| it estimates the true
     // residual, which is what iter compares with its tolerance. Unscaled, a
     // cycle that follows a false convergence opened below the tolerance and
-    // made one step per restart. The ratio is 1 without a preconditioner.
-    const auto est_scale = rnorm / beta;
+    // made one step per restart. The ratio is 1 without a preconditioner,
+    // and then the estimate is used as it is, to the last bit.
+    // |g(k + 1)| <= beta, so (|g(k + 1)| / beta) * ||r0|| stays finite where
+    // ||r0|| / beta alone overflows: a preconditioner that scales by 1e-310
+    // made the ratio inf, every estimate inf, and each cycle one step.
+    auto estimate = [&](const auto& gk) {
+        using std::abs;
+        const auto a = abs(gk);
+        return rnorm == beta ? a : a / beta * rnorm;
+    };
     for (size_type i = 0; i < n; ++i)
         V[0](i) = ws.r(i) / beta;
 
@@ -163,8 +171,7 @@ int gmres_cycle(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& it
 
         // |g(k+1)| is the preconditioned residual norm: an estimate that ends
         // the cycle. Whether it converged is decided after x is updated.
-        using std::abs;
-        if (iter.finished(unscale(abs(g(k + 1)) * est_scale))) {
+        if (iter.finished(unscale(estimate(g(k + 1))))) {
             ++k; // include this column in the solution
             break;
         }
