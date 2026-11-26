@@ -45,6 +45,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - When ‖b‖ lies outside [2^-E, 2^E], cg, bicg, bicgstab, cgs, qmr, tfqmr, bicgstab_ell and gmres solve A (s x) = s b, with s an exact power of two. E is a quarter of the type's `max_exponent`.
     - In float, b = 1e-30 had made `dot(p, A p)` underflow, giving a false breakdown with x = 0, and b = 1e30 had made it overflow to NaN.
     - Inside the band nothing changes. Outside it, the result is the unscaled iteration's bit for bit, which a test checks at 2^-600 in double.
+    - The scale is bounded so that x0 comes back exactly when the solver takes no step. The upper bound comes from overflow of x's largest part, the lower from the smallest nonzero part staying normal; a subnormal part allows only scaling up. Both take the real and imaginary parts separately, since a modulus can overflow where its parts don't. An empty range, or one that reverses the direction, leaves the system unscaled.
     - minres and idr_s, which already scale their own dots, take the copy only.
   - **Non-finite residuals:** `basic_iteration::finished` returns the new error code 6 (`non_finite`) for a NaN or Inf residual. Before, a NaN in b ran all `max_iter` iterations and returned error 1.
   - **gmres:**
@@ -53,7 +54,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Other checks:**
     - `bicgstab_ell` throws `invalid_argument` for ell = 0.
     - `cg` and `bicg` report rho = 0 for an unconverged residual as a breakdown, where it had become a 0/0.
-    - `minres` now records a zero M-norm residual: converged when r0 = 0, breakdown otherwise. It no longer returns stale iteration state.
+    - `minres` now records a zero M-norm residual: converged when r0 meets the tolerance, breakdown otherwise. It no longer returns stale iteration state.
   - **Tests:**
     - `test_krylov_robustness.cpp`: complex solves for every solver, float scaling, exact power-of-two scaling, aliasing, NaN and Inf input, singular gmres, empty systems, and `basic_iteration` directly.
     - The regression tier gains BiCG and a complex shifted convection-diffusion system.
@@ -70,7 +71,9 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - throws for `block_size == 0` and for a non-square A;
     - allocates one pair of block vectors per solve, not per block.
   - **Shape checks in every build:** `ilu_0`, `ilut`, `ssor`, `ic_0`, `ildl` and `block_diagonal` reject a non-square A, and `multigrid` rejects a hierarchy whose transfer counts or dimensions do not match its levels. All throw `invalid_argument`. These checks were assert-only: a non-square A indexed `ilu_0`'s work arrays, which are sized by rows, by column.
-  - **`ilut`:** a row with no stored diagonal or upper entry, factored with `fill = 0`, keeps no strictly upper fill. `orig_u + fill - 1` wrapped to SIZE_MAX there, so every fill entry of U was kept.
+  - **`ilut`:**
+    - A row with no stored diagonal or upper entry, factored with `fill = 0`, keeps no strictly upper fill. `orig_u + fill - 1` wrapped to SIZE_MAX there, so every fill entry of U was kept.
+    - The fill limits saturate, so `fill = SIZE_MAX` (no limit) keeps every entry. `orig + fill` wrapped to a small count and truncated the row.
   - **`multigrid::wcycle`** solves the coarsest level once per visit from the level above, not twice: the coarse solver is exact, and the second solve repeated it.
   - **`power_iteration`** with n = 0 returns value 0, not converged. Before, its value was never written.
   - **`owned_csr`** (the smoothers' copy of an `ell_matrix`) sizes its inserter's slots to the widest row, where rows wider than 5 overflowed into a `std::map`.
