@@ -42,7 +42,7 @@ const stored = trace.crs.values.length;
 <script>
   import { createPlayer, mountAll } from './lib/player.js';
   import { kirchhoffModel } from './lib/models.js';
-  import { svg, clear, fmt } from './lib/plot.js';
+  import { svg, setAttr, clear, fmt } from './lib/plot.js';
 
   const CX = 160;   // the bridge's centre line
   const NODE = [
@@ -136,7 +136,7 @@ const stored = trace.crs.values.length;
           const active = idx === f.resistor;
           const present = idx < stamped;
           w.line.setAttribute('class', active ? 'ex-series ex-c2' : present ? 'ex-series ex-c1' : 'ex-ghost');
-          w.line.setAttribute('stroke-width', active ? 4 : 2);
+          setAttr(w.line, 'stroke-width', active ? 4 : 2);
           const ohms = f.kind === 'amended' && idx === 3 ? f.solution.r4_ohms : w.r.ohms;
           w.text.textContent = `${w.r.name} ${ohms} Ω`;
         });
