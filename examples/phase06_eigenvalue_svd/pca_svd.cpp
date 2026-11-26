@@ -14,10 +14,16 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <vector>
+
+#include "../common/replay.hpp"
+#include "../common/trace.hpp"
 
 using namespace mtl;
 
-int main() {
+int main(int argc, char** argv) {
+    example_trace::trace trace(argc, argv, "6B PCA via SVD");
+
     std::cout << "=============================================================\n";
     std::cout << " Phase 6B: PCA via SVD - Data Dimensionality Reduction\n";
     std::cout << "=============================================================\n\n";
@@ -212,6 +218,46 @@ int main() {
     }
 
     // -- Commentary -------------------------------------------------------
+    if (trace) {
+        auto rows = [](const auto& M) {
+            auto a = example_trace::value::array();
+            for (std::size_t i = 0; i < M.num_rows(); ++i) {
+                std::vector<double> r(M.num_cols());
+                for (std::size_t j = 0; j < M.num_cols(); ++j) r[j] = M(i, j);
+                a.push_back(example_trace::value::numbers(r, 8));
+            }
+            return a;
+        };
+        trace["samples"] = m;
+        trace["features"] = p;
+        trace["centered"] = rows(Xc);
+        trace["means"] = example_trace::value::numbers(example_trace::to_std(col_means), 8);
+        std::vector<double> sigma(p);
+        for (std::size_t k = 0; k < p; ++k) sigma[k] = S(k, k);
+        trace["sigma"] = example_trace::value::numbers(sigma, 10);
+        trace["V"] = rows(V);
+        // Scores: the centered data in principal coordinates, Xc * V.
+        mat::dense2D<double> scores(Xc * V);
+        trace["scores"] = rows(scores);
+        // Rank-r reconstructions of the centered data: Xc V_r V_r^T.
+        auto recon = example_trace::value::array();
+        for (std::size_t r = 1; r <= p; ++r) {
+            mat::dense2D<double> Vr(p, r);
+            for (std::size_t i = 0; i < p; ++i)
+                for (std::size_t j = 0; j < r; ++j) Vr(i, j) = V(i, j);
+            mat::dense2D<double> Xr(Xc * Vr * trans(Vr));
+            auto o = example_trace::value::object();
+            o["rank"] = r;
+            o["data"] = rows(Xr);
+            double err = 0.0;
+            for (std::size_t i = 0; i < m; ++i)
+                for (std::size_t j = 0; j < p; ++j) err += (Xc(i, j) - Xr(i, j)) * (Xc(i, j) - Xr(i, j));
+            o["error_fro"] = example_trace::value::rounded(std::sqrt(err), 8);
+            recon.push_back(o);
+        }
+        trace["reconstructions"] = recon;
+    }
+
     std::cout << "\n=== Key Takeaways ===\n";
     std::cout << "1. PCA finds orthogonal directions of maximum variance.\n";
     std::cout << "   The k-th principal component captures the k-th most\n";
@@ -223,5 +269,5 @@ int main() {
     std::cout << "4. Truncating to k components gives the best rank-k\n";
     std::cout << "   approximation (Eckart-Young theorem).\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

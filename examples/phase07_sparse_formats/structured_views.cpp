@@ -17,6 +17,12 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
+#include <utility>
+#include <vector>
+
+#include "../common/replay.hpp"
+#include "../common/trace.hpp"
 
 using namespace mtl;
 
@@ -33,7 +39,9 @@ void print_matrix(const std::string& name, auto const& M,
     }
 }
 
-int main() {
+int main(int argc, char** argv) {
+    example_trace::trace trace(argc, argv, "7B structured views");
+
     std::cout << "=============================================================\n";
     std::cout << " Phase 7B: Structured Matrix Views - Zero-Copy Abstractions\n";
     std::cout << "=============================================================\n\n";
@@ -212,6 +220,71 @@ int main() {
     std::remove(fname.c_str());
 
     // -- Commentary -------------------------------------------------------
+    if (trace) {
+        using cell = std::optional<std::pair<std::size_t, std::size_t>>;
+        auto grid_of = [](const auto& M, std::size_t r, std::size_t c) {
+            auto a = example_trace::value::array();
+            for (std::size_t i = 0; i < r; ++i) {
+                std::vector<double> row(c);
+                for (std::size_t j = 0; j < c; ++j) row[j] = M(i, j);
+                a.push_back(example_trace::value::numbers(row, 8));
+            }
+            return a;
+        };
+        trace["n"] = n;
+        trace["A_upper"] = grid_of(A_upper, n, n);
+        trace["A_full"] = grid_of(A_full, n, n);
+        // Each view: its values as MTL5 returns them, and for each of its
+        // cells the stored entry it reads (none: a structural zero or one).
+        auto views = example_trace::value::array();
+        auto add = [&](const char* name, const char* expr, const char* base, const auto& V,
+                       std::size_t r, std::size_t c, auto source) {
+            auto o = example_trace::value::object();
+            o["name"] = name;
+            o["expression"] = expr;
+            o["base"] = base;
+            o["rows"] = r;
+            o["cols"] = c;
+            o["values"] = grid_of(V, r, c);
+            auto src = example_trace::value::array();
+            for (std::size_t i = 0; i < r; ++i)
+                for (std::size_t j = 0; j < c; ++j) {
+                    const cell s2 = source(i, j);
+                    src.push_back(s2 ? example_trace::value::numbers(std::vector<std::size_t>{s2->first, s2->second})
+                                     : example_trace::value());
+                }
+            o["sources"] = src;
+            views.push_back(o);
+        };
+        add("Hermitian", "hermitian(A_upper)", "A_upper", H, n, n,
+            [](std::size_t i, std::size_t j) -> cell { return std::pair{std::min(i, j), std::max(i, j)}; });
+        add("tridiagonal band", "banded(A, 1, 1)", "A_full", tri, n, n, [](std::size_t i, std::size_t j) -> cell {
+            if (i > j + 1 || j > i + 1) return std::nullopt;
+            return std::pair{i, j};
+        });
+        add("diagonal", "banded(A, 0, 0)", "A_full", diag_view, n, n,
+            [](std::size_t i, std::size_t j) -> cell { return i == j ? cell(std::pair{i, j}) : std::nullopt; });
+        add("sub-matrix", "mapped(A, {1,3,5}, {0,2,4})", "A_full", sub, 3, 3,
+            [&](std::size_t i, std::size_t j) -> cell { return std::pair{row_sel[i], col_sel[j]}; });
+        add("rows reversed", "mapped(A, {5,...,0}, all)", "A_full", perm, n, n,
+            [&](std::size_t i, std::size_t j) -> cell { return std::pair{rev_rows[i], j}; });
+        add("identity", "identity2D(6)", "none", I, n, n, [](std::size_t, std::size_t) -> cell { return std::nullopt; });
+        trace["views"] = views;
+        // CG on the Hermitian view, step by step.
+        auto steps = example_trace::value::array(), res = example_trace::value::array();
+        for (int k = 0; k <= iter_h.iterations(); ++k) {
+            auto xk = example_trace::iterate_after(b_h, k, [&](auto& x, auto& it) { itl::cg(H, x, b_h, pc_h, it); });
+            steps.push_back(example_trace::value::numbers(example_trace::to_std(xk), 8));
+            res.push_back(example_trace::value::rounded(example_trace::true_residual(H, xk, b_h), 6));
+        }
+        auto& cg = trace["cg"];
+        cg["b"] = example_trace::value::numbers(example_trace::to_std(b_h), 8);
+        cg["iterations"] = iter_h.iterations();
+        cg["code"] = info;
+        cg["iterates"] = steps;
+        cg["residual"] = res;
+    }
+
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. Views are zero-copy wrappers that reinterpret existing data.\n";
     std::cout << "   No memory allocation, no data movement.\n";
@@ -226,5 +299,5 @@ int main() {
     std::cout << "6. All views satisfy the Matrix concept, so they work with\n";
     std::cout << "   solvers, norms, and other operations transparently.\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

@@ -276,3 +276,86 @@ export function factorFrame(model, f) {
   });
   return { part: part.name, k, matrix: part.matrix, methods };
 }
+
+// ── 6A vibrating string ───────────────────────────────────────────────────
+
+/**
+ * Frames: the string's n modes, then the membrane's n2d^2 modes, then the
+ * lopsided operator's eigenvalues for each d of the sweep.
+ */
+export function stringModel(trace) {
+  const frames = [
+    ...trace.modes.map((v, k) => ({ kind: 'string', k })),
+    ...trace.membrane_modes.map((v, k) => ({ kind: 'membrane', k })),
+    ...trace.skew_sweep.map((s, k) => ({ kind: 'skew', k })),
+  ];
+  return { ...trace, frames, count: frames.length };
+}
+
+/** Relative frequency of string mode k against the fundamental: sqrt(lambda_k / lambda_1). */
+export const relativeFrequency = (model, k) => Math.sqrt(model.eigenvalues[k] / model.eigenvalues[0]);
+
+/** The analytic eigenvalues of the lopsided Laplacian, 2 - 2 sqrt(1 - d^2) cos(k pi / (n+1)), as [re, im]. */
+export function skewAnalytic(n, d) {
+  const out = [];
+  for (let k = 1; k <= n; ++k) {
+    const c = 2 * Math.cos((k * Math.PI) / (n + 1));
+    const q = 1 - d * d;
+    out.push(q >= 0 ? [2 - c * Math.sqrt(q), 0] : [2, -c * Math.sqrt(-q)]);
+  }
+  return out;
+}
+
+// ── 6B PCA ────────────────────────────────────────────────────────────────
+
+/**
+ * Frames, each a set of 2D point positions: the centered data in the plane of
+ * features `fx` and `fy`, the principal scores (PC1, PC2), and the rank-2
+ * and rank-1 reconstructions back in the feature plane.
+ */
+export function pcaModel(trace, fx = 0, fy = 2) {
+  const plane = (rows) => rows.map((r) => [r[fx], r[fy]]);
+  const frames = [
+    { kind: 'data', label: 'centered data', points: plane(trace.centered) },
+    { kind: 'scores', label: 'principal coordinates', points: trace.scores.map((r) => [r[0], r[1]]) },
+    ...trace.reconstructions
+      .filter((r) => r.rank < trace.features)
+      .sort((a, b) => b.rank - a.rank)
+      .map((r) => ({ kind: 'recon', rank: r.rank, error: r.error_fro, label: `rank-${r.rank} reconstruction`, points: plane(r.data) })),
+  ];
+  const total = trace.sigma.reduce((a, s) => a + s * s, 0);
+  return { ...trace, fx, fy, frames, count: frames.length, explained: trace.sigma.map((s) => (s * s) / total) };
+}
+
+// ── 7A sparse formats ─────────────────────────────────────────────────────
+
+/** Frame r is row r of a matvec: which slots each format reads for it. */
+export function formatsModel(trace) {
+  return { ...trace, count: trace.n };
+}
+
+export function formatsFrame(model, r) {
+  const coo = [];
+  model.coo.rows.forEach((row, q) => row === r && coo.push(q));
+  const crs = [];
+  for (let q = model.crs.starts[r]; q < model.crs.starts[r + 1]; ++q) crs.push(q);
+  const w = model.ell.width;
+  const ell = [];
+  const padding = [];
+  for (let q = r * w; q < (r + 1) * w; ++q) (model.ell.cols[q] < 0 ? padding : ell).push(q);
+  const cols = crs.map((q) => model.crs.cols[q]);
+  return { row: r, coo, crs, crsStarts: [r, r + 1], ell, padding, cols };
+}
+
+// ── 7B structured views ───────────────────────────────────────────────────
+
+/** Frames: one per view, then CG on the Hermitian view step by step. */
+export function viewsModel(trace) {
+  const frames = [...trace.views.map((v, i) => ({ kind: 'view', i })), ...trace.cg.iterates.map((x, k) => ({ kind: 'cg', k }))];
+  return { ...trace, frames, count: frames.length };
+}
+
+/** The distinct stored entries a view reads. */
+export function entriesRead(view) {
+  return new Set(view.sources.filter((s) => s !== null).map(([i, j]) => `${i},${j}`)).size;
+}

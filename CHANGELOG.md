@@ -39,7 +39,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - 2B, Cuthill-McKee bandwidth reduction (`bandwidth_reduction.cpp`): permutation vectors, `symmetric_permute`, `mapped(A, p, p)`, RCM. Bandwidth goes from 128 to 12 on a scrambled 12 × 12 grid.
   - **3A** (the heat equation) has its animation: both CG runs' iterates and true residuals, step by step.
   - **Traces.** With `--trace <file>`, an example writes what it computed as JSON (`examples/common/trace.hpp`). Without the flag its output is unchanged. The traces are committed in `docs-site/src/data/traces/`, and `tools/regen_example_traces.sh` rebuilds and rewrites them.
-  - **The animations** are Astro components in `docs-site/src/components/examples/`, inline SVG with no new npm dependencies. Each has play, step and scrub controls. With reduced motion an animation rests on its final frame. Each works in both themes and has a text alternative with its trace's key numbers. `docs-site/tests/` checks what each animation draws against its trace (145 tests), and `examples/common/test_trace.cpp` (CTest) tests the trace writer.
+  - **The animations** are Astro components in `docs-site/src/components/examples/`, inline SVG with no new npm dependencies. Each has play, step and scrub controls. With reduced motion an animation rests on its final frame. Each works in both themes and has a text alternative with its trace's key numbers. `docs-site/tests/` checks what each animation draws against its trace (164 tests), and `examples/common/test_trace.cpp` (CTest) tests the trace writer.
   - The page moved from `docs/modernization/examples.md` to `docs/site/modernization/examples.mdx`, so that it can embed the components.
   - **3B to 5B** (the second PR) have their animations:
     - 3B: CG against BiCGSTAB at four values of ε (a selector). BiCGSTAB converges at every ε, while CG reaches its 500-step limit, with a residual of 2440 at ε = 0.01. The converged solution overshoots because the cell Péclet number exceeds 1.
@@ -48,6 +48,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - 5A: least-squares fits by degree. The normal equations stall between 3e-5 and 1.2e-4, and Cholesky fails from degree 15, while QR reaches 1.2e-10. The plot sets cond(V)² against the saturating eigenvalue estimate.
     - 5B: LU, Cholesky and QR one elimination step at a time, rebuilt from MTL5's factors, with textbook flop counts. Cholesky's pivot of −2.4 on the indefinite matrix stops it.
     - `convection_diffusion` and `smoother_convergence` print new sections (an ε sweep, an ω sweep, and the smoothing experiment). `least_squares_qr` and `solve_three_ways` print what they printed before.
+  - **6A to 7B** (the third PR) complete the set:
+    - 6A: the string's modes vibrating at √λ_k, on the analytic curve; the membrane's Kronecker modes; and a lopsided Laplacian's eigenvalues meeting at 2 when d = 1, then leaving the real axis as conjugate pairs.
+    - 6B: the data turning onto its principal axes, then the rank-2 and rank-1 reconstructions. Their errors are σ₃ and √(σ₂² + σ₃²) (Eckart–Young).
+    - 7A: one matvec row by row, and the memory that COO, CRS and ELL read for it, ELL's padding included.
+    - 7B: the stored entries each view reads, and CG on the Hermitian view.
+  - **Fixed, `vibrating_string`:** Part 3 was titled for complex eigenvalues and its takeaway said such perturbations create complex pairs, but every eigenvalue it printed was real. It now says why: one asymmetric entry is not enough. It adds the lopsided-Laplacian sweep, whose eigenvalues become complex for d > 1. Its error columns no longer run into the column before.
 
 ### Fixed
 

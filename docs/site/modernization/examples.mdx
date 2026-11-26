@@ -13,6 +13,10 @@ import LaplacianGrid from '../../../components/examples/LaplacianGrid.astro';
 import SmootherConvergence from '../../../components/examples/SmootherConvergence.astro';
 import LeastSquares from '../../../components/examples/LeastSquares.astro';
 import ThreeWays from '../../../components/examples/ThreeWays.astro';
+import VibratingString from '../../../components/examples/VibratingString.astro';
+import PcaSvd from '../../../components/examples/PcaSvd.astro';
+import SparseFormats from '../../../components/examples/SparseFormats.astro';
+import StructuredViews from '../../../components/examples/StructuredViews.astro';
 
 {/*
   Source: docs/site/modernization/examples.mdx, copied verbatim by
@@ -285,6 +289,10 @@ MTL5 features demonstrated:
   - eigenvalue() (general) on a non-symmetric perturbation showing complex eigenvalues
   - svd() to verify singular values equal absolute eigenvalues for symmetric matrices
 
+Program: `examples/phase06_eigenvalue_svd/vibrating_string.cpp`
+
+<VibratingString />
+
 ### Example 6B: Principal Component Analysis (PCA) via SVD
 
 Numerical goal: Perform PCA on a small dataset — compute SVD of the centered data matrix, 
@@ -303,6 +311,10 @@ MTL5 features demonstrated:
   - Dense matrix arithmetic: centering, trans(), and matrix multiplication
   - Verification: U * diag(S) * V^T ≈ X
   - Truncated reconstruction showing information loss
+
+Program: `examples/phase06_eigenvalue_svd/pca_svd.cpp`
+
+<PcaSvd />
 
 ---
 
@@ -331,6 +343,10 @@ MTL5 features demonstrated:
   - Storage comparison: bytes per format for same matrix
   - Element access correctness verification across all three
 
+Program: `examples/phase07_sparse_formats/sparse_formats.cpp`
+
+<SparseFormats />
+
 ### Example 7B: Structured Matrix Views: Exploiting Symmetry and Bandedness
 
 Numerical goal: Start with a full dense matrix from a finite element assembly, 
@@ -354,4 +370,8 @@ MTL5 features demonstrated:
   - identity2D as implicit identity (no storage)
   - Combining views with solvers: CG on hermitian_view
   - Matrix Market I/O to save/load results
+
+Program: `examples/phase07_sparse_formats/structured_views.cpp`
+
+<StructuredViews />
 

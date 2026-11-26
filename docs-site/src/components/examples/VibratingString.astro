@@ -1,0 +1,177 @@
+---
+// 6A: the string's modes vibrating at their frequencies, the membrane's
+// Kronecker modes, and the lopsided Laplacian's eigenvalues leaving the real
+// axis. Data: examples/phase06_eigenvalue_svd/vibrating_string.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/vibrating_string.json';
+import traceUrl from '../../data/traces/vibrating_string.json?url';
+import { fmt } from './lib/plot.js';
+
+type Sweep = { d: number; re: number[]; im: number[] };
+const sweep = trace.skew_sweep as Sweep[];
+const firstComplex = sweep.find((s) => Math.max(...s.im.map(Math.abs)) > 0);
+const lastS = sweep[sweep.length - 1];
+---
+
+<AnimationShell
+  kind="string"
+  trace={traceUrl}
+  title="Eigenvalues you can hear, see and push off the axis"
+  label="The vibration modes of an eight-point string with their eigenvalues against the analytic curve, then the modes of a four by four membrane, then the eigenvalues of a lopsided Laplacian moving into the complex plane."
+  height={290}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>computed by MTL5</span>
+    <span><i style="background: var(--ex-line)"></i>analytic</span>
+  </div>
+  <p>
+    The first {trace.n} frames are the modes of the string: eigenvector k of the {trace.n} × {trace.n} Laplacian,
+    vibrating while the frame plays at a speed proportional to √λ_k, so mode k oscillates √(λ_k/λ_1) times as
+    fast as the fundamental. On the right, the computed λ_k sit on the analytic curve 4 sin²(kπ / 2(n+1)). They
+    agree to the 12 digits the trace keeps; the example prints differences of a few units in the last place. The next {trace.n2d * trace.n2d} frames are the modes of a
+    {trace.n2d} × {trace.n2d} membrane from kron(I, T) + kron(T, I), with positive and negative displacement in two
+    colours. Where two modes share an eigenvalue, any mix of them is also a mode, and the picture shows the one MTL5
+    returned.
+  </p>
+  <p>
+    The last {sweep.length} frames make the string lopsided, the way convection does in example 3B: subdiagonal
+    −(1 + d), superdiagonal −(1 − d). The eigenvalues, 2 − 2√(1 − d²) cos(kπ/(n+1)), close in on 2 as d grows.
+    At d = 1 the matrix is triangular and all of them equal 2. From d = {firstComplex?.d} on they leave the real
+    axis in conjugate pairs, and at d = {lastS.d} the largest imaginary part is
+    {fmt(Math.max(...lastS.im), 3)}. The rings mark the formula and the dots are MTL5's <code>eigenvalue()</code>.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { stringModel, relativeFrequency, skewAnalytic } from './lib/models.js';
+  import { scaleLinear, niceTicks, linePath, drawAxes, svg, clear, fmt } from './lib/plot.js';
+
+  mountAll('[data-ex="string"]', (root, trace) => {
+    const model = stringModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+    const n = model.n;
+
+    // String panel.
+    const L = { left: 30, right: 300, top: 40, bottom: 230 };
+    const xs = [0, ...Array.from({ length: n }, (_, i) => (i + 1) / (n + 1)), 1];
+    const sx = scaleLinear([0, 1], [L.left, L.right]);
+    const sy = scaleLinear([-0.75, 0.75], [L.bottom, L.top]);
+    const stringG = el.appendChild(svg('g'));
+    stringG.append(svg('line', { x1: L.left, x2: L.right, y1: sy(0), y2: sy(0), class: 'ex-grid' }));
+    const envUp = stringG.appendChild(svg('path', { class: 'ex-ghost' }));
+    const envDn = stringG.appendChild(svg('path', { class: 'ex-ghost' }));
+    const wire = stringG.appendChild(svg('path', { class: 'ex-series ex-c1', 'stroke-width': 2.5 }));
+    const beads = xs.map(() => stringG.appendChild(svg('circle', { r: 3.5, class: 'ex-fill1' })));
+    const stringTitle = stringG.appendChild(svg('text', { x: L.left, y: 24, class: 'ex-text' }));
+
+    // Membrane panel.
+    const memG = el.appendChild(svg('g'));
+    const m = model.n2d;
+    const cell = 42;
+    const mx0 = 70;
+    const my0 = 50;
+    const memCells = [];
+    for (let k = 0; k < m * m; ++k) {
+      const r = Math.floor(k / m);
+      const c = k % m;
+      memCells.push(memG.appendChild(svg('rect', { x: mx0 + c * cell, y: my0 + r * cell, width: cell - 2, height: cell - 2, rx: 3 })));
+    }
+    const memTitle = memG.appendChild(svg('text', { x: L.left, y: 24, class: 'ex-text' }));
+
+    // Complex-plane panel.
+    const C = { left: 46, right: 300, top: 30, bottom: 250 };
+    const cxs = scaleLinear([-0.2, 4.2], [C.left, C.right]);
+    const cys = scaleLinear([-2.6, 2.6], [C.bottom, C.top]);
+    const cplxG = el.appendChild(svg('g'));
+    drawAxes(cplxG, C, cxs, cys, { xTicks: [0, 1, 2, 3, 4], yTicks: [-2, -1, 0, 1, 2], xLabel: 'Re λ', yLabel: 'Im λ' });
+    cplxG.append(svg('line', { x1: C.left, x2: C.right, y1: cys(0), y2: cys(0), class: 'ex-axis' }));
+    const rings = Array.from({ length: n }, () => cplxG.appendChild(svg('circle', { r: 6, class: 'ex-ghost' })));
+    const pts = Array.from({ length: n }, () => cplxG.appendChild(svg('circle', { r: 3.5, class: 'ex-fill1' })));
+    const cplxTitle = cplxG.appendChild(svg('text', { x: C.right, y: 16, 'text-anchor': 'end', class: 'ex-text' }));
+
+    // Right panel: eigenvalues (string and membrane), or max |Im| against d.
+    const R = { left: 384, right: 630, top: 30, bottom: 250 };
+    const rightG = el.appendChild(svg('g'));
+    const kx = scaleLinear([0.5, n + 0.5], [R.left, R.right]);
+    const ly = scaleLinear([0, 4], [R.bottom, R.top]);
+    const specG = rightG.appendChild(svg('g'));
+    drawAxes(specG, R, kx, ly, { xTicks: Array.from({ length: n }, (_, i) => i + 1), yTicks: [0, 1, 2, 3, 4], xLabel: 'mode k', yLabel: 'λ_k' });
+    const curveK = Array.from({ length: 101 }, (_, i) => 0.5 + (n * i) / 100);
+    specG.append(svg('path', { d: linePath(curveK, curveK.map((k) => 4 * Math.sin((k * Math.PI) / (2 * (n + 1))) ** 2), kx, ly), class: 'ex-ghost' }));
+    const specDots = model.eigenvalues.map((l, k) => specG.appendChild(svg('circle', { cx: kx(k + 1), cy: ly(l), r: 3.5, class: 'ex-fill1' })));
+    const memSpecG = rightG.appendChild(svg('g'));
+    const mkx = scaleLinear([0.5, m * m + 0.5], [R.left, R.right]);
+    const mly = scaleLinear([0, 8], [R.bottom, R.top]);
+    drawAxes(memSpecG, R, mkx, mly, { xTicks: niceTicks([1, m * m], 4), yTicks: [0, 2, 4, 6, 8], xLabel: 'membrane mode', yLabel: 'λ' });
+    const memDots = model.membrane_eigenvalues.map((l, k) => memSpecG.appendChild(svg('circle', { cx: mkx(k + 1), cy: mly(l), r: 3.5, class: 'ex-fill1' })));
+    const skewG = rightG.appendChild(svg('g'));
+    const ds = model.skew_sweep.map((s) => s.d);
+    const dx = scaleLinear([0, ds[ds.length - 1]], [R.left, R.right]);
+    const imMax = model.skew_sweep.map((s) => Math.max(...s.im.map(Math.abs)));
+    const iy = scaleLinear([0, Math.max(...imMax) * 1.1], [R.bottom, R.top]);
+    drawAxes(skewG, R, dx, iy, { xTicks: [0, 0.5, 1, 1.5], yTicks: niceTicks([0, Math.max(...imMax)], 3), xLabel: 'd', yLabel: 'max |Im λ|' });
+    skewG.append(svg('path', { d: linePath(ds, imMax, dx, iy), class: 'ex-series ex-c1', 'stroke-width': 1.5 }));
+    const skewCursor = skewG.appendChild(svg('circle', { r: 4.5, class: 'ex-fill2' }));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 1900,
+      tweenMs: 1500,
+      render(f, t) {
+        const fr = model.frames[f];
+        stringG.style.display = fr.kind === 'string' ? '' : 'none';
+        memG.style.display = fr.kind === 'membrane' ? '' : 'none';
+        cplxG.style.display = fr.kind === 'skew' ? '' : 'none';
+        specG.style.display = fr.kind === 'string' ? '' : 'none';
+        memSpecG.style.display = fr.kind === 'membrane' ? '' : 'none';
+        skewG.style.display = fr.kind === 'skew' ? '' : 'none';
+        if (fr.kind === 'string') {
+          const v = [0, ...model.modes[fr.k], 0];
+          const amp = t < 1 ? Math.cos(2 * Math.PI * t * relativeFrequency(model, fr.k)) : 1;
+          wire.setAttribute('d', linePath(xs, v.map((y) => y * amp), sx, sy));
+          envUp.setAttribute('d', linePath(xs, v, sx, sy));
+          envDn.setAttribute('d', linePath(xs, v.map((y) => -y), sx, sy));
+          beads.forEach((b, i) => {
+            b.setAttribute('cx', sx(xs[i]));
+            b.setAttribute('cy', sy(v[i] * amp));
+          });
+          stringTitle.textContent = `string mode ${fr.k + 1}: λ = ${fmt(model.eigenvalues[fr.k], 6)}, frequency × ${fmt(relativeFrequency(model, fr.k), 3)}`;
+          specDots.forEach((d, k) => d.setAttribute('r', k === fr.k ? 6 : 3));
+        } else if (fr.kind === 'membrane') {
+          const v = model.membrane_modes[fr.k];
+          const vmax = Math.max(...v.map(Math.abs));
+          memCells.forEach((c, i) => {
+            c.setAttribute('class', v[i] >= 0 ? 'ex-fill1' : 'ex-fill2');
+            c.setAttribute('fill-opacity', (0.08 + 0.92 * (Math.abs(v[i]) / vmax)).toFixed(3));
+          });
+          memTitle.textContent = `membrane mode ${fr.k + 1}: λ = ${fmt(model.membrane_eigenvalues[fr.k], 6)}`;
+          memDots.forEach((d, k) => d.setAttribute('r', k === fr.k ? 6 : 3));
+        } else {
+          const s = model.skew_sweep[fr.k];
+          const exact = skewAnalytic(n, s.d);
+          exact.forEach(([re, im], i) => {
+            rings[i].setAttribute('cx', cxs(re));
+            rings[i].setAttribute('cy', cys(im));
+          });
+          s.re.forEach((re, i) => {
+            pts[i].setAttribute('cx', cxs(re));
+            pts[i].setAttribute('cy', cys(s.im[i]));
+          });
+          cplxTitle.textContent = `lopsided Laplacian, d = ${fmt(s.d, 2)}`;
+          skewCursor.setAttribute('cx', dx(s.d));
+          skewCursor.setAttribute('cy', iy(imMax[fr.k]));
+        }
+      },
+      label(f) {
+        const fr = model.frames[f];
+        if (fr.kind === 'string') return `String mode ${fr.k + 1}: λ = ${fmt(model.eigenvalues[fr.k], 6)}, analytic ${fmt(model.analytic[fr.k], 6)}.`;
+        if (fr.kind === 'membrane') return `Membrane mode ${fr.k + 1}: λ = ${fmt(model.membrane_eigenvalues[fr.k], 6)}.`;
+        const s = model.skew_sweep[fr.k];
+        const im = Math.max(...s.im.map(Math.abs));
+        return `d = ${fmt(s.d, 2)}: ${im > 0 ? `complex pairs, largest imaginary part ${fmt(im, 3)}` : 'all eigenvalues real'}.`;
+      },
+    });
+  });
+</script>

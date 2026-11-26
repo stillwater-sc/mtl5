@@ -30,6 +30,10 @@ examples=(
     "example_smoother_convergence:smoother_convergence"
     "example_least_squares_qr:least_squares_qr"
     "example_solve_three_ways:solve_three_ways"
+    "example_vibrating_string:vibrating_string"
+    "example_pca_svd:pca_svd"
+    "example_sparse_formats:sparse_formats"
+    "example_structured_views:structured_views"
 )
 
 if [ ! -f "$build/CMakeCache.txt" ]; then

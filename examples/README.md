@@ -4,7 +4,7 @@ A progressive tutorial through the Matrix Template Library, organized by impleme
 
 ## Animations and traces
 
-Examples 1A to 5B have animations on the docs site's
+Every example, 1A to 7B, has an animation on the docs site's
 [pedagogical examples page](../docs/site/modernization/examples.mdx). Each program
 accepts `--trace <file>` and writes the numbers it computed as JSON (see
 `common/trace.hpp`); without the flag its output is unchanged. After a change that
