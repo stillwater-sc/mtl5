@@ -1,4 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
+#include <string>
+#include <cstdint>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <cmath>
@@ -516,4 +518,18 @@ TEST_CASE("Threshold pivoting keeps a nonzero pivot when threshold * max underfl
     const auto& U = num.factorU();
     for (std::size_t k = 0; k < 2; ++k)          // U(k,k) is stored last in column k
         REQUIRE(U.values[U.col_ptr[k + 1] - 1] != 0.0);
+}
+
+TEST_CASE("sparse_lu_numeric rejects n beyond the int32 index range (issue 926)", "[sparse][lu][907][926]") {
+    // The check is first, so it is reached without an A or a permutation of
+    // 2^31 entries: a symbolic analysis that claims that n, and a 2x2 A.
+    mat::compressed2D<double> A(2, 2);
+    sparse::factorization::lu_symbolic sym;
+    sym.n = static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) + 1;
+    try {
+        (void)sparse::factorization::sparse_lu_numeric(A, sym);
+        FAIL("sparse_lu_numeric accepted n = 2^31");
+    } catch (const std::invalid_argument& e) {
+        CHECK(std::string(e.what()).find("int32") != std::string::npos);
+    }
 }

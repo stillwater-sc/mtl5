@@ -26,6 +26,7 @@
 #include <mtl/mat/parameter.hpp>
 #include <mtl/operation/symm.hpp>
 #include <mtl/operation/symv.hpp>
+#include <mtl/vec/strided_vector_ref.hpp>
 #include <mtl/operation/syr2k.hpp>
 #include <mtl/operation/syrk.hpp>
 #include <mtl/operation/trmm.hpp>
@@ -348,6 +349,47 @@ TEMPLATE_TEST_CASE("symv strips are bit-identical to the old loop", "[operation]
                     REQUIRE(std::fabs(double(u(i)) - double(w(i))) <= 1e-4 * (1 + std::fabs(double(w(i)))));
                 else
                     REQUIRE(identical(u(i), w(i)));
+            }
+        }
+    }
+}
+
+// The symv strips with an x that is not a dense_vector (issue 926): a
+// strided_vector_ref over every third element of a buffer. The strips read x
+// through x(i), as the column loop does, so the bits are the same.
+TEMPLATE_TEST_CASE("symv strips with a strided x are bit-identical to the old loop", "[operation][236][926]",
+                   float, double) {
+    using T = TestType;
+    using M = rm<T>;
+    using V = vec::dense_vector<T>;
+    for (const std::size_t n : {std::size_t{128}, std::size_t{263}}) {
+        CAPTURE(n);
+        const M A = filled<M>(n, n, 18);
+        std::vector<T> buf(3 * n);
+        for (std::size_t i = 0; i < buf.size(); ++i) buf[i] = T(val(19, i, 0));
+        vec::strided_vector_ref<T> x(buf.data(), n, 3);
+        V xd(n);
+        for (std::size_t i = 0; i < n; ++i) xd(i) = x(i);
+        V y0(n);
+        for (std::size_t i = 0; i < n; ++i) y0(i) = T(val(20, i, 0));
+        for (const T beta : {T(0), T(0.75)}) {
+            CAPTURE(static_cast<double>(beta));
+            V u = y0, w = y0, d = y0;
+            symv(T(1.25), A, x, beta, u);
+            old_symv(T(1.25), A, xd, beta, w);
+            symv(T(1.25), A, xd, beta, d);
+            for (std::size_t i = 0; i < n; ++i) {
+                INFO("y(" << i << ")");
+                // A strided x is never BLAS-dense, so u takes the strips in
+                // every build: the old loop's bits (#931 review).
+                if constexpr (detail::symv_dispatches_blas_v<void, M, decltype(x), V>)
+                    REQUIRE(std::fabs(double(u(i)) - double(w(i))) <= 1e-4 * (1 + std::fabs(double(w(i)))));
+                else
+                    REQUIRE(identical(u(i), w(i)));
+                // The same bits as a dense_vector x, where that is not handed
+                // to BLAS ?symv (a strided x never is: it is not BLAS-dense).
+                if constexpr (!detail::symv_dispatches_blas_v<void, M, V, V>)
+                    REQUIRE(identical(u(i), d(i)));
             }
         }
     }

@@ -71,6 +71,11 @@ void mult_rows_interleaved(const M& A, const VIn& x, VOut& y,
             // with GCC's loop vectorizer off (#898; row_kernel_fixed_rows_v).
             // Every other case runs the loop below, unchanged.
             if constexpr (row_kernel_fixed_rows_v<Result, M>) {
+                // keep_scalar (#776) applies only to a row-major A, so the old
+                // loop's calls were no-ops on this column-major path, and
+                // sweep_fixed_rows needs none (issue 926). Should keep_scalar
+                // ever cover a column-major A, this stops the build.
+                static_assert(!keep_scalar_v<Result, M, W>);
                 if (static_cast<std::size_t>(ncols) >= row_kernel_fixed_rows_min_columns) {
                     sweep_fixed_rows<W>(acc, A.data(), static_cast<std::size_t>(A.num_rows()), r, 0,
                                         static_cast<std::size_t>(ncols),

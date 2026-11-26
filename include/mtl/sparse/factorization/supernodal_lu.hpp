@@ -76,6 +76,11 @@ struct supernodal_lu_factor {
     std::vector<std::size_t> lsuper_first; // dynamic L-supernode boundaries (size nsuper+1)
     std::vector<Value>       row_scale;    // r[orig row]; empty = unscaled (factored R*A)
     std::size_t              num_perturbed = 0; // pivots replaced by perturbation (0 = clean factor)
+    /// Supernode updates the panel pre-passes applied (#195): one per closed
+    /// supernode per panel that took it. 0 when panels never ran (panel = 1,
+    /// or the gate kept them off). A diagnostic: the factor is the same either
+    /// way, and tests use it to know the panel path ran (issue 926).
+    std::size_t              panel_updates = 0;
     supernodal_lu_symbolic   symbolic;
 
     std::size_t num_rows() const { return symbolic.n; }
@@ -101,6 +106,10 @@ struct supernodal_lu_factor {
                 "the symbolic analysis");
         lower_solve_schedule fsched = build_lower_solve_schedule(L);   // may throw
         upper_solve_schedule usched = build_upper_solve_schedule(U);   // may throw
+        // The diagonals are checked here, once, so the solves skip the pass
+        // (diagonal_check::done_by_caller, issue 926).
+        detail::require_nonzero_diagonal(L, false, L.values, "supernodal_lu_factor::set_factor");   // may throw
+        detail::require_nonzero_diagonal(U, true, U.values, "supernodal_lu_factor::set_factor");    // may throw
         L_ = std::move(L);            // noexcept
         U_ = std::move(U);            // noexcept
         fwd_sched_ = std::move(fsched);  // noexcept
@@ -129,6 +138,8 @@ struct supernodal_lu_factor {
             throw std::invalid_argument(
                 "supernodal_lu_factor::set_factor_values: value count does not match the "
                 "installed factor pattern (use set_factor for a pattern change)");
+        detail::require_nonzero_diagonal(L_, false, Lvals, "supernodal_lu_factor::set_factor_values");   // may throw
+        detail::require_nonzero_diagonal(U_, true, Uvals, "supernodal_lu_factor::set_factor_values");    // may throw
         L_.values = std::move(Lvals);   // noexcept
         U_.values = std::move(Uvals);   // noexcept
     }
@@ -163,8 +174,8 @@ struct supernodal_lu_factor {
         }
         // L z = P (R b), then U y = z. Level-scheduled (parallel, bit-identical to
         // dense_lower_solve / dense_upper_solve); serial at MTL5_NUM_THREADS=1.
-        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w);
-        level_scheduled_upper_solve<Accumulator>(U_, up_sched_, w);
+        level_scheduled_lower_solve<Accumulator>(L_, fwd_sched_, w, diagonal_check::done_by_caller);
+        level_scheduled_upper_solve<Accumulator>(U_, up_sched_, w, diagonal_check::done_by_caller);
         for (std::size_t i = 0; i < n; ++i)
             x(symbolic.col_perm[i]) = static_cast<typename VecX::value_type>(w[i]);
     }
@@ -246,6 +257,11 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     using std::abs;
     using AT = accumulator_traits<Acc, Value>;
     const size_type n = sym.n;
+    // Row/node indices are stored as int32 (memory-bandwidth choice inherited
+    // from sparse_lu); fail safely rather than silently overflow on huge inputs.
+    // Checked first, so a test reaches it without an A of that size (issue 926).
+    if (n > static_cast<size_type>(std::numeric_limits<std::int32_t>::max()))
+        throw std::invalid_argument("supernodal_lu_numeric: dimension exceeds 32-bit index range");
     if (A.num_rows() != n || A.num_cols() != n)
         throw std::invalid_argument("supernodal_lu_numeric: dimensions do not match symbolic analysis");
     if (!(threshold > Value{0} && threshold <= Value{1}))
@@ -253,10 +269,6 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     if (sym.col_perm.size() != n || sym.col_pinv.size() != n ||
         sym.col_super.size() != n || !util::is_valid_permutation(sym.col_perm))
         throw std::invalid_argument("supernodal_lu_numeric: invalid symbolic analysis");
-    // Row/node indices are stored as int32 (memory-bandwidth choice inherited
-    // from sparse_lu); fail safely rather than silently overflow on huge inputs.
-    if (n > static_cast<size_type>(std::numeric_limits<std::int32_t>::max()))
-        throw std::invalid_argument("supernodal_lu_numeric: dimension exceeds 32-bit index range");
     if (panel < 1 || panel > 64)
         throw std::invalid_argument("supernodal_lu_numeric: panel must be in [1, 64]");
 
@@ -299,6 +311,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     std::vector<idx32> col_csuper(n, -1);          // col -> closed supernode id (or -1 if open/unset)
     std::vector<size_type> lsuper_first;           // boundaries, recorded as supernodes close
     std::size_t num_perturbed = 0;                 // count of perturbed pivots (pivot_perturb > 0)
+    std::size_t panel_updates = 0;                 // supernode updates applied by panel pre-passes
     size_type open_sf = 0;                         // first column of the currently-open supernode
     std::vector<size_type> prev_cand;              // sorted orig candidate rows of column k-1
 
@@ -379,8 +392,10 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     // so the part of a panel column's reach before the panel is known before
     // any panel column is factored, and is the reach a DFS finds now.
     const size_type W = panel;
-    std::vector<Acc> panel_x(panel > 1 ? n * W : 0);
-    for (auto& v : panel_x) AT::clear(v);
+    // Allocated by the first pre-pass, not up front: 16 n accumulators (128 MB
+    // for double at n = 1e6) were allocated and cleared even when the gate kept
+    // panels off for the whole factorization (issue 926).
+    std::vector<Acc> panel_x;
     std::vector<std::uint64_t> super_mask;          // per closed supernode: panel columns it updates
     std::vector<idx32> panel_super;
     std::vector<Acc> panel_tmp;                     // gathered off-diagonal rows, column t at t * mo
@@ -404,6 +419,10 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     size_type panels_off = 0;        // panels left to run column at a time
     bool panel_active = false;
     auto panel_prepass = [&](size_type k0) {
+        if (panel_x.empty()) {
+            panel_x.resize(n * W);
+            for (auto& v : panel_x) AT::clear(v);
+        }
         panel_k0 = k0; panel_k1 = std::min(n, k0 + W); panel_open_sf = open_sf;
         panel_saved = 0.0; panel_reach = 0.0;
         super_mask.resize(snodes.size(), 0);
@@ -432,6 +451,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
                   [&](idx32 a, idx32 b) { return snodes[a].sf < snodes[b].sf; });
         std::size_t cols[64];
         for (idx32 sid : panel_super) {
+            ++panel_updates;
             const auto& S = snodes[sid];
             const size_type w = S.w, m = S.m, mo = m - w;
             size_type nt = 0;
@@ -493,7 +513,14 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
         Lp[k] = Li.size();
         Up[k] = Ui.size();
         if (W > 1 && k == panel_k1) {
-            if (panels_off == 0) {
+            if (k == 0) {
+                // No supernode is closed before column 0, so a pre-pass there
+                // can apply nothing, and its second DFS per column and the
+                // gate's verdict on it (panels off for the next 16) were pure
+                // cost (issue 926). The first probe is at k = W.
+                panel_active = false;
+                panel_k0 = 0; panel_k1 = std::min(n, W);
+            } else if (panels_off == 0) {
                 panel_prepass(k);
                 panel_active = true;
                 if (panel_saved < panel_min_gain * panel_reach) panels_off = panel_skip;
@@ -707,6 +734,7 @@ supernodal_lu_factor<Value> supernodal_lu_numeric(
     result.symbolic = sym;
     result.row_scale = std::move(row_scale);
     result.num_perturbed = num_perturbed;
+    result.panel_updates = panel_updates;
     result.lsuper_first.assign(lsuper_first.begin(), lsuper_first.end());
     result.row_perm.resize(n); result.row_pinv.resize(n);
     for (size_type i = 0; i < n; ++i) {

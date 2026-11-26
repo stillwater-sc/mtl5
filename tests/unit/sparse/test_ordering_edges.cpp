@@ -423,3 +423,43 @@ TEST_CASE("reach() and sparse_lower_solve on a node with many children", "[spars
     REQUIRE(top2 == top);
     REQUIRE(xi2 == xi);
 }
+
+// The test above checks reach()'s result on the star, not its cost (issue
+// 926). From d = 4000 to d = 32000 (8x) linear work takes ~8x as long; the
+// old rescan of the node's column, O(d^2), took ~64x. The bound is 24x, a
+// factor of 3 from either, and each time is the best of several runs.
+TEST_CASE("reach() on a node with many children is linear in the children", "[sparse][triangular][907][926]") {
+    auto star = [](std::size_t d) {
+        const std::size_t n = 2 * d + 1;
+        ut::csc_matrix<double> L;
+        L.nrows = L.ncols = n;
+        L.col_ptr.push_back(0);
+        L.row_ind.push_back(0); L.values.push_back(2.0);
+        for (std::size_t i = 1; i <= d; ++i) { L.row_ind.push_back(i); L.values.push_back(-1.0); }
+        L.col_ptr.push_back(L.row_ind.size());
+        for (std::size_t j = 1; j < n; ++j) {
+            L.row_ind.push_back(j); L.values.push_back(1.5);
+            if (j <= d) { L.row_ind.push_back(d + j); L.values.push_back(0.25); }
+            L.col_ptr.push_back(L.row_ind.size());
+        }
+        return L;
+    };
+    auto time_reach = [](const ut::csc_matrix<double>& L) {
+        const std::size_t n = L.ncols;
+        std::vector<std::size_t> xi(n), stack(n), pos(n);
+        std::vector<bool> marked(n, false);
+        double best = 1e30;
+        for (int r = 0; r < 7; ++r) {
+            std::fill(marked.begin(), marked.end(), false);
+            const auto t0 = std::chrono::steady_clock::now();
+            const std::size_t top = sparse::factorization::reach(L.col_ptr, L.row_ind, n, {0}, xi, stack, pos, marked);
+            best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+            REQUIRE(top == 0);
+        }
+        return best;
+    };
+    const auto small = star(4000), large = star(32000);
+    const double ratio = time_reach(large) / time_reach(small);
+    INFO("reach time ratio for 8x the children: " << ratio);
+    CHECK(ratio < 24.0);
+}

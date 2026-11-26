@@ -39,6 +39,7 @@
 // block, is in test_mult_generic_mt.cpp, which runs with a pool of 4.
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <iterator>
 
 #include <cmath>
 #include <cstddef>
@@ -404,6 +405,21 @@ void check_widths(std::index_sequence<W...>) {
 TEMPLATE_TEST_CASE("every interleave width is bit-identical to the one-row loops", "[operation][772]",
                    rm<float>, rm<double>, rm<long double>, cm<float>, cm<double>, cm<long double>) {
     check_widths<TestType>(widths{});
+}
+
+// The row kernels' sweep_fixed_rows<W> branch (#898) runs on a contiguous
+// column-major A with at least row_kernel_fixed_rows_min_columns columns, GCC
+// on x86-64 only. mult_generic reaches the gemv row kernel only for m <= 2
+// rows, so W = 4 and 8 run only through the direct calls above: check_width at
+// W = 4 and 8 on cm<float> and cm<double>, at n = 31 to 64 (issue 926). This
+// pins that those calls take the branch in the build that has it.
+TEST_CASE("the interleave-width test reaches sweep_fixed_rows at W = 4 and 8 (issue 926)", "[operation][898][926]") {
+#if defined(__GNUC__) && !defined(__clang__) && defined(__x86_64__)
+    STATIC_REQUIRE(detail::row_kernel_fixed_rows_v<float, cm<float>>);
+    STATIC_REQUIRE(detail::row_kernel_fixed_rows_v<double, cm<double>>);
+#endif
+    STATIC_REQUIRE(detail::row_kernel_fixed_rows_min_columns <= 31);   // the sizes 31..64 qualify
+    STATIC_REQUIRE(sizes[std::size(sizes) - 1] >= 8 + detail::row_kernel_fixed_rows_min_columns);
 }
 
 TEST_CASE("every interleave width keeps wrapping integers bit for bit", "[operation][772]") {

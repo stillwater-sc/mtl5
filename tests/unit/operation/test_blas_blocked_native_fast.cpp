@@ -16,6 +16,7 @@
 
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 
 #include <cmath>
 #include <cstddef>
@@ -296,5 +297,55 @@ TEST_CASE("syrk and syr2k with double coefficients on float matrices", "[operati
         const float want = static_cast<float>(1e-50 * static_cast<double>(1e30f));
         for (std::size_t i = 0; i < m; ++i)
             for (std::size_t j = 0; j < m; ++j) REQUIRE(C(i, j) == want);
+    }
+}
+
+// The cases the test above leaves out (issue 926): k = 0 (gemmt is skipped,
+// syrk's loops scale C) and k = 1 above the block size, a C whose upper
+// triangle differs from its lower one (both paths read only the lower and
+// mirror it), and a non-void Accumulator, which takes the blocked path only
+// where gemmt_uses_blocked_v allows it. Checked against the long-double
+// reference. dense2D has no leading dimension wider than its rows or columns,
+// so there is no strided operand to try.
+TEMPLATE_TEST_CASE("blocked syrk and syr2k: k = 0 and 1, an asymmetric C, an accumulator (issue 926)",
+                   "[operation][236][926]",
+                   (std::pair<rm<double>, rm<double>>), (std::pair<cm<float>, rm<float>>)) {
+    using MA = typename TestType::first_type;
+    using MC = typename TestType::second_type;
+    using T = typename MA::value_type;
+    const std::size_t m = 100;   // above detail::gemmt_block
+    auto run = [&](std::size_t k, auto accumulate) {
+        using Acc = typename decltype(accumulate)::type;
+        CAPTURE(k);
+        const MA A = filled<MA>(m, k, 21);
+        const MA B = filled<MA>(m, k, 22);
+        MC C0(m, m);   // not symmetric: the upper triangle is different
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < m; ++j) C0(i, j) = T(val(i >= j ? 23 : 24, i, j));
+        MC C1 = C0, C2 = C0;
+        const T beta = T(0.5);
+        syrk<Acc>(T(1.5), A, beta, C1);
+        syr2k<Acc>(T(1.5), A, B, beta, C2);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < m; ++j) {
+                const std::size_t lo = std::max(i, j), hi = std::min(i, j);   // the lower triangle's entry
+                long double s1 = 0, a1 = 0, s2 = 0, a2 = 0;
+                for (std::size_t l = 0; l < k; ++l) {
+                    const long double t1 = at(A, i, l) * at(A, j, l);
+                    s1 += t1; a1 += std::fabs(t1);
+                    const long double p = at(A, i, l) * at(B, j, l), q = at(B, i, l) * at(A, j, l);
+                    s2 += p + q; a2 += std::fabs(p) + std::fabs(q);
+                }
+                const long double c = static_cast<long double>(beta) * at(C0, lo, hi);
+                INFO("(" << i << ", " << j << ")");
+                check<T>(at(C1, i, j), 1.5L * s1 + c, 1.5L * a1 + std::fabs(c), k);
+                check<T>(at(C2, i, j), 1.5L * s2 + c, 1.5L * a2 + std::fabs(c), 2 * k);
+                REQUIRE(C1(i, j) == C1(j, i));
+                REQUIRE(C2(i, j) == C2(j, i));
+            }
+    };
+    for (const std::size_t k : {std::size_t{0}, std::size_t{1}, std::size_t{37}}) {
+        run(k, std::type_identity<void>{});
+        run(k, std::type_identity<long double>{});
     }
 }
