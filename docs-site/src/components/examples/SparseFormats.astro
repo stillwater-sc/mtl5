@@ -1,0 +1,124 @@
+---
+// 7A: one matvec, row by row, and the memory each of COO, CRS and ELL reads
+// for it, beside the values each format stores.
+// Data: examples/phase07_sparse_formats/sparse_formats.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/sparse_formats.json';
+import traceUrl from '../../data/traces/sparse_formats.json?url';
+
+const nnz = trace.crs.values.length;
+const padding = trace.ell.cols.filter((c: number) => c < 0).length;
+const st = trace.stored_values;
+---
+
+<AnimationShell
+  kind="formats"
+  trace={traceUrl}
+  title="One matrix, three layouts, one matvec"
+  label="A 36 by 36 grid Laplacian's spy plot with one row highlighted, beside the COO triplets, the CRS arrays and the ELL slots, each with the entries that row reads highlighted, and bars of the values each format stores."
+  height={330}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--sl-color-accent)"></i>read for this row</span>
+    <span><i style="background: var(--ex-c2)"></i>ELL padding read anyway</span>
+  </div>
+  <p>
+    Each frame is one row of y = A x on the {trace.n} × {trace.n} Laplacian of a {trace.grid} × {trace.grid} grid.
+    Left: the row in the matrix, and the entries of x it needs. Right: the memory each format reads for it. The
+    sorted COO triplets keep the row together, but finding it needs a search or a scan. CRS jumps straight there
+    through <code>row_ptr</code>. ELL computes the address, row × width, and reads every slot, the padding too.
+  </p>
+  <p>
+    All three hold the same {nnz} nonzeros. Counted in stored values, as the example's table does: dense
+    {st.dense}, COO {st.coo} (row, column and value per entry), CRS {st.crs} (values, columns and
+    {trace.n + 1} row pointers), ELL {st.ell} ({trace.n} rows × {trace.ell.width} slots, two arrays, {padding} of the
+    slots padding). ELL pays for padding with addresses it can compute, which suits SIMD and GPU kernels that
+    process rows in lockstep.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { formatsModel, formatsFrame } from './lib/models.js';
+  import { svg, clear } from './lib/plot.js';
+
+  mountAll('[data-ex="formats"]', (root, trace) => {
+    const model = formatsModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+    const n = model.n;
+
+    // Spy plot.
+    const c = 5;
+    const sx0 = 20;
+    const sy0 = 24;
+    el.append(svg('rect', { x: sx0, y: sy0, width: n * c, height: n * c, class: 'ex-cell' }));
+    const rowBand = el.appendChild(svg('rect', { x: sx0, width: n * c, height: c, fill: 'var(--sl-color-accent)', 'fill-opacity': 0.25 }));
+    const spy = [];
+    model.crs.cols.forEach((col, q) => {
+      let r = 0;
+      while (model.crs.starts[r + 1] <= q) ++r;
+      spy.push({ r, el: el.appendChild(svg('rect', { x: sx0 + col * c + 0.5, y: sy0 + r * c + 0.5, width: c - 1, height: c - 1, class: 'ex-fill1' })) });
+    });
+    // x, with the entries this row needs.
+    el.append(svg('text', { x: sx0, y: sy0 + n * c + 18, class: 'ex-tick' }, 'x'));
+    const xs = Array.from({ length: n }, (_, j) => el.appendChild(svg('rect', { x: sx0 + j * c + 0.5, y: sy0 + n * c + 22, width: c - 1, height: 8, class: 'ex-cell' })));
+
+    // Stored values per format.
+    const st = model.stored_values;
+    const bars = [['dense', st.dense], ['COO', st.coo], ['CRS', st.crs], ['ELL', st.ell]];
+    const bx0 = 64;
+    const bmax = 130;
+    bars.forEach(([name, v], i) => {
+      const y = 250 + i * 18;
+      el.append(svg('text', { x: bx0 - 6, y: y + 10, 'text-anchor': 'end', class: 'ex-tick' }, name));
+      el.append(svg('rect', { x: bx0, y, width: Math.max(1, (bmax * v) / st.dense), height: 12, class: i === 0 ? 'ex-cell' : 'ex-fill1', 'fill-opacity': 0.8 }));
+      el.append(svg('text', { x: bx0 + (bmax * v) / st.dense + 4, y: y + 10, class: 'ex-tick' }, v));
+    });
+
+    // Memory blocks, wrapped at `per` slots a line.
+    const per = 40;
+    const s = 10;
+    const mx0 = 232;
+    function block(y0, label, count, padded) {
+      el.append(svg('text', { x: mx0, y: y0 - 4, class: 'ex-label' }, label));
+      return Array.from({ length: count }, (_, q) =>
+        el.appendChild(svg('rect', { x: mx0 + (q % per) * s, y: y0 + Math.floor(q / per) * s, width: s - 1, height: s - 1, class: padded?.(q) ? 'ex-pad' : 'ex-cell' })),
+      );
+    }
+    const coo = block(24, 'COO: (row, col, value) triplets, sorted', model.coo.rows.length);
+    const ptr = block(90, 'CRS: row_ptr', model.crs.starts.length);
+    const crs = block(122, 'CRS: col_idx and values', model.crs.values.length);
+    const ell = block(188, `ELL: ${model.ell.width} slots per row`, model.ell.cols.length, (q) => model.ell.cols[q] < 0);
+
+    const paint = (cells, on, cls = 'ex-cell-on', base = () => 'ex-cell') => cells.forEach((r, q) => r.setAttribute('class', on.has(q) ? cls : base(q)));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 500,
+      tweenMs: 0,
+      render(r) {
+        const f = formatsFrame(model, r);
+        rowBand.setAttribute('y', sy0 + r * c);
+        spy.forEach((d) => d.el.setAttribute('class', d.r === r ? 'ex-fill-acc' : 'ex-fill1'));
+        const need = new Set(f.cols);
+        xs.forEach((x, j) => x.setAttribute('class', need.has(j) ? 'ex-cell-on' : 'ex-cell'));
+        paint(coo, new Set(f.coo));
+        paint(ptr, new Set(f.crsStarts));
+        paint(crs, new Set(f.crs));
+        const padRead = new Set(f.padding);
+        const ellOn = new Set(f.ell);
+        ell.forEach((rect, q) => rect.setAttribute('class', ellOn.has(q) ? 'ex-cell-on' : padRead.has(q) ? 'ex-cell-new' : model.ell.cols[q] < 0 ? 'ex-pad' : 'ex-cell'));
+      },
+      label(r) {
+        const f = formatsFrame(model, r);
+        return `Row ${r}: ${f.crs.length} nonzeros, columns ${f.cols.join(', ')}; CRS reads row_ptr[${r}] and row_ptr[${r + 1}], ELL reads ${model.ell.width} slots (${f.padding.length} padding).`;
+      },
+    });
+  });
+</script>
+
+<style is:global>
+  .exfig .ex-fill-acc { fill: var(--sl-color-accent-high); }
+  .exfig .ex-pad { fill: none; stroke: var(--ex-line); stroke-width: 1; stroke-dasharray: 2 2; }
+</style>

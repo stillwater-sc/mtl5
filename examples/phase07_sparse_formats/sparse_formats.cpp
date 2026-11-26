@@ -16,10 +16,16 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <tuple>
+#include <vector>
+
+#include "../common/trace.hpp"
 
 using namespace mtl;
 
-int main() {
+int main(int argc, char** argv) {
+    example_trace::trace trace(argc, argv, "7A sparse format shootout");
+
     std::cout << "=============================================================\n";
     std::cout << " Phase 7A: Sparse Format Shootout - COO vs CRS vs ELL\n";
     std::cout << "=============================================================\n\n";
@@ -195,6 +201,42 @@ int main() {
     std::remove(dense_file.c_str());
 
     // -- Commentary -------------------------------------------------------
+    if (trace) {
+        trace["grid"] = grid;
+        trace["n"] = N;
+        // COO after sort(): the (row, col, value) triplets in memory order.
+        std::vector<std::size_t> coo_r, coo_c;
+        std::vector<double> coo_v;
+        for (const auto& [r, c, v] : coo.ref_entries()) {
+            coo_r.push_back(r);
+            coo_c.push_back(c);
+            coo_v.push_back(v);
+        }
+        auto& co = trace["coo"];
+        co["rows"] = example_trace::value::numbers(coo_r);
+        co["cols"] = example_trace::value::numbers(coo_c);
+        co["values"] = example_trace::value::numbers(coo_v, 6);
+        auto& cr = trace["crs"];
+        cr["starts"] = example_trace::value::numbers(std::vector<std::size_t>(crs.ref_major().begin(), crs.ref_major().end()));
+        cr["cols"] = example_trace::value::numbers(std::vector<std::size_t>(crs.ref_minor().begin(), crs.ref_minor().end()));
+        cr["values"] = example_trace::value::numbers(std::vector<double>(crs.ref_data().begin(), crs.ref_data().end()), 6);
+        // ELL: row r's slots are [r * width, (r + 1) * width); an empty slot
+        // holds size_type(-1), written here as -1.
+        std::vector<long long> ell_c;
+        for (auto c : ell.ref_indices())
+            ell_c.push_back(c == static_cast<std::size_t>(-1) ? -1LL : static_cast<long long>(c));
+        auto& el = trace["ell"];
+        el["width"] = ell.max_width();
+        el["cols"] = example_trace::value::numbers(ell_c);
+        el["values"] = example_trace::value::numbers(std::vector<double>(ell.ref_data().begin(), ell.ref_data().end()), 6);
+        // The values each format stores, as the storage table counts them.
+        auto& st = trace["stored_values"];
+        st["dense"] = N * N;
+        st["coo"] = 3 * coo.nnz();
+        st["crs"] = 2 * crs.nnz() + N + 1;
+        st["ell"] = 2 * N * ell.max_width();
+    }
+
     std::cout << "=== Key Takeaways ===\n";
     std::cout << "1. COO: simplest format, good for assembly. O(nnz) for insert,\n";
     std::cout << "   but O(nnz) for element lookup. Sort + compress -> CRS.\n";
@@ -206,5 +248,5 @@ int main() {
     std::cout << "5. Matrix Market is the standard exchange format for sparse\n";
     std::cout << "   matrices (used by SuiteSparse, NIST, etc.).\n";
 
-    return EXIT_SUCCESS;
+    return trace.close();   // EXIT_FAILURE if a requested trace could not be written
 }

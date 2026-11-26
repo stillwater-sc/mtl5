@@ -1,0 +1,124 @@
+---
+// 6B: the centered data turning onto its principal axes, then the rank-2
+// and rank-1 reconstructions, beside the variance each component explains.
+// Data: examples/phase06_eigenvalue_svd/pca_svd.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/pca_svd.json';
+import traceUrl from '../../data/traces/pca_svd.json?url';
+import { fmt } from './lib/plot.js';
+
+const total = trace.sigma.reduce((a: number, s: number) => a + s * s, 0);
+const pct = trace.sigma.map((s: number) => (100 * s * s) / total);
+type Rec = { rank: number; error_fro: number };
+const rec = trace.reconstructions as Rec[];
+const r1 = rec.find((r) => r.rank === 1)!;
+const r2 = rec.find((r) => r.rank === 2)!;
+---
+
+<AnimationShell
+  kind="pca"
+  trace={traceUrl}
+  title="PCA: turning the data onto its axes"
+  label="Eight samples plotted in the plane of features 1 and 3, turning into principal coordinates, then reconstructed from two components and from one, beside bars of the variance each component explains."
+  height={290}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--ex-c1)"></i>samples</span>
+    <span><i style="background: var(--ex-c2)"></i>principal directions</span>
+  </div>
+  <p>
+    Left: the {trace.samples} samples, centered, in the plane of features 1 and 3, the two that were made to
+    correlate. The arrows are the first two principal directions, the columns of V, drawn in that plane. The next
+    frame moves every sample to its principal coordinates (PC1, PC2) = rows of Xc V. The last two take the data back
+    to the feature plane, rebuilt from two components and then from one. Right: the share of the variance,
+    σ_k² / Σσ², that each component carries.
+  </p>
+  <p>
+    The singular values are {trace.sigma.map((s: number) => fmt(s, 4)).join(', ')}, so the components explain
+    {pct.map((p: number) => fmt(p, 3) + '%').join(', ')} of the variance. Rebuilt from two components the data is off by
+    ‖Xc − X₂‖_F = {fmt(r2.error_fro, 4)}, which is σ₃; from one, by {fmt(r1.error_fro, 4)}, which is √(σ₂² + σ₃²). No
+    rank-r approximation does better (Eckart–Young). In the rank-1 frame every sample lies on the first principal
+    direction.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { pcaModel } from './lib/models.js';
+  import { scaleLinear, lerp, ease, drawAxes, svg, clear, fmt } from './lib/plot.js';
+
+  mountAll('[data-ex="pca"]', (root, trace) => {
+    const model = pcaModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+
+    const P = { left: 46, right: 330, top: 24, bottom: 262 };
+    const lim = 6;
+    const sx = scaleLinear([-lim, lim], [P.left, P.right]);
+    const sy = scaleLinear([-lim * 0.84, lim * 0.84], [P.bottom, P.top]);
+    const axes = svg('g');
+    drawAxes(axes, P, sx, sy, { xTicks: [-6, -3, 0, 3, 6], yTicks: [-4, -2, 0, 2, 4] });
+    el.append(axes);
+    el.append(svg('line', { x1: sx(0), x2: sx(0), y1: P.top, y2: P.bottom, class: 'ex-grid' }));
+    el.append(svg('line', { x1: P.left, x2: P.right, y1: sy(0), y2: sy(0), class: 'ex-grid' }));
+    const xLabel = el.appendChild(svg('text', { x: (P.left + P.right) / 2, y: P.bottom + 26, 'text-anchor': 'middle', class: 'ex-label' }));
+    const yLabel = el.appendChild(svg('text', { x: P.left, y: P.top - 8, class: 'ex-label' }));
+    const arrows = [0, 1].map(() => el.appendChild(svg('line', { class: 'ex-series ex-c2', 'stroke-width': 2 })));
+    const dots = model.frames[0].points.map(() => el.appendChild(svg('circle', { r: 4.5, class: 'ex-fill1' })));
+    const title = el.appendChild(svg('text', { x: P.left + 6, y: P.top + 14, class: 'ex-text' }));
+
+    // Variance bars.
+    const B = { left: 420, right: 630, top: 40, bottom: 230 };
+    const bw = (B.right - B.left) / model.explained.length;
+    el.append(svg('text', { x: B.left, y: B.top - 14, class: 'ex-label' }, 'variance explained'));
+    const bars = model.explained.map((e, k) => {
+      const h = (B.bottom - B.top) * e;
+      el.append(svg('text', { x: B.left + k * bw + bw / 2, y: B.bottom + 16, 'text-anchor': 'middle', class: 'ex-tick' }, `PC${k + 1}`));
+      el.append(svg('text', { x: B.left + k * bw + bw / 2, y: B.bottom - h - 6, 'text-anchor': 'middle', class: 'ex-tick' }, `${fmt(100 * e, 3)}%`));
+      return el.appendChild(svg('rect', { x: B.left + k * bw + 8, y: B.bottom - h, width: bw - 16, height: Math.max(h, 0.5), class: 'ex-fill1' }));
+    });
+    const info = el.appendChild(svg('text', { x: B.left, y: B.bottom + 40, class: 'ex-tick', 'font-size': 11 }));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 2200,
+      tweenMs: 1400,
+      render(f, t) {
+        const fr = model.frames[f];
+        const prev = model.frames[Math.max(0, f - 1)];
+        const e = f === 0 ? 1 : ease(t);
+        fr.points.forEach(([x, y], i) => {
+          const [px, py] = prev.points[i];
+          dots[i].setAttribute('cx', sx(lerp(px, x, e)));
+          dots[i].setAttribute('cy', sy(lerp(py, y, e)));
+        });
+        const inScores = fr.kind === 'scores';
+        xLabel.textContent = inScores ? 'PC1' : 'feature 1 (centered)';
+        yLabel.textContent = inScores ? 'PC2' : 'feature 3 (centered)';
+        // Principal directions: in the feature plane, the (f1, f3) parts of
+        // V's columns, scaled by each component's spread; in principal
+        // coordinates, the axes themselves.
+        [0, 1].forEach((k) => {
+          const s = model.sigma[k] / Math.sqrt(model.samples - 1);
+          const dirx = inScores ? (k === 0 ? 1 : 0) : model.V[model.fx][k];
+          const diry = inScores ? (k === 0 ? 0 : 1) : model.V[model.fy][k];
+          const len = 2 * s;
+          arrows[k].setAttribute('x1', sx(-dirx * len));
+          arrows[k].setAttribute('y1', sy(-diry * len));
+          arrows[k].setAttribute('x2', sx(dirx * len));
+          arrows[k].setAttribute('y2', sy(diry * len));
+        });
+        const kept = fr.kind === 'recon' ? fr.rank : model.features;
+        bars.forEach((b, k) => b.setAttribute('fill-opacity', k < kept ? '1' : '0.2'));
+        title.textContent = fr.label;
+        info.textContent = fr.kind === 'recon' ? `kept ${fr.rank} of ${model.features}: error ‖Xc − X${fr.rank}‖_F = ${fmt(fr.error, 4)}` : 'all components kept';
+      },
+      label(f) {
+        const fr = model.frames[f];
+        if (fr.kind === 'recon') return `Rank-${fr.rank} reconstruction: Frobenius error ${fmt(fr.error, 4)}.`;
+        if (fr.kind === 'scores') return `Principal coordinates: PC1 carries ${fmt(100 * model.explained[0], 3)}% of the variance.`;
+        return 'Centered data in the plane of features 1 and 3.';
+      },
+    });
+  });
+</script>

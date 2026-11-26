@@ -1,0 +1,156 @@
+---
+// 7B: which stored entries each view reads, cell by cell, and CG running on
+// the Hermitian view. Data: examples/phase07_sparse_formats/structured_views.cpp --trace.
+import AnimationShell from './AnimationShell.astro';
+import trace from '../../data/traces/structured_views.json';
+import traceUrl from '../../data/traces/structured_views.json?url';
+import { entriesRead } from './lib/models.js';
+import { fmt } from './lib/plot.js';
+
+type View = { name: string; expression: string; rows: number; cols: number; sources: (number[] | null)[] };
+const views = trace.views as View[];
+const n = trace.n;
+const herm = views.find((v) => v.name === 'Hermitian')!;
+const cg = trace.cg;
+---
+
+<AnimationShell
+  kind="views"
+  trace={traceUrl}
+  title="What a view reads"
+  label="A six by six stored matrix beside each view of it, with the stored entries each view reads highlighted, then CG runs on the Hermitian view."
+  height={300}
+>
+  <div class="exfig-legend" slot="legend">
+    <span><i style="background: var(--sl-color-accent)"></i>stored entries the view reads</span>
+    <span><i style="background: var(--ex-c2)"></i>read twice (mirrored)</span>
+  </div>
+  <p>
+    Left: the stored matrix: the upper triangle for the Hermitian view, the full matrix for the others. Right: the
+    view, as MTL5 returns it. Each step shows one view and marks the stored entries it reads. A view that reads an
+    entry for two of its cells (the Hermitian view's mirror) marks it in the second colour. Cells a view computes
+    without reading anything, such as a band's zeros or the identity, stay blank on the left.
+  </p>
+  <p>
+    The views store nothing. The Hermitian view's {n * n} cells read {entriesRead(herm)} stored entries, the upper
+    triangle, and {views.map((v) => `${v.name} reads ${entriesRead(v)}`).slice(1).join(', ')}. The last frames run CG
+    on <code>hermitian(A_upper)</code> as if it were a full matrix. It converges in {cg.iterations} steps, to a
+    residual of {fmt(cg.residual[cg.residual.length - 1], 2)}, without the lower triangle ever being stored.
+  </p>
+</AnimationShell>
+
+<script>
+  import { createPlayer, mountAll } from './lib/player.js';
+  import { viewsModel, entriesRead } from './lib/models.js';
+  import { scaleLinear, scaleLog, logDomain, logTicks, linePath, drawAxes, svg, clear, fmt, fmtPow10 } from './lib/plot.js';
+
+  mountAll('[data-ex="views"]', (root, trace) => {
+    const model = viewsModel(trace);
+    const el = root.querySelector('[data-ex-svg]');
+    clear(el);
+    const n = model.n;
+    const cw = 40;
+    const ch = 28;
+
+    function grid(x0, y0, rows, cols) {
+      const cells = [];
+      for (let i = 0; i < rows; ++i) {
+        cells.push([]);
+        for (let j = 0; j < cols; ++j) {
+          cells[i].push({
+            box: el.appendChild(svg('rect', { x: x0 + j * cw + 1, y: y0 + i * ch + 1, width: cw - 2, height: ch - 2, rx: 3, class: 'ex-cell' })),
+            text: el.appendChild(svg('text', { x: x0 + j * cw + cw / 2, y: y0 + i * ch + ch / 2 + 4, 'text-anchor': 'middle', class: 'ex-tick', 'font-size': 10 })),
+          });
+        }
+      }
+      return cells;
+    }
+    const baseTitle = el.appendChild(svg('text', { x: 16, y: 20, class: 'ex-text' }));
+    const base = grid(16, 30, n, n);
+    const viewTitle = el.appendChild(svg('text', { x: 336, y: 20, class: 'ex-text' }));
+    const view = grid(336, 30, n, n);
+    const stats = el.appendChild(svg('text', { x: 16, y: 218, class: 'ex-tick', 'font-size': 11 }));
+
+    // CG panel, shown on the CG frames in place of the view grid.
+    const cgG = el.appendChild(svg('g'));
+    const R = { left: 380, right: 630, top: 58, bottom: 168 };
+    const kx = scaleLinear([0, model.cg.iterations], [R.left, R.right]);
+    const rDom = logDomain(model.cg.residual);
+    const ry = scaleLog(rDom, [R.bottom, R.top]);
+    drawAxes(cgG, R, kx, ry, { xTicks: Array.from({ length: model.cg.iterations + 1 }, (_, k) => k), yTicks: logTicks(rDom, 5), yFmt: fmtPow10, xLabel: 'CG step', yLabel: '‖b − H x‖ / ‖b‖' });
+    const hist = cgG.appendChild(svg('path', { class: 'ex-series ex-c1', 'stroke-width': 1.5 }));
+    const dot = cgG.appendChild(svg('circle', { r: 4, class: 'ex-fill1' }));
+    const xBars = cgG.appendChild(svg('g'));
+    const xMax = Math.max(...model.cg.iterates[model.cg.iterations].map(Math.abs));
+    const bars = Array.from({ length: n }, (_, i) => xBars.appendChild(svg('rect', { x: R.left + i * 40, width: 28, class: 'ex-fill2' })));
+    cgG.append(svg('text', { x: R.left, y: 286, class: 'ex-tick' }, 'x, component by component'));
+
+    const show = (cells, on) => cells.forEach((row) => row.forEach((c) => { c.box.style.display = on ? '' : 'none'; c.text.style.display = on ? '' : 'none'; }));
+
+    createPlayer(root, {
+      count: model.count,
+      frameMs: 1600,
+      tweenMs: 0,
+      render(f) {
+        const fr = model.frames[f];
+        if (fr.kind === 'view') {
+          const v = model.views[fr.i];
+          const src = v.base === 'A_upper' ? model.A_upper : model.A_full;
+          const reads = new Map();
+          v.sources.forEach((s) => s && reads.set(`${s[0]},${s[1]}`, (reads.get(`${s[0]},${s[1]}`) ?? 0) + 1));
+          for (let i = 0; i < n; ++i)
+            for (let j = 0; j < n; ++j) {
+              const c = base[i][j];
+              const hits = reads.get(`${i},${j}`) ?? 0;
+              c.box.setAttribute('class', hits > 1 ? 'ex-cell-new' : hits === 1 ? 'ex-cell-on' : 'ex-cell');
+              c.text.textContent = v.base === 'none' ? '' : fmt(src[i][j], 2);
+            }
+          show(view, true);
+          cgG.style.display = 'none';
+          for (let i = 0; i < n; ++i)
+            for (let j = 0; j < n; ++j) {
+              const c = view[i][j];
+              const inside = i < v.rows && j < v.cols;
+              c.box.style.display = inside ? '' : 'none';
+              c.text.style.display = inside ? '' : 'none';
+              if (!inside) continue;
+              c.box.setAttribute('class', v.sources[i * v.cols + j] ? 'ex-cell-on' : 'ex-cell');
+              c.text.textContent = fmt(v.values[i][j], 2);
+            }
+          baseTitle.textContent = v.base === 'none' ? 'stored: nothing' : `stored: ${v.base}`;
+          viewTitle.textContent = v.expression;
+          stats.textContent = `${v.rows * v.cols} view cells read ${entriesRead(v)} stored entries; the view itself stores 0.`;
+        } else {
+          const k = fr.k;
+          for (let i = 0; i < n; ++i)
+            for (let j = 0; j < n; ++j) {
+              base[i][j].box.setAttribute('class', j >= i ? 'ex-cell-on' : 'ex-cell');
+              base[i][j].text.textContent = fmt(model.A_upper[i][j], 2);
+            }
+          show(view, false);
+          cgG.style.display = '';
+          const ks = Array.from({ length: k + 1 }, (_, j) => j);
+          hist.setAttribute('d', linePath(ks, model.cg.residual.slice(0, k + 1), kx, ry));
+          dot.setAttribute('cx', kx(k));
+          dot.setAttribute('cy', ry(model.cg.residual[k]));
+          model.cg.iterates[k].forEach((x, i) => {
+            const h = (60 * Math.abs(x)) / xMax;
+            bars[i].setAttribute('y', 268 - h);
+            bars[i].setAttribute('height', Math.max(0.5, h));
+          });
+          baseTitle.textContent = 'stored: A_upper';
+          viewTitle.textContent = `cg(hermitian(A_upper), x, b), step ${k}`;
+          stats.textContent = `residual ${fmt(model.cg.residual[k])}`;
+        }
+      },
+      label(f) {
+        const fr = model.frames[f];
+        if (fr.kind === 'view') {
+          const v = model.views[fr.i];
+          return `${v.expression}: ${v.rows * v.cols} cells, ${entriesRead(v)} stored entries read.`;
+        }
+        return `CG on the Hermitian view, step ${fr.k}: residual ${fmt(model.cg.residual[fr.k])}.`;
+      },
+    });
+  });
+</script>
