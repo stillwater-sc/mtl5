@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -57,8 +58,22 @@ int main() {
     }
 
     // 2. An unwritable path makes close() fail; a writable one succeeds.
-    const fs::path dir = fs::temp_directory_path() / "mtl5_test_trace";
-    fs::create_directories(dir);
+    // A directory of this run's own: two build trees running the test at once
+    // must not share (and delete) each other's files. create_directory returns
+    // false when the name exists, so a name is used only if this run made it.
+    fs::path dir;
+    {
+        std::random_device rd;
+        for (int attempt = 0; attempt < 100 && dir.empty(); ++attempt) {
+            fs::path candidate = fs::temp_directory_path()
+                               / ("mtl5_test_trace_" + std::to_string(rd()) + "_" + std::to_string(rd()));
+            if (fs::create_directory(candidate)) dir = candidate;
+        }
+        if (dir.empty()) {
+            std::cerr << "FAILED: could not create a temporary directory\n";
+            return EXIT_FAILURE;
+        }
+    }
     {
         const std::string bad = (dir / "no_such_dir" / "t.json").string();
         std::vector<std::string> args = {"prog", "--trace", bad};

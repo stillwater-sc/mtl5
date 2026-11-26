@@ -102,3 +102,10 @@ test('Play resumes a paused tween where it stopped', () => {
 test('Play at the last frame replays from frame 0, settled', () => {
   assert.deepEqual(resumeFrom({ frame: 2, elapsed: 9999 }, { count: 3, tweenMs: 1600 }), { frame: 0, elapsed: 1600, restarted: true });
 });
+
+test('Play paused during the last frame\'s tween finishes it instead of restarting', () => {
+  const o = { count: 3, tweenMs: 1600 };
+  assert.deepEqual(resumeFrom({ frame: 2, elapsed: 400 }, o), { frame: 2, elapsed: 400, restarted: false });
+  // Settled exactly at the end counts as finished.
+  assert.equal(resumeFrom({ frame: 2, elapsed: 1600 }, o).restarted, true);
+});

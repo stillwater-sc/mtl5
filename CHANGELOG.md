@@ -39,7 +39,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - 2B, Cuthill-McKee bandwidth reduction (`bandwidth_reduction.cpp`): permutation vectors, `symmetric_permute`, `mapped(A, p, p)`, RCM. Bandwidth goes from 128 to 12 on a scrambled 12 × 12 grid.
   - **3A** (the heat equation) has its animation: both CG runs' iterates and true residuals, step by step.
   - **Traces.** With `--trace <file>`, an example writes what it computed as JSON (`examples/common/trace.hpp`). Without the flag its output is unchanged. The traces are committed in `docs-site/src/data/traces/`, and `tools/regen_example_traces.sh` rebuilds and rewrites them.
-  - **The animations** are Astro components in `docs-site/src/components/examples/`, inline SVG with no new npm dependencies. Each has play, step and scrub controls. With reduced motion an animation rests on its final frame. Each works in both themes and has a text alternative with its trace's key numbers. `docs-site/tests/` checks what each animation draws against its trace (113 tests), and `examples/common/test_trace.cpp` (CTest) tests the trace writer.
+  - **The animations** are Astro components in `docs-site/src/components/examples/`, inline SVG with no new npm dependencies. Each has play, step and scrub controls. With reduced motion an animation rests on its final frame. Each works in both themes and has a text alternative with its trace's key numbers. `docs-site/tests/` checks what each animation draws against its trace (114 tests), and `examples/common/test_trace.cpp` (CTest) tests the trace writer.
   - The page moved from `docs/modernization/examples.md` to `docs/site/modernization/examples.mdx`, so that it can embed the components.
 
 ### Fixed

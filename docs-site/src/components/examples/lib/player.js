@@ -31,12 +31,15 @@ export function advance(state, dt, { count, frameMs, tweenMs }) {
 }
 
 /**
- * Where Play starts from. At the last frame it replays from frame 0, shown
- * settled (elapsed = tweenMs). Anywhere else it resumes with the stored
- * elapsed time, so a tween paused halfway finishes instead of jumping.
+ * Where Play starts from. Once playback has finished (the last frame, its
+ * tween done) it replays from frame 0, shown settled (elapsed = tweenMs).
+ * Anywhere else, including partway through the last frame's tween, it
+ * resumes with the stored elapsed time, so a paused tween finishes instead
+ * of jumping.
  */
 export function resumeFrom({ frame, elapsed }, { count, tweenMs }) {
-  if (frame >= count - 1) return { frame: 0, elapsed: tweenMs, restarted: true };
+  const finished = frame >= count - 1 && elapsed >= tweenMs;
+  if (finished) return { frame: 0, elapsed: tweenMs, restarted: true };
   return { frame, elapsed, restarted: false };
 }
 

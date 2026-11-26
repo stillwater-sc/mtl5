@@ -32,17 +32,30 @@ if [ ! -f "$build/CMakeCache.txt" ]; then
     exit 1
 fi
 
+# One configuration, used for both the build and the lookup: a multi-config
+# tree (Visual Studio, Ninja Multi-Config) holds one binary per configuration,
+# and the traces must come from the one just built. CONFIG overrides; the
+# default is the tree's CMAKE_BUILD_TYPE, else Release.
+config="${CONFIG:-$(sed -n 's/^CMAKE_BUILD_TYPE:[A-Z]*=//p' "$build/CMakeCache.txt")}"
+config="${config:-Release}"
+
 targets=()
 for e in "${examples[@]}"; do targets+=("${e%%:*}"); done
-cmake --build "$build" --target "${targets[@]}" -j4
+cmake --build "$build" --config "$config" --target "${targets[@]}" -j4
 
 mkdir -p "$out"
 for e in "${examples[@]}"; do
     target="${e%%:*}"
     name="${e##*:}"
-    exe="$(find "$build" -type f \( -name "$target" -o -name "$target.exe" \) | head -n 1)"
+    # Multi-config trees put it in examples/<config>/, single-config in examples/.
+    exe=""
+    for dir in "$build/examples/$config" "$build/examples"; do
+        for cand in "$dir/$target" "$dir/$target.exe"; do
+            if [ -z "$exe" ] && [ -f "$cand" ] && [ -x "$cand" ]; then exe="$cand"; fi
+        done
+    done
     if [ -z "$exe" ]; then
-        echo "error: $target was not built" >&2
+        echo "error: $target ($config) not found in $build/examples" >&2
         exit 1
     fi
     "$exe" --trace "$out/$name.json" > /dev/null
