@@ -57,6 +57,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`gmres` with a preconditioner converges on the true residual** (issue 936, found by stillwater-sc/mtl5-python#150).
+  - GMRES is left-preconditioned. It tested the preconditioned residual ‖M⁻¹(b − Ax)‖ against `rtol · ‖b‖`, so with a preconditioner it could return 0 short of the tolerance. On a non-symmetric 144-unknown system with 400 on the diagonal and the diagonal preconditioner, it stopped at a true relative residual of 3.5e-6 for `rtol = 1e-8`, and `relresid()` reported the preconditioned 8.7e-9.
+  - Each cycle now opens and closes on the true residual b − Ax, as `cg` and `tfqmr` do, and the iteration object's residual is that norm. The closing test costs one product with A, which the next cycle reuses, so only a converged solve pays for it.
+  - Within a cycle, the Arnoldi estimate is scaled by the cycle's opening ratio ‖b − Ax‖ / ‖M⁻¹(b − Ax)‖, so a cycle that follows a false convergence does not open below the tolerance and stall at one step per restart. Without a preconditioner the ratio is 1, and nothing changes.
+  - A singular M that maps an unconverged residual to zero is now a breakdown (error 2). Before, the zero preconditioned norm passed the test, and gmres returned 0.
+  - A breakdown on an A that is singular on the Krylov space (error 2) is reported only when the true residual has not converged. A consistent system can converge there, and the preconditioned estimate could say it had not.
+
 - **Krylov solvers: complex systems, extreme scales, aliasing and non-finite input** (issue 924, from QA sweep #913).
   - **Complex systems:**
     - `bicg` and `qmr` now build their shadow sequence with A^H and the conjugate coefficients. They used A^T, and on a complex non-Hermitian system they stopped at `max_iter` with a residual near 2.

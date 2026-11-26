@@ -4,6 +4,8 @@
 #include <mtl/detail/exceptions.hpp>
 #include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
+#include <limits>
+#include <type_traits>
 #include <stdexcept>
 #include <vector>
 #include <mtl/vec/dense_vector.hpp>
@@ -35,6 +37,10 @@ struct gmres_workspace {
     mat::dense2D<Value> H;                     // Hessenberg, (kmax+1) x kmax
     vec::dense_vector<Value> g, cs, sn, y;     // least-squares RHS, rotations, solution
     vec::dense_vector<Value> r0, r, w_tmp, w;
+    /// r0 holds b - A x for the current x, and iter has already tested its
+    /// norm: set by a cycle that ends without converging, so the next cycle
+    /// starts from it without a second product with A or a second test.
+    bool r0_tested = false;
 };
 
 /// The identity, for a gmres_inner called without a scaled right-hand side.
@@ -58,17 +64,57 @@ int gmres_cycle(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& it
     auto& H = ws.H;
     auto& g = ws.g;
 
-    // r = M^{-1}(b - A*x); w_tmp holds A x
-    apply_operator<Accumulator>(A, x, ws.w_tmp);
-    for (size_type i = 0; i < n; ++i)
-        ws.r0(i) = b(i) - ws.w_tmp(i);
-    M.solve(ws.r, ws.r0);
-
-    // Real for a complex system (#853): the iteration takes a magnitude.
-    const auto beta = mtl::two_norm(ws.r);
-    if (iter.finished(unscale(beta)))
+    // r0 = b - A x, the true residual. Convergence is decided on its norm
+    // and on nothing else (issue 936). The Arnoldi process below minimizes
+    // the preconditioned residual M^{-1}(b - A x), and it was tested against
+    // rtol * ||b||: with the diagonal preconditioner of a matrix whose
+    // diagonal is 400, gmres reported convergence at a true residual 400
+    // times the tolerance, and relresid() showed the preconditioned ratio.
+    // Returns ||r0|| in the units of b's scaled copy (not yet unscaled).
+    auto true_residual = [&]() {
+        apply_operator<Accumulator>(A, x, ws.w_tmp);
+        for (size_type i = 0; i < n; ++i)
+            ws.r0(i) = b(i) - ws.w_tmp(i);
+        // Real for a complex system (#853): the iteration takes a magnitude.
+        return mtl::two_norm(ws.r0);
+    };
+    const auto rnorm = ws.r0_tested ? mtl::two_norm(ws.r0) : true_residual();
+    if (ws.r0_tested)
+        ws.r0_tested = false;   // the last cycle's closing test: not finished
+    else if (iter.finished(unscale(rnorm)))
         return 0;
 
+    // r = M^{-1} r0
+    M.solve(ws.r, ws.r0);
+    const auto beta = mtl::two_norm(ws.r);
+    // r0 has not converged, so it is not zero, and a zero M^{-1} r0 means a
+    // singular M: V[0] would be 0 / 0.
+    if (beta == decltype(beta)(0)) {
+        iter.fail(2, "gmres breakdown: M^{-1}(b - A x) == 0");
+        return 0;
+    }
+    // A NaN or infinite M^{-1} r0 would be divided into V[0] and reach x.
+    // It is the non-finite residual error, 6, with x unchanged, as when the
+    // preconditioned norm was the one tested (issue 924). A norm is not
+    // negative, so this is NaN or +Inf.
+    if (!(beta <= std::numeric_limits<std::remove_cv_t<decltype(beta)>>::max())) {
+        iter.fail(6, "gmres: M^{-1}(b - A x) is not finite");
+        return 0;
+    }
+    // The Arnoldi estimate |g(k + 1)| is a preconditioned norm. Scaled by
+    // the cycle's opening ratio ||r0|| / ||M^{-1} r0|| it estimates the true
+    // residual, which is what iter compares with its tolerance. Unscaled, a
+    // cycle that follows a false convergence opened below the tolerance and
+    // made one step per restart. The ratio is 1 without a preconditioner,
+    // and then the estimate is used as it is, to the last bit.
+    // |g(k + 1)| <= beta, so (|g(k + 1)| / beta) * ||r0|| stays finite where
+    // ||r0|| / beta alone overflows: a preconditioner that scales by 1e-310
+    // made the ratio inf, every estimate inf, and each cycle one step.
+    auto estimate = [&](const auto& gk) {
+        using std::abs;
+        const auto a = abs(gk);
+        return rnorm == beta ? a : a / beta * rnorm;
+    };
     for (size_type i = 0; i < n; ++i)
         V[0](i) = ws.r(i) / beta;
 
@@ -123,9 +169,9 @@ int gmres_cycle(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& it
             break;
         }
 
-        // Check convergence using |g(k+1)|
-        using std::abs;
-        if (iter.finished(unscale(abs(g(k + 1))))) {
+        // |g(k+1)| is the preconditioned residual norm: an estimate that ends
+        // the cycle. Whether it converged is decided after x is updated.
+        if (iter.finished(unscale(estimate(g(k + 1))))) {
             ++k; // include this column in the solution
             break;
         }
@@ -157,13 +203,20 @@ int gmres_cycle(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& it
         for (size_type i = 0; i < n; ++i)
             x(i) += y(j) * V[j](i);
 
-    // |g(m)| is the residual estimate without the dropped column (its rotation
-    // had nothing to rotate, so g(m + 1) is 0). A consistent system can still
-    // have converged.
-    if (singular && !iter.is_finished()) {
-        using std::abs;
-        if (!iter.finished(unscale(abs(g(m)))))
+    // Converged by the estimate, at the iteration limit, at the end of the
+    // cycle, or at a breakdown: the true residual decides, as in cg and
+    // tfqmr. This costs one product with A per cycle, which the next cycle
+    // reuses as its r0, so only a converged solve pays for it. A breakdown
+    // that dropped a column (A singular on the Krylov space) is reported only
+    // when that test leaves the iteration unfinished: a consistent system can
+    // still have converged, and the estimate |g(m)| is a preconditioned norm
+    // that can say otherwise. (Not iter.error_code(): a cyclic_iteration
+    // prints its summary when asked, issue 866.)
+    if (!iter.finished(unscale(true_residual()))) {
+        if (singular)
             iter.fail(2, "gmres breakdown: A is singular on an invariant Krylov space");
+        else
+            ws.r0_tested = true;
     }
 
     return iter.is_finished() ? 0 : 1;
