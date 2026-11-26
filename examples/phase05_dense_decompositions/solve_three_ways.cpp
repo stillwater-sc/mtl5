@@ -4,15 +4,22 @@
 //   1. When to use each direct factorization method
 //   2. Cholesky is 2x faster but requires SPD matrices
 //   3. LU with pivoting handles any non-singular system
-//   4. QR is the most numerically stable
+//   4. QR is backward stable without pivoting, at twice LU's cost
 //   5. Why you should never compute inv(A)*b in practice
 //
 // We solve the same system three ways, then show what happens
-// when the matrix is not SPD (Cholesky correctly fails).
+// when the matrix is not SPD (Cholesky correctly fails), and then
+// sweep the Hilbert matrix, where inv(A)*b falls behind the three
+// factorizations. The test matrices come from mtl::generators, whose
+// properties are documented: lehmer (SPD, well conditioned), wilkinson
+// (symmetric indefinite), hilbert (SPD, badly conditioned) and
+// laplacian_1d.
 
 #include <mtl/mtl.hpp>
 #include <iostream>
 #include <iomanip>
+#include <limits>
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <utility>
@@ -29,6 +36,17 @@ void print_vector(const std::string& name, const vec::dense_vector<double>& v) {
         std::cout << std::fixed << std::setprecision(8) << v(i);
     }
     std::cout << "]\n";
+}
+
+// lehmer and hilbert are implicit generators: they compute each entry on
+// demand and store nothing. The factorizations work in place, so they need
+// the matrix copied into a dense2D first.
+template <typename Generator>
+mat::dense2D<double> dense_copy(const Generator& G) {
+    mat::dense2D<double> A(G.num_rows(), G.num_cols());
+    for (std::size_t i = 0; i < G.num_rows(); ++i)
+        for (std::size_t j = 0; j < G.num_cols(); ++j) A(i, j) = G(i, j);
+    return A;
 }
 
 double residual_norm(const mat::dense2D<double>& A,
@@ -202,20 +220,16 @@ int main(int argc, char** argv) {
     // ======================================================================
     std::cout << "=== Part 1: SPD (Symmetric Positive Definite) System ===\n\n";
 
-    // Build a well-conditioned SPD matrix (Hilbert-like but better conditioned)
-    mat::dense2D<double> A_spd(n, n);
-    for (std::size_t i = 0; i < n; ++i) {
-        for (std::size_t j = 0; j < n; ++j) {
-            A_spd(i, j) = 1.0 / (1.0 + std::abs(static_cast<double>(i) - static_cast<double>(j)));
-        }
-        A_spd(i, i) += 1.0;  // boost diagonal for better conditioning
-    }
+    // The Lehmer matrix, L(i, j) = (min(i, j) + 1) / (max(i, j) + 1): SPD,
+    // with a tridiagonal inverse, and well conditioned.
+    const mat::dense2D<double> A_spd = dense_copy(generators::lehmer<double>(n));
 
     // Known solution x_true = [1, 2, 3, 4], compute b = A * x_true
     vec::dense_vector<double> x_true = {1.0, 2.0, 3.0, 4.0};
     auto b_spd = A_spd * x_true;
 
-    std::cout << "Matrix A (4x4 SPD):\n";
+    std::cout << "Matrix A = lehmer(4), SPD, cond_2(A) = " << std::fixed << std::setprecision(2)
+              << condition_number(A_spd) << ":\n";
     for (std::size_t i = 0; i < n; ++i) {
         std::cout << "  [";
         for (std::size_t j = 0; j < n; ++j) {
@@ -286,8 +300,9 @@ int main(int argc, char** argv) {
     // -- Method 4: inv(A) * b (never do this!) ---------------------------
     {
         std::cout << "--- inv(A) * b (DO NOT do this in practice) ---\n";
-        std::cout << "  Computing the full inverse is O(n^3) and numerically\n";
-        std::cout << "  inferior to factorization-based solves.\n";
+        std::cout << "  Forming the inverse takes about 2n^3 flops, three times LU's\n";
+        std::cout << "  2n^3/3. On this well-conditioned matrix it gives the same digits;\n";
+        std::cout << "  Part 3 shows where it does not.\n";
         auto A_inv = inv(A_spd);
         auto x_inv = A_inv * b_spd;
         vec::dense_vector<double> x(n);
@@ -302,19 +317,35 @@ int main(int argc, char** argv) {
     // ======================================================================
     std::cout << "=== Part 2: Non-SPD System (Cholesky should fail) ===\n\n";
 
-    // Make a symmetric INDEFINITE matrix (has negative eigenvalues)
-    mat::dense2D<double> A_indef(n, n);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < n; ++j)
-            A_indef(i, j) = A_spd(i, j);
-    // Reduce diagonal to make it indefinite (symmetric but not positive definite)
-    A_indef(0, 0) = 0.1;
-    A_indef(1, 1) = 0.1;
+    // Wilkinson's W4+ (MATLAB's wilkinson(4)): symmetric tridiagonal, with
+    // 1.5, 0.5, 0.5, 1.5 on the diagonal and 1 beside it. Symmetric, but
+    // with one negative eigenvalue, so it is not positive definite.
+    const mat::dense2D<double> A_indef = generators::wilkinson<double>(n);
 
     auto b_indef = A_indef * x_true;
 
-    std::cout << "Perturbed matrix (A(0,0)=0.1, A(1,1)=0.1 - symmetric indefinite):\n";
-    std::cout << "  Diagonal now too small relative to off-diagonal entries.\n\n";
+    std::cout << "Matrix A = wilkinson(4), symmetric tridiagonal:\n";
+    for (std::size_t i = 0; i < n; ++i) {
+        std::cout << "  [";
+        for (std::size_t j = 0; j < n; ++j) {
+            if (j > 0) std::cout << ", ";
+            std::cout << std::fixed << std::setprecision(4) << std::setw(8) << A_indef(i, j);
+        }
+        std::cout << "]\n";
+    }
+    {
+        auto ev = eigenvalue_symmetric(A_indef);
+        std::vector<double> lam(ev.size());
+        for (std::size_t i = 0; i < ev.size(); ++i) lam[i] = ev(i);
+        std::sort(lam.begin(), lam.end());
+        std::size_t negative = 0;
+        std::cout << "  eigenvalues:";
+        for (double l : lam) {
+            std::cout << " " << std::fixed << std::setprecision(4) << l;
+            if (l < 0.0) ++negative;
+        }
+        std::cout << "\n  " << negative << " negative eigenvalue: symmetric indefinite.\n\n";
+    }
 
     // LU: works
     {
@@ -392,21 +423,125 @@ int main(int argc, char** argv) {
     }
 
     // ======================================================================
-    // Part 3: Preconditioner Preview (ILU(0) and IC(0) on sparse SPD)
+    // Part 3: The Hilbert Matrix -- Why Not inv(A) * b
     // ======================================================================
-    std::cout << "=== Part 3: Preconditioner Preview (Sparse SPD) ===\n\n";
+    std::cout << "=== Part 3: The Hilbert Matrix, n = 4 to 15 ===\n\n";
+    std::cout << "H(i, j) = 1 / (i + j + 1) is SPD and badly conditioned. Solve H x = b\n";
+    std::cout << "for x = (1, ..., 1). The backward error ||b - H x^|| / (||H|| ||x^||)\n";
+    std::cout << "(infinity norms) measures how well each method solved the system it\n";
+    std::cout << "was given; the forward error ||x^ - x|| / ||x|| how close it came to x.\n\n";
+    std::cout << std::setw(4) << "n" << std::setw(11) << "cond_2(H)" << "  backward: "
+              << std::setw(9) << "LU" << std::setw(10) << "Cholesky" << std::setw(9) << "QR"
+              << std::setw(10) << "inv(H)*b" << "   forward: " << std::setw(9) << "LU"
+              << std::setw(10) << "inv(H)*b" << "\n";
+    auto hilbert_rows = example_trace::value::array();
+    int chol_first_fail = 0;
+    double inv_bw_first = 0.0, inv_bw_max = 0.0, cond_first_fail = 0.0, cond_last_ok = 0.0;
+    std::size_t inv_bw_max_n = 0, lu_within = 0, lu_rows = 0;
+    for (std::size_t m = 4; m <= 15; ++m) {
+        const mat::dense2D<double> H = dense_copy(generators::hilbert<double>(m));
+        const vec::dense_vector<double> ones(m, 1.0);
+        const auto b = vec::dense_vector<double>(H * ones);
+        const double normH = infinity_norm(H);
+        auto backward = [&](const vec::dense_vector<double>& x) {
+            auto Hx = H * x;
+            double r = 0.0;
+            for (std::size_t i = 0; i < m; ++i) r = std::max(r, std::abs(b(i) - Hx(i)));
+            return r / (normH * infinity_norm(x));
+        };
+        auto forward = [&](const vec::dense_vector<double>& x) {
+            double e = 0.0;
+            for (std::size_t i = 0; i < m; ++i) e = std::max(e, std::abs(x(i) - 1.0));
+            return e;   // ||x|| = 1 in the infinity norm
+        };
 
-    const std::size_t ns = 20;
-    double hs = 1.0 / (ns + 1);
-    mat::compressed2D<double> A_sparse(ns, ns);
-    {
-        mat::inserter<mat::compressed2D<double>> ins(A_sparse, 3);
-        for (std::size_t i = 0; i < ns; ++i) {
-            ins[i][i] << 2.0 / (hs * hs);
-            if (i > 0)      ins[i][i-1] << -1.0 / (hs * hs);
-            if (i + 1 < ns) ins[i][i+1] << -1.0 / (hs * hs);
+        vec::dense_vector<double> x_lu(m), x_chol(m), x_qr(m), x_inv(m);
+        mat::dense2D<double> F(H);
+        std::vector<std::size_t> pivot;
+        lu_factor(F, pivot);
+        lu_solve(F, pivot, x_lu, b);
+        mat::dense2D<double> C(H);
+        const int chol_info = cholesky_factor(C);
+        if (chol_info == 0) cholesky_solve(C, x_chol, b);
+        mat::dense2D<double> Q(H);
+        vec::dense_vector<double> tau;
+        qr_factor(Q, tau);
+        qr_solve(Q, tau, x_qr, b);
+        auto xi = inv(H) * b;
+        for (std::size_t i = 0; i < m; ++i) x_inv(i) = xi(i);
+
+        const double cond = condition_number(H);
+        const double bw_lu = backward(x_lu), bw_qr = backward(x_qr), bw_inv = backward(x_inv);
+        const double bw_chol = chol_info == 0 ? backward(x_chol) : 0.0;
+        if (m == 4) inv_bw_first = bw_inv;
+        if (bw_inv > inv_bw_max) { inv_bw_max = bw_inv; inv_bw_max_n = m; }
+        if (chol_info == 0 && chol_first_fail == 0) cond_last_ok = cond;
+        if (chol_info != 0 && chol_first_fail == 0) {
+            chol_first_fail = static_cast<int>(m);
+            cond_first_fail = cond;
         }
+        // Where the SVD can still resolve cond(H), LU's forward error stays
+        // below cond(H) * eps, the sensitivity of the problem itself.
+        if (cond < 1e16) {
+            ++lu_rows;
+            if (forward(x_lu) <= cond * std::numeric_limits<double>::epsilon()) ++lu_within;
+        }
+        std::cout << std::setw(4) << m << std::scientific << std::setprecision(2) << std::setw(11) << cond
+                  << "            " << std::setw(9) << bw_lu;
+        if (chol_info == 0) std::cout << std::setw(10) << bw_chol;
+        else                std::cout << std::setw(10) << ("fails@" + std::to_string(chol_info));
+        std::cout << std::setw(9) << bw_qr << std::setw(10) << bw_inv << "            "
+                  << std::setw(9) << forward(x_lu) << std::setw(10) << forward(x_inv) << "\n";
+
+        auto row = example_trace::value::object();
+        row["n"] = m;
+        row["cond"] = example_trace::value::rounded(cond, 6);
+        row["cholesky_info"] = chol_info;
+        auto method = [&](const char* name, const vec::dense_vector<double>& x, bool ok) {
+            auto o = example_trace::value::object();
+            o["method"] = name;
+            o["backward"] = ok ? example_trace::value::rounded(backward(x), 6) : example_trace::value();
+            o["forward"] = ok ? example_trace::value::rounded(forward(x), 6) : example_trace::value();
+            return o;
+        };
+        auto ms = example_trace::value::array();
+        ms.push_back(method("LU", x_lu, true));
+        ms.push_back(method("Cholesky", x_chol, chol_info == 0));
+        ms.push_back(method("QR", x_qr, true));
+        ms.push_back(method("inv(H) * b", x_inv, true));
+        row["methods"] = ms;
+        hilbert_rows.push_back(row);
     }
+    std::cout << std::scientific << std::setprecision(1);
+    std::cout << "\nThe three factorizations stay backward stable: their backward error\n";
+    std::cout << "is a small multiple of eps = 2.2e-16 at every n. inv(H) * b is not:\n";
+    std::cout << "its backward error rises from " << inv_bw_first << " at n = 4 to " << inv_bw_max
+              << " at n = " << inv_bw_max_n << ".\n";
+    std::cout << "The forward errors grow with cond(H) for every method, because the\n";
+    std::cout << "problem itself is that sensitive. LU's stays below cond(H) * eps at\n";
+    std::cout << lu_within << " of the " << lu_rows << " sizes where cond(H) < 1e16; inv(H) * b's is larger.\n";
+    std::cout << "Cholesky first fails at n = " << chol_first_fail << ", though H is SPD. Past\n";
+    std::cout << "cond(H) = 1 / eps = 4.5e15, H is positive definite only up to rounding,\n";
+    std::cout << "and a pivot can come out non-positive. At n = " << chol_first_fail - 1
+              << " (cond " << cond_last_ok << ")\n";
+    std::cout << "it still succeeds.\n";
+    std::cout << "(cond_2 comes from the SVD, which cannot resolve singular values much\n";
+    std::cout << "below eps * ||H||: past about 1e16 it is not reliable, and it stops\n";
+    std::cout << "growing with n. At n = " << chol_first_fail << " it reads " << cond_first_fail << ".)\n\n";
+    if (trace) {
+        trace["hilbert"] = hilbert_rows;
+        trace["hilbert_cholesky_first_fail"] = chol_first_fail;
+    }
+
+    // ======================================================================
+    // Part 4: Preconditioner Preview (ILU(0) and IC(0) on sparse SPD)
+    // ======================================================================
+    std::cout << "=== Part 4: Preconditioner Preview (Sparse SPD) ===\n\n";
+
+    // The 1-D Laplacian tridiag(-1, 2, -1). The usual 1/h^2 scale would not
+    // change the iteration counts: the tolerance is relative to ||b||.
+    const std::size_t ns = 20;
+    const mat::compressed2D<double> A_sparse = generators::laplacian_1d<double>(ns);
 
     vec::dense_vector<double> b_sparse(ns, 1.0);
 

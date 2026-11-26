@@ -104,7 +104,7 @@ All examples are auto-discovered by CMake. Each `.cpp` file produces a target na
 
 | Example | Description |
 |---------|-------------|
-| `solve_three_ways.cpp` | Side-by-side comparison of LU, Cholesky, and QR on the same system |
+| `solve_three_ways.cpp` | LU, Cholesky and QR on the same system, Cholesky failing on an indefinite one, and a Hilbert sweep where `inv(A) * b` loses to all three; matrices from `mtl::generators` |
 | `least_squares_qr.cpp` | Polynomial curve fitting via QR least-squares |
 
 ---

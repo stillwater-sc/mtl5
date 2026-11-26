@@ -46,14 +46,19 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - 4A: the inserter filling the grid matrix, then GMRES(5), GMRES(20) and CG. GMRES(5) slows after its first restart.
     - 4B: what Jacobi and Gauss-Seidel sweeps do to a smooth and an oscillatory error mode. The SOR residual across ω has its smallest value at ω_opt = 1.884.
     - 5A: least-squares fits by degree. The normal equations stall between 3e-5 and 1.2e-4, and Cholesky fails from degree 15, while QR reaches 1.2e-10. The plot sets cond(V)² against the saturating eigenvalue estimate.
-    - 5B: LU, Cholesky and QR one elimination step at a time, rebuilt from MTL5's factors, with textbook flop counts. Cholesky's pivot of −2.4 on the indefinite matrix stops it.
+    - 5B: LU, Cholesky and QR one elimination step at a time, rebuilt from MTL5's factors, with textbook flop counts. Cholesky's pivot of −0.167 on the indefinite matrix stops it.
     - `convection_diffusion` and `smoother_convergence` print new sections (an ε sweep, an ω sweep, and the smoothing experiment). `least_squares_qr` and `solve_three_ways` print what they printed before.
   - **6A to 7B** (the third PR) complete the set:
     - 6A: the string's modes vibrating at √λ_k, on the analytic curve; the membrane's Kronecker modes; and a lopsided Laplacian's eigenvalues meeting at 2 when d = 1, then leaving the real axis as conjugate pairs.
     - 6B: the data turning onto its principal axes, then the rank-2 and rank-1 reconstructions. Their errors are σ₃ and √(σ₂² + σ₃²) (Eckart–Young).
     - 7A: one matvec row by row, and the memory that COO, CRS and ELL read for it, ELL's padding included.
     - 7B: the stored entries each view reads, and CG on the Hermitian view.
-  - **Fixed, `vibrating_string`:** Part 3 was titled for complex eigenvalues and its takeaway said such perturbations create complex pairs, but every eigenvalue it printed was real. It now says why: one asymmetric entry is not enough. It adds the lopsided-Laplacian sweep, whose eigenvalues become complex for d > 1. Its error columns no longer run into the column before.
+  - **`solve_three_ways` (5B) uses the test-matrix generators** (issue 937). Its hand-built matrices could not show the example's own claim against `inv(A) * b`: LU, Cholesky, QR and the inverse agreed to 1e-16 on them.
+    - Part 1 solves `generators::lehmer(4)` (SPD, cond 12.2), and Part 2 `generators::wilkinson(4)`, Wilkinson's W₄⁺: symmetric tridiagonal with one negative eigenvalue, printed with `eigenvalue_symmetric`. Cholesky fails at step 2 with a pivot of −0.167. The issue suggested W₇⁺; W₄⁺ has the same inertia and keeps the 5B animation at 4 × 4.
+    - A new Part 3 sweeps `generators::hilbert(n)` for n = 4 to 15. The three factorizations stay backward stable (at most 8.7e-16, about 4ε), while the inverse's backward error rises from 2.1e-13 to 6.4e-4. LU's forward error stays below cond(H)·ε wherever the SVD resolves cond(H). Cholesky fails from n = 13. The commentary is computed from the run, including the caveat that `condition_number` is unreliable past about 1e16.
+    - Part 4, the preconditioner preview, builds its matrix with `generators::laplacian_1d`. The iteration counts are unchanged.
+    - A second 5B figure, `HilbertSweep`, plots the backward and forward errors against n. Seven new tests pin its caption's claims.
+  - **Fixed, `vibrating_string`:** Part 3 was titled for complex eigenvalues and its takeaway said such perturbations create complex pairs, but every eigenvalue it printed was real. It now says why: one asymmetric entry is not enough. It adds the lopsided-Laplacian sweep, whose eigenvalues become complex for d > 1. Its error columns no longer run into the column before. It also gives the corner entry's bound (issue 938): the eigenvalues are real exactly for −1 ≤ s ≤ 5/4, since det(B − λI) = μ⁴ − 3μ² + 1 + s with μ = λ − 2, and a sweep of s shows them leave the real axis between 1.25 and 1.3.
 
 ### Fixed
 

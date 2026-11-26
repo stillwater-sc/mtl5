@@ -35,11 +35,12 @@ const big = trace.flops_by_n[trace.flops_by_n.length - 1];
     textbook ones.
   </p>
   <p>
-    On the SPD matrix the three take {total(spd.methods[0])}, {total(spd.methods[1])} and {total(spd.methods[2])} flops.
+    The SPD matrix is <code>generators::lehmer(4)</code>, L(i, j) = (min(i, j) + 1) / (max(i, j) + 1). On it the three take {total(spd.methods[0])}, {total(spd.methods[1])} and {total(spd.methods[2])} flops.
     At n = 4 the lower-order terms dominate; at n = {big.n} the same counts give {fmt(big.lu, 3)},
-    {fmt(big.cholesky, 3)} and {fmt(big.qr, 3)}, the 2 : 1 : 4 of 2n³/3, n³/3 and 4n³/3. On the indefinite
-    matrix (two diagonal entries lowered to 0.1), LU and QR finish, but Cholesky's pivot at step {chol.info} is
-    {fmt(chol.failed_pivot ?? 0, 3)}. It would need its square root, so <code>cholesky_factor</code> returns {chol.info}.
+    {fmt(big.cholesky, 3)} and {fmt(big.qr, 3)}, the 2 : 1 : 4 of 2n³/3, n³/3 and 4n³/3. The indefinite
+    matrix is Wilkinson's W₄⁺, <code>generators::wilkinson(4)</code>: symmetric tridiagonal, with one negative eigenvalue.
+    LU and QR finish, but Cholesky's pivot at step {chol.info} is {fmt(chol.failed_pivot ?? 0, 3)}. It would need its
+    square root, so <code>cholesky_factor</code> returns {chol.info}.
   </p>
 </AnimationShell>
 
@@ -99,7 +100,7 @@ const big = trace.flops_by_n[trace.flops_by_n.length - 1];
       panel.title.textContent = m.method;
       panel.cost.textContent = `${m.flops} flops`;
       panel.status.textContent = m.failed
-        ? `pivot ${fmt(m.failedPivot, 3)} ≤ 0: not SPD, info = ${m.step + 1}`
+        ? `pivot ${fmt(m.failedPivot, 3)} ≤ 0: info = ${m.step + 1}`
         : m.step >= n ? 'done' : `step ${m.step} of ${n}`;
     }
 
@@ -109,7 +110,7 @@ const big = trace.flops_by_n[trace.flops_by_n.length - 1];
       tweenMs: 0,
       render(f) {
         const s = factorFrame(model, f);
-        part.textContent = s.part === 'SPD' ? 'SPD matrix' : 'indefinite matrix: A(0,0) = A(1,1) = 0.1';
+        part.textContent = s.part === 'SPD' ? 'SPD matrix: lehmer(4)' : 'indefinite matrix: wilkinson(4)';
         s.methods.forEach((m, p) => paint(panels[p], m, s.k));
       },
       label(f) {

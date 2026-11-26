@@ -250,6 +250,34 @@ export function leastSquaresModel(trace) {
   return { ...trace, count: trace.fits.length };
 }
 
+// ── 5B, the Hilbert sweep ─────────────────────────────────────────────────
+
+/**
+ * One frame per Hilbert order n. Each method's backward and forward errors
+ * as arrays over n, with null where it failed (Cholesky past its first
+ * failure), and cond(H) * eps, the forward error the problem itself allows.
+ */
+export function hilbertModel(trace) {
+  const rows = trace.hilbert;
+  const eps = 2.220446049250313e-16;
+  const names = rows[0].methods.map((m) => m.method);
+  const series = names.map((name) => ({
+    method: name,
+    backward: rows.map((r) => r.methods.find((m) => m.method === name).backward),
+    forward: rows.map((r) => r.methods.find((m) => m.method === name).forward),
+  }));
+  return {
+    n: rows.map((r) => r.n),
+    cond: rows.map((r) => r.cond),
+    condEps: rows.map((r) => r.cond * eps),
+    choleskyInfo: rows.map((r) => r.cholesky_info),
+    firstFail: trace.hilbert_cholesky_first_fail,
+    series,
+    eps,
+    count: rows.length,
+  };
+}
+
 // ── 5B three factorizations ───────────────────────────────────────────────
 
 /**
