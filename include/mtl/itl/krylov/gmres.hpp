@@ -4,6 +4,8 @@
 #include <mtl/detail/exceptions.hpp>
 #include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
+#include <limits>
+#include <type_traits>
 #include <stdexcept>
 #include <vector>
 #include <mtl/vec/dense_vector.hpp>
@@ -89,6 +91,14 @@ int gmres_cycle(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& it
     // singular M: V[0] would be 0 / 0.
     if (beta == decltype(beta)(0)) {
         iter.fail(2, "gmres breakdown: M^{-1}(b - A x) == 0");
+        return 0;
+    }
+    // A NaN or infinite M^{-1} r0 would be divided into V[0] and reach x.
+    // It is the non-finite residual error, 6, with x unchanged, as when the
+    // preconditioned norm was the one tested (issue 924). A norm is not
+    // negative, so this is NaN or +Inf.
+    if (!(beta <= std::numeric_limits<std::remove_cv_t<decltype(beta)>>::max())) {
+        iter.fail(6, "gmres: M^{-1}(b - A x) is not finite");
         return 0;
     }
     // The Arnoldi estimate |g(k + 1)| is a preconditioned norm. Scaled by
@@ -186,26 +196,19 @@ int gmres_cycle(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& it
         for (size_type i = 0; i < n; ++i)
             x(i) += y(j) * V[j](i);
 
-    // |g(m)| is the residual estimate without the dropped column (its rotation
-    // had nothing to rotate, so g(m + 1) is 0). A consistent system can still
-    // have converged.
-    bool failed = false;
-    if (singular && !iter.is_finished()) {
-        using std::abs;
-        if (!iter.finished(unscale(abs(g(m)) * est_scale))) {
+    // Converged by the estimate, at the iteration limit, at the end of the
+    // cycle, or at a breakdown: the true residual decides, as in cg and
+    // tfqmr. This costs one product with A per cycle, which the next cycle
+    // reuses as its r0, so only a converged solve pays for it. A breakdown
+    // that dropped a column (A singular on the Krylov space) is reported only
+    // when that test leaves the iteration unfinished: a consistent system can
+    // still have converged, and the estimate |g(m)| is a preconditioned norm
+    // that can say otherwise. (Not iter.error_code(): a cyclic_iteration
+    // prints its summary when asked, issue 866.)
+    if (!iter.finished(unscale(true_residual()))) {
+        if (singular)
             iter.fail(2, "gmres breakdown: A is singular on an invariant Krylov space");
-            failed = true;
-        }
-    }
-
-    // Converged by the estimate, at the iteration limit, or at the end of the
-    // cycle: the true residual decides, as in cg and tfqmr. This costs one
-    // product with A per cycle, which the next cycle reuses as its r0, so
-    // only a converged solve pays for it. A breakdown stands. (Not
-    // iter.error_code(): a cyclic_iteration prints its summary when asked,
-    // issue 866.)
-    if (!failed) {
-        if (!iter.finished(unscale(true_residual())))
+        else
             ws.r0_tested = true;
     }
 

@@ -62,6 +62,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - Each cycle now opens and closes on the true residual b − Ax, as `cg` and `tfqmr` do, and the iteration object's residual is that norm. The closing test costs one product with A, which the next cycle reuses, so only a converged solve pays for it.
   - Within a cycle, the Arnoldi estimate is scaled by the cycle's opening ratio ‖b − Ax‖ / ‖M⁻¹(b − Ax)‖, so a cycle that follows a false convergence does not open below the tolerance and stall at one step per restart. Without a preconditioner the ratio is 1, and nothing changes.
   - A singular M that maps an unconverged residual to zero is now a breakdown (error 2). Before, the zero preconditioned norm passed the test, and gmres returned 0.
+  - A breakdown on an A that is singular on the Krylov space (error 2) is reported only when the true residual has not converged. A consistent system can converge there, and the preconditioned estimate could say it had not.
 
 - **Krylov solvers: complex systems, extreme scales, aliasing and non-finite input** (issue 924, from QA sweep #913).
   - **Complex systems:**

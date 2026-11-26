@@ -15,6 +15,8 @@
 
 #include <cmath>
 #include <complex>
+#include <limits>
+#include <vector>
 
 using namespace mtl;
 
@@ -157,17 +159,19 @@ namespace {
 mat::compressed2D<double> scaled_convective_laplacian(std::size_t k) {
     const std::size_t n = k * k;
     mat::compressed2D<double> A(n, n);
-    mat::inserter<mat::compressed2D<double>> ins(A, 6);
-    for (std::size_t i = 0; i < k; ++i)
-        for (std::size_t j = 0; j < k; ++j) {
-            const std::size_t r = i * k + j;
-            ins[r][r] << 400.0;
-            if (i > 0)     ins[r][r - k] << -100.0;
-            if (i + 1 < k) ins[r][r + k] << -100.0;
-            if (j > 0)     ins[r][r - 1] << -100.0;
-            if (j + 1 < k)      ins[r][r + 1] << -70.0;
-            else if (r + 1 < n) ins[r][r + 1] << 30.0;
-        }
+    {   // the inserter writes A when it is destroyed: before the return
+        mat::inserter<mat::compressed2D<double>> ins(A, 6);
+        for (std::size_t i = 0; i < k; ++i)
+            for (std::size_t j = 0; j < k; ++j) {
+                const std::size_t r = i * k + j;
+                ins[r][r] << 400.0;
+                if (i > 0)     ins[r][r - k] << -100.0;
+                if (i + 1 < k) ins[r][r + k] << -100.0;
+                if (j > 0)     ins[r][r - 1] << -100.0;
+                if (j + 1 < k)      ins[r][r + 1] << -70.0;
+                else if (r + 1 < n) ins[r][r + 1] << 30.0;
+            }
+    }
     return A;
 }
 
@@ -178,6 +182,24 @@ double true_relative_residual(const Matrix& A, const Vector& x, const Vector& b)
     for (std::size_t i = 0; i < b.size(); ++i) r(i) = b(i) - Ax(i);
     return two_norm(r) / two_norm(b);
 }
+
+// out = in / d, elementwise: a diagonal preconditioner given its diagonal,
+// for a matrix whose own diagonal has zeros.
+struct given_diagonal_pc {
+    std::vector<double> d;
+    template <typename VecOut, typename VecIn>
+    void solve(VecOut& out, const VecIn& in) const {
+        for (std::size_t i = 0; i < out.size(); ++i) out(i) = in(i) / d[i];
+    }
+};
+
+// A preconditioner that returns NaN.
+struct nan_pc {
+    template <typename VecOut, typename VecIn>
+    void solve(VecOut& out, const VecIn&) const {
+        for (std::size_t i = 0; i < out.size(); ++i) out(i) = std::numeric_limits<double>::quiet_NaN();
+    }
+};
 
 // A preconditioner that maps every vector to zero: a singular M.
 struct zero_pc {
@@ -253,4 +275,37 @@ TEST_CASE("GMRES with a preconditioner that maps the residual to zero breaks dow
     CHECK(info == 2);
     CHECK(std::isfinite(x(0)));
     CHECK(std::isfinite(x(1)));
+}
+
+TEST_CASE("GMRES with a preconditioner that returns NaN fails with x unchanged", "[itl][gmres][936]") {
+    // A non-finite M^{-1}(b - A x) was divided into the first basis vector
+    // and reached x. It is error 6, the non-finite residual, as before 936.
+    mat::dense2D<double> A(2, 2);
+    A(0, 0) = 2; A(0, 1) = 1; A(1, 0) = 0; A(1, 1) = 3;
+    vec::dense_vector<double> b = {1.0, 1.0}, x(2, 0.0);
+    itl::basic_iteration<double> iter(b, 50, 1e-10);
+    const int info = itl::gmres(A, x, b, nan_pc{}, iter, 2);
+    CHECK(info == 6);
+    CHECK(x(0) == 0.0);
+    CHECK(x(1) == 0.0);
+}
+
+TEST_CASE("GMRES: a singular breakdown is reported only if the true residual has not converged", "[itl][gmres][936]") {
+    // A singular on the Krylov space: Arnoldi's second column is exactly zero
+    // and is dropped. The update gives x = (1/4, 1/4, 1/4, 1/4), whose true
+    // residual 0.707 is below rtol ||b|| = 0.907, but the preconditioned
+    // estimate (8.0) reported breakdown, error 2, without testing it.
+    mat::dense2D<double> A(4, 4);
+    for (std::size_t i = 0; i < 4; ++i)
+        for (std::size_t j = 0; j < 4; ++j) A(i, j) = i < 2 ? 8.0 : 0.0;
+    vec::dense_vector<double> b = {8.0, 8.0, 0.5, 0.5}, x(4, 0.0);
+    given_diagonal_pc M{{16.0, 16.0, 1.0, 1.0}};
+    const double rtol = 0.08;
+    itl::basic_iteration<double> iter(b, 50, rtol);
+    const int info = itl::gmres(A, x, b, M, iter, 2);
+    const double rel = true_relative_residual(A, x, b);
+    INFO("info " << info << ", true " << rel << ", relresid " << iter.relresid());
+    CHECK(info == 0);
+    CHECK(rel <= rtol);
+    CHECK_THAT(iter.relresid(), Catch::Matchers::WithinRel(rel, 1e-12));
 }
