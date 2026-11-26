@@ -185,11 +185,11 @@ itl/mg/
 
 ## Examples (2 in `examples/`)
 
-### `phase13a_krylov_comparison.cpp`
-Solve a non-symmetric sparse system with CGS, BiCGSTAB, BiCGSTAB(2), and MINRES (on symmetric version). Compare iteration counts and demonstrate convergence behavior.
+### `phase13_krylov_multigrid/krylov_comparison.cpp`
+Solve a non-symmetric 2-D convection–diffusion system (variable diffusion, so Jacobi is not a constant scaling) with CGS, BiCGSTAB, BiCGSTAB(2) and BiCGSTAB(4), each with the identity, diagonal and ILU(0) preconditioners, printing every return code. CGS breaks down without ILU(0). Then MINRES against CG and BiCGSTAB on the discrete Helmholtz operator `laplacian_2d(30, 30) − 1.3 I` (96 negative eigenvalues), where MINRES's residual never rises and CG's does. Finally, why MINRES needs a symmetric positive definite preconditioner: M = diag(A) of an indefinite matrix breaks down, M = |diag(A)| does not.
 
-### `phase13b_multigrid_poisson.cpp`
-Solve 1D Poisson equation using V-cycle multigrid. Show convergence rates, demonstrate multigrid as a stand-alone solver and as a preconditioner for CG.
+### `phase13_krylov_multigrid/multigrid_poisson.cpp`
+Solve the 1-D Poisson equation with V-cycle multigrid on a hierarchy that coarsens to 3 points, with an exact (LU) coarse solve. Show the V-cycle as a stand-alone solver, and the cycle count staying flat from n = 63 to 4095 where a fixed 3-level hierarchy stops converging. Measure ‖B − Bᵀ‖ of the V-cycle preconditioner: only symmetric Gauss–Seidel with an exact coarse solve makes it symmetric, as CG needs.
 
 ## Implementation Order
 

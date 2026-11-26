@@ -62,6 +62,18 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **Phase 13 examples: a multigrid that scales, and preconditioners that fit their solvers** (issues 942 and 943).
+  - **`multigrid_poisson`** promised a cost independent of problem size, but it hard-coded 3 levels with 100 forward Gauss–Seidel sweeps as the "effectively exact" coarse solve. At n = 1023 that stops converging. It also used a nonsymmetric V-cycle as CG's preconditioner.
+    - The hierarchy now coarsens to 3 points, with a dense-LU coarse solve. A sweep from n = 63 to 4095 takes 5 V-cycles and 4 MG-PCG iterations at every size, while the original 3 levels need 76 V-cycles at n = 255 and fail from n = 1023.
+    - It measures ‖B − Bᵀ‖ / ‖B‖ of the V-cycle preconditioner. Only symmetric Gauss–Seidel with the exact coarse solve gives 3.4e-16. Forward Gauss–Seidel with 100 sweeps gives 3.6e-3 and 8 PCG iterations, against 5.
+    - It explains why f = 1 lets unpreconditioned CG finish in (n + 1) / 2 steps (f = 1 has no antisymmetric component), next to f = x, which takes n.
+    - The level matrices come from `generators::laplacian_1d`.
+  - **`krylov_comparison`** ran MINRES with `pc::diagonal` on a matrix with an indefinite diagonal, against MINRES's SPD-preconditioner contract. It never checked the return code, so the breakdown (code 2 after 149 iterations, 96% of the residual left) passed for slow convergence.
+    - Every solve now prints its return code.
+    - The MINRES section shows diag(A) breaking down and the SPD |diag(A)| converging.
+    - The non-symmetric system is now a 2-D convection–diffusion with variable diffusion. Its diagonal is no longer constant, which had made Jacobi a no-op. Every solver runs with identity, Jacobi and ILU(0). CGS breaks down without ILU(0), as SciPy's CGS also diverges there.
+    - MINRES is compared with CG and BiCGSTAB on the Helmholtz operator `laplacian_2d(30, 30) − 1.3 I`, which has 96 negative eigenvalues. CG's residual rises to 1.24‖b‖ on the way, while MINRES's never rises.
+
 - **`gmres` with a preconditioner converges on the true residual** (issue 936, found by stillwater-sc/mtl5-python#150).
   - GMRES is left-preconditioned. It tested the preconditioned residual ‖M⁻¹(b − Ax)‖ against `rtol · ‖b‖`, so with a preconditioner it could return 0 short of the tolerance. On a non-symmetric 144-unknown system with 400 on the diagonal and the diagonal preconditioner, it stopped at a true relative residual of 3.5e-6 for `rtol = 1e-8`, and `relresid()` reported the preconditioned 8.7e-9.
   - Each cycle now opens and closes on the true residual b − Ax, as `cg` and `tfqmr` do, and the iteration object's residual is that norm. The closing test costs one product with A, which the next cycle reuses, so only a converged solve pays for it.
