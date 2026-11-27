@@ -43,6 +43,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/math/pow2_scaling.hpp>
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
@@ -96,6 +97,134 @@ Value lu_rgrowth(const util::csc_matrix<Value, SizeType>& U, ColMax&& amax_of, V
         if (r < g) g = r;
     }
     return g;
+}
+
+/// ||A||_1, the largest column sum of |A(i, j)|, for a square CSR A, as
+/// m 2^e: 2^e <= max |A(i, j)| < 2^(e+1), so m is in [1, 2n) and neither the
+/// sums nor m overflow, whatever A's scale (e = 0 and m = 0 for A = 0). NaN if
+/// A holds one, or an infinity.
+template <typename Value, typename Parameters>
+Value csr_norm1_scaled(const mat::compressed2D<Value, Parameters>& A, int& e) {
+    using std::abs;
+    e = 0;
+    const auto& ci  = A.ref_minor();
+    const auto& dat = A.ref_data();
+    Value amax{0};
+    for (std::size_t k = 0; k < A.nnz(); ++k) {
+        const Value a = abs(dat[k]);
+        if (!(a == a) || !(a - a == Value{0})) return a - a;   // NaN, also for an infinity
+        if (a > amax) amax = a;
+    }
+    if (amax == Value{0}) return amax;
+    e = math::pow2_scaling<Value>::exponent(amax);
+    std::vector<Value> col(A.num_cols(), Value{0});
+    for (std::size_t k = 0; k < A.nnz(); ++k)
+        col[ci[k]] += math::pow2_scaling<Value>::scale(abs(dat[k]), -e);
+    Value m{0};
+    for (const Value& c : col)
+        if (c > m) m = c;
+    return m;
+}
+
+/// ||A||_1 itself (it overflows where the norm does).
+template <typename Value, typename Parameters>
+Value csr_norm1(const mat::compressed2D<Value, Parameters>& A) {
+    int e = 0;
+    const Value m = csr_norm1_scaled(A, e);
+    return e == 0 ? m : math::pow2_scaling<Value>::scale(m, e);
+}
+
+/// An estimate of ||A^{-1}||_1 from solves with A and A^T: Hager's method with
+/// Higham's refinements (Higham, "FORTRAN codes for estimating the one-norm of
+/// a real or complex matrix", ACM TOMS 14(4), 1988; Algorithm 4.1), as
+/// SuiteSparse's klu_condest. At most five pairs of solves and one more, so
+/// O(5 nnz(L + U)). The estimate is a lower bound of ||A^{-1}||_1, and is
+/// exact or within a factor of 3 in practice. `solve(y, x)` computes A^{-1} x
+/// and `solve_t(z, x)` A^{-T} x, on dense_vector<Value>. NaN if a solve gives a
+/// NaN.
+///
+/// `probe_exp` scales every vector handed to a solve by 2^probe_exp (exact),
+/// so the estimate returned is of 2^probe_exp ||A^{-1}||_1. condest_1 picks it
+/// so that the solves' results are of the size of cond(A), not of ||A^{-1}||,
+/// which keeps them finite for a matrix of any scale whose condition number is.
+template <typename Value, typename Solve, typename SolveT>
+Value inverse_norm1_estimate(std::size_t n, Solve&& solve_raw, SolveT&& solve_t_raw, int probe_exp = 0) {
+    using std::abs;
+    if (n == 0) return Value{0};
+    using vec_t = vec::dense_vector<Value>;
+    vec_t x(n, Value{1} / Value(n)), y(n), xi(n), xi_old(n), z(n), probe(n);
+    auto scaled = [&](const vec_t& v) -> const vec_t& {
+        if (probe_exp == 0) return v;
+        for (std::size_t i = 0; i < n; ++i) probe(i) = math::pow2_scaling<Value>::scale(v(i), probe_exp);
+        return probe;
+    };
+    auto solve   = [&](vec_t& out, const vec_t& in) { solve_raw(out, scaled(in)); };
+    auto solve_t = [&](vec_t& out, const vec_t& in) { solve_t_raw(out, scaled(in)); };
+    auto norm1 = [&](const vec_t& v) {
+        Value t{0};
+        for (std::size_t i = 0; i < n; ++i) t += abs(v(i));
+        return t;
+    };
+    Value est{0};
+    for (int k = 0; k < 5; ++k) {
+        solve(y, x);
+        const Value ny = norm1(y);
+        if (!(ny == ny)) return ny;
+        if (k > 0 && !(ny > est)) break;      // no increase: the last estimate stands
+        est = ny;
+        bool same_sign = (k > 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            xi(i) = (y(i) < Value{0}) ? -Value{1} : Value{1};
+            if (k > 0 && !(xi(i) == xi_old(i))) same_sign = false;
+        }
+        if (same_sign) break;                  // the sign pattern repeated: converged
+        solve_t(z, xi);
+        std::size_t j = 0;
+        Value zmax = abs(z(0)), ztx{0};
+        for (std::size_t i = 0; i < n; ++i) {
+            const Value a = abs(z(i));
+            if (!(a == a)) return a;
+            if (a > zmax) { zmax = a; j = i; }
+            ztx += z(i) * x(i);
+        }
+        if (k > 0 && !(zmax > ztx)) break;     // Hager's test: x is a local maximum
+        for (std::size_t i = 0; i < n; ++i) { x(i) = Value{0}; xi_old(i) = xi(i); }
+        x(j) = Value{1};
+    }
+    // Higham's extra vector, x_i = (-1)^i (1 + i / (n - 1)): it catches the
+    // matrices on which the iteration above stops at a poor local maximum.
+    for (std::size_t i = 0; i < n; ++i) {
+        const Value t = n > 1 ? Value{1} + Value(i) / Value(n - 1) : Value{1};
+        x(i) = (i % 2 == 0) ? t : -t;
+    }
+    solve(y, x);
+    // 2 ||y||_1 / (3n), divided first: doubling ||y||_1 could overflow.
+    const Value alt = norm1(y) / (Value(3) * Value(n)) * Value(2);
+    if (!(alt == alt)) return alt;
+    return alt > est ? alt : est;
+}
+
+/// ||A||_1 ||A^{-1}||_1, estimated, for condest(): from solve(y, x) = A^{-1} x
+/// and solve_t(z, x) = A^{-T} x. Range-safe: with 2^e <= max |A(i, j)|, the
+/// probes are scaled by 2^(e-2), so each solve's result is about cond(A) / (4
+/// ||A||_1 / 2^e) in size, and the result is m 2^e times the estimate of
+/// ||A^{-1}||_1, combined as m (2^(e - probe_exp) est). The probe exponent is
+/// kept above the subnormal range by twice the mantissa width, so a probe
+/// keeps its precision. 1 for n = 0; NaN for a NaN or infinite A, or solve.
+template <typename Value, typename Parameters, typename Solve, typename SolveT>
+Value condest_1(const mat::compressed2D<Value, Parameters>& A, Solve&& solve, SolveT&& solve_t) {
+    const std::size_t n = A.num_rows();
+    if (n == 0) return Value{1};
+    int e = 0;
+    const Value m = csr_norm1_scaled(A, e);
+    if (!(m == m)) return m;
+    if (m == Value{0}) return std::numeric_limits<Value>::quiet_NaN();   // A = 0: singular, as no factorization would allow
+    using lim = std::numeric_limits<Value>;
+    const int lo = lim::min_exponent + 2 * lim::digits;
+    const int pe = std::max(e - 2, lo);
+    const Value est = inverse_norm1_estimate<Value>(n, solve, solve_t, pe);
+    if (!(est == est)) return est;
+    return m * math::pow2_scaling<Value>::scale(est, e - pe);
 }
 } // namespace detail
 
@@ -185,6 +314,59 @@ struct lu_numeric {
             if (a > amax[ci[k]]) amax[ci[k]] = a;
         }
         return detail::lu_rgrowth(U_, [&](std::size_t k) { return amax[symbolic.col_perm[k]]; });
+    }
+
+    /// Solve A^T x = b (the transpose, not the conjugate transpose). With
+    /// P A Q = L U, A^T = Q U^T L^T P, so U^T L^T (P x) = Q^T b: a forward
+    /// solve with U^T, a back solve with L^T, then the row permutation. x and
+    /// b may be the same vector. Serial: the transposed solves have no schedule.
+    /// \throws std::logic_error if no factor is installed (n > 0).
+    /// \throws std::invalid_argument on a size mismatch.
+    template <typename VecX, typename VecB>
+    void solve_transpose(VecX& x, const VecB& b) const {
+        const std::size_t n = symbolic.n;
+        if (static_cast<std::size_t>(x.size()) != n || static_cast<std::size_t>(b.size()) != n)
+            throw std::invalid_argument(
+                "lu_numeric::solve_transpose: vector size mismatch (expected " + std::to_string(n) + ")");
+        if (n == 0) return;
+        require_factor("lu_numeric::solve_transpose");
+        std::vector<Value> w(n);
+        for (std::size_t i = 0; i < n; ++i) w[i] = static_cast<Value>(b(symbolic.col_perm[i]));
+        // U^T v = w, forward: column k of U holds U(i, k) for i <= k, diagonal last.
+        for (std::size_t k = 0; k < n; ++k) {
+            const std::size_t last = U_.col_ptr[k + 1] - 1;
+            Value t = w[k];
+            for (std::size_t p = U_.col_ptr[k]; p < last; ++p) t -= U_.values[p] * w[U_.row_ind[p]];
+            w[k] = t / U_.values[last];
+        }
+        // L^T u = v, backward: column k of L holds L(i, k) for i >= k, diagonal
+        // first (1, divided by as the forward solve does).
+        for (std::size_t k = n; k-- > 0; ) {
+            const std::size_t first = L_.col_ptr[k];
+            Value t = w[k];
+            for (std::size_t p = first + 1; p < L_.col_ptr[k + 1]; ++p) t -= L_.values[p] * w[L_.row_ind[p]];
+            w[k] = t / L_.values[first];
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            x(row_perm[i]) = static_cast<typename VecX::value_type>(w[i]);
+    }
+
+    /// An estimate of the 1-norm condition number ||A||_1 ||A^{-1}||_1, as
+    /// SuiteSparse's klu_condest: Hager's method with Higham's refinements
+    /// (detail::inverse_norm1_estimate), from at most 11 solves. A lower bound,
+    /// exact or within a factor of 3 in practice. Far more telling than rcond()
+    /// and far cheaper than forming A^{-1}. `A` must be the matrix this
+    /// factorization is of. 1 for n = 0; NaN if A or a solve holds a NaN.
+    template <typename Parameters>
+    Value condest(const mat::compressed2D<Value, Parameters>& A) const {
+        const std::size_t n = symbolic.n;
+        if (A.num_rows() != n || A.num_cols() != n)
+            throw std::invalid_argument(
+                "lu_numeric::condest: matrix dimensions do not match the factorization");
+        if (n == 0) return Value{1};
+        require_factor("lu_numeric::condest");
+        return detail::condest_1(A, [&](auto& y, const auto& x) { solve(y, x); },
+                                    [&](auto& z, const auto& x) { solve_transpose(z, x); });
     }
 
     /// Install recomputed VALUES on the already-installed factor pattern, keeping

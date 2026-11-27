@@ -1,17 +1,35 @@
-// ukf_comparison.cpp -- UKF numerical stability: Cholesky vs LDL^T
+// ukf_comparison.cpp -- UKF sigma points: Cholesky against LDL^T
 //
-// Demonstrates that the LDL^T (square-root-free Cholesky) decomposition
-// provides superior numerical stability for Unscented Kalman Filter sigma
-// point generation when the state covariance becomes ill-conditioned.
+// The Unscented Kalman Filter takes its sigma points from a square root of the
+// state covariance P. This example runs one UKF with Cholesky (P = L L^T) and
+// one with LDL^T (P = L D L^T, the columns L(:, k) sqrt(D_k)) on the same
+// scenarios, and factors test matrices directly, to compare the two.
 //
 // System model:
 //   State: [px, py, vx, vy]^T -- 2D position + velocity
 //   Process: constant velocity with quadratic drag
 //   Measurement: range + bearing from a known beacon
 //
-// Four scenarios with increasing measurement precision stress the
-// factorization differently. The key metric is whether the filter
-// diverges or maintains accurate state estimates.
+// What it shows (issue 953; the conclusion at the end is computed from the
+// runs):
+//   - On an SPD covariance the two are equally accurate, at any condition
+//     number: the filters give the same final error in every scenario, and
+//     both factorizations' residuals stay at rounding level up to cond 1e15.
+//     When Cholesky completes, its backward error is small at any condition
+//     number (Higham, "Accuracy and Stability of Numerical Algorithms", Thm
+//     10.3). Completion is guaranteed for c n^(3/2) cond(P) eps < 1; beyond
+//     it a rounded pivot can come out non-positive and the factorization
+//     stops, as LDL^T's D gets an entry <= 0. Neither fails silently. A
+//     scalar square root is perfectly conditioned: a relative error e in its
+//     argument becomes e/2. LDL^T does not avoid the square root either: its sigma points use
+//     sqrt(D_k).
+//   - A tiny measurement noise does not make P ill-conditioned here: the
+//     process noise Q, added at every predict step, keeps its eigenvalues up.
+//   - The difference is in kind, on an indefinite P: Cholesky stops, while
+//     LDL^T's D reports the inertia. Unpivoted LDL^T is not stable on an
+//     indefinite matrix, though; Bunch-Kaufman (ldlt_bk) is.
+// The float32 side, and the UKF weights that decide it, are in
+// ../ukf_bearing_only/bearing_only_ukf.cpp.
 //
 // Reference:
 //   Julier & Uhlmann, "Unscented Filtering and Nonlinear Estimation",
@@ -24,6 +42,7 @@
 #include <iostream>
 #include <limits>
 #include <numbers>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -187,6 +206,20 @@ static vec::dense_vector<double> measurement_model(
     return z;
 }
 
+/// Wrap each sigma point's bearing relative to the central point's, before
+/// the means and covariances are formed. A set that straddles atan2's cut at
+/// +-pi (the target near the beacon's -x axis) would otherwise hold bearings
+/// almost 2 pi apart.
+static void wrap_bearings(std::vector<vec::dense_vector<double>>& sigma_z) {
+    const double z0 = sigma_z[0](1);
+    for (std::size_t s = 1; s < sigma_z.size(); ++s) {
+        double d = sigma_z[s](1) - z0;
+        while (d > std::numbers::pi)  d -= 2.0 * std::numbers::pi;
+        while (d < -std::numbers::pi) d += 2.0 * std::numbers::pi;
+        sigma_z[s](1) = z0 + d;
+    }
+}
+
 /// Result of one UKF run
 struct UkfResult {
     std::vector<double> estimation_error;
@@ -246,16 +279,14 @@ static bool generate_sigma_ldlt(
             Lmat(i, j) = (i == j) ? 1.0 : ((j < i) ? F(i, j) : 0.0);
     }
 
-    // Sigma points: x_hat +/- gamma * L * sqrt(|D|) * e_k
-    // Each sigma direction is column k of L * sqrt(|D(k)|)
-    // Note: using abs(D(k)) flips negative eigenvalues to positive, which is a
-    // practical heuristic for graceful degradation when P is slightly indefinite
-    // (e.g., due to covariance update rounding). This produces sigma points from
-    // a modified covariance rather than mathematically rigorous generation, but
-    // keeps the filter running and makes the issue detectable via D sign checks.
+    // Sigma points: x_hat +/- gamma * L * sqrt(D_k) * e_k, column k of
+    // L sqrt(D). A D_k <= 0 means P is not SPD: it has no real square root,
+    // and sqrt(|D_k|) would give the sigma points of another covariance,
+    // L |D| L^T. So it fails, as Cholesky does; D's signs say why.
     sigma[0] = x_hat;
     for (std::size_t k = 0; k < NX; ++k) {
-        double sqrtDk = std::sqrt(std::abs(D(k)));
+        if (!(D(k) > 0.0)) return false;
+        double sqrtDk = std::sqrt(D(k));
         vec::dense_vector<double> col(NX);
         for (std::size_t i = 0; i < NX; ++i)
             col(i) = Lmat(i, k) * sqrtDk;
@@ -377,6 +408,7 @@ static UkfResult run_ukf(
         // Propagate through measurement model
         for (std::size_t s = 0; s < num_sigma; ++s)
             sigma_z[s] = measurement_model(sigma_x[s], params);
+        wrap_bearings(sigma_z);
 
         // Predicted measurement mean
         vec::dense_vector<double> z_pred(NZ);
@@ -551,9 +583,17 @@ static void print_row(int step,
     std::cout << "\n";
 }
 
-static void run_scenario(const std::string& name,
-                         const mat::dense2D<double>& R,
-                         int num_steps)
+/// What the conclusion reads from each scenario.
+struct ScenarioSummary {
+    std::string name;
+    bool chol_done = false, ldlt_done = false;
+    double chol_err = 0.0, ldlt_err = 0.0;   // final errors (when done)
+    double max_cond = 0.0;                    // largest cond(P) of the LDL^T run
+};
+
+static ScenarioSummary run_scenario(const std::string& name,
+                                    const mat::dense2D<double>& R,
+                                    int num_steps)
 {
     // Process noise covariance
     mat::dense2D<double> Q(NX, NX);
@@ -599,6 +639,17 @@ static void run_scenario(const std::string& name,
         std::cout << "  LDL^T:    completed " << num_steps << " steps, final error = "
                   << std::scientific << std::setprecision(3)
                   << ldlt.estimation_error.back() << "\n";
+
+    ScenarioSummary sum;
+    sum.name = name;
+    sum.chol_done = !chol.diverged;
+    sum.ldlt_done = !ldlt.diverged;
+    if (sum.chol_done) sum.chol_err = chol.estimation_error.back();
+    if (sum.ldlt_done) sum.ldlt_err = ldlt.estimation_error.back();
+    for (double c : ldlt.cond_P)
+        if (std::isfinite(c) && c > sum.max_cond) sum.max_cond = c;
+    std::cout << "  largest cond(P): " << std::scientific << std::setprecision(2) << sum.max_cond << "\n";
+    return sum;
 }
 
 // ============================================================================
@@ -617,6 +668,7 @@ int main() {
               << "\n";
 
     constexpr int num_steps = 200;
+    std::vector<ScenarioSummary> summaries;
 
     // Scenario 1: Benign
     {
@@ -624,7 +676,7 @@ int main() {
         for (std::size_t i = 0; i < NZ; ++i)
             for (std::size_t j = 0; j < NZ; ++j)
                 R(i, j) = (i == j) ? 1.0 : 0.0;
-        run_scenario("Benign", R, num_steps);
+        summaries.push_back(run_scenario("Benign", R, num_steps));
     }
 
     // Scenario 2: Moderate stress
@@ -634,7 +686,7 @@ int main() {
             for (std::size_t j = 0; j < NZ; ++j)
                 R(i, j) = 0.0;
         R(0,0) = 0.01; R(1,1) = 0.1;
-        run_scenario("Moderate stress", R, num_steps);
+        summaries.push_back(run_scenario("Moderate stress", R, num_steps));
     }
 
     // Scenario 3: Severe stress
@@ -644,7 +696,7 @@ int main() {
             for (std::size_t j = 0; j < NZ; ++j)
                 R(i, j) = 0.0;
         R(0,0) = 1e-14; R(1,1) = 1e-2;
-        run_scenario("Severe stress", R, num_steps);
+        summaries.push_back(run_scenario("Severe stress", R, num_steps));
     }
 
     // === Direct factorization stress test ===
@@ -657,7 +709,9 @@ int main() {
     std::cout << "================================================================\n\n";
 
     // Test 1: SPD matrices with controlled condition numbers
-    std::cout << "--- SPD matrices (Cholesky should succeed, both accurate) ---\n";
+    std::cout << "--- SPD matrices, n = 8, eigenvalues spread over cond(P) ---\n";
+    double spd_max_cr = 0.0, spd_max_lr = 0.0;
+    bool spd_all_ok = true;
     std::cout << std::setw(14) << "cond(P)"
               << std::setw(16) << "Chol residual"
               << std::setw(16) << "LDLT residual"
@@ -691,6 +745,12 @@ int main() {
 
         double cr = cholesky_residual(P);
         double lr = ldlt_residual(P);
+        if (std::isfinite(cr) && std::isfinite(lr)) {
+            spd_max_cr = std::max(spd_max_cr, cr);
+            spd_max_lr = std::max(spd_max_lr, lr);
+        } else {
+            spd_all_ok = false;
+        }
 
         std::cout << std::setw(14) << std::scientific << std::setprecision(1) << target_cond
                   << std::setw(16) << std::scientific << std::setprecision(3);
@@ -699,28 +759,90 @@ int main() {
         std::cout << std::setw(16) << std::scientific << std::setprecision(3) << lr << "\n";
     }
 
-    // Test 2: Nearly-indefinite matrices (P with one tiny negative eigenvalue)
-    // This simulates what happens when UKF covariance update P = P_pred - K*S*K^T
-    // produces a matrix that is slightly non-SPD due to rounding.
-    std::cout << "\n--- Nearly-indefinite matrices (smallest eigenvalue < 0) ---\n";
-    std::cout << "  (Cholesky fails; LDL^T succeeds with negative D entry)\n\n";
-    std::cout << std::setw(14) << "min_eig"
-              << std::setw(16) << "Cholesky"
-              << std::setw(16) << "LDL^T"
-              << std::setw(14) << "D entries"
-              << "\n";
-    std::cout << std::string(60, '-') << "\n";
+    // Test 2: indefinite matrices. A covariance update P = P_pred - K S K^T
+    // can lose positive definiteness to rounding (the float32 filter in
+    // ../ukf_bearing_only shows it). Two families, neither diagonal:
+    //   - diag(1, 0.5, 0.1, min_eig) rotated by a random orthogonal Q;
+    //   - the Hilbert matrix H_6 (cond 1.5e7) shifted by twice its smallest
+    //     eigenvalue, so that lambda_min = -lambda_min(H_6) = -1.1e-7;
+    //   - ones off the diagonal and a tiny e on it, whose first pivot
+    //     unpivoted LDL^T must divide by.
+    // Cholesky stops on every one. Unpivoted LDL^T returns, with D's signs,
+    // but on an indefinite matrix it is not backward stable: a small pivot
+    // makes L large. Bunch-Kaufman (ldlt_bk) pivots with 1x1 and 2x2 blocks,
+    // and its D gives the inertia. Both are measured by the backward error of
+    // a solve with their factors, ||P x - b|| / (||P|| ||x||).
+    std::cout << "\n--- Indefinite matrices ---\n";
+    std::cout << std::setw(26) << "matrix" << std::setw(11) << "lambda_min" << std::setw(5) << "neg"
+              << std::setw(9) << "Cholesky" << std::setw(15) << "LDL^T D signs" << std::setw(12) << "LDL^T berr"
+              << std::setw(8) << "BK neg" << std::setw(11) << "BK berr" << "\n";
+    std::cout << std::string(97, '-') << "\n";
 
+    auto eig_min_count = [](const mat::dense2D<double>& P, int& negatives) {
+        auto e = eigenvalue_symmetric(copy_matrix(P));
+        double lo = e(0);
+        negatives = 0;
+        for (std::size_t i = 0; i < e.size(); ++i) {
+            lo = std::min(lo, e(i));
+            if (e(i) < 0.0) ++negatives;
+        }
+        return lo;
+    };
+    // Bunch-Kaufman: the number of negative eigenvalues of D (1x1 pivots by
+    // sign, 2x2 blocks by their determinant), and ||P - P^T L D L^T P|| / ||P||
+    // through the solve: P x = P e_j column by column, compared with e_j.
+    // The backward error of x for P x = b.
+    auto backward_error = [](const mat::dense2D<double>& P, const vec::dense_vector<double>& x,
+                             const vec::dense_vector<double>& bv) {
+        const std::size_t n = P.num_rows();
+        double r2 = 0.0, a2 = 0.0, x2 = 0.0;
+        for (std::size_t i = 0; i < n; ++i) {
+            double ax = 0.0;
+            for (std::size_t j = 0; j < n; ++j) { ax += P(i, j) * x(j); a2 += P(i, j) * P(i, j); }
+            r2 += (ax - bv(i)) * (ax - bv(i));
+            x2 += x(i) * x(i);
+        }
+        return std::sqrt(r2) / (std::sqrt(a2) * std::sqrt(x2));
+    };
+    // b = P (1, 2, ..., n)^T.
+    auto rhs = [](const mat::dense2D<double>& P) {
+        vec::dense_vector<double> bv(P.num_rows(), 0.0);
+        for (std::size_t i = 0; i < P.num_rows(); ++i)
+            for (std::size_t j = 0; j < P.num_cols(); ++j) bv(i) += P(i, j) * double(j + 1);
+        return bv;
+    };
+    auto bk = [&](const mat::dense2D<double>& P, int& negatives, double& res) {
+        const std::size_t n = P.num_rows();
+        auto F = copy_matrix(P);
+        bk_pivot_info piv;
+        if (ldlt_bk_factor(F, piv) != 0) return false;
+        negatives = 0;
+        for (std::size_t k = 0; k < n; ++k) {
+            if (piv.ipiv[k] > 0) {
+                if (F(k, k) < 0.0) ++negatives;
+            } else {
+                const double a = F(k, k), b = F(k + 1, k), c = F(k + 1, k + 1);
+                const double det = a * c - b * b;
+                negatives += det < 0.0 ? 1 : (a < 0.0 ? 2 : 0);
+                ++k;
+            }
+        }
+        const auto bv = rhs(P);
+        vec::dense_vector<double> x(n, 0.0);
+        ldlt_bk_solve(F, piv, x, bv);
+        res = backward_error(P, x, bv);
+        return true;
+    };
+
+    struct Indef { std::string name; mat::dense2D<double> P; };
+    std::vector<Indef> indef;
     for (double min_eig : {-1e-14, -1e-10, -1e-6, -1e-2}) {
-        std::size_t n = 4;
-        // Diagonal matrix with one negative eigenvalue
+        const std::size_t n = 4;
         mat::dense2D<double> P(n, n);
         for (std::size_t i = 0; i < n; ++i)
             for (std::size_t j = 0; j < n; ++j)
                 P(i, j) = 0.0;
         P(0,0) = 1.0; P(1,1) = 0.5; P(2,2) = 0.1; P(3,3) = min_eig;
-
-        // Mix it up with a rotation to make it non-diagonal
         mat::dense2D<double> M2(n, n);
         Rng rng3(99);
         for (std::size_t i = 0; i < n; ++i)
@@ -729,48 +851,67 @@ int main() {
         vec::dense_vector<double> tau2(n);
         qr_factor(M2, tau2);
         auto Qmat2 = qr_extract_Q(M2, tau2);
-
-        // P_rot = Q * P * Q^T
         auto QP = Qmat2 * P;
-        auto P_rot = QP * trans(Qmat2);
-        // Force exact symmetry
+        mat::dense2D<double> P_rot = QP * trans(Qmat2);
         for (std::size_t i = 0; i < n; ++i)
             for (std::size_t j = i + 1; j < n; ++j)
                 P_rot(j, i) = P_rot(i, j);
-
-        // Try Cholesky
-        auto Pc = copy_matrix(P_rot);
-        int chol_info = cholesky_factor(Pc);
-
-        // Try LDL^T
-        auto Pl = copy_matrix(P_rot);
-        int ldlt_info = ldlt_factor(Pl);
-
-        std::cout << std::setw(14) << std::scientific << std::setprecision(1) << min_eig;
-
-        if (chol_info != 0)
-            std::cout << std::setw(16) << "FAIL (non-SPD)";
-        else
-            std::cout << std::setw(16) << "OK";
-
-        if (ldlt_info != 0)
-            std::cout << std::setw(16) << "FAIL";
-        else {
-            std::cout << std::setw(16) << "OK";
-            // Show D signs
-            std::cout << "  [";
-            for (std::size_t i = 0; i < n; ++i) {
-                if (i > 0) std::cout << ",";
-                std::cout << (Pl(i, i) >= 0 ? "+" : "-");
-            }
-            std::cout << "]";
-        }
-        std::cout << "\n";
+        std::ostringstream nm;
+        nm << "Q diag(.., " << std::scientific << std::setprecision(0) << min_eig << ") Q^T";
+        indef.push_back({nm.str(), std::move(P_rot)});
     }
-    std::cout << "\n  LDL^T detects indefiniteness via negative D entries rather\n"
-              << "  than failing. This allows graceful recovery (e.g., clamping\n"
-              << "  D entries or triggering a covariance reset) instead of a\n"
-              << "  hard Cholesky failure that crashes the filter.\n";
+    {
+        const std::size_t n = 6;
+        mat::dense2D<double> H(n, n);
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t j = 0; j < n; ++j) H(i, j) = 1.0 / double(i + j + 1);
+        int neg = 0;
+        const double lmin = eig_min_count(H, neg);
+        for (std::size_t i = 0; i < n; ++i) H(i, i) -= 2.0 * lmin;
+        indef.push_back({"H_6 - 2 lambda_min I", std::move(H)});
+    }
+    for (double e : {1e-8, 1e-12}) {
+        mat::dense2D<double> T(4, 4);
+        for (std::size_t i = 0; i < 4; ++i)
+            for (std::size_t j = 0; j < 4; ++j) T(i, j) = (i == j) ? e : 1.0;
+        std::ostringstream nm;
+        nm << "ones, diagonal " << std::scientific << std::setprecision(0) << e;
+        indef.push_back({nm.str(), std::move(T)});
+    }
+
+    bool indef_chol_all_fail = true, indef_bk_inertia_ok = true;
+    double indef_max_ldlt_res = 0.0, indef_max_bk_res = 0.0;
+    for (const auto& c : indef) {
+        int neg_eig = 0;
+        const double lmin = eig_min_count(c.P, neg_eig);
+        auto Pc = copy_matrix(c.P);
+        const bool chol_ok = cholesky_factor(Pc) == 0;
+        if (chol_ok) indef_chol_all_fail = false;
+        auto Pl = copy_matrix(c.P);
+        const bool ldlt_ok = ldlt_factor(Pl) == 0;
+        std::string signs = "[";
+        for (std::size_t i = 0; i < c.P.num_rows(); ++i) signs += (i ? "," : "") + std::string(Pl(i, i) >= 0 ? "+" : "-");
+        signs += "]";
+        double lres = std::numeric_limits<double>::quiet_NaN();
+        if (ldlt_ok) {
+            const auto bv = rhs(c.P);
+            vec::dense_vector<double> x(c.P.num_rows(), 0.0);
+            ldlt_solve(Pl, x, bv);
+            lres = backward_error(c.P, x, bv);
+        }
+        int bk_neg = -1;
+        double bres = std::numeric_limits<double>::quiet_NaN();
+        const bool bk_ok = bk(c.P, bk_neg, bres);
+        if (!bk_ok || bk_neg != neg_eig) indef_bk_inertia_ok = false;
+        if (std::isfinite(lres)) indef_max_ldlt_res = std::max(indef_max_ldlt_res, lres);
+        if (std::isfinite(bres)) indef_max_bk_res = std::max(indef_max_bk_res, bres);
+        std::cout << std::setw(26) << c.name << std::setw(11) << std::scientific << std::setprecision(1) << lmin
+                  << std::setw(5) << neg_eig << std::setw(9) << (chol_ok ? "OK" : "stops") << std::setw(15)
+                  << (ldlt_ok ? signs : "FAIL") << std::setw(12) << lres << std::setw(8)
+                  << (bk_ok ? std::to_string(bk_neg) : "FAIL") << std::setw(11) << bres << "\n";
+    }
+    std::cout << "\n  neg is the number of negative eigenvalues; BK neg the number ldlt_bk's D has.\n"
+              << "  berr is the backward error of a solve with that factorization.\n";
 
     // Scenario 4: Intermittent
     std::cout << "\n=== Scenario: Intermittent (alternating R) ===\n";
@@ -801,11 +942,14 @@ int main() {
 
         bool chol_ok = true, ldlt_ok = true;
         int chol_div = -1, ldlt_div = -1;
+        double chol_err = 0.0, ldlt_err = 0.0;
+        double ldlt_max_cond = 0.0;   // the LDL^T run's largest posterior cond(P), as run_scenario's
 
         for (int method_idx = 0; method_idx < 2; ++method_idx) {
             FactMethod method = (method_idx == 0) ? FactMethod::Cholesky : FactMethod::LDLT;
             auto& ok = (method_idx == 0) ? chol_ok : ldlt_ok;
             auto& div_step = (method_idx == 0) ? chol_div : ldlt_div;
+            auto& final_err = (method_idx == 0) ? chol_err : ldlt_err;
 
             // Reset state
             double lambda_ = params.alpha * params.alpha * (NX + params.kappa) - NX;
@@ -874,6 +1018,7 @@ int main() {
 
                 for (std::size_t s = 0; s < num_sigma; ++s)
                     sigma_z[s] = measurement_model(sigma_x[s], params);
+                wrap_bearings(sigma_z);
 
                 vec::dense_vector<double> z_pred(NZ);
                 for (std::size_t i = 0; i < NZ; ++i) {
@@ -924,6 +1069,10 @@ int main() {
                 for (std::size_t i = 0; i < NX; ++i)
                     for (std::size_t j = i + 1; j < NX; ++j)
                         P(j, i) = P(i, j);
+                if (method == FactMethod::LDLT) {
+                    const double c = condition_number(P);
+                    if (std::isfinite(c) && c > ldlt_max_cond) ldlt_max_cond = c;
+                }
 
                 double err = 0.0;
                 for (std::size_t i = 0; i < NX; ++i) {
@@ -933,33 +1082,70 @@ int main() {
                 if (!std::isfinite(std::sqrt(err)) || std::sqrt(err) > 1e6) {
                     ok = false; div_step = step; break;
                 }
+                final_err = std::sqrt(err);
             }
         }
 
         if (chol_ok)
-            std::cout << "  Cholesky: completed " << num_steps << " steps\n";
+            std::cout << "  Cholesky: completed " << num_steps << " steps, final error = "
+                      << std::scientific << std::setprecision(3) << chol_err << "\n";
         else
             std::cout << "  Cholesky: DIVERGED at step " << chol_div << "\n";
 
         if (ldlt_ok)
-            std::cout << "  LDL^T:    completed " << num_steps << " steps\n";
+            std::cout << "  LDL^T:    completed " << num_steps << " steps, final error = "
+                      << std::scientific << std::setprecision(3) << ldlt_err << "\n";
         else
             std::cout << "  LDL^T:    DIVERGED at step " << ldlt_div << "\n";
+
+        ScenarioSummary sum;
+        sum.name = "Intermittent";
+        sum.chol_done = chol_ok;
+        sum.ldlt_done = ldlt_ok;
+        sum.chol_err = chol_err;
+        sum.ldlt_err = ldlt_err;
+        sum.max_cond = ldlt_max_cond;
+        std::cout << "  largest cond(P): " << std::scientific << std::setprecision(2) << sum.max_cond << "\n";
+        summaries.push_back(sum);
     }
 
     std::cout << "\n================================================================\n";
-    std::cout << " Conclusion\n";
-    std::cout << "================================================================\n";
-    std::cout << "\n"
-              << "The LDL^T factorization avoids the sqrt() that Cholesky requires,\n"
-              << "eliminating the primary source of precision loss when the state\n"
-              << "covariance P becomes ill-conditioned. In the severe stress scenario,\n"
-              << "very informative observations drive eigenvalues of P toward machine\n"
-              << "epsilon, and the Cholesky decomposition degrades or fails while\n"
-              << "LDL^T remains stable.\n"
-              << "\n"
-              << "Rule of thumb: if cond(P) can exceed ~1e8 in your application,\n"
-              << "prefer LDL^T over Cholesky for sigma point generation.\n";
+    std::cout << " Conclusion (computed from the runs above)\n";
+    std::cout << "================================================================\n\n";
+    bool both_done = true;
+    double worst_cond = 0.0, worst_rel = 0.0;
+    for (const auto& sm : summaries) {
+        if (!sm.chol_done || !sm.ldlt_done) both_done = false;
+        else worst_rel = std::max(worst_rel, std::abs(sm.chol_err - sm.ldlt_err) / sm.ldlt_err);
+        worst_cond = std::max(worst_cond, sm.max_cond);
+    }
+    std::cout << std::scientific << std::setprecision(1);
+    if (both_done)
+        std::cout << "- In all " << summaries.size() << " scenarios both filters complete, and their final errors\n"
+                  << "  agree to a relative " << worst_rel << ": rounding, amplified by the UKF weights at\n"
+                  << "  alpha = 1e-3 (W_0 = -1e6; see ../ukf_bearing_only). ";
+    else
+        std::cout << "- In at least one scenario one filter did not complete (see above). ";
+    std::cout << "cond(P) never exceeded " << worst_cond << ": the process noise Q,\n"
+              << "  added at every predict step, keeps P's eigenvalues up, even with R = 1e-14.\n";
+    if (spd_all_ok)
+        std::cout << "- On SPD matrices up to cond 1e15 both factorizations' residuals stay at rounding\n"
+                  << "  level: at most " << spd_max_cr << " (Cholesky) and " << spd_max_lr << " (LDL^T).\n"
+                  << "  When Cholesky completes, its backward error is small at any condition number; it\n"
+                  << "  is guaranteed to complete for c n^(3/2) cond(P) eps < 1; beyond that it may stop,\n"
+                  << "  if a rounded pivot comes out non-positive, rather than return a poor factor (as\n"
+                  << "  LDL^T's D may get an entry <= 0). A scalar square root halves a relative error.\n"
+                  << "  Neither method is the safer choice above some condition number, and LDL^T's\n"
+                  << "  sigma points take sqrt(D_k) anyway.\n";
+    std::cout << "- On an indefinite matrix the two differ in kind: Cholesky "
+              << (indef_chol_all_fail ? "stops on every one" : "does not always stop") << ", while\n"
+              << "  LDL^T returns, with a negative D entry. Unpivoted LDL^T is not stable there: its\n"
+              << "  solve's backward error reached " << indef_max_ldlt_res << ". Bunch-Kaufman (ldlt_bk) "
+              << (indef_bk_inertia_ok ? "found the\n  inertia of every matrix" : "missed an\n  inertia")
+              << ", with a backward error of at most " << indef_max_bk_res << ".\n"
+              << "- An indefinite covariance has no sigma points: either factorization can only report\n"
+              << "  it. Where a UKF does meet one, look at the update's arithmetic (and, in low\n"
+              << "  precision, at the weights: ../ukf_bearing_only/bearing_only_ukf.cpp).\n";
 
     return 0;
 }

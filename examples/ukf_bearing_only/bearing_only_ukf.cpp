@@ -1,67 +1,91 @@
-// bearing_only_ukf.cpp -- Bearing-only UKF stress test: Cholesky vs LDL^T
+// bearing_only_ukf.cpp -- Bearing-only UKF: Cholesky against LDL^T, float64
+// against float32, and what really breaks the float32 filter
 //
-// The canonical ill-conditioning generator for UKF sigma point factorization:
-// a 2D tracker with bearing-only measurements. The bearing direction is
-// well-observed while range is unobserved, creating extreme eigenvalue spread
-// in the covariance P after each update.
+// A 2-D tracker [px, py, vx, vy] with one measurement, the bearing from a
+// beacon. The bearing pins down one direction of the position and leaves the
+// range unobserved, the classic source of a covariance P with a large
+// eigenvalue spread.
 //
-// This example:
-//   1. Runs the bearing-only UKF in both float64 and float32
-//   2. Compares Cholesky vs LDL^T at each step
-//   3. Measures sigma-point mean bias (the silent killer)
-//   4. Tracks condition number and factorization residual
-//   5. Is structured for future Bunch-Kaufman path (issue #46)
+// This example runs TWO filters on one scenario (the same truth and the same
+// measurements), one taking its sigma points from Cholesky, P = L L^T, the
+// other from LDL^T, P = L D L^T. It runs them in float64 and in float32, and
+// prints:
+//   1. each step's cond(P), the sigma-point mean bias of each filter, and how
+//      far the two filters' estimates are apart;
+//   2. where a filter fails, and on what;
+//   3. the UKF weights in float32 for alpha = 1e-3 ... 1, and the bias and
+//      the outcome of both float32 filters at each alpha.
 //
-// The sigma-point mean bias is the key diagnostic: with a degraded square
-// root, the 2n+1 points are asymmetric around x-hat, pushing x-hat_pred
-// away from the true mean. This bias is small per-step but compounds over
-// 10-20 iterations to produce mean drifts of 0.5-2 sigma in float32.
+// What it shows (issue 953; the conclusion at the end is computed from the
+// runs):
+//   - The two factorizations give the same filter. Both are backward stable
+//     square roots of an SPD P, at any condition number; any square root of P
+//     gives sigma points symmetric about x-hat. (LDL^T does not avoid the
+//     square root: its sigma points are x-hat +- gamma L sqrt(D_k) e_k.)
+//   - float32 fails because of the weights, not the factorization. At
+//     alpha = 1e-3, W_0 = lambda / (n + lambda) is about -1e6 and the other
+//     weights about 1.25e5, so the weighted sums cancel six of float32's seven
+//     digits. The step-0 bias is 2.2e-2 at cond(P) = 1, and the two float32
+//     filters, identical until the rounding of the two factorizations
+//     differs, drift up to 1.9 apart; at alpha = 1 (W_0 = 0) they stay within
+//     6.6e-5. A covariance P^- - K S K^T that the cancellation makes
+//     indefinite would stop both filters (run_filter reports where); this
+//     run does not reach one.
+//   - An indefinite P is where the methods differ in kind: Cholesky stops,
+//     and LDL^T's D shows the inertia. For a matrix that needs pivoting to be
+//     factored at all, see ldlt_bk (Bunch-Kaufman).
+//
+// The sigma-point mean bias is ||sum_k W_k sigma_k - x-hat|| / ||x-hat||. For
+// a symmetric set of points the exact weighted mean is x-hat, since the
+// weights sum to 1, so the bias measures only the rounding of that sum.
 //
 // References:
 //   Julier & Uhlmann, "Unscented Filtering and Nonlinear Estimation", 2004
 //   Bar-Shalom, Li, Kirubarajan, "Estimation with Applications to Tracking
 //   and Navigation", Ch. 11
+//   Higham, "Accuracy and Stability of Numerical Algorithms", 2nd ed., Thm 10.3
 
 #include <mtl/mtl.hpp>
+#include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <numbers>
+#include <sstream>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 using namespace mtl;
 
+static constexpr std::size_t NX = 4;  // [px, py, vx, vy]
+static constexpr std::size_t num_sigma = 2 * NX + 1;
+
 // ============================================================================
-// Templated helpers
+// Helpers
 // ============================================================================
 
 template <typename T>
 mat::dense2D<T> copy_mat(const mat::dense2D<T>& A) {
-    std::size_t n = A.num_rows(), m = A.num_cols();
-    mat::dense2D<T> B(n, m);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < m; ++j)
+    mat::dense2D<T> B(A.num_rows(), A.num_cols());
+    for (std::size_t i = 0; i < A.num_rows(); ++i)
+        for (std::size_t j = 0; j < A.num_cols(); ++j)
             B(i, j) = A(i, j);
     return B;
 }
 
-// ============================================================================
-// Simple PRNG (deterministic, no external deps)
-// ============================================================================
-
+/// Deterministic PRNG (xoroshiro128+), so the run is the same everywhere.
 struct Rng {
-    uint64_t s[2];
-    explicit Rng(uint64_t seed = 42) {
+    std::uint64_t s[2];
+    explicit Rng(std::uint64_t seed = 42) {
         s[0] = seed ^ 0x9E3779B97F4A7C15ULL;
         s[1] = seed ^ 0x6A09E667F3BCC908ULL;
         for (int i = 0; i < 10; ++i) next();
     }
-    uint64_t next() {
-        uint64_t s0 = s[0], s1 = s[1], result = s0 + s1;
+    std::uint64_t next() {
+        std::uint64_t s0 = s[0], s1 = s[1], result = s0 + s1;
         s1 ^= s0;
         s[0] = ((s0 << 55) | (s0 >> 9)) ^ s1 ^ (s1 << 14);
         s[1] = (s1 << 36) | (s1 >> 28);
@@ -74,184 +98,82 @@ struct Rng {
     }
 };
 
-// ============================================================================
-// Bearing-only UKF -- templated over Scalar
-// ============================================================================
-
-static constexpr std::size_t NX = 4;  // [px, py, vx, vy]
-static constexpr std::size_t NZ = 1;  // bearing only
-
-/// Sigma-point mean bias: measure asymmetry of sigma points around mean.
-/// For a perfect factorization, sum of (sigma_k - mean) should be zero.
-/// Returns ||sum(sigma_k * w_k) - mean * sum(w_k)|| as fraction of ||mean||.
+/// Eigenvalues of a symmetric P, computed in double whatever T is.
 template <typename T>
-T sigma_point_bias(
-    const std::vector<vec::dense_vector<T>>& sigma,
-    const vec::dense_vector<T>& mean,
-    T Wm0, T Wi)
-{
-    constexpr std::size_t n = NX;
-    constexpr std::size_t num_sigma = 2 * n + 1;
-
-    // Compute weighted mean of sigma points
-    vec::dense_vector<T> weighted_mean(n);
-    for (std::size_t i = 0; i < n; ++i) {
-        weighted_mean(i) = Wm0 * sigma[0](i);
-        for (std::size_t s = 1; s < num_sigma; ++s)
-            weighted_mean(i) += Wi * sigma[s](i);
-    }
-
-    // Bias = ||weighted_mean - mean||
-    T bias_sq = T(0);
-    T mean_sq = T(0);
-    for (std::size_t i = 0; i < n; ++i) {
-        T d = weighted_mean(i) - mean(i);
-        bias_sq += d * d;
-        mean_sq += mean(i) * mean(i);
-    }
-
-    using std::sqrt;
-    if (mean_sq < std::numeric_limits<T>::min())
-        return sqrt(bias_sq);
-    return sqrt(bias_sq) / sqrt(mean_sq);
+vec::dense_vector<double> eigenvalues_f64(const mat::dense2D<T>& P) {
+    mat::dense2D<double> Pd(P.num_rows(), P.num_cols());
+    for (std::size_t i = 0; i < P.num_rows(); ++i)
+        for (std::size_t j = 0; j < P.num_cols(); ++j)
+            Pd(i, j) = static_cast<double>(P(i, j));
+    return eigenvalue_symmetric(Pd);
 }
 
-/// Factorization residual for Cholesky: ||P - L*L^T|| / ||P||
-template <typename T>
-T chol_residual(const mat::dense2D<T>& P) {
-    std::size_t n = P.num_rows();
-    auto L = copy_mat(P);
-    int info = cholesky_factor(L);
-    if (info != 0) return T(-1);  // signal failure
-
-    mat::dense2D<T> Lmat(n, n);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < n; ++j)
-            Lmat(i, j) = (j <= i) ? L(i, j) : T(0);
-
-    auto LLt = Lmat * trans(Lmat);
-
-    T res = T(0), pnorm = T(0);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < n; ++j) {
-            T d = P(i, j) - LLt(i, j);
-            res += d * d;
-            pnorm += P(i, j) * P(i, j);
-        }
-    using std::sqrt;
-    return sqrt(res) / sqrt(pnorm);
-}
-
-/// Factorization residual for LDL^T: ||P - L*D*L^T|| / ||P||
-template <typename T>
-T ldlt_residual_val(const mat::dense2D<T>& P) {
-    std::size_t n = P.num_rows();
-    auto F = copy_mat(P);
-    int info = ldlt_factor(F);
-    if (info != 0) return T(-1);
-
-    mat::dense2D<T> Lmat(n, n), Dmat(n, n);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < n; ++j) {
-            if (i == j) { Lmat(i, j) = T(1); Dmat(i, j) = F(i, j); }
-            else if (j < i) { Lmat(i, j) = F(i, j); Dmat(i, j) = T(0); }
-            else { Lmat(i, j) = T(0); Dmat(i, j) = T(0); }
-        }
-
-    auto LDLt = Lmat * Dmat * trans(Lmat);
-
-    T res = T(0), pnorm = T(0);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < n; ++j) {
-            T d = P(i, j) - LDLt(i, j);
-            res += d * d;
-            pnorm += P(i, j) * P(i, j);
-        }
-    using std::sqrt;
-    return sqrt(res) / sqrt(pnorm);
-}
-
-/// Condition number via eigenvalue ratio (double precision computation
-/// regardless of T, to avoid eigenvalue solver issues in float32)
+/// max |lambda| / min |lambda|, in double.
 template <typename T>
 double condition_number_f64(const mat::dense2D<T>& P) {
-    std::size_t n = P.num_rows();
-    mat::dense2D<double> Pd(n, n);
-    for (std::size_t i = 0; i < n; ++i)
-        for (std::size_t j = 0; j < n; ++j)
-            Pd(i, j) = static_cast<double>(P(i, j));
-
-    auto eigs = eigenvalue_symmetric(Pd);
-    double emin = std::abs(eigs(0)), emax = emin;
-    for (std::size_t i = 1; i < n; ++i) {
-        double ae = std::abs(eigs(i));
-        if (ae < emin) emin = ae;
-        if (ae > emax) emax = ae;
+    const auto e = eigenvalues_f64(P);
+    double lo = std::abs(e(0)), hi = lo;
+    for (std::size_t i = 1; i < e.size(); ++i) {
+        lo = std::min(lo, std::abs(e(i)));
+        hi = std::max(hi, std::abs(e(i)));
     }
-    if (emin < std::numeric_limits<double>::min())
-        return std::numeric_limits<double>::infinity();
-    return emax / emin;
+    return lo < std::numeric_limits<double>::min() ? std::numeric_limits<double>::infinity() : hi / lo;
 }
+
+template <typename T>
+double min_eigenvalue_f64(const mat::dense2D<T>& P) {
+    const auto e = eigenvalues_f64(P);
+    double lo = e(0);
+    for (std::size_t i = 1; i < e.size(); ++i) lo = std::min(lo, e(i));
+    return lo;
+}
+
+/// a mapped into [-pi, pi].
+template <typename T>
+T wrap_pi(T a) {
+    const double pi = std::numbers::pi;
+    while (static_cast<double>(a) > pi) a = a - T(2.0 * pi);
+    while (static_cast<double>(a) < -pi) a = a + T(2.0 * pi);
+    return a;
+}
+
+// ============================================================================
+// Sigma points
+// ============================================================================
 
 enum class FactMethod { Cholesky, LDLT };
 
-/// Generate sigma points using Cholesky
-template <typename T>
-bool generate_sigma_cholesky(
-    const vec::dense_vector<T>& x, const mat::dense2D<T>& P,
-    T gamma, std::vector<vec::dense_vector<T>>& sigma)
-{
-    auto L = copy_mat(P);
-    int info = cholesky_factor(L);
-    if (info != 0) return false;
+inline const char* name(FactMethod m) { return m == FactMethod::Cholesky ? "Cholesky" : "LDL^T"; }
 
-    sigma[0] = x;
-    for (std::size_t j = 0; j < NX; ++j) {
-        vec::dense_vector<T> sp(NX), sm(NX);
-        for (std::size_t i = 0; i < NX; ++i) {
-            T col_val = (i >= j) ? L(i, j) : T(0);
-            sp(i) = x(i) + gamma * col_val;
-            sm(i) = x(i) - gamma * col_val;
-        }
-        sigma[1 + j] = sp;
-        sigma[1 + NX + j] = sm;
-    }
-    return true;
-}
-
-/// Generate sigma points using LDL^T
+/// x +- gamma * (column k of a square root of P), from P = L L^T or from
+/// P = L D L^T with the column L(:, k) sqrt(D_k). False if P is not SPD to the
+/// factorization: Cholesky meets a non-positive pivot, or D has an entry <= 0
+/// (an indefinite P has no real square root; L |D| L^T would be another
+/// covariance).
 template <typename T>
-bool generate_sigma_ldlt(
-    const vec::dense_vector<T>& x, const mat::dense2D<T>& P,
-    T gamma, std::vector<vec::dense_vector<T>>& sigma)
-{
+bool make_sigma(FactMethod m, const vec::dense_vector<T>& x, const mat::dense2D<T>& P, T gamma,
+                std::vector<vec::dense_vector<T>>& sigma) {
+    using std::sqrt;
     auto F = copy_mat(P);
-    int info = ldlt_factor(F);
-    if (info != 0) return false;
-
-    mat::dense2D<T> Lmat(NX, NX);
-    vec::dense_vector<T> D(NX);
-    for (std::size_t i = 0; i < NX; ++i) {
-        D(i) = F(i, i);
-        for (std::size_t j = 0; j < NX; ++j)
-            Lmat(i, j) = (i == j) ? T(1) : ((j < i) ? F(i, j) : T(0));
+    mat::dense2D<T> S(NX, NX);   // the square root's columns
+    if (m == FactMethod::Cholesky) {
+        if (cholesky_factor(F) != 0) return false;
+        for (std::size_t i = 0; i < NX; ++i)
+            for (std::size_t j = 0; j < NX; ++j) S(i, j) = (i >= j) ? F(i, j) : T(0);
+    } else {
+        if (ldlt_factor(F) != 0) return false;
+        for (std::size_t k = 0; k < NX; ++k) {
+            if (!(F(k, k) > T(0))) return false;
+            const T d = sqrt(F(k, k));
+            for (std::size_t i = 0; i < NX; ++i) S(i, k) = (i == k) ? d : (i > k ? F(i, k) * d : T(0));
+        }
     }
-
-    // Sigma = x +/- gamma * L * sqrt(D(k)) * e_k
-    // Negative D(k) means P is indefinite -- report failure rather than
-    // silently using abs(D(k)), which would produce sigma points for
-    // L|D|L^T instead of P. This keeps the comparison fair: LDL^T
-    // detects the problem; the caller decides how to recover.
     sigma[0] = x;
     for (std::size_t k = 0; k < NX; ++k) {
-        if (D(k) <= T(0)) return false;  // indefinite pivot -- fail cleanly
-        using std::sqrt;
-        T sqrtDk = sqrt(D(k));
         vec::dense_vector<T> sp(NX), sm(NX);
         for (std::size_t i = 0; i < NX; ++i) {
-            T col_val = Lmat(i, k) * sqrtDk;
-            sp(i) = x(i) + gamma * col_val;
-            sm(i) = x(i) - gamma * col_val;
+            sp(i) = x(i) + gamma * S(i, k);
+            sm(i) = x(i) - gamma * S(i, k);
         }
         sigma[1 + k] = sp;
         sigma[1 + NX + k] = sm;
@@ -259,320 +181,235 @@ bool generate_sigma_ldlt(
     return true;
 }
 
-/// Bearing measurement model: z = atan2(py - by, px - bx)
+/// ||sum_k W_k sigma_k - x|| / ||x||: the rounding of the weighted mean of a
+/// symmetric set of points, whose exact mean is x.
 template <typename T>
-T bearing_measurement(const vec::dense_vector<T>& x, T bx, T by) {
-    using std::atan2;
-    return atan2(x(1) - by, x(0) - bx);
+double sigma_point_bias(const std::vector<vec::dense_vector<T>>& sigma, const vec::dense_vector<T>& x,
+                        T Wm0, T Wi) {
+    double b2 = 0.0, x2 = 0.0;
+    for (std::size_t i = 0; i < NX; ++i) {
+        T m = Wm0 * sigma[0](i);
+        for (std::size_t s = 1; s < num_sigma; ++s) m = m + Wi * sigma[s](i);
+        const double d = static_cast<double>(m - x(i));
+        b2 += d * d;
+        x2 += static_cast<double>(x(i)) * static_cast<double>(x(i));
+    }
+    return x2 > 0.0 ? std::sqrt(b2 / x2) : std::sqrt(b2);
 }
 
-/// Bearing measurement Jacobian H = d(bearing)/d(state) at x
-template <typename T>
-vec::dense_vector<T> bearing_jacobian(const vec::dense_vector<T>& x, T bx, T by) {
-    T dx = x(0) - bx;
-    T dy = x(1) - by;
-    T r2 = dx * dx + dy * dy;
-    vec::dense_vector<T> H(NX);
-    H(0) = -dy / r2;  // d(bearing)/d(px)
-    H(1) =  dx / r2;  // d(bearing)/d(py)
-    H(2) = T(0);
-    H(3) = T(0);
-    return H;
-}
+// ============================================================================
+// One scenario, two filters
+// ============================================================================
 
-/// Per-step result
-struct StepResult {
-    int step;
-    double cond_P;
-    bool chol_ok;
-    bool ldlt_ok;
-    double chol_bias;
-    double ldlt_bias;
-    double chol_resid;
-    double ldlt_resid;
+static constexpr double beacon_x = 50.0, beacon_y = 0.0;
+static constexpr double dt = 0.1;
+static constexpr double R_bearing = 1e-4;   // a tight angular measurement
+static constexpr std::array<double, NX> q_diag{1e-6, 1e-6, 1e-4, 1e-4};
+
+/// The truth and the measurements, made once in double so that every filter,
+/// in every precision, sees the same ones.
+struct Scenario {
+    std::vector<std::array<double, NX>> truth;
+    std::vector<double> z;
 };
 
-/// Run bearing-only UKF for a given scalar type
+Scenario make_scenario(int steps) {
+    Scenario sc;
+    std::array<double, NX> x{0.0, 5.0, 2.0, -0.5};   // moving toward the beacon
+    Rng rng(54321);
+    for (int k = 0; k < steps; ++k) {
+        x[0] += x[2] * dt;
+        x[1] += x[3] * dt;
+        for (std::size_t i = 0; i < NX; ++i) x[i] += std::sqrt(q_diag[i]) * rng.randn();
+        sc.truth.push_back(x);
+        sc.z.push_back(std::atan2(x[1] - beacon_y, x[0] - beacon_x) + std::sqrt(R_bearing) * rng.randn());
+    }
+    return sc;
+}
+
 template <typename T>
-std::vector<StepResult> run_bearing_only_ukf(int num_steps) {
-    std::vector<StepResult> results;
+struct Weights {
+    T gamma, Wm0, Wc0, Wi;
+};
 
-    // UKF parameters
-    T alpha = T(1e-3);
-    T beta  = T(2);
-    T kappa = T(0);
-    T dt    = T(0.1);
-    T R_val = T(1e-4);  // tight bearing measurement noise
+/// The scaled unscented transform's weights, formed in T: beta = 2, kappa = 0.
+template <typename T>
+Weights<T> weights(double alpha_d) {
+    const T alpha = T(alpha_d), beta = T(2), kappa = T(0), n = T(NX);
+    const T lambda = alpha * alpha * (n + kappa) - n;
+    using std::sqrt;
+    return {sqrt(n + lambda), lambda / (n + lambda), lambda / (n + lambda) + (T(1) - alpha * alpha + beta),
+            T(1) / (T(2) * (n + lambda))};
+}
 
-    T lambda_ = alpha * alpha * (T(NX) + kappa) - T(NX);
-    T gamma = T(std::sqrt(static_cast<double>(NX) + static_cast<double>(lambda_)));
-    T Wm0 = lambda_ / (T(NX) + lambda_);
-    T Wc0 = Wm0 + (T(1) - alpha * alpha + beta);
-    T Wi  = T(1) / (T(2) * (T(NX) + lambda_));
+struct Row {
+    double cond = 0.0;   // cond(P) at the start of the step
+    double bias = 0.0;   // that step's sigma-point mean bias
+    double err = 0.0;    // ||x-hat - x_true|| after the update
+    std::array<double, NX> x{};
+};
 
-    constexpr std::size_t num_sigma = 2 * NX + 1;
+struct Run {
+    std::vector<Row> rows;      // the steps that completed
+    int failed_at = -1;         // the step a factorization refused, or -1
+    std::string failed_on;      // which covariance it refused
+    double failed_min_eig = 0;  // that covariance's smallest eigenvalue (in double)
+};
 
-    // Beacon position
-    T bx = T(50), by = T(0);
+template <typename T>
+Run run_filter(FactMethod method, double alpha, const Scenario& sc) {
+    const Weights<T> w = weights<T>(alpha);
+    const T R = T(R_bearing), bx = T(beacon_x), by = T(beacon_y), tdt = T(dt);
 
-    // True state: target moving roughly toward beacon
-    vec::dense_vector<T> x_true(NX);
-    x_true(0) = T(0); x_true(1) = T(5);
-    x_true(2) = T(2); x_true(3) = T(-0.5);
-
-    // Process noise (small -- we want P conditioning to be driven by measurements)
-    mat::dense2D<T> Q(NX, NX);
-    for (std::size_t i = 0; i < NX; ++i)
-        for (std::size_t j = 0; j < NX; ++j)
-            Q(i, j) = T(0);
-    Q(0,0) = T(1e-6); Q(1,1) = T(1e-6);
-    Q(2,2) = T(1e-4); Q(3,3) = T(1e-4);
-
-    // Initial estimate (offset from truth)
     vec::dense_vector<T> x_hat(NX);
-    x_hat(0) = T(1); x_hat(1) = T(6);
-    x_hat(2) = T(1.5); x_hat(3) = T(0);
-
-    // Initial covariance: large and isotropic
+    x_hat(0) = T(1); x_hat(1) = T(6); x_hat(2) = T(1.5); x_hat(3) = T(0);
     mat::dense2D<T> P(NX, NX);
     for (std::size_t i = 0; i < NX; ++i)
-        for (std::size_t j = 0; j < NX; ++j)
-            P(i, j) = (i == j) ? T(100) : T(0);
+        for (std::size_t j = 0; j < NX; ++j) P(i, j) = (i == j) ? T(100) : T(0);
 
-    Rng rng(54321);
-
-    std::vector<vec::dense_vector<T>> sigma_chol(num_sigma);
-    std::vector<vec::dense_vector<T>> sigma_ldlt(num_sigma);
-    bool filter_failed = false;
-
-    for (int step = 0; step < num_steps; ++step) {
-        StepResult sr;
-        sr.step = step;
-
-        // === Propagate true state (constant velocity) ===
-        x_true(0) = x_true(0) + x_true(2) * dt;
-        x_true(1) = x_true(1) + x_true(3) * dt;
-        // Add small process noise
-        for (std::size_t i = 0; i < NX; ++i)
-            x_true(i) = x_true(i) + T(std::sqrt(static_cast<double>(Q(i, i)))) * T(rng.randn());
-
-        // === Generate bearing measurement ===
-        T z_true = bearing_measurement(x_true, bx, by);
-        T z = z_true + T(std::sqrt(static_cast<double>(R_val))) * T(rng.randn());
-
-        // === Condition number (computed in double for reliability) ===
-        sr.cond_P = condition_number_f64(P);
-
-        // === Try Cholesky sigma points ===
-        sr.chol_ok = generate_sigma_cholesky(x_hat, P, gamma, sigma_chol);
-        if (sr.chol_ok) {
-            sr.chol_bias = static_cast<double>(
-                sigma_point_bias(sigma_chol, x_hat, Wm0, Wi));
-        } else {
-            sr.chol_bias = std::numeric_limits<double>::quiet_NaN();
+    Run run;
+    std::vector<vec::dense_vector<T>> sigma(num_sigma);
+    for (std::size_t k = 0; k < sc.z.size(); ++k) {
+        Row row;
+        row.cond = condition_number_f64(P);
+        if (!make_sigma(method, x_hat, P, w.gamma, sigma)) {
+            run.failed_at = int(k);
+            run.failed_on = "the incoming P, the last update's P- - K S K^T";
+            run.failed_min_eig = min_eigenvalue_f64(P);
+            break;
         }
+        row.bias = sigma_point_bias(sigma, x_hat, w.Wm0, w.Wi);
 
-        // === Try LDL^T sigma points ===
-        sr.ldlt_ok = generate_sigma_ldlt(x_hat, P, gamma, sigma_ldlt);
-        if (sr.ldlt_ok) {
-            sr.ldlt_bias = static_cast<double>(
-                sigma_point_bias(sigma_ldlt, x_hat, Wm0, Wi));
-        } else {
-            sr.ldlt_bias = std::numeric_limits<double>::quiet_NaN();
+        // Predict: constant velocity.
+        for (auto& s : sigma) {
+            s(0) = s(0) + s(2) * tdt;
+            s(1) = s(1) + s(3) * tdt;
         }
-
-        // === Factorization residuals ===
-        {
-            T cr = chol_residual(P);
-            sr.chol_resid = (cr < T(0)) ? std::numeric_limits<double>::quiet_NaN()
-                                         : static_cast<double>(cr);
-        }
-        {
-            T lr = ldlt_residual_val(P);
-            sr.ldlt_resid = (lr < T(0)) ? std::numeric_limits<double>::quiet_NaN()
-                                         : static_cast<double>(lr);
-        }
-
-        results.push_back(sr);
-
-        // === UKF predict+update using LDL^T (the more robust path) ===
-        // We use LDL^T for the actual filter progression so both precisions
-        // run the same number of steps for fair comparison.
-        // If LDL^T fails, freeze P and continue emitting diagnostic rows.
-        if (filter_failed) continue;
-
-        std::vector<vec::dense_vector<T>>& sigma = sigma_ldlt;
-        if (!sr.ldlt_ok) { filter_failed = true; continue; }
-
-        // Propagate sigma points through process model (constant velocity)
-        for (std::size_t s = 0; s < num_sigma; ++s) {
-            sigma[s](0) = sigma[s](0) + sigma[s](2) * dt;
-            sigma[s](1) = sigma[s](1) + sigma[s](3) * dt;
-        }
-
-        // Predicted state mean
         vec::dense_vector<T> x_pred(NX);
         for (std::size_t i = 0; i < NX; ++i) {
-            x_pred(i) = Wm0 * sigma[0](i);
-            for (std::size_t s = 1; s < num_sigma; ++s)
-                x_pred(i) = x_pred(i) + Wi * sigma[s](i);
+            x_pred(i) = w.Wm0 * sigma[0](i);
+            for (std::size_t s = 1; s < num_sigma; ++s) x_pred(i) = x_pred(i) + w.Wi * sigma[s](i);
         }
-
-        // Predicted covariance
         mat::dense2D<T> P_pred(NX, NX);
         for (std::size_t i = 0; i < NX; ++i)
-            for (std::size_t j = 0; j < NX; ++j)
-                P_pred(i, j) = Q(i, j);
+            for (std::size_t j = 0; j < NX; ++j) {
+                T acc = (i == j) ? T(q_diag[i]) : T(0);
+                for (std::size_t s = 0; s < num_sigma; ++s)
+                    acc = acc + (s == 0 ? w.Wc0 : w.Wi) * (sigma[s](i) - x_pred(i)) * (sigma[s](j) - x_pred(j));
+                P_pred(i, j) = acc;
+            }
 
+        // Update: sigma points of the prediction, through the bearing.
+        if (!make_sigma(method, x_pred, P_pred, w.gamma, sigma)) {
+            run.failed_at = int(k);
+            run.failed_on = "the predicted P";
+            run.failed_min_eig = min_eigenvalue_f64(P_pred);
+            break;
+        }
+        std::vector<T> zs(num_sigma);
+        for (std::size_t s = 0; s < num_sigma; ++s) {
+            using std::atan2;
+            zs[s] = atan2(sigma[s](1) - by, sigma[s](0) - bx);
+        }
+        // Wrap each bearing relative to the central point's before any sum: a
+        // set that straddles atan2's cut at +-pi would otherwise hold bearings
+        // almost 2 pi apart, and its mean and spread would be meaningless.
+        for (std::size_t s = 1; s < num_sigma; ++s) zs[s] = zs[0] + wrap_pi(T(zs[s] - zs[0]));
+        T z_pred = w.Wm0 * zs[0];
+        for (std::size_t s = 1; s < num_sigma; ++s) z_pred = z_pred + w.Wi * zs[s];
+        T S = R;
+        vec::dense_vector<T> Pxz(NX, T(0));
+        for (std::size_t s = 0; s < num_sigma; ++s) {
+            const T ws = (s == 0) ? w.Wc0 : w.Wi;
+            const T dz = zs[s] - z_pred;
+            S = S + ws * dz * dz;
+            for (std::size_t i = 0; i < NX; ++i) Pxz(i) = Pxz(i) + ws * (sigma[s](i) - x_pred(i)) * dz;
+        }
+        const T innov = wrap_pi(T(T(sc.z[k]) - z_pred));
+        for (std::size_t i = 0; i < NX; ++i) x_hat(i) = x_pred(i) + Pxz(i) / S * innov;
         for (std::size_t i = 0; i < NX; ++i)
-            for (std::size_t j = 0; j < NX; ++j)
-                P_pred(i, j) = P_pred(i, j) + Wc0 * (sigma[0](i) - x_pred(i))
-                                                    * (sigma[0](j) - x_pred(j));
-        for (std::size_t s = 1; s < num_sigma; ++s)
-            for (std::size_t i = 0; i < NX; ++i)
-                for (std::size_t j = 0; j < NX; ++j)
-                    P_pred(i, j) = P_pred(i, j) + Wi * (sigma[s](i) - x_pred(i))
-                                                      * (sigma[s](j) - x_pred(j));
+            for (std::size_t j = 0; j < NX; ++j) P(i, j) = P_pred(i, j) - Pxz(i) * Pxz(j) / S;
+        for (std::size_t i = 0; i < NX; ++i)
+            for (std::size_t j = i + 1; j < NX; ++j) P(j, i) = P(i, j);
 
-        // === Measurement update (bearing-only, linearized via sigma points) ===
-        // Regenerate sigma points from P_pred for measurement transform
-        if (!generate_sigma_ldlt(x_pred, P_pred, gamma, sigma)) {
-            filter_failed = true;
-            continue;
-        }
-
-        // Predicted measurement
-        std::vector<T> z_sigma(num_sigma);
-        for (std::size_t s = 0; s < num_sigma; ++s)
-            z_sigma[s] = bearing_measurement(sigma[s], bx, by);
-
-        T z_pred = Wm0 * z_sigma[0];
-        for (std::size_t s = 1; s < num_sigma; ++s)
-            z_pred = z_pred + Wi * z_sigma[s];
-
-        // Innovation covariance S (scalar for 1D measurement)
-        T S = R_val;
-        {
-            T dz0 = z_sigma[0] - z_pred;
-            S = S + Wc0 * dz0 * dz0;
-        }
-        for (std::size_t s = 1; s < num_sigma; ++s) {
-            T dz = z_sigma[s] - z_pred;
-            S = S + Wi * dz * dz;
-        }
-
-        // Cross-covariance Pxz (NX x 1)
-        vec::dense_vector<T> Pxz(NX);
+        double e2 = 0.0;
         for (std::size_t i = 0; i < NX; ++i) {
-            Pxz(i) = Wc0 * (sigma[0](i) - x_pred(i)) * (z_sigma[0] - z_pred);
-            for (std::size_t s = 1; s < num_sigma; ++s)
-                Pxz(i) = Pxz(i) + Wi * (sigma[s](i) - x_pred(i)) * (z_sigma[s] - z_pred);
+            row.x[i] = static_cast<double>(x_hat(i));
+            const double d = row.x[i] - sc.truth[k][i];
+            e2 += d * d;
         }
-
-        // Kalman gain K = Pxz / S
-        vec::dense_vector<T> K(NX);
-        for (std::size_t i = 0; i < NX; ++i)
-            K(i) = Pxz(i) / S;
-
-        // Innovation (with bearing wrap)
-        T innov = z - z_pred;
-        while (static_cast<double>(innov) > std::numbers::pi)
-            innov = innov - T(2.0 * std::numbers::pi);
-        while (static_cast<double>(innov) < -std::numbers::pi)
-            innov = innov + T(2.0 * std::numbers::pi);
-
-        // State update
-        for (std::size_t i = 0; i < NX; ++i)
-            x_hat(i) = x_pred(i) + K(i) * innov;
-
-        // Covariance update: P = P_pred - K * S * K^T
-        for (std::size_t i = 0; i < NX; ++i)
-            for (std::size_t j = 0; j < NX; ++j)
-                P(i, j) = P_pred(i, j) - K(i) * S * K(j);
-
-        // Force symmetry
-        for (std::size_t i = 0; i < NX; ++i)
-            for (std::size_t j = i + 1; j < NX; ++j)
-                P(j, i) = P(i, j);
-
-        // Check for NaN divergence
-        bool has_nan = false;
-        for (std::size_t i = 0; i < NX; ++i)
-            if (!std::isfinite(static_cast<double>(x_hat(i)))) has_nan = true;
-        if (has_nan) filter_failed = true;
+        row.err = std::sqrt(e2);
+        run.rows.push_back(row);
     }
-
-    return results;
+    return run;
 }
 
 // ============================================================================
 // Reporting
 // ============================================================================
 
-void print_results(const std::string& label, const std::string& type_info,
-                   const std::vector<StepResult>& results) {
-    std::cout << "\n=== " << label << " (" << type_info << ") ===\n";
-    std::cout << std::setw(6) << "Step"
-              << std::setw(12) << "cond(P)"
-              << std::setw(8) << "Chol"
-              << std::setw(8) << "LDLT"
-              << std::setw(14) << "Chol-bias"
-              << std::setw(14) << "LDLT-bias"
-              << std::setw(14) << "Chol-resid"
-              << std::setw(14) << "LDLT-resid"
-              << "\n";
-    std::cout << std::string(90, '-') << "\n";
+struct Pair {
+    Run chol, ldlt;
+};
 
-    for (const auto& r : results) {
-        std::cout << std::setw(6) << r.step;
-        std::cout << std::setw(12) << std::scientific << std::setprecision(1) << r.cond_P;
-        std::cout << std::setw(8) << (r.chol_ok ? "OK" : "FAIL");
-        std::cout << std::setw(8) << (r.ldlt_ok ? "OK" : "FAIL");
+template <typename T>
+Pair run_both(double alpha, const Scenario& sc) {
+    return {run_filter<T>(FactMethod::Cholesky, alpha, sc), run_filter<T>(FactMethod::LDLT, alpha, sc)};
+}
 
-        if (r.chol_ok && std::isfinite(r.chol_bias))
-            std::cout << std::setw(14) << std::scientific << std::setprecision(2) << r.chol_bias;
-        else
-            std::cout << std::setw(14) << "N/A";
+/// The largest ||x-hat_Cholesky - x-hat_LDLT|| over the steps both completed.
+double max_gap(const Pair& p) {
+    double g = 0.0;
+    const std::size_t m = std::min(p.chol.rows.size(), p.ldlt.rows.size());
+    for (std::size_t k = 0; k < m; ++k) {
+        double d2 = 0.0;
+        for (std::size_t i = 0; i < NX; ++i) {
+            const double d = p.chol.rows[k].x[i] - p.ldlt.rows[k].x[i];
+            d2 += d * d;
+        }
+        g = std::max(g, std::sqrt(d2));
+    }
+    return g;
+}
 
-        if (r.ldlt_ok && std::isfinite(r.ldlt_bias))
-            std::cout << std::setw(14) << std::scientific << std::setprecision(2) << r.ldlt_bias;
-        else
-            std::cout << std::setw(14) << "N/A";
+std::string outcome(const Run& r, int steps) {
+    std::ostringstream o;
+    if (r.failed_at < 0)
+        o << "all " << steps << " steps, final error " << std::fixed << std::setprecision(3) << r.rows.back().err;
+    else
+        o << "stopped at step " << r.failed_at << ", on " << r.failed_on << " (lambda_min = " << std::scientific
+          << std::setprecision(2) << r.failed_min_eig << ")";
+    return o.str();
+}
 
-        if (std::isfinite(r.chol_resid))
-            std::cout << std::setw(14) << std::scientific << std::setprecision(2) << r.chol_resid;
-        else
-            std::cout << std::setw(14) << "N/A";
-
-        if (std::isfinite(r.ldlt_resid))
-            std::cout << std::setw(14) << std::scientific << std::setprecision(2) << r.ldlt_resid;
-        else
-            std::cout << std::setw(14) << "N/A";
-
+void print_pair(const std::string& title, const Pair& p, int steps) {
+    std::cout << "\n=== " << title << " ===\n";
+    std::cout << std::setw(5) << "step" << std::setw(11) << "cond(P)" << std::setw(12) << "bias Chol"
+              << std::setw(12) << "bias LDLT" << std::setw(13) << "|xC - xL|" << std::setw(11) << "err Chol"
+              << std::setw(11) << "err LDLT" << "\n"
+              << std::string(75, '-') << "\n";
+    const std::size_t m = std::max(p.chol.rows.size(), p.ldlt.rows.size());
+    for (std::size_t k = 0; k < m; ++k) {
+        const bool c = k < p.chol.rows.size(), l = k < p.ldlt.rows.size();
+        const Row& r = c ? p.chol.rows[k] : p.ldlt.rows[k];
+        std::cout << std::setw(5) << k << std::setw(11) << std::scientific << std::setprecision(1) << r.cond
+                  << std::setprecision(2);
+        if (c) std::cout << std::setw(12) << p.chol.rows[k].bias; else std::cout << std::setw(12) << "-";
+        if (l) std::cout << std::setw(12) << p.ldlt.rows[k].bias; else std::cout << std::setw(12) << "-";
+        if (c && l) {
+            double d2 = 0.0;
+            for (std::size_t i = 0; i < NX; ++i) {
+                const double d = p.chol.rows[k].x[i] - p.ldlt.rows[k].x[i];
+                d2 += d * d;
+            }
+            std::cout << std::setw(13) << std::sqrt(d2);
+        } else std::cout << std::setw(13) << "-";
+        std::cout << std::fixed << std::setprecision(3);
+        if (c) std::cout << std::setw(11) << p.chol.rows[k].err; else std::cout << std::setw(11) << "-";
+        if (l) std::cout << std::setw(11) << p.ldlt.rows[k].err; else std::cout << std::setw(11) << "-";
         std::cout << "\n";
     }
-
-    // Summary
-    int chol_fails = 0, ldlt_fails = 0;
-    double max_chol_bias = 0, max_ldlt_bias = 0;
-    for (const auto& r : results) {
-        if (!r.chol_ok) ++chol_fails;
-        if (!r.ldlt_ok) ++ldlt_fails;
-        if (r.chol_ok && std::isfinite(r.chol_bias) && r.chol_bias > max_chol_bias)
-            max_chol_bias = r.chol_bias;
-        if (r.ldlt_ok && std::isfinite(r.ldlt_bias) && r.ldlt_bias > max_ldlt_bias)
-            max_ldlt_bias = r.ldlt_bias;
-    }
-
-    std::cout << "\n  Cholesky: " << (results.size() - chol_fails) << "/"
-              << results.size() << " steps OK";
-    if (chol_fails > 0) std::cout << " (" << chol_fails << " FAILED)";
-    std::cout << ", max bias = " << std::scientific << std::setprecision(2) << max_chol_bias;
-    std::cout << "\n  LDL^T:    " << (results.size() - ldlt_fails) << "/"
-              << results.size() << " steps OK";
-    if (ldlt_fails > 0) std::cout << " (" << ldlt_fails << " FAILED)";
-    std::cout << ", max bias = " << std::scientific << std::setprecision(2) << max_ldlt_bias;
-    std::cout << "\n";
+    std::cout << "\n  Cholesky: " << outcome(p.chol, steps) << "\n  LDL^T:    " << outcome(p.ldlt, steps) << "\n";
 }
 
 // ============================================================================
@@ -580,77 +417,95 @@ void print_results(const std::string& label, const std::string& type_info,
 // ============================================================================
 
 int main() {
-    std::cout << "================================================================\n";
-    std::cout << " Bearing-Only UKF: Cholesky vs LDL^T Stress Test\n";
-    std::cout << "================================================================\n";
-    std::cout << "\n"
-              << "System:      2D tracking [px, py, vx, vy]\n"
-              << "Measurement: bearing-only from beacon at (50, 0)\n"
-              << "R = 1e-4:    tight angular measurement\n"
-              << "Key effect:  bearing collapses one covariance direction,\n"
-              << "             range direction stays large -> extreme cond(P)\n"
-              << "\n"
-              << "Diagnostics:\n"
-              << "  cond(P)    -- eigenvalue ratio (higher = harder)\n"
-              << "  Chol/LDLT  -- did the factorization succeed?\n"
-              << "  bias       -- sigma-point mean asymmetry (the silent killer)\n"
-              << "  resid      -- ||P - reconstruct|| / ||P||\n";
+    constexpr int steps = 15;
+    const Scenario sc = make_scenario(steps);
 
-    constexpr int num_steps = 15;
+    std::cout << "================================================================\n"
+              << " Bearing-only UKF: Cholesky against LDL^T, float64 and float32\n"
+              << "================================================================\n\n"
+              << "State [px, py, vx, vy]; one measurement, the bearing from a beacon at (50, 0),\n"
+              << "R = 1e-4. Two filters per precision, one per factorization, on the same truth\n"
+              << "and the same measurements. bias is the sigma-point mean's rounding\n"
+              << "(||sum W_k sigma_k - x|| / ||x||); |xC - xL| is how far the two filters'\n"
+              << "estimates are apart; err is ||x-hat - x_true||.\n";
 
-    // --- float64 ---
-    auto results_f64 = run_bearing_only_ukf<double>(num_steps);
-    print_results("Bearing-Only UKF", "float64, 53-bit significand", results_f64);
+    const double alpha = 1e-3;
+    const Pair f64 = run_both<double>(alpha, sc);
+    const Pair f32 = run_both<float>(alpha, sc);   // the sweep below repeats them
+    print_pair("float64, alpha = 1e-3", f64, steps);
+    print_pair("float32, alpha = 1e-3", f32, steps);
 
-    // --- float32 ---
-    auto results_f32 = run_bearing_only_ukf<float>(num_steps);
-    print_results("Bearing-Only UKF", "float32, 24-bit significand", results_f32);
+    // -- the weights ---------------------------------------------------------
+    // The same two filters at four alphas, in both precisions. The gap between
+    // them is rounding: the two factorizations give the same P^{1/2} up to
+    // rounding, and the weights amplify it by about |W_0|.
+    struct Sweep {
+        double alpha;
+        Weights<float> w32;
+        Pair f64, f32;
+    };
+    std::vector<Sweep> sweep;
+    for (const double a : {1e-3, 1e-2, 1e-1, 1.0})
+        sweep.push_back({a, weights<float>(a), run_both<double>(a, sc), run_both<float>(a, sc)});
+    auto steps_of = [&](const Run& r) {
+        return r.failed_at < 0 ? std::string("all ") + std::to_string(steps)
+                               : std::string("stops at ") + std::to_string(r.failed_at);
+    };
+    std::cout << "\n=== The weights, and both filters, by alpha ===\n"
+              << "lambda = alpha^2 n - n, W_0 = lambda / (n + lambda), W_i = 1 / (2 (n + lambda)), n = 4.\n"
+              << "Each weighted sum adds terms about |W_0| times its result, which cancel. gap is the\n"
+              << "largest |xC - xL| over the run.\n\n"
+              << std::setw(7) << "alpha" << std::setw(13) << "W_0 (f32)" << std::setw(11) << "W_i (f32)"
+              << std::setw(13) << "f32 bias_0" << std::setw(11) << "f64 gap" << std::setw(11) << "f32 gap"
+              << "   f32 Cholesky / LDL^T\n"
+              << std::string(94, '-') << "\n";
+    for (const auto& sw : sweep)
+        std::cout << std::setw(7) << std::defaultfloat << sw.alpha << std::setw(13) << std::setprecision(6)
+                  << static_cast<double>(sw.w32.Wm0) << std::setw(11) << static_cast<double>(sw.w32.Wi)
+                  << std::scientific << std::setprecision(1) << std::setw(13)
+                  << (sw.f32.chol.rows.empty() ? 0.0 : sw.f32.chol.rows[0].bias) << std::setw(11)
+                  << max_gap(sw.f64) << std::setw(11) << max_gap(sw.f32) << "   " << steps_of(sw.f32.chol)
+                  << " / " << steps_of(sw.f32.ldlt) << "\n";
+    const Sweep& lo = sweep.front();
+    const Sweep& hi = sweep.back();
+    print_pair("float32, alpha = 1", hi.f32, steps);
 
-    // --- Comparison summary ---
-    std::cout << "\n================================================================\n";
-    std::cout << " Precision Comparison Summary\n";
-    std::cout << "================================================================\n\n";
-
-    std::cout << "Step-by-step Cholesky success: float64 vs float32\n";
-    std::cout << std::setw(6) << "Step"
-              << std::setw(12) << "cond(P)"
-              << std::setw(12) << "f64-Chol"
-              << std::setw(12) << "f32-Chol"
-              << std::setw(12) << "f64-LDLT"
-              << std::setw(12) << "f32-LDLT"
-              << "\n";
-    std::cout << std::string(64, '-') << "\n";
-
-    std::size_t max_steps = std::min(results_f64.size(), results_f32.size());
-    for (std::size_t i = 0; i < max_steps; ++i) {
-        std::cout << std::setw(6) << results_f64[i].step;
-        std::cout << std::setw(12) << std::scientific << std::setprecision(1) << results_f64[i].cond_P;
-        std::cout << std::setw(12) << (results_f64[i].chol_ok ? "OK" : "FAIL");
-        std::cout << std::setw(12) << (results_f32[i].chol_ok ? "OK" : "FAIL");
-        std::cout << std::setw(12) << (results_f64[i].ldlt_ok ? "OK" : "FAIL");
-        std::cout << std::setw(12) << (results_f32[i].ldlt_ok ? "OK" : "FAIL");
-        std::cout << "\n";
+    // -- conclusion, from the runs ------------------------------------------
+    auto max_cond = [](const Run& r) {
+        double c = 0.0;
+        for (const auto& row : r.rows) c = std::max(c, row.cond);
+        return c;
+    };
+    std::cout << "\n================================================================\n"
+              << " Conclusion (computed from the runs above)\n"
+              << "================================================================\n\n"
+              << std::scientific << std::setprecision(1);
+    std::cout << "- float64: the Cholesky and LDL^T filters agree to " << max_gap(f64) << " at alpha = 1e-3, and to "
+              << max_gap(hi.f64) << "\n  at alpha = 1, with cond(P) up to " << max_cond(f64.chol)
+              << ". The two factorizations give the same filter; the gap is\n  rounding, amplified by the weights.\n";
+    std::cout << "- float32, alpha = 1e-3: ";
+    if (f32.chol.failed_at >= 0 || f32.ldlt.failed_at >= 0) {
+        std::cout << "Cholesky " << outcome(f32.chol, steps) << ";\n  LDL^T " << outcome(f32.ldlt, steps) << ".\n";
+        if (f32.chol.failed_at == f32.ldlt.failed_at)
+            std::cout << "  Both stop at the same step: P is no longer positive definite, and no real square\n"
+                         "  root of it exists, by either method.\n";
+    } else {
+        std::cout << "the step-0 bias is already " << lo.f32.chol.rows[0].bias << " (P = 100 I, cond 1), and\n"
+                  << "  the two filters drift up to " << max_gap(f32) << " apart, while cond(P) peaks at "
+                  << max_cond(f32.chol) << ".\n";
     }
-
-    std::cout << "\n================================================================\n";
-    std::cout << " Conclusion\n";
-    std::cout << "================================================================\n";
-    std::cout << "\n"
-              << "Bearing-only updates collapse one direction of the covariance,\n"
-              << "creating extreme eigenvalue spread. In float32, this drives\n"
-              << "cond(P) into the regime where Cholesky's sqrt amplifies error.\n"
-              << "\n"
-              << "The sigma-point bias metric reveals silent degradation: even\n"
-              << "when Cholesky 'succeeds', the sigma points may be asymmetric,\n"
-              << "biasing the predicted mean. This compounds over filter steps.\n"
-              << "\n"
-              << "LDL^T avoids sqrt entirely, extending the usable conditioning\n"
-              << "range for each precision level. For custom number types (posits,\n"
-              << "LNS) with even fewer significand bits, the advantage grows.\n"
-              << "\n"
-              << "Future: Bunch-Kaufman pivoted LDL^T (issue #46) will handle\n"
-              << "the case where P becomes indefinite due to rounding, turning\n"
-              << "'fail gracefully' into 'produce a usable approximation.'\n";
-
+    const bool a1_ok = hi.f32.chol.failed_at < 0 && hi.f32.ldlt.failed_at < 0;
+    std::cout << "- It follows alpha, not the factorization: as alpha goes from 1e-3 to 1, the float32\n"
+              << "  step-0 bias falls from " << lo.f32.chol.rows[0].bias << " to " << hi.f32.chol.rows[0].bias
+              << ", and the gap between the filters\n  from " << max_gap(lo.f32) << " to " << max_gap(hi.f32) << ".";
+    if (a1_ok)
+        std::cout << " With alpha = 1 both float32 filters end at error " << std::fixed << std::setprecision(3)
+                  << hi.f32.chol.rows.back().err << " / " << hi.f32.ldlt.rows.back().err << ",\n  against "
+                  << hi.f64.chol.rows.back().err << " in float64.";
+    std::cout << "\n- In low precision, keep W_0 small: alpha near 1, or kappa chosen so that n + lambda is\n"
+              << "  not tiny. The factorization is not the lever.\n"
+              << "- LDL^T does not avoid the square root here: its sigma points are x-hat +- gamma L\n"
+              << "  sqrt(D_k) e_k. Where it differs is an indefinite P: Cholesky stops, while D shows\n"
+              << "  the inertia (and ldlt_bk, Bunch-Kaufman, factors a matrix that needs pivoting).\n";
     return 0;
 }

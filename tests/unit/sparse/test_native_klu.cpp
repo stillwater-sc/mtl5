@@ -15,6 +15,7 @@
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/generators/poisson.hpp>
+#include <mtl/operation/norms.hpp>
 #include <mtl/sparse/factorization/native_klu.hpp>
 #include <mtl/sparse/factorization/sparse_lu.hpp>
 
@@ -649,4 +650,193 @@ TEST_CASE("lu_numeric: rgrowth and rcond, by hand (issue 946)", "[sparse][lu][94
     none.symbolic.n = 2;
     REQUIRE_THROWS_AS(none.rcond(), std::logic_error);
     REQUIRE_THROWS_AS(none.rgrowth(A1), std::logic_error);
+}
+
+// Issue 946's optional items: solve_transpose and condest (Hager-Higham, as
+// klu_condest), and native_klu_refactor's opt-in growth threshold.
+namespace {
+// (A^T x)_j = sum_i A(i, j) x_i, from A's CSR arrays.
+vec::dense_vector<double> times_transpose(const csr946& A, const vec::dense_vector<double>& x) {
+    vec::dense_vector<double> y(A.num_cols(), 0.0);
+    const auto& rp = A.ref_major();
+    const auto& ci = A.ref_minor();
+    const auto& dat = A.ref_data();
+    for (std::size_t i = 0; i < A.num_rows(); ++i)
+        for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) y(ci[k]) += dat[k] * x(i);
+    return y;
+}
+
+// Unsymmetric, reducible: three diagonal blocks (2 x 2, 1 x 1, 3 x 3) with
+// coupling above them, and rows of very different scale.
+csr946 three_blocks() {
+    csr946 A(6, 6);
+    {
+        mat::inserter<csr946> ins(A);
+        ins[0][0] << 1e-3; ins[0][1] << 2.0;  ins[0][3] << 5.0;
+        ins[1][0] << 3.0;  ins[1][1] << 1.0;  ins[1][2] << -1.0;
+        ins[2][2] << 7.0;  ins[2][4] << 1.0;
+        ins[3][3] << 4.0e3; ins[3][4] << -1.0e3; ins[3][5] << 2.0e3;
+        ins[4][3] << 1.0;  ins[4][4] << 3.0;
+        ins[5][4] << -2.0; ins[5][5] << 0.5;  ins[5][3] << 1.0;
+    }
+    return A;
+}
+
+// The exact ||A||_1 ||A^-1||_1, through n solves for the columns of A^-1.
+template <typename Fac>
+double exact_cond1(const csr946& A, const Fac& fac) {
+    const std::size_t n = A.num_rows();
+    double inv = 0.0;
+    for (std::size_t j = 0; j < n; ++j) {
+        vec::dense_vector<double> e(n, 0.0), c(n, 0.0);
+        e(j) = 1.0;
+        fac.solve(c, e);
+        double t = 0.0;
+        for (std::size_t i = 0; i < n; ++i) t += std::abs(c(i));
+        inv = std::max(inv, t);
+    }
+    return sparse::factorization::detail::csr_norm1(A) * inv;
+}
+} // namespace
+
+TEST_CASE("solve_transpose: A^T x = b through lu_numeric and klu_numeric (issue 946)", "[sparse][klu][946]") {
+    namespace fz = sparse::factorization;
+    for (const auto& A : {three_blocks(), make_unsym_tridiag(12), two_by_two(1e-20)}) {
+        const std::size_t n = A.num_rows();
+        vec::dense_vector<double> b(n);
+        for (std::size_t i = 0; i < n; ++i) b(i) = 1.0 + double(i % 4) - 0.25 * double(i);
+        for (const bool scale : {true, false}) {
+            const auto fac = native_klu_factor(A, 1.0, scale);
+            vec::dense_vector<double> x(n, 0.0);
+            fac.solve_transpose(x, b);
+            const auto r = times_transpose(A, x);
+            double err = 0.0;
+            for (std::size_t i = 0; i < n; ++i) err = std::max(err, std::abs(r(i) - b(i)));
+            CHECK(err < 1e-12 * (1.0 + mtl::infinity_norm(b)) * fac.condest(A));
+            // In place, as solve allows.
+            vec::dense_vector<double> y = b;
+            fac.solve_transpose(y, y);
+            for (std::size_t i = 0; i < n; ++i) CHECK(y(i) == x(i));
+        }
+        const auto lu = fz::sparse_lu_numeric(A, fz::sparse_lu_symbolic(A));
+        vec::dense_vector<double> x(n, 0.0);
+        lu.solve_transpose(x, b);
+        const auto r = times_transpose(A, x);
+        for (std::size_t i = 0; i < n; ++i) CHECK(std::abs(r(i) - b(i)) < 1e-9 * (1.0 + std::abs(b(i))));
+    }
+    vec::dense_vector<double> wrong(3);
+    REQUIRE_THROWS_AS(native_klu_factor(three_blocks()).solve_transpose(wrong, wrong), std::invalid_argument);
+}
+
+TEST_CASE("condest: a lower bound of cond_1, and near it (issue 946)", "[sparse][klu][946]") {
+    namespace fz = sparse::factorization;
+    csr946 D(4, 4);   // diag(1, 1e-8, 3, 1): cond_1 = 3e8 exactly
+    {
+        mat::inserter<csr946> ins(D);
+        ins[0][0] << 1.0; ins[1][1] << 1e-8; ins[2][2] << 3.0; ins[3][3] << 1.0;
+    }
+    std::vector<csr946> cases{three_blocks(), make_unsym_tridiag(20), two_blocks(2.0), D};
+    {
+        auto P = generators::poisson2d_dirichlet<double>(8, 8);
+        cases.push_back(P);
+    }
+    for (const auto& A : cases) {
+        const auto fac = native_klu_factor(A);
+        const double exact = exact_cond1(A, fac);
+        const double est = fac.condest(A);
+        CAPTURE(A.num_rows(), exact, est);
+        CHECK(est <= exact * (1.0 + 1e-10));
+        CHECK(est >= exact / 3.0);
+        const auto lu = fz::sparse_lu_numeric(A, fz::sparse_lu_symbolic(A));
+        const double lest = lu.condest(A);
+        CHECK(lest <= exact * (1.0 + 1e-10));
+        CHECK(lest >= exact / 3.0);
+    }
+    CHECK_THAT(native_klu_factor(D).condest(D), Catch::Matchers::WithinRel(3e8, 1e-12));
+    CHECK(native_klu_factor(csr946(0, 0)).condest(csr946(0, 0)) == 1.0);
+    REQUIRE_THROWS_AS(native_klu_factor(D).condest(csr946(3, 3)), std::invalid_argument);
+    const auto lu = fz::sparse_lu_numeric(D, fz::sparse_lu_symbolic(D));
+    REQUIRE_THROWS_AS(lu.condest(csr946(3, 3)), std::invalid_argument);
+}
+
+TEST_CASE("native_klu_refactor: the opt-in growth threshold (issue 946)", "[sparse][klu][946]") {
+    using sparse::factorization::klu_growth_error;
+    using sparse::factorization::native_klu_refactor;
+    const auto fac = native_klu_factor(two_by_two(2.0));
+
+    // The issue's stale pivot: rejected, with the measured growth.
+    try {
+        (void)native_klu_refactor(two_by_two(1e-20), fac, {.min_rgrowth = 1e-8});
+        FAIL("no klu_growth_error");
+    } catch (const klu_growth_error& e) {
+        CHECK(e.rgrowth < 1e-15);
+        const std::string what = e.what();
+        CHECK(what.find("factor afresh") != std::string::npos);
+        // Both values readable, not %f's 0.000000 (review of #956).
+        CHECK(what.find("min_rgrowth 1.000000e-08") != std::string::npos);
+        CHECK(what.find("0.000000 ") == std::string::npos);
+    }
+    // A NaN growth is rejected too.
+    REQUIRE_THROWS_AS(native_klu_refactor(two_by_two(std::nan("")), fac, {.min_rgrowth = 1e-8}), klu_growth_error);
+    // Values that still fit pass, and the result is the unchecked one.
+    const auto ok = native_klu_refactor(two_by_two(2.02), fac, {.min_rgrowth = 1e-8});
+    CHECK(ok.rgrowth() > 0.1);
+    // 0, the default, checks nothing: the stale refactorization is returned.
+    const auto unchecked = native_klu_refactor(two_by_two(1e-20), fac, {});
+    CHECK(unchecked.rgrowth() < 1e-15);
+    // prev is untouched by a rejection: it still solves A1 x = b.
+    vec::dense_vector<double> b(2), x(2, 0.0);
+    b(0) = 3.0; b(1) = 2.0;   // A1 = [[2, 1], [1, 1]], x = (1, 1)
+    fac.solve(x, b);
+    CHECK_THAT(x(0), WithinAbs(1.0, 1e-15));
+    CHECK_THAT(x(1), WithinAbs(1.0, 1e-15));
+}
+
+// Review of #956: condest is independent of A's scale. Unscaled, ||A||_1
+// overflowed for A = 1e308 [[1, 1], [1, -1]] (cond_1 = 2), and 2 ||y||_1
+// overflowed in the last probe for A = 2^-1022 I (cond_1 = 1).
+TEST_CASE("condest: a matrix at the ends of double's range (issue 946)", "[sparse][klu][946]") {
+    namespace fz = sparse::factorization;
+    auto scaled = [](const csr946& A, double s) {
+        csr946 B(A.num_rows(), A.num_cols());
+        {
+            mat::inserter<csr946> ins(B);
+            const auto& rp = A.ref_major();
+            const auto& ci = A.ref_minor();
+            const auto& dat = A.ref_data();
+            for (std::size_t i = 0; i < A.num_rows(); ++i)
+                for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) ins[i][ci[k]] << s * dat[k];
+        }
+        return B;
+    };
+    auto both = [](const csr946& A) {
+        const auto lu = fz::sparse_lu_numeric(A, fz::sparse_lu_symbolic(A));
+        return std::pair{native_klu_factor(A).condest(A), lu.condest(A)};
+    };
+    csr946 H(2, 2);
+    {
+        mat::inserter<csr946> ins(H);
+        ins[0][0] << 1e308; ins[0][1] << 1e308; ins[1][0] << 1e308; ins[1][1] << -1e308;
+    }
+    const auto [kh, lh] = both(H);
+    CHECK_THAT(kh, Catch::Matchers::WithinRel(2.0, 1e-12));
+    CHECK_THAT(lh, Catch::Matchers::WithinRel(2.0, 1e-12));
+
+    csr946 T(2, 2);
+    {
+        mat::inserter<csr946> ins(T);
+        ins[0][0] << 0x1p-1022; ins[1][1] << 0x1p-1022;
+    }
+    const auto [kt, lt] = both(T);
+    CHECK(kt == 1.0);
+    CHECK(lt == 1.0);
+
+    // An exact power-of-two scaling changes nothing.
+    const auto A = three_blocks();
+    const auto [k1, l1] = both(A);
+    for (const double s : {0x1p600, 0x1p-600}) {
+        const auto [ks, ls] = both(scaled(A, s));
+        CHECK_THAT(ks, Catch::Matchers::WithinRel(k1, 1e-12));
+        CHECK_THAT(ls, Catch::Matchers::WithinRel(l1, 1e-12));
+    }
 }

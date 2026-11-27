@@ -7,6 +7,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`condest()`, transposed solves and a checked refactor for native KLU** (issue 946, its optional items, after #951's `rgrowth()` and `rcond()`).
+  - **`klu_numeric::condest(A)` and `lu_numeric::condest(A)`** estimate the 1-norm condition number ‖A‖₁‖A⁻¹‖₁, as SuiteSparse's `klu_condest` does. They use Hager's method with Higham's refinements (ACM TOMS 1988, Algorithm 4.1), in at most 11 solves with A and Aᵀ. The estimate is a lower bound. It matched the exact κ₁ (formed column by column) on all four test matrices, among them a 16 × 16 Poisson grid and a 1-D Laplacian of order 200 with κ₁ = 2.0e4.
+  - **`klu_numeric::solve_transpose(x, b)` and `lu_numeric::solve_transpose(x, b)`** solve Aᵀx = b. For KLU, Bᵀ is block lower triangular, so the blocks are solved first to last and the row scaling is undone. Both are what `condest` needs, and what an adjoint solve needs. x and b may alias.
+  - **`native_klu_refactor(A, prev, {.min_rgrowth = g})`** throws `klu_growth_error` (a `std::runtime_error` that carries the measured growth) when the refactorization's `rgrowth()` is below g, or NaN. `prev` is left untouched, so a SPICE-style loop can catch the error and call `native_klu_factor` afresh. The default, 0, checks nothing, and the two-argument form is unchanged.
+  - Tests: `test_native_klu.cpp` ([946]) and `test_shim_genericity.cpp`.
 - **A benchmark regression gate on every PR** (issue 944, items 1 and 2). Until now nothing in CI compared a PR's performance with main's. Shared runners cannot time reliably (#454), so the gate counts instructions instead.
   - **`bench-regression.yml`** builds `mtl5_bench` twice, native and native-fast (Highway, the blocked GEMM). It runs 14 kernels from `benchmarks/regression/kernels.txt` once each under callgrind: GEMM, GEMV, dot, norm, axpy, LU, Cholesky, QR, SpMV, the sparse triangular solve, native KLU, CG and BiCGSTAB. Then it compares each count with main's latest baseline artifact. A rise of more than **2%** fails the PR, and the table goes to the job summary.
   - **`mtl5_bench --count ID`** runs one registry entry once, untimed, inside `mtl5_bench_counted_region()`, which is all that `callgrind --toggle-collect` counts. Setup, a warm-up run and the correctness check are outside it. Two counts of one binary are identical, and all 14 kernels take about 3 s under callgrind.
@@ -92,6 +97,17 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **The result:** CG now converges in the same 17 iterations, to the same bits, from 2^±300 to 2^±900. Past about 2^±950, z = M⁻¹r itself reaches the subnormal range.
   - **Audited:** CGS, TFQMR, MINRES and GMRES pass at 2^±600. BiCG and BiCGSTAB fail there, and are filed separately.
   - Tests: `test_cg.cpp` ([955]); #952's code-7 test now runs to 2^±600.
+- **The UKF examples' conclusions now match their output** (issue 953). `ukf_comparison` and `bearing_only_ukf` concluded that Cholesky's square roots lose precision on an ill-conditioned P, and that LDLᵀ avoids them. Their own output showed the opposite.
+  - **`ukf_comparison`.** Both filters complete every scenario, with final errors that agree to 2.2e-7. cond(P) never exceeds 6.8e3, because the process noise keeps P's eigenvalues up. On SPD matrices up to cond 1e15 both residuals stay at 1e-16.
+    - The conclusion is now computed from the run. The "cond(P) > 1e8 → prefer LDLᵀ" rule is gone.
+    - The indefinite test adds a shifted Hilbert matrix and a matrix of ones with a tiny diagonal. On the latter, unpivoted LDLᵀ's solve has a backward error of 1.8e-4. The test also adds a Bunch–Kaufman (`ldlt_bk`) column, which gets the inertia of every matrix right, with a backward error of 1e-16.
+    - LDLᵀ's sigma points now refuse a D_k ≤ 0, as Cholesky does, instead of taking √|D_k|, which belongs to another covariance.
+  - **`bearing_only_ukf`** ran one filter and tested its P with both factorizations, so its two columns could not differ. It now runs two filters, one per factorization, on one shared scenario, in float64 and float32. It also sweeps α = 1e-3 … 1.
+    - The float32 trouble comes from the weights: W₀ = −986894 at α = 1e-3. The step-0 bias is already 2.2e-2 at cond(P) = 1, and the two float32 filters drift up to 1.9 apart.
+    - At α = 1 the gap is 6.6e-5, and both filters end at the float64 error. In float64 the gap is 7.8e-8 at α = 1e-3 and 3.1e-13 at α = 1.
+    - The program no longer says LDLᵀ "avoids sqrt": its sigma points take √D_k.
+  - **Both programs** now wrap each sigma point's bearing relative to the central point's before the sums, so a set that straddles atan2's cut at ±π stays consistent.
+  - **Notes and docs.** The stale "Future: Bunch–Kaufman (#46)" notes are gone. `docs/examples/ukf-cholesky-vs-ldlt.md` and both READMEs are rewritten around the measured results.
 - **Phase 13 examples: a multigrid that scales, and preconditioners that fit their solvers** (issues 942 and 943).
   - **`multigrid_poisson`** promised a cost independent of problem size, but it hard-coded 3 levels with 100 forward Gauss–Seidel sweeps as the "effectively exact" coarse solve. At n = 1023 that stops converging. It also used a nonsymmetric V-cycle as CG's preconditioner.
     - The hierarchy now coarsens to 3 points, with a dense-LU coarse solve. A sweep from n = 63 to 4095 takes 5 V-cycles and 4 MG-PCG iterations at every size, while the original 3 levels need 76 V-cycles at n = 255 and fail from n = 1023.
