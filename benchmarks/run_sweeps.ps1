@@ -297,6 +297,10 @@ foreach ($s in $script:Sidecars) {
                                          bench_cpus = "mask 0x$($PinMask.ToString('x'))" })) {
             $SidecarFail = $true
         }
+    } else {
+        # A sidecar the binary did not write fails the session (#975 review).
+        Write-Host "run_sweeps.ps1: $s was not written"
+        $SidecarFail = $true
     }
 }
 if ($SidecarFail) {

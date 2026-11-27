@@ -215,7 +215,9 @@ esac
 . "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
 SIDECAR_FAIL=0
 for s in "${SIDECARS[@]}"; do
-    [[ -f "$s" ]] || continue
+    # The binary writes the sidecar; one it did not write is a CSV without
+    # provenance, so it fails the session rather than being skipped (#975 review).
+    [[ -f "$s" ]] || { echo "run_sweeps.sh: $s was not written" >&2; SIDECAR_FAIL=1; continue; }
     printf '%s\n%s\n' "$PREFLIGHT_KV" "$AFTER_KV" >> "$s"
     printf 'harness=run_sweeps.sh\nharness_pinned_cpus=%s\nharness_interleaved=0\n' \
            "${BENCH_CPU:-none}" >> "$s"

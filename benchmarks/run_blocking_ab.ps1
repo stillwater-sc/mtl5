@@ -376,9 +376,16 @@ foreach ($s in ($ArmList | ForEach-Object { "$(Get-ArmCsv $_).sysinfo" })) {
         # The run's keys (#930). Each invocation rewrote the sidecar, so the
         # binary's pool_size is the last run's; the CSV holds every T.
         Set-SidecarKey $s 'pool_size' $Threads
-        if (-not (Complete-Sidecar $s @{ benchmark = 'bench_blocking_ab'; class = $DType; bench_cpus = $PCores })) {
+        # bench_cpus: the cores the widest run was pinned to, as run_blocking_ab.sh
+        # records it (pin_for TMAX); harness_pcores keeps the whole list.
+        $usedCores = ($PCoreList | Select-Object -First $TMax) -join ','
+        if (-not (Complete-Sidecar $s @{ benchmark = 'bench_blocking_ab'; class = $DType; bench_cpus = $usedCores })) {
             $SidecarFail = $true
         }
+    } else {
+        # A sidecar the binary did not write fails the session (#975 review).
+        Write-Host "run_blocking_ab.ps1: $s was not written"
+        $SidecarFail = $true
     }
 }
 if ($SidecarFail) {

@@ -19,7 +19,11 @@ function Get-SidecarLines([string]$Path) {
 }
 
 function Write-SidecarLines([string]$Path, [string[]]$Lines) {
-    [System.IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n"))
+    # .NET resolves a relative path against the process's directory, PowerShell
+    # against its own location, which Set-Location changes; resolve it the
+    # PowerShell way, as Get-Content and Add-Content do (#975 review).
+    $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    [System.IO.File]::WriteAllText($full, (($Lines -join "`n") + "`n"))
 }
 
 function Test-SidecarKey([string]$Path, [string]$Key) {

@@ -257,6 +257,11 @@ for a in $ARMS; do
         sidecar_put "$s" "pool_size=$(echo "$THREADS" | tr ' ' ',')"
         sidecar_finish "$s" "benchmark=bench_blocking_ab" "class=${BENCH_CLASS:-$DTYPE}" \
                        "bench_cpus=$(pin_for "$TMAX")" || SIDECAR_FAIL=1
+    else
+        # The binary writes the sidecar only when it can open it; a CSV left
+        # without one has no provenance, so the session fails (#975 review).
+        echo "run_blocking_ab.sh: $s was not written" >&2
+        SIDECAR_FAIL=1
     fi
 done
 

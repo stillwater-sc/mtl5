@@ -228,7 +228,8 @@ esac
 . "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
 SIDECAR_FAIL=0
 for s in "${SIDECARS[@]}"; do
-    [[ -f "$s" ]] || continue
+    # A sidecar the binary did not write fails the session (#975 review).
+    [[ -f "$s" ]] || { echo "run_scaling.sh: $s was not written" >&2; SIDECAR_FAIL=1; continue; }
     printf '%s\n%s\n' "$PREFLIGHT_KV" "$AFTER_KV" >> "$s"
     printf 'harness=run_scaling.sh\nharness_pinned_cpus=%s\nharness_interleaved=0\n' "$PCPUS" >> "$s"
     # The run's keys (#930). The sidecar is the first thread count's, but the

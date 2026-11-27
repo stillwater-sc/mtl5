@@ -6,9 +6,11 @@
 # rewritten: inventing a clock policy or a pin list after the fact would be worse
 # than its absence. mtl5-python ingests them in its incomplete tier.
 #
-# THIS LIST ONLY EVER SHRINKS. Re-run the producer (its harness now completes
-# the sidecar), commit the new session, and delete the line. The checker fails
-# if a listed sidecar is complete or gone, so a stale entry cannot sit here.
+# THIS LIST ONLY EVER SHRINKS. A re-run of the producer (its harness now
+# completes the sidecar) adds a new session beside the old one and leaves the
+# old sidecar as it was, so its line stays. A line goes only when its sidecar
+# is removed, or completed from evidence recorded at the time. The checker
+# fails if a listed sidecar is complete or gone, so a stale entry cannot sit here.
 #
 # Blank lines and #-comments are ignored.
 benchmarks/data/arduino-ventuno-q/column_sweep/20261117T133657Z/clang++-generic.csv.sysinfo

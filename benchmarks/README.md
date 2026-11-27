@@ -1008,7 +1008,10 @@ keys instead: `derived_by`, `baseline_session` and `new_session`.
 in `benchmarks/data/.sidecar-incomplete`, and cost nothing. They are not
 rewritten: their gaps are real, because the state was not recorded. A new
 incomplete sidecar fails, and so does a listed one that is complete now or gone.
-Re-run the producer, commit the new session, and delete its line.
+- **A re-run** adds a new session, with its own complete sidecar. It does not
+  change the old one, so the old session stays listed.
+- **A line goes** only when its sidecar is removed from the repository, or
+  completed from evidence that was recorded at the time.
 
 Run it locally before committing benchmark data:
 

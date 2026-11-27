@@ -266,6 +266,10 @@ foreach ($s in $script:Sidecars) {
         if (-not (Complete-Sidecar $s @{ benchmark = 'bench_all'; class = "gemm $Sizes"; bench_cpus = $PCores })) {
             $SidecarFail = $true
         }
+    } else {
+        # A sidecar the binary did not write fails the session (#975 review).
+        Write-Host "run_scaling.ps1: $s was not written"
+        $SidecarFail = $true
     }
 }
 if ($SidecarFail) {
