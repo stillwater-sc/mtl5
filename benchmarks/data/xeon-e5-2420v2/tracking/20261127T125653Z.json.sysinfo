@@ -1,0 +1,10 @@
+derived_by=benchmarks/tracking/track_sessions.py compare
+schema=mtl5-track/1
+machine=xeon-e5-2420v2
+class=medium
+baseline_session=20261111T193510Z
+baseline_commit=bfa1c2822688
+new_session=20261127T125653Z
+new_commit=f98777e6c6f7
+run_band_pct=2
+entry_band_pct=10
