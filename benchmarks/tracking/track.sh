@@ -80,7 +80,21 @@ DEST="$ROOT/build-platform/remote"
 LOGS="$TRACK/logs-$TAG"
 mkdir -p "$TRACK" "$LOGS" || exit 2
 git -C "$ROOT" worktree add -q --detach "$SRC" "$SHA" || { log "cannot create the worktree $SRC"; exit 2; }
-cleanup() { git -C "$ROOT" worktree remove --force "$SRC" 2>/dev/null; return 0; }
+# An interrupted run stops its sessions before their worktree goes: the local
+# profile (its exit trap restores the clock policy) and each remote_session.sh,
+# which releases its host's lock if the remote session has not started yet;
+# one that has started runs on and releases the lock itself.
+stop_sessions() {
+    local pid
+    for pid in "${PIDS[@]+"${PIDS[@]}"}"; do
+        kill -0 "$pid" 2>/dev/null || continue
+        pkill -TERM -P "$pid" 2>/dev/null
+        kill -TERM "$pid" 2>/dev/null
+    done
+    for pid in "${PIDS[@]+"${PIDS[@]}"}"; do wait "$pid" 2>/dev/null; done
+    return 0
+}
+cleanup() { stop_sessions; git -C "$ROOT" worktree remove --force "$SRC" 2>/dev/null; return 0; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
@@ -88,18 +102,27 @@ log "measuring $(git -C "$ROOT" log --oneline -1 "$SHA"), class $CLASS, tag $TAG
 
 # -- 2. the sessions ------------------------------------------------------------------
 # hosts.txt: "<machine> <ssh host or local> <profile>", # comments.
+# Two passes: every row is checked before any session starts, so a bad row
+# never leaves started sessions behind an exit that removes their worktree.
 declare -a MACHINES=() PIDS=()
-declare -A PROFILE_OF=()
+declare -A PROFILE_OF=() HOST_OF=()
 while read -r machine host profile _; do
     case "$machine" in ''|'#'*) continue ;; esac
     if [ -n "$ONLY" ] && [[ ",$ONLY," != *",$machine,"* ]]; then continue; fi
     if [ -z "$profile" ]; then log "$HOSTS: '$machine' has no profile"; exit 2; fi
     case "$profile" in "$machine"-platform.sh|"$machine"-platform.ps1) ;;
         *) log "$HOSTS: $machine's profile $profile is not $machine-platform.sh/.ps1"; exit 2 ;; esac
+    if [ -n "${PROFILE_OF[$machine]+x}" ]; then log "$HOSTS: $machine is listed twice"; exit 2; fi
     [ -f "$SRC/benchmarks/machines/$profile" ] || { log "$profile is not a profile at $SHA; skipping $machine"; continue; }
     if [ -e "$DEST/$machine/$TAG" ]; then log "$DEST/$machine/$TAG exists; pick another --tag"; exit 2; fi
     MACHINES+=("$machine")
     PROFILE_OF[$machine]=$profile
+    HOST_OF[$machine]=$host
+done < "$HOSTS"
+[ "${#MACHINES[@]}" -gt 0 ] || { log "no machine selected"; exit 2; }
+
+for machine in "${MACHINES[@]}"; do
+    host=${HOST_OF[$machine]} profile=${PROFILE_OF[$machine]}
     if [ "$host" = local ]; then
         mkdir -p "$DEST/$machine"
         ( cd "$SRC" && env CLASS="$CLASS" INTERLEAVE=0 PLATFORM_OUT="$DEST/$machine/$TAG" \
@@ -110,8 +133,7 @@ while read -r machine host profile _; do
     fi
     PIDS+=($!)
     log "$machine: started on $host ($profile); log $LOGS/$machine.log"
-done < "$HOSTS"
-[ "${#MACHINES[@]}" -gt 0 ] || { log "no machine selected"; exit 2; }
+done
 
 declare -A RC=()
 for i in "${!MACHINES[@]}"; do
