@@ -1,41 +1,60 @@
-# Bearing-Only UKF: Cholesky vs LDL^T Stress Test
+# Bearing-only UKF: Cholesky against LDL^T, float64 against float32
 
-This example demonstrates the canonical ill-conditioning scenario for UKF
-sigma point generation: bearing-only tracking, where a tight angular measurement
-collapses one direction of the state covariance while leaving the range
-direction essentially unobserved.
+A 2-D tracker whose one measurement is the bearing from a beacon. The bearing
+pins down one direction of the position and leaves the range unobserved, which
+gives P a wide eigenvalue spread.
 
-## Why Bearing-Only?
+The example runs **two filters on one scenario**, the same truth and the same
+measurements:
+- one takes its sigma points from Cholesky;
+- the other from LDLᵀ.
 
-Range+bearing measurements constrain all state dimensions roughly equally.
-Bearing-only measurements create extreme eigenvalue spread in P:
+It runs both in float64 and in float32, and repeats both at α = 1e-3, 1e-2, 1e-1
+and 1. Its conclusion is computed from the run.
 
-- **Small eigenvalue**: along the bearing normal (well-observed)
-- **Large eigenvalue**: along the line of sight (unobserved)
+## What it shows
 
-After a few updates with R = 1e-4 (tight bearing), cond(P) can reach 10^6
-in double, 10^3 in float -- exactly where Cholesky starts failing silently.
+- **The factorization doesn't decide the outcome.**
+  - In float64 the two filters' estimates agree to 8e-8 at α = 1e-3, and to
+    3e-13 at α = 1.
+  - cond(P) reaches 3e4.
+- **In float32, the weights decide it.** At α = 1e-3 the unscented transform's
+  weights are W₀ = λ/(n + λ) ≈ −10⁶ and Wᵢ ≈ 1.25·10⁵ (in float32, W₀ = −986894).
+  So every weighted mean and covariance adds terms about 10⁶ times its result,
+  and those terms cancel six of float32's seven digits.
+  - The sigma-point mean is already off by 2.2e-2 at step 0, where P = 100·I and
+    cond(P) = 1.
+  - The two float32 filters drift up to 1.9 apart, while cond(P) peaks at about
+    1e3.
 
-## The Silent Killer: Sigma-Point Mean Bias
+  | α | W₀ (float32) | step-0 bias | gap between the filters |
+  |---|---|---|---|
+  | 1e-3 | −986894 | 2.2e-2 | 1.9 |
+  | 1e-2 | −9997.34 | 4.9e-4 | 1.4 |
+  | 1e-1 | −99.0001 | 2.9e-6 | 3.8e-3 |
+  | 1 | 0 | 0 | 6.6e-5 |
 
-This example measures not just whether the factorization completes, but
-whether the resulting sigma points are symmetric around the mean. A degraded
-factorization produces asymmetric sigma points, biasing the predicted mean.
+  With α = 1, both float32 filters end at error 4.189, against 4.188 in
+  float64.
+- **In low precision, keep W₀ small:** α near 1, or a κ for which n + λ is not
+  tiny. Changing the factorization doesn't help.
+- **LDLᵀ doesn't avoid the square root.** Its sigma points are
+  x̂ ± γ L √D_k e_k. Where the two methods differ is an indefinite P:
+  - Cholesky stops;
+  - LDLᵀ's D shows the inertia, but neither gives sigma points;
+  - `ldlt_bk` (Bunch–Kaufman) factors a matrix that needs pivoting.
 
-The bias is small per-step but compounds: 10-20 UKF iterations in float32
-with ill-conditioned updates can produce mean drifts of 0.5-2 sigma.
+  See [`../ukf_cholesky_vs_ldlt`](../ukf_cholesky_vs_ldlt).
 
-## Precision Levels
+The sigma-point bias is ‖Σ W_k σ_k − x̂‖ / ‖x̂‖. For a symmetric set of points
+the exact weighted mean is x̂, so the bias measures only the rounding of that
+sum.
 
-| Type | Significand bits | Expected behavior |
-|------|-----------------|-------------------|
-| float64 (double) | 53 | Both methods succeed; baseline |
-| float32 (float) | 24 | Cholesky may degrade; LDL^T extends usable range |
+Each sigma point's bearing is wrapped relative to the central point's before the
+sums. The target starts near the beacon's −x axis, where atan2 jumps from π to
+−π.
 
-For posit and custom float types, see the mixed-precision experiment in
-the mtl5-python repository (stillwater-sc/mtl5-python#18).
-
-## Building and Running
+## Building and running
 
 ```bash
 cmake --preset dev
@@ -43,15 +62,8 @@ cmake --build build --target example_bearing_only_ukf
 ./build/examples/example_bearing_only_ukf
 ```
 
-## Output Columns
-
-- **Step**: UKF iteration (each applies one bearing measurement)
-- **cond(P)**: condition number of the state covariance
-- **Chol/LDLT**: did the factorization succeed?
-- **bias**: sigma-point mean asymmetry (higher = more biased prediction)
-- **resid**: factorization residual ||P - reconstruct|| / ||P||
-
 ## References
 
-- Bar-Shalom, Li, Kirubarajan, *Estimation with Applications to Tracking and Navigation*, Ch. 11
 - Julier & Uhlmann, *Unscented Filtering and Nonlinear Estimation*, Proc. IEEE 2004
+- Bar-Shalom, Li, Kirubarajan, *Estimation with Applications to Tracking and Navigation*, Ch. 11
+- mtl5-python's port, the "UKF sigma points: Cholesky against LDLᵀ" notebook (stillwater-sc/mtl5-python#158)

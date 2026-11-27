@@ -1,203 +1,137 @@
-# UKF Numerical Stability: Cholesky vs LDL^T Decomposition
+# UKF Sigma Points: Cholesky vs LDL^T
 
-The Unscented Kalman Filter (UKF) generates sigma points from the state covariance matrix $P$ at every time step. This requires a matrix factorization that serves as a "square root" of $P$. The choice of factorization has a direct impact on filter stability, particularly when $P$ becomes ill-conditioned after informative observations.
+The Unscented Kalman Filter (UKF) takes its sigma points from a square root of the state covariance $P$, at every step. Two factorizations give one:
 
-This document walks through MTL5's UKF comparison examples, explains why the $LDL^T$ (square-root-free Cholesky) decomposition provides superior numerical robustness, and offers guidance on when to use each method.
+- Cholesky, $P = LL^T$;
+- $LDL^T$, $P = LDL^T$.
 
-## The Problem: Square Roots and Ill-Conditioned Covariances
+A common claim is that $LDL^T$ is the more robust choice, because it "avoids the square root" that loses precision when $P$ is ill-conditioned. MTL5's two UKF examples test that claim, and their output doesn't support it (issue 953):
 
-### Why the UKF needs a matrix square root
+- On an SPD covariance the two factorizations give the same filter, at any condition number.
+- What breaks a float32 UKF is its weights, not its factorization.
+- The factorizations do differ in kind on an indefinite matrix. There, neither gives sigma points.
 
-The UKF approximates a nonlinear probability distribution by propagating a carefully chosen set of **sigma points** through the system model. For a state with covariance $P$, the sigma points are:
+This page walks through the reasoning and the programs' output.
 
-$$\sigma_k = \hat{x} \pm \sqrt{n + \lambda} \cdot S_{:,k}$$
+## The square root in the UKF
 
-where $S$ is a matrix satisfying $SS^T = P$. The standard approach computes $S$ via Cholesky factorization: $P = LL^T$.
+For a state of dimension $n$ with mean $\hat{x}$ and covariance $P$, the sigma points are
 
-### How informative observations create ill-conditioning
+$$\sigma_0 = \hat{x}, \qquad \sigma_{\pm k} = \hat{x} \pm \gamma\, S_{:,k}, \qquad \gamma = \sqrt{n + \lambda},$$
 
-When a measurement is very precise (small measurement noise $R$), the Kalman update collapses one or more directions of the state covariance toward machine epsilon while others remain $O(1)$. This creates extreme eigenvalue spread:
+for any $S$ with $SS^T = P$, and $\lambda = \alpha^2 (n + \kappa) - n$. The two factorizations give two such $S$:
 
-- **Well-observed direction**: eigenvalue $\sim \varepsilon_{\text{mach}}$
-- **Poorly-observed direction**: eigenvalue $\sim O(1)$ or larger
+| | Cholesky | $LDL^T$ |
+|---|---|---|
+| Factorization | $P = LL^T$ | $P = LDL^T$, $L$ unit lower triangular |
+| $S$ | $L$ | $L\,\mathrm{diag}(\sqrt{D_k})$ |
+| Square roots | $n$, one per pivot | $n$, one per $D_k$, to form the sigma points |
+| Cost | $n^3/3$ | $n^3/3$ |
+| Indefinite $P$ | stops at the first non-positive pivot | returns, and $D$'s signs give the inertia |
 
-The condition number $\kappa(P) = \lambda_{\max} / \lambda_{\min}$ can reach $10^6$ in double precision and $10^3$ in single precision after just a few updates.
+So $LDL^T$ doesn't avoid the square root here. Its sigma points take $\sqrt{D_k}$, the same $n$ scalar square roots that Cholesky takes of its pivots.
 
-### The precision loss mechanism
+## Why the condition number is not the issue
 
-Standard Cholesky factorization computes the diagonal of $L$ via:
+- **Cholesky is backward stable for every SPD matrix, whatever its condition number** (Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., Thm 10.3). The computed $\hat{L}$ is the exact factor of $P + \Delta P$, with $\|\Delta P\| \le c\, n\, \varepsilon\, \|P\|$. There is no condition number above which it "degrades".
+- **A scalar square root is perfectly conditioned.** A relative error $\varepsilon$ in its argument becomes $\varepsilon / 2$ in its result. It halves the relative error rather than growing it. A small pivot is not a less accurate pivot.
+- **Unpivoted $LDL^T$ has the same kind of backward-error bound on an SPD matrix.**
 
-$$L_{jj} = \sqrt{A_{jj} - \sum_{k<j} L_{jk}^2}$$
+So any square root of $P$ gives sigma points symmetric about $\hat{x}$ to rounding, and both factorizations give one.
 
-When $A_{jj}$ is near machine epsilon after the subtraction, the $\sqrt{\cdot}$ operation halves the number of significant digits:
+## What the examples show
 
-- In float64 (53-bit significand): $\sqrt{10^{-15}} = 3.16 \times 10^{-8}$, losing ~7.5 digits
-- In float32 (24-bit significand): $\sqrt{10^{-7}} = 3.16 \times 10^{-4}$, losing ~3.5 digits
-- In float16 (11-bit significand): essentially all precision is lost
+### Example 1: range and bearing (`examples/ukf_cholesky_vs_ldlt/`)
 
-This degraded diagonal entry propagates into every subsequent column of $L$, contaminating the entire factorization.
-
-## The Solution: $LDL^T$ Factorization
-
-### Mathematical relationship
-
-The $LDL^T$ decomposition factors a symmetric matrix as:
-
-$$A = L D L^T$$
-
-where $L$ is **unit** lower triangular (ones on the diagonal) and $D$ is diagonal. Comparing with Cholesky:
-
-| Property | Cholesky ($LL^T$) | $LDL^T$ |
-|----------|----------------|-------|
-| Diagonal of $L$ | $\sqrt{\text{pivot values}}$ | 1 (unit diagonal) |
-| Square roots | One per column | **None** |
-| Stores | $L$ (lower triangular) | $L$ (unit lower) + $D$ (diagonal) |
-| Cost | $O(n^3/3)$ | $O(n^3/3)$ |
-| SPD required | Yes | No (works for indefinite) |
-
-### Why avoiding square roots preserves precision
-
-The $LDL^T$ algorithm computes $D_j$ directly:
-
-$$D_j = A_{jj} - \sum_{k<j} L_{jk}^2 \cdot D_k$$
-
-No square root is taken. $D_j$ retains the full precision of the subtraction result, however small. The unit lower triangular entries are:
-
-$$L_{ij} = \frac{A_{ij} - \sum_{k<j} L_{ik} \cdot D_k \cdot L_{jk}}{D_j}$$
-
-This is a simple division, not a precision-destroying $\sqrt{\cdot}$.
-
-### Sigma point generation with $LDL^T$
-
-With the $LDL^T$ factorization, sigma points are generated as:
-
-$$\sigma_k = \hat{x} \pm \sqrt{n + \lambda} \cdot L \cdot \sqrt{D_k} \cdot e_k$$
-
-Each $\sqrt{D_k}$ involves only a **single scalar** -- not an accumulated error propagated from previous columns. This is the fundamental stability advantage.
-
-### Detecting indefiniteness
-
-A critical practical benefit: when the covariance update $P = P_{\text{pred}} - K S K^T$ introduces rounding errors that make $P$ slightly non-SPD (which happens in practice), the two methods behave very differently:
-
-- **Cholesky**: attempts $\sqrt{\text{negative}}$ and fails completely
-- **$LDL^T$**: produces a negative $D$ entry, which can be detected and handled (e.g., clamping, covariance reset, or using Bunch-Kaufman pivoting)
-
-## Experiment Setup
-
-MTL5 includes two UKF examples that demonstrate these effects.
-
-### Example 1: Range+Bearing UKF (`examples/ukf_cholesky_vs_ldlt/`)
-
-A 4-state nonlinear tracking problem:
-
-- **State**: [px, py, vx, vy] -- 2D position and velocity
-- **Process model**: constant velocity with nonlinear quadratic drag
-- **Measurement model**: range and bearing from a beacon at (10, 0)
-- **Scenarios**: benign (R = I), moderate (R = diag(0.01, 0.1)), severe (R = diag(1e-14, 1e-2)), and intermittent
-
-### Example 2: Bearing-Only UKF (`examples/ukf_bearing_only/`)
-
-The canonical ill-conditioning generator:
-
-- **Measurement**: bearing only (no range) -- one direction of P collapses while the other stays large
-- **Tight measurement noise**: R = 1e-4
-- **Precision comparison**: runs in both float64 and float32 to show where Cholesky breaks
-- **Key diagnostic**: sigma-point mean bias -- measures the asymmetry introduced by degraded factorizations
-
-### Building and running
-
-```bash
-cmake --preset dev
-cmake --build build --target example_ukf_comparison example_bearing_only_ukf
-./build/examples/example_ukf_comparison
-./build/examples/example_bearing_only_ukf
-```
-
-## Results and Interpretation
-
-### Double precision: both methods perform identically
-
-In float64, both Cholesky and LDL^T succeed across all scenarios. The condition numbers reach ~10^4, well within the ~10^15 that double precision can handle:
+A 4-state tracker, [px, py, vx, vy], with constant velocity and quadratic drag. It is observed through range and bearing from a beacon at (10, 0), in four scenarios whose measurement noise R goes down to diag(1e-14, 1e-2). One filter uses Cholesky and one uses $LDL^T$.
 
 ```text
-=== Scenario: Benign (R = diag(1.0e+00, 1.0e+00)) ===
+=== Scenario: Severe stress (R = diag(1.0e-14, 1.0e-02)) ===
   Step       cond(P)      Chol-err      LDLT-err    Chol-resid    LDLT-resid
-     0      2.21e+00      9.70e-01      9.70e-01      6.12e-17      0.00e+00
-   100      6.42e+01      1.37e+00      1.37e+00      3.88e-17      2.00e-17
-   199      3.26e+02      1.50e+00      1.50e+00      1.19e-16      7.49e-18
+     0      1.77e+02      6.12e-01      6.12e-01      8.32e-17      0.00e+00
+   100      4.85e+03      2.34e-01      2.34e-01      0.00e+00      4.88e-17
+   199      6.15e+03      1.25e+00      1.25e+00      4.20e-17      5.24e-18
 
-  Cholesky: completed 200 steps, final error = 1.505e+00
-  LDL^T:    completed 200 steps, final error = 1.505e+00
+  Cholesky: completed 200 steps, final error = 1.246e+00
+  LDL^T:    completed 200 steps, final error = 1.246e+00
+  largest cond(P): 6.80e+03
 ```
 
-Both methods produce identical estimation errors and residuals at machine epsilon level. This is the expected baseline.
-
-### Single precision: Cholesky fails, LDL^T detects the problem
-
-The bearing-only example in float32 shows the critical difference. At step 5, the covariance update rounding errors make P non-SPD:
+- **Both filters complete in every scenario**, and their final errors agree to 2e-7. That gap is rounding, amplified by the weights (below).
+- **A tiny R doesn't make $P$ ill-conditioned.** cond($P$) never exceeds 7e3: the process noise $Q$, added at every predict step, keeps $P$'s eigenvalues well above $\varepsilon$.
+- **The direct test agrees.** On SPD matrices with eigenvalues spread up to cond 1e15, both residuals stay at rounding level:
 
 ```text
-=== Bearing-Only UKF (float32, 24-bit significand) ===
-  Step     cond(P)    Chol    LDLT     Chol-bias     LDLT-bias
-     0     1.0e+00      OK      OK      2.19e-02      2.19e-02
-     4     6.1e+00      OK      OK      3.40e-02      3.40e-02
-     5     2.1e+02    FAIL    FAIL           N/A           N/A
-     6     2.1e+02    FAIL    FAIL           N/A           N/A
-  ...
-  Cholesky: 5/15 steps OK (10 FAILED), max bias = 8.96e-02
-  LDL^T:    5/15 steps OK (10 FAILED), max bias = 8.96e-02
+--- SPD matrices, n = 8, eigenvalues spread over cond(P) ---
+       cond(P)   Chol residual   LDLT residual
+       1.0e+02       1.137e-16       1.022e-16
+       1.0e+08       5.464e-17       6.472e-17
+       1.0e+15       3.182e-17       1.504e-16
 ```
 
-Both methods detect the failure -- but the failure modes differ:
+### Example 2: bearing only (`examples/ukf_bearing_only/`)
 
-- **Cholesky** fails via `sqrt(negative)`, providing no information about which direction went bad
-- **LDL^T** `ldlt_factor()` **succeeds** — it only fails on zero pivots. Negative D entries are representable and indicate indefiniteness when inspected afterward. The caller can examine the D vector to identify exactly which eigenvalue direction became negative.
-
-This diagnostic difference is what enables graceful recovery strategies: inspect D after factorization, clamp negative entries, reset the covariance, or trigger a warning — rather than handling a hard factorization failure.
-
-### Indefinite matrices: Cholesky crashes, $LDL^T$ succeeds
-
-The direct factorization stress test constructs matrices with one deliberately negative eigenvalue -- simulating what happens when covariance update rounding goes wrong:
+One measurement, the bearing from a beacon. The bearing observes one direction of the position and leaves the range unobserved. The example runs two filters, one per factorization, on the same truth and measurements, in float64 and in float32, and at α = 1e-3, 1e-2, 1e-1 and 1.
 
 ```text
---- Nearly-indefinite matrices (smallest eigenvalue < 0) ---
-       min_eig        Cholesky           LDL^T     D entries
-      -1.0e-14  FAIL (non-SPD)              OK  [+,+,+,-]
-      -1.0e-10  FAIL (non-SPD)              OK  [+,+,+,-]
-      -1.0e-06  FAIL (non-SPD)              OK  [+,+,+,-]
-      -1.0e-02  FAIL (non-SPD)              OK  [+,+,+,-]
+=== float32, alpha = 1e-3 ===
+ step    cond(P)   bias Chol   bias LDLT    |xC - xL|   err Chol   err LDLT
+    0    1.0e+00    2.19e-02    2.19e-02     0.00e+00      3.310      3.310
+   12    1.4e+02    9.90e-02    9.89e-02     1.51e-02      3.155      3.152
+   13    1.7e+02    9.34e-02    9.34e-02     6.27e-01      3.369      3.650
+   14    1.0e+03    1.09e-01    5.10e-02     1.88e+00      5.670      4.032
 ```
 
-Cholesky fails on all four cases. $LDL^T$ succeeds and reports the $D$ entry signs, showing exactly one negative pivot. A UKF implementation can use this information to clamp the offending direction, reset the covariance, or trigger a diagnostic warning.
+The bias is $\|\sum_k W_k \sigma_k - \hat{x}\| / \|\hat{x}\|$. The weights sum to 1, so for a symmetric set of points the exact weighted mean is $\hat{x}$, and the bias measures only the rounding of the sum.
 
-## When to Use Which
+- **At step 0 the bias is already 2.2e-2,** where $P = 100\,I$ and cond($P$) = 1. Nothing about the factorization can cause that.
+- **The two float32 filters drift up to 1.9 apart.** Their estimates were exact copies of each other until step 11, and cond($P$) peaks at about 1e3.
+- **In float64 the same two filters agree to 8e-8.**
 
-### Use Cholesky ($LL^T$) when:
+### The cause: the weights at α = 1e-3
 
-- The matrix is guaranteed SPD (e.g., formed as $A^T A + \text{regularization}$)
-- You need maximum performance and LAPACK `dpotrf` is available (it's the most optimized factorization in most BLAS libraries)
-- Working in double precision with well-conditioned matrices ($\kappa < 10^8$)
-- Backward compatibility with existing code is required
+With $n = 4$ and α = 1e-3, $\lambda = \alpha^2 n - n \approx -4$, so
 
-### Use $LDL^T$ when:
+$$W_0 = \frac{\lambda}{n + \lambda} \approx -10^6, \qquad W_i = \frac{1}{2(n + \lambda)} \approx 1.25 \times 10^5.$$
 
-- The matrix may be ill-conditioned (Kalman filters, optimization Hessians)
-- The matrix may be symmetric indefinite (modified Newton methods, saddle-point systems)
-- Working in reduced precision (float32, float16, posit, custom types)
-- You need to detect indefiniteness rather than crashing
-- No square root is available for the number type (e.g., some custom arithmetic)
+Every weighted mean and covariance therefore adds terms about $10^6$ times the result, which cancel. In float32 that cancels six of the seven digits. Raising α removes it, for both factorizations alike:
 
-### Use Bunch-Kaufman pivoted $LDL^T$ when:
+| α | $W_0$ (float32) | step-0 bias | gap between the two float32 filters |
+|---|---|---|---|
+| 1e-3 | −986894 | 2.2e-2 | 1.9 |
+| 1e-2 | −9997.34 | 4.9e-4 | 1.4 |
+| 1e-1 | −99.0001 | 2.9e-6 | 3.8e-3 |
+| 1 | 0 | 0 | 6.6e-5 |
 
-- The matrix is expected to be indefinite (not just nearly-indefinite)
-- You need a numerically stable factorization regardless of pivot ordering
-- Graceful degradation is more important than raw speed
+With α = 1 both float32 filters end at error 4.189, against 4.188 in float64. In low precision, keep $W_0$ small: α near 1, or a κ for which $n + \lambda$ is not tiny.
 
-### Rule of thumb
+### Indefinite matrices
 
-If $\kappa(P)$ can exceed approximately $10^8$ in your application, prefer $LDL^T$ over Cholesky for sigma point generation. For reduced-precision types (float32, posit), the threshold is proportionally lower -- roughly $10^{b/4}$ where $b$ is the number of significand bits.
+A covariance update $P = P^- - K S K^T$ can lose positive definiteness to rounding. On such a $P$ the two factorizations differ in kind. The table is from Example 1's direct test:
 
-## MTL5 API Reference
+```text
+--- Indefinite matrices ---
+                    matrix lambda_min  neg Cholesky  LDL^T D signs  LDL^T berr  BK neg    BK berr
+    Q diag(.., -1e-14) Q^T   -1.0e-14    1    stops      [+,+,+,-]     5.4e-17       1    7.7e-17
+      H_6 - 2 lambda_min I   -1.1e-07    1    stops  [+,+,+,+,+,-]     5.7e-17       1    1.5e-16
+      ones, diagonal 1e-12   -1.0e+00    3    stops      [+,-,-,-]     1.8e-04       3    1.6e-16
+```
+
+- **Cholesky** stops at the first non-positive pivot.
+- **Unpivoted $LDL^T$** (`ldlt_factor`) returns, and fails only on an exact zero pivot. $D$'s signs report the inertia. But it is not backward stable on an indefinite matrix: a small pivot makes $L$ large. On the matrix of ones with 1e-12 on the diagonal, its solve's backward error is 1.8e-4.
+- **Bunch–Kaufman** (`ldlt_bk_factor`) pivots with 1 × 1 and 2 × 2 blocks. It finds the inertia of every matrix, with a backward error of 1e-16.
+
+Neither gives sigma points for an indefinite $P$, since it has no real square root. Both examples' $LDL^T$ filters refuse a $D_k \le 0$ for that reason: $L\,|D|\,L^T$ would be another covariance. What $LDL^T$ adds is the diagnosis, which directions went negative.
+
+## When to use which
+
+- **For an SPD matrix, at any condition number, either factorization.** Cholesky is the usual one, and LAPACK's `dpotrf` is the most optimized factorization in most BLAS libraries. Neither is the more accurate.
+- **$LDL^T$ when no square root is available or wanted.** For example, solving with $P$ rather than forming sigma points, or a number type without a square root.
+- **$LDL^T$'s $D$ when you need the inertia** of a matrix that should be SPD, to see which directions went negative.
+- **Bunch–Kaufman (`ldlt_bk_factor`) for a matrix that is, or may be, indefinite:** saddle-point systems, modified Newton methods. Unpivoted $LDL^T$ is not stable there.
+- **For a UKF in low precision, look at the weights first.**
+
+## MTL5 API reference
 
 ### Dense Cholesky
 
@@ -223,13 +157,25 @@ int info = mtl::ldlt_factor(A);  // returns 0 on success, k+1 on zero pivot
 mtl::ldlt_solve(A, x, b);
 ```
 
+### Bunch–Kaufman $LDL^T$
+
+```cpp
+#include <mtl/operation/ldlt_bk.hpp>
+
+// Factor: P A P^T = L D L^T with 1x1 and 2x2 pivots (in-place)
+mtl::bk_pivot_info piv;
+int info = mtl::ldlt_bk_factor(A, piv);  // 0 on success, k+1 on a singular block
+mtl::ldlt_bk_solve(A, piv, x, b);
+```
+
 ### Sparse versions
 
-Both factorizations have sparse counterparts in `mtl::sparse::factorization::` with symbolic/numeric phase separation and fill-reducing ordering support. See `<mtl/sparse/factorization/sparse_cholesky.hpp>` and `<mtl/sparse/factorization/sparse_ldlt.hpp>`.
+Both factorizations have sparse counterparts in `mtl::sparse::factorization::`, with symbolic and numeric phases and fill-reducing orderings. See `<mtl/sparse/factorization/sparse_cholesky.hpp>` and `<mtl/sparse/factorization/sparse_ldlt.hpp>`.
 
-## Further Reading
+## Further reading
 
+- Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM 2002, Ch. 10 (Cholesky) and Ch. 11 (symmetric indefinite)
 - Golub & Van Loan, *Matrix Computations*, Section 4.1.2 ($LDL^T$ factorization)
 - Julier & Uhlmann, "Unscented Filtering and Nonlinear Estimation", Proc. IEEE, 92(3), 2004
-- Davis, *Direct Methods for Sparse Linear Systems*, SIAM, 2006
 - Bar-Shalom, Li, Kirubarajan, *Estimation with Applications to Tracking and Navigation*, Ch. 11
+- mtl5-python's port, the "UKF sigma points: Cholesky against LDLᵀ" notebook (stillwater-sc/mtl5-python#158)

@@ -1,40 +1,62 @@
-# UKF Numerical Stability: Cholesky vs LDL^T
+# UKF sigma points: Cholesky against LDL^T
 
-This example demonstrates the numerical stability advantage of the LDL^T
-(square-root-free Cholesky) decomposition over standard Cholesky when used
-for sigma point generation in an Unscented Kalman Filter (UKF).
+The Unscented Kalman Filter takes its sigma points from a square root of the
+state covariance P at every step:
 
-## The Problem
+- **Cholesky**, P = L Lᵀ, uses the columns of L.
+- **LDLᵀ**, P = L D Lᵀ, uses the columns L(:, k)·√D_k.
 
-The UKF requires a "matrix square root" of the state covariance P at every
-time step to generate sigma points. The standard Cholesky factorization
-(P = LL^T) computes this via iterative square roots of diagonal entries. When
-P is ill-conditioned -- which happens immediately after a very informative
-observation drives eigenvalues of P toward machine epsilon -- the sqrt()
-amplifies relative error and can cause the filter to diverge.
+This example runs one filter with each, on the same scenarios, and factors test
+matrices directly. Its conclusion is computed from the run.
 
-The LDL^T factorization (P = LDL^T) avoids all square roots. The diagonal D
-captures the same information as L^2 in Cholesky, but without the
-precision-destroying sqrt step. Sigma points are generated from L and sqrt(D),
-where each sqrt(D_k) involves only a single scalar -- not an accumulated error.
+## What it shows
 
-## System Model
+- **On an SPD covariance the two are equally accurate, at any condition number.**
+  - In all four scenarios both filters complete, and their final errors agree
+    to 2e-7. The gap is rounding, amplified by the UKF weights at α = 1e-3:
+    W₀ ≈ −10⁶, see [`../ukf_bearing_only`](../ukf_bearing_only).
+  - On SPD matrices up to cond 1e15, both factorizations' residuals stay at
+    1e-16.
+  - Cholesky is backward stable for any SPD matrix (Higham, *Accuracy and
+    Stability of Numerical Algorithms*, Thm 10.3). A scalar square root halves a
+    relative error rather than growing it.
+  - LDLᵀ doesn't avoid the square root: its sigma points take √D_k.
+- **A tiny measurement noise doesn't make P ill-conditioned here.** cond(P)
+  stays below 7e3 even with R = diag(1e-14, 1e-2). The process noise Q, added at
+  every predict step, keeps P's eigenvalues up.
+- **The two differ in kind on an indefinite matrix.**
+  - Cholesky stops.
+  - Unpivoted LDLᵀ returns, and D's signs report the inertia. It is not
+    backward stable on an indefinite matrix, though: on ones with 1e-12 on the
+    diagonal, its solve's backward error is 1.8e-4.
+  - Bunch–Kaufman (`ldlt_bk`) pivots. It finds the inertia of every test matrix,
+    with a backward error of 1e-16.
+- **An indefinite covariance has no sigma points**, by either method. Each can
+  only report it.
 
-- **State**: [px, py, vx, vy] -- 2D position and velocity (4-state)
+## System model
+
+- **State**: [px, py, vx, vy], 2-D position and velocity
 - **Process**: constant velocity with quadratic drag
-- **Measurement**: range and bearing from a beacon at (10, 0)
-- **Key knob**: measurement noise covariance R
+- **Measurement**: range and bearing from a beacon at (10, 0). Each sigma point's
+  bearing is wrapped relative to the central point's before the sums, so a set
+  that straddles atan2's cut at ±π stays consistent.
 
-## Scenarios
+| Scenario | R |
+|----------|---|
+| Benign | diag(1, 1) |
+| Moderate | diag(0.01, 0.1) |
+| Severe | diag(1e-14, 1e-2) |
+| Intermittent | diag(1e-8, 1e-2) and diag(1, 1), alternating every 25 steps |
 
-| Scenario | R | Expected behavior |
-|----------|---|-------------------|
-| Benign | diag(1, 1) | Both methods perform identically |
-| Moderate stress | diag(0.01, 0.1) | Mild ill-conditioning; Cholesky may show slight degradation |
-| Severe stress | diag(1e-14, 1e-2) | Cholesky expected to degrade or diverge |
-| Intermittent | alternating | Tests recovery after ill-conditioning episodes |
+The direct tests are of two kinds:
+- SPD matrices of order 8 with eigenvalues spread over cond(P) = 1e2 to 1e15.
+- Indefinite matrices:
+  - a random rotation of diag(1, 0.5, 0.1, λ);
+  - the Hilbert matrix H₆ shifted below zero by its smallest eigenvalue;
+  - ones with a tiny diagonal.
 
-## Building and Running
+## Building and running
 
 ```bash
 cmake --preset dev
@@ -42,19 +64,8 @@ cmake --build build --target example_ukf_comparison
 ./build/examples/example_ukf_comparison
 ```
 
-## Interpreting the Output
-
-The program prints a table for each scenario with columns:
-
-- **Step**: time step number
-- **cond(P)**: condition number of the state covariance (higher = harder)
-- **Chol-err / LDLT-err**: estimation error ||x_true - x_est||
-- **Chol-resid / LDLT-resid**: factorization residual ||P - reconstruct|| / ||P||
-
-When the Cholesky variant diverges, its columns show "diverged" or "NaN".
-The LDL^T variant should remain stable across all scenarios.
-
 ## References
 
+- Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., SIAM 2002, Ch. 10–11
 - Golub & Van Loan, *Matrix Computations*, Section 4.1.2
 - Julier & Uhlmann, *Unscented Filtering and Nonlinear Estimation*, Proc. IEEE 2004
