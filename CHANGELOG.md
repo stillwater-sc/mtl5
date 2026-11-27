@@ -7,6 +7,13 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`randsym_indefinite(n, kappa, mode, num_negative)`: a symmetric indefinite matrix with cond₂ = κ** (issue 961; #970). `randsym(n, kappa, mode)` draws its eigenvalues from `make_sigma` in [1/κ, 1], so it only ever built SPD matrices. There was no way to ask for a symmetric matrix with a given condition number, spectrum mode and number of negative eigenvalues, the usual specification for testing LDLᵀ, MINRES and `inertia` / `is_indefinite`. mtl5-python binds it (stillwater-sc/mtl5-python#165).
+  - **What it builds:** `make_sigma`'s spectrum with `num_negative` of it negated. For n ≥ 2, cond₂(A) = κ, and the inertia is (n − `num_negative`, `num_negative`, 0). n = 1 gives [±1] whatever κ is, and n = 0 an empty matrix.
+  - **Which eigenvalues are negated:** a random subset of positions, drawn from the engine after the spectrum, as LAPACK's `DLATMS` does with `RSIGN = 'T'`. The draw is a partial Fisher–Yates over the raw engine stream, so a seed negates the same positions with every standard library. A test pins seed 961's positions, {0, 4, 5}, so CI's eight platforms check it.
+  - **`num_negative = 0`** draws nothing for the subset and gives `randsym`'s matrix for the same seed. `num_negative > n` throws.
+  - **A new name, not a `randsym` overload:** `randsym(n, kappa, mode, num_negative)` would have the parameter types of the seeded `randsym(n, kappa, mode, std::uint64_t seed)`, since `std::size_t` is `std::uint64_t` on Linux and macOS.
+  - **`randsym`'s mode form is unchanged.** Its documentation now says the result is SPD and points to `randsym_indefinite`.
+  - Tests: `test_randsym.cpp` ([961]). Docs: `docs/generators/tier3-spectral-control.md`.
 - **Wall-clock tracking of `main` on the benchmark machines, and the instruction-count gate on arm64** (issue 944, item 3; #962). This completes #944.
   - **`benchmarks/tracking/track.sh`** is run by hand when the lab machines are on. Their power is managed manually, so nothing schedules it.
     - It measures `origin/main` in a scratch worktree, on every machine in `benchmarks/tracking/hosts.txt` at once. Each machine runs under its own #737 profile, with pinned cores and its clock policy. Remote machines go through `remote_session.sh`.
