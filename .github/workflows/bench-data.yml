@@ -9,19 +9,22 @@ name: Benchmark data
 #
 # This was the `sidecar-check` job of ci.yml. It lives here so that it runs on
 # the changes it checks: every committed CSV or JSON must carry its .sysinfo
-# (#477). See benchmarks/check_sidecars.sh.
+# (#477), and every sidecar every key in benchmarks/sidecar_keys.txt (#930).
+# See benchmarks/check_sidecars.sh.
 on:
   push:
     branches: [ main ]
     paths:
       - 'benchmarks/data/**'
       - 'benchmarks/check_sidecars.sh'
+      - 'benchmarks/sidecar_keys.txt'
       - '.github/workflows/bench-data.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'benchmarks/data/**'
       - 'benchmarks/check_sidecars.sh'
+      - 'benchmarks/sidecar_keys.txt'
       - '.github/workflows/bench-data.yml'
   workflow_dispatch:
 

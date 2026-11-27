@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Every committed CSV must have its .sysinfo beside it (#477).
+# Every committed CSV must have its .sysinfo beside it (#477), and every sidecar
+# every key in benchmarks/sidecar_keys.txt (#930; the second half of this script).
 #
 # A benchmark result without provenance is a number nobody can check: not the
 # commit it was built from, not the compiler flags that decided which kernel ran,
