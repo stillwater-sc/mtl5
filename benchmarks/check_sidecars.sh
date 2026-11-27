@@ -71,8 +71,9 @@ done
 # -- the keys (#930) ---------------------------------------------------------------
 # A sidecar must also SAY enough: every key in benchmarks/sidecar_keys.txt, the
 # list mtl5-python's ingest requires (REQUIRED_KEYS), non-empty unless marked
-# empty-ok, and no key with two different values (which one describes the run?
-# mtl5-python drops such a key). A derived report -- a sidecar with derived_by=,
+# empty-ok, no key with two different values (which one describes the run?
+# mtl5-python drops such a key), and no line that is neither key=value, a
+# #-comment nor blank (the ingest counts each as a fault). A derived report -- a sidecar with derived_by=,
 # such as a tracking comparison (benchmarks/tracking/) -- describes no run of
 # its own; its provenance is the sessions it names, so it needs those keys.
 #
@@ -98,7 +99,8 @@ fi
 sidecar_problems() {
     awk -v req="$required" -v ok="$empty_ok" '
         BEGIN { n = split(req, R, " "); m = split(ok, O, " "); for (i = 1; i <= m; ++i) E[O[i]] = 1 }
-        /^[[:space:]]*#/ || index($0, "=") == 0 { next }
+        /^[[:space:]]*(#|$)/ { next }
+        index($0, "=") == 0 { bad = bad "line" NR " "; next }
         {
             k = substr($0, 1, index($0, "=") - 1); v = substr($0, index($0, "=") + 1)
             gsub(/^[ \t\r]+|[ \t\r]+$/, "", k); gsub(/^[ \t\r]+|[ \t\r]+$/, "", v)
@@ -108,6 +110,7 @@ sidecar_problems() {
             if ("derived_by" in V) { n = split("derived_by baseline_session new_session", R, " "); delete E }
             for (i = 1; i <= n; ++i) if (!(R[i] in V) || (V[R[i]] == "" && !(R[i] in E))) printf "%s ", R[i]
             for (k in C) printf "conflict:%s ", k
+            if (bad != "") printf "not-key=value:%s", bad
         }' "$1"
 }
 incomplete=()    # a sidecar with a problem, not grandfathered

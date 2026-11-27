@@ -150,7 +150,9 @@ echo "== running: ${RUN[*]}"
     echo "pin=${PIN:-none}"
     echo "harness=run_int_bench.sh"
     [ -n "$PREFLIGHT_KV" ] && printf '%s\n' "$PREFLIGHT_KV"
-    echo "$BANNER"
+    # The binary's banner, as #-comments: it is not key=value, and a reader
+    # (mtl5-python's ingest, check_sidecars.sh) counts such a line as a fault.
+    printf '%s\n' "$BANNER" | sed 's/^/# /'
 } >> "$CSV.sysinfo" 2>/dev/null || true
 # The run's keys (#930): what ran, and where.
 . "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
