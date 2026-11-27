@@ -12,6 +12,8 @@
 #include <mtl/itl/smoother/sor.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <type_traits>
+#include <limits>
+#include <cmath>
 
 using namespace mtl;
 
@@ -618,9 +620,16 @@ TEST_CASE("backward / symmetric SOR edge cases: 1x1 and empty (#291)",
 
 // Issue 964: the compressed2D SOR and Gauss-Seidel sweeps sum the off-diagonal
 // terms as two loops around the diagonal's position, instead of one loop that
-// tests every column index. The same terms in the same order: every sweep must
-// match the per-entry-test form bit for bit, forward and backward, with and
-// without an Accumulator, on rows whose diagonal is first, last or in between.
+// tests every column index. The same terms in the same order, so every sweep
+// matches the per-entry-test form, forward and backward, with and without an
+// Accumulator, on rows whose diagonal is first, last or in between:
+//   - bit for bit where multiply-adds are not fused (no FMA hardware, or
+//     -ffp-contract=off);
+//   - to rounding where they may be (__FP_FAST_FMA: GCC's default GNU dialect
+//     contracts, and fuses data[k] * x(j) into sigma in one loop form and not
+//     the other -- on x86-64-v3 the old branchy loop's products were not
+//     fused, the new loops' are). Two roundings of the same sum, not a change
+//     of algorithm.
 namespace {
 // The per-entry-test reference: x_i = omega * d_i (b_i - sigma_i) + (1 - omega) x_i.
 // omega = 1 is Gauss-Seidel's x_i = d_i (b_i - sigma_i), which is not the same
@@ -674,7 +683,14 @@ mat::compressed2D<double> matrix_964(std::size_t n) {
     return A;
 }
 bool same_bits_964(const vec::dense_vector<double>& a, const vec::dense_vector<double>& b) {
+#if defined(__FP_FAST_FMA)
+    // A fused product rounds once where an unfused one rounds twice: each row
+    // differs by a few ulps, and two sweeps carry it to later rows.
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!(std::abs(a(i) - b(i)) <= 64 * std::numeric_limits<double>::epsilon() * std::abs(b(i)))) return false;
+#else
     for (std::size_t i = 0; i < a.size(); ++i) if (!(a(i) == b(i))) return false;
+#endif
     return true;
 }
 template <typename Acc>

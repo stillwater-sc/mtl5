@@ -145,8 +145,10 @@ private:
             const size_type i = ascending ? step : (n - 1 - step);
             // The off-diagonal sum, as two loops around the diagonal's position
             // (found once, at construction) instead of one loop that tests every
-            // column index (issue 964). The same terms in the same order, so the
-            // same bits. The test-per-entry loop is short (a 5-point row has 4
+            // column index (issue 964). The same terms in the same order: the
+            // same bits where multiply-adds are not fused, and a rounding apart
+            // where the compiler fuses them (it may fuse data[k] * x(j) into
+            // sigma in one form and not the other). The test-per-entry loop is short (a 5-point row has 4
             // off-diagonal entries) and branchy, and on AArch64 its speed
             // depended on where it fell relative to a 64-byte boundary: the same
             // instructions ran a 512^2 SOR sweep in 2.9 or 5.0 ms on the Ventuno
