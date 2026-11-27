@@ -145,7 +145,7 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
                     iter.fail(2, "cg breakdown: dot(p, A p) == 0");
                     return iter;
                 }
-                c = detail::by_pow2(rho / pqh, -e);
+                c = detail::scaled_quotient(rho, pqh, -e);
                 u = &q;
                 w = &Ax;
             }

@@ -58,6 +58,36 @@ int max_abs_exponent(const Vec& v) {
                ? math::pow2_scaling<mag_t>::exponent(vmax) : 0;
 }
 
+/// The e with 2^e <= |v| < 2^(e+1), |v| the larger of a complex value's parts;
+/// 0 for a zero or non-finite v.
+template <typename Value>
+int value_exponent(const Value& v) {
+    using mag_t = magnitude_t<Value>;
+    using std::abs;
+    mag_t m;
+    if constexpr (is_complex_v<Value>) {
+        const mag_t re = abs(v.real()), im = abs(v.imag());
+        m = re > im ? re : im;
+    } else {
+        m = abs(v);
+    }
+    return (m > mag_t(0) && m <= std::numeric_limits<mag_t>::max())
+               ? math::pow2_scaling<mag_t>::exponent(m) : 0;
+}
+
+/// 2^k num / den without an intermediate leaving the range: the quotient of
+/// the two mantissas, near 1, then one exact scaling by 2^(k + e_num - e_den).
+/// The rescaled step's coefficient is 2^k rho / d with rho and d themselves in
+/// range but rho / d not, as for A = [2^-200] with M^-1 = 2^900: rho = 2^900,
+/// d = 2^-200, rho / d = 2^1100 is inf where 2^-900 rho / d = 2^200 is not
+/// (#967 review). Division rounds the same on values scaled by powers of two,
+/// so where rho / d is in range this is 2^k (rho / d) exactly.
+template <typename Value>
+Value scaled_quotient(const Value& num, const Value& den, int k) {
+    const int en = value_exponent(num), ed = value_exponent(den);
+    return by_pow2(by_pow2(num, -en) / by_pow2(den, -ed), k + en - ed);
+}
+
 /// out = 2^k v, value by value.
 template <typename Vec, typename Out>
 void scale_by_pow2(const Vec& v, int k, Out& out) {

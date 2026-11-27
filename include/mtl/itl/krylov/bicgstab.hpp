@@ -146,7 +146,7 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
                     iter.fail(4, "bicgstab breakdown: dot(t, t) == 0");
                     return iter;
                 }
-                omega = detail::by_pow2(mtl::dot<Accumulator, value_type>(Ax, s) / tth, -e);
+                omega = detail::scaled_quotient(mtl::dot<Accumulator, value_type>(Ax, s), tth, -e);
             }
             // omega == 0 stalls x and divides the next beta by zero (issue 866).
             if (omega == value_type(0)) {

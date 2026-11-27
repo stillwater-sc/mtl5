@@ -139,7 +139,9 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             // d = p~-hat^H A p-hat = 2^-(e+f) p~^H A p, so alpha = 2^-(e+f) rho / d:
             //   alpha p    = (2^-f rho / d) p-hat,  alpha A p = (2^-f rho / d) A p-hat,
             //   conj(alpha) A^H p~ = conj(2^-e rho / d) A^H p~-hat,
-            // exactly, since a power of two scales without rounding. Where
+            // exactly, since a power of two scales without rounding; the
+            // coefficients are formed by scaled_quotient, since rho / d itself
+            // can leave the range where 2^-f rho / d does not. Where
             // p~^H A p is normal nothing changes, bit for bit. One that is zero
             // after the rescaling is a true zero: a breakdown (issue 866).
             // z and z~ are recomputed below, so they and Ax hold the rescaled
@@ -165,9 +167,8 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
                     iter.fail(3, "bicg breakdown: dot(p_tilde, A p) == 0");
                     return iter;
                 }
-                const value_type rd = rho / d;
-                c  = detail::by_pow2(rd, -f);
-                ct = conj_t::apply(detail::by_pow2(rd, -e));
+                c  = detail::scaled_quotient(rho, d, -f);
+                ct = conj_t::apply(detail::scaled_quotient(rho, d, -e));
                 u = &z;
                 w = &Ax;
             }
