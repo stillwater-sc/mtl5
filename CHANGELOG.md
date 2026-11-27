@@ -84,6 +84,14 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **CG with a preconditioner scaled far from 1** (issue 955). For M scaled by s, ρ = rᵀM⁻¹r scales as 1/s, but pᵀAp scales as 1/s², so it left double's range beyond 2^±512.
+  - **What failed:** at M = 4·2^600·I, pᵀAp underflowed to 0 and CG reported a false breakdown (code 2) after one iteration. At 4·2^-600·I it overflowed, α was 0, and CG ran to its limit (code 1).
+  - **The fix:** when pᵀAp is not a normal number, `cg` redoes the step on p̂ = 2^-e p, where 2^e ≤ max|pᵢ|, and applies α p = (ρ/p̂ᵀAp̂)·2^-e·p̂. That is exact, since a power of two scales without rounding.
+    - Where pᵀAp is normal nothing changes, bit for bit, and the normal step costs nothing extra.
+    - A pᵀAp that is still 0 after rescaling is a true zero, as on an indefinite A (issue 866), and is still a breakdown.
+  - **The result:** CG now converges in the same 17 iterations, to the same bits, from 2^±300 to 2^±900. Past about 2^±950, z = M⁻¹r itself reaches the subnormal range.
+  - **Audited:** CGS, TFQMR, MINRES and GMRES pass at 2^±600. BiCG and BiCGSTAB fail there, and are filed separately.
+  - Tests: `test_cg.cpp` ([955]); #952's code-7 test now runs to 2^±600.
 - **Phase 13 examples: a multigrid that scales, and preconditioners that fit their solvers** (issues 942 and 943).
   - **`multigrid_poisson`** promised a cost independent of problem size, but it hard-coded 3 levels with 100 forward Gauss–Seidel sweeps as the "effectively exact" coarse solve. At n = 1023 that stops converging. It also used a nonsymmetric V-cycle as CG's preconditioner.
     - The hierarchy now coarsens to 3 points, with a dense-LU coarse solve. A sweep from n = 63 to 4095 takes 5 V-cycles and 4 MG-PCG iterations at every size, while the original 3 levels need 76 V-cycles at n = 255 and fail from n = 1023.
