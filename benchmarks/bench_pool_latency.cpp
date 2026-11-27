@@ -50,6 +50,7 @@
 #include <mtl/parallel/thread_pool.hpp>
 #include <mtl/util/system_info.hpp>
 #include <mtl/build_info.hpp>
+#include <benchmarks/harness/sidecar.hpp>
 
 namespace {
 
@@ -188,13 +189,11 @@ int main(int argc, char** argv) {
     // Provenance (#442).
     if (!csv.empty()) {
         if (std::ofstream si{csv + ".sysinfo"}) {
-            si << "label=pool-latency\n"
-               << mtl::util::to_keyvals(mtl::util::identify())
-               << "git_commit="  << mtl::build_git_commit  << "\n"
-               << "git_dirty="   << mtl::build_git_dirty   << "\n"
-               << "cxx_flags="   << mtl::build_cxx_flags   << "\n"
-               << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-               << "default_spin=" << mtl::parallel::spin_pool::default_spin << "\n";
+            si << "label=pool-latency\n";
+            // The largest pool measured; run_pool_latency.sh records the list.
+            mtl::bench::write_build_keys(si, threads.empty() ? 1u
+                                         : std::size_t(*std::max_element(threads.begin(), threads.end())));
+            si << "default_spin=" << mtl::parallel::spin_pool::default_spin << "\n";
             for (const char* name : {"MTL5_NUM_THREADS", "MTL5_POOL_SPIN", "BENCH_PCPUS"})
                 if (const char* v = std::getenv(name)) si << "env_" << name << '=' << v << "\n";
         }

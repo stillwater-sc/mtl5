@@ -87,14 +87,35 @@ run_native() {
         echo "  $name  T=$T  pinned to CPUs $pin"
         env MTL5_NUM_THREADS="$T" taskset -c "$pin" "$bin" "$@" \
             --label "native-t${T}" --csv "$tmp" >/dev/null
-        if [[ $first -eq 1 ]]; then cat "$tmp" > "$out"; first=0; else tail -n +2 "$tmp" >> "$out"; fi
-        rm -f "$tmp"
+        if [[ $first -eq 1 ]]; then
+            cat "$tmp" > "$out"; first=0
+            # The binary writes <csv>.sysinfo; the per-T runs merge into one
+            # CSV, so the first one's sidecar is kept and completed below.
+            [[ -f "$tmp.sysinfo" ]] && mv "$tmp.sysinfo" "$out.sysinfo"
+        else
+            tail -n +2 "$tmp" >> "$out"
+        fi
+        rm -f "$tmp" "$tmp.sysinfo"
     done
+    # The run's keys (#930): the machine's state, what ran, the thread counts
+    # the CSV holds, and the cores they were pinned to.
+    if [[ -f "$out.sysinfo" ]]; then
+        printf '%s\n' "$PREFLIGHT_KV" >> "$out.sysinfo"
+        sidecar_put "$out.sysinfo" "pool_size=$(echo $THREADS | tr ' ' ',')" "label=native"
+        sidecar_finish "$out.sysinfo" "benchmark=$(basename "$bin")" "class=${BENCH_CLASS:-scaling $name}" \
+                       "bench_cpus=$PCPUS" "harness=run_scaling_297.sh" || SIDECAR_FAIL=1
+    else
+        echo "  $out.sysinfo was not written" >&2; SIDECAR_FAIL=1
+    fi
     echo "  -> $out"
 }
 
 BA="$BUILD/benchmarks/bench_all"
 BS="$BUILD/benchmarks/bench_sparse"
+# The machine's state for the sidecars (#930), recorded, not gated, as before.
+PREFLIGHT_KV=$(benchmarks/preflight.sh --repo . --ignore-path "$DATA" --report-only 2>/dev/null || true)
+. benchmarks/sidecar.sh
+SIDECAR_FAIL=0
 
 echo "=== gemm-rect (multi-loop 2D grid) ==="
 run_native gemm_rect "$BA" --suite gemm-rect
@@ -107,6 +128,10 @@ run_native ewise "$BA" --suite ewise
 echo "=== sparse triangular solves (level-scheduled) ==="
 run_native sparse "$BS" --sizes "$SPARSE_SIZES"
 
+if [[ "$SIDECAR_FAIL" != 0 ]]; then
+    echo "run_scaling_297.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
+    exit 1
+fi
 echo
 echo "Done. Analyze with:"
 echo "  ./benchmarks/analyze_scaling.py $DATA/scaling_*.csv --plot $DATA/scaling_297.png"

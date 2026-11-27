@@ -90,10 +90,19 @@ echo "== building (full, so the provenance stamp is regenerated)"
 cmake --build "$BUILD_DIR" --parallel 4 > /dev/null
 
 mkdir -p "$OUTDIR"
+# The machine's state, for the sidecars (#930). The sweep times nothing -- it
+# enumerates the nc models' choices -- so this records, it does not gate.
+PREFLIGHT_KV=$(benchmarks/preflight.sh --repo . --ignore-path "$OUTDIR" --report-only 2>/dev/null || true)
+. "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
+SIDECAR_FAIL=0
 for dt in double float; do
     echo "== sweeping dtype=$dt"
     "$BUILD_DIR/benchmarks/sweep_nc_models" --threads "$THREADS" --dtype "$dt" \
         --csv "$OUTDIR/nc_model_sweep_$dt.csv" | grep -vE '^DISAGREE'
+    si="$OUTDIR/nc_model_sweep_$dt.csv.sysinfo"
+    [ -n "$PREFLIGHT_KV" ] && [ -f "$si" ] && printf '%s\n' "$PREFLIGHT_KV" >> "$si"
+    sidecar_finish "$si" "benchmark=sweep_nc_models" "class=${BENCH_CLASS:-$dt}" \
+                   "bench_cpus=unpinned" || SIDECAR_FAIL=1
 done
 
 # Verify rather than trust. Every way of getting the ordering wrong produces a
@@ -118,6 +127,10 @@ if [ "$fail" != "0" ]; then
     echo "" >&2
     echo "The data does not describe the tree it was produced from. Do not commit it." >&2
     echo "Re-run from a clean tree; this script does a full build for that reason." >&2
+    exit 1
+fi
+if [ "$SIDECAR_FAIL" != 0 ]; then
+    echo "run_nc_sweep.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
     exit 1
 fi
 

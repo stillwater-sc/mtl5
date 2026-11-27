@@ -32,8 +32,16 @@
 //
 // Usage:
 //   bench_column_sweep [--reps 11] [--min-us 2000] [--quick]
+//   bench_column_sweep --sysinfo     the build's and the machine's sidecar keys
+//
+// run_column_sweep.sh compiles this file directly, without CMake, so there is
+// no generated mtl/build_info.hpp: --sysinfo prints what the binary can see
+// (system_info::to_keyvals, simd_backend, pool_size), and the script adds the
+// commit and the flags it compiled with (#930).
 
 #include <mtl/interface/interleave_rows.hpp>
+#include <mtl/simd/batch.hpp>
+#include <mtl/util/system_info.hpp>
 #include <mtl/mat/dense2D.hpp>
 #include <mtl/operation/lower_trisolve.hpp>
 #include <mtl/operation/mult.hpp>
@@ -217,8 +225,13 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--reps") && i + 1 < argc) reps = std::max(1, std::atoi(argv[++i]));
         else if (!std::strcmp(argv[i], "--min-us") && i + 1 < argc) min_us = std::atof(argv[++i]);
         else if (!std::strcmp(argv[i], "--quick")) quick = true;
-        else {
-            std::printf("usage: bench_column_sweep [--reps 11] [--min-us 2000] [--quick]\n");
+        else if (!std::strcmp(argv[i], "--sysinfo")) {
+            // One CPU, pinned by the script; no thread pool is used.
+            std::printf("%ssimd_backend=%s\npool_size=1\n",
+                        mtl::util::to_keyvals(mtl::util::identify()).c_str(), mtl::simd::backend_name());
+            return 0;
+        } else {
+            std::printf("usage: bench_column_sweep [--reps 11] [--min-us 2000] [--quick] | --sysinfo\n");
             return argv[i][0] == '-' && argv[i][1] == 'h' ? 0 : 1;
         }
     }

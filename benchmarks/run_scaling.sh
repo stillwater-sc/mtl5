@@ -225,11 +225,23 @@ case "$AFTER_KV" in
     *) AFTER_KV="thermal_after_c=unavailable" ;;
 esac
 
+. "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
+SIDECAR_FAIL=0
 for s in "${SIDECARS[@]}"; do
     [[ -f "$s" ]] || continue
     printf '%s\n%s\n' "$PREFLIGHT_KV" "$AFTER_KV" >> "$s"
     printf 'harness=run_scaling.sh\nharness_pinned_cpus=%s\nharness_interleaved=0\n' "$PCPUS" >> "$s"
+    # The run's keys (#930). The sidecar is the first thread count's, but the
+    # CSV merges every T: pool_size is the list, and the label the backend.
+    backend=$(basename "$s" .csv.sysinfo); backend=${backend#gemm_scaling_}
+    sidecar_put "$s" "pool_size=$(echo $THREADS | tr ' ' ',')" "label=$backend"
+    sidecar_finish "$s" "benchmark=bench_all" "class=${BENCH_CLASS:-gemm $SIZES}" \
+                   "bench_cpus=$PCPUS" || SIDECAR_FAIL=1
 done
+if [[ "$SIDECAR_FAIL" != 0 ]]; then
+    echo "run_scaling.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
+    exit 1
+fi
 
 echo
 echo "Done. Analyze with:"

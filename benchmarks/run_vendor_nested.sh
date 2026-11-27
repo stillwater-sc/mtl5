@@ -90,6 +90,8 @@ done
 # Only now: the build records whether the tree was dirty, and untracked files
 # count, so an output directory made before it would mark every binary dirty.
 mkdir -p "$OUTDIR"
+. "$SCRIPT_DIR/sidecar.sh"
+SIDECAR_FAIL=0
 
 for v in "${BUILT[@]}"; do
     csv=$OUTDIR/vendor_nested_$v.csv
@@ -116,4 +118,11 @@ for v in "${BUILT[@]}"; do
     done; done
     { printf '%s\n' "$PREFLIGHT"
       "$SCRIPT_DIR/preflight.sh" --phase after --repo "$ROOT" --report-only; } >>"$csv.sysinfo"
+    # The run's keys (#930).
+    sidecar_finish "$csv.sysinfo" "benchmark=bench_vendor_nested" "class=${BENCH_CLASS:-sizes $SIZES}" \
+                   "bench_cpus=${BENCH_PCPUS:-unpinned}" || SIDECAR_FAIL=1
 done
+if [ "$SIDECAR_FAIL" != 0 ]; then
+    echo "run_vendor_nested.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
+    exit 1
+fi

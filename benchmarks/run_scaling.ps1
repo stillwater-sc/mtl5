@@ -248,6 +248,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 if (-not ($AfterKv -match 'thermal_after_c=')) { $AfterKv = "thermal_after_c=unavailable" }
 
+. (Join-Path $PSScriptRoot 'sidecar.ps1')
+$SidecarFail = $false
 foreach ($s in $script:Sidecars) {
     if (Test-Path $s) {
         Add-Content -Path $s -Value $PreflightKv
@@ -256,7 +258,19 @@ foreach ($s in $script:Sidecars) {
             "harness=run_scaling.ps1",
             "harness_pinned_cores=$PCores",
             "harness_interleaved=0")
+        # The run's keys (#930). The sidecar is the first thread count's, but the
+        # CSV merges every T: pool_size is the list, and the label the backend.
+        $backend = ([System.IO.Path]::GetFileName($s)) -replace '^gemm_scaling_', '' -replace '\.csv\.sysinfo$', ''
+        Set-SidecarKey $s 'pool_size' $Threads
+        Set-SidecarKey $s 'label' $backend
+        if (-not (Complete-Sidecar $s @{ benchmark = 'bench_all'; class = "gemm $Sizes"; bench_cpus = $PCores })) {
+            $SidecarFail = $true
+        }
     }
+}
+if ($SidecarFail) {
+    Write-Host "run_scaling.ps1: a sidecar lacks required keys (above); do not commit it as is"
+    exit 1
 }
 
 Write-Host "`nDone. Analyze with:"

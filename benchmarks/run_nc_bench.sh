@@ -159,6 +159,8 @@ echo "== building (full, so the provenance stamp is regenerated)"
 cmake --build "$BUILD_DIR" --parallel 4 > /dev/null
 
 mkdir -p "$OUTDIR"
+. "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
+SIDECAR_FAIL=0
 for dt in $DTYPES; do
     echo "== timing dtype=$dt (threads=$THREADS reps=$REPS rounds=$ROUNDS)"
     MTL5_NUM_THREADS="$THREADS" \
@@ -173,6 +175,9 @@ for dt in $DTYPES; do
     if [ -n "$PREFLIGHT_KV" ] && [ -f "$si" ]; then
         printf '%s\n' "$PREFLIGHT_KV" >> "$si"
     fi
+    # The run's keys (#930). Not pinned: the pool's threads go where the OS puts them.
+    sidecar_finish "$si" "benchmark=bench_nc_models" "class=${BENCH_CLASS:-$dt}" \
+                   "bench_cpus=unpinned" || SIDECAR_FAIL=1
 done
 
 # Verify rather than trust. Every way of getting the ordering wrong produces a
@@ -202,6 +207,10 @@ done
 if [ "$fail" != "0" ]; then
     echo "" >&2
     echo "The data does not describe the tree it was produced from. Do not commit it." >&2
+    exit 1
+fi
+if [ "$SIDECAR_FAIL" != 0 ]; then
+    echo "run_nc_bench.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
     exit 1
 fi
 

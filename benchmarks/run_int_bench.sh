@@ -146,13 +146,17 @@ echo "== running: ${RUN[*]}"
 # AVX512VNNI / AVX3_DL / DOTPROD, so it records the decision the guard made.
 {
     echo "suite=int"
-    echo "label=$LABEL"
     echo "arch_flag=$ARCH"
     echo "pin=${PIN:-none}"
     echo "harness=run_int_bench.sh"
     [ -n "$PREFLIGHT_KV" ] && printf '%s\n' "$PREFLIGHT_KV"
     echo "$BANNER"
 } >> "$CSV.sysinfo" 2>/dev/null || true
+# The run's keys (#930): what ran, and where.
+. "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
+sidecar_finish "$CSV.sysinfo" "benchmark=bench_all" "class=${BENCH_CLASS:-int}" \
+               "bench_cpus=${PIN:-unpinned}" \
+    || { echo "run_int_bench.sh: $CSV.sysinfo lacks required keys (above); do not commit it as is" >&2; exit 1; }
 
 echo ""
 echo "Done. $CSV (with .sysinfo)."

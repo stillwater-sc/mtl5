@@ -1,0 +1,52 @@
+# The keys every benchmark sidecar (.sysinfo) must carry (#930).
+#
+# A run whose sidecar lacks one of these, or has one empty, cannot be placed:
+# not the commit, the build, the machine or its state. mtl5-python's ingest
+# (stillwater-sc/mtl5-python, mtl5/bench/sysinfo.py REQUIRED_KEYS) keeps such a
+# run out of trends and cross-machine comparisons. This list is that list; keep
+# the two in step.
+#
+# Format: one key per line; `empty-ok` after a key allows an empty value (a
+# build with no extra flags; arm64's /proc/cpuinfo reports no vendor).
+#
+# A key that does not apply to a producer still gets a value, never an
+# omission: pool_size=1 for a single-threaded harness, bench_cpus=unpinned,
+# clock_policy=not applied (#930's decision).
+#
+# Written by: the benchmark binary (benchmarks/harness/sidecar.hpp, the build
+# and the machine's identity), and the harness script (benchmarks/sidecar.sh,
+# the run: benchmark, machine, class, pinning, clock policy, preflight).
+# Checked by: benchmarks/check_sidecars.sh, for every committed sidecar.
+
+# what ran
+benchmark
+label
+machine
+class
+# machine identity
+cpu_vendor          empty-ok
+cpu_brand
+cpu_arch
+cpu_logical_cores
+preflight_host
+# build
+git_commit
+git_dirty
+compiler
+compiler_version
+cpp_standard
+build_type
+cxx_flags           empty-ok
+build_isa
+simd_backend
+os_name
+# threads
+pool_size
+# machine state
+governor
+turbo
+power_mode
+clock_policy
+cpu_affinity
+bench_cpus
+preflight_gates

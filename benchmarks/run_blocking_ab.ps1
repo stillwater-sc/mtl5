@@ -353,6 +353,8 @@ if ($TreeCommit -and $BuildCommit -and $TreeCommit -ne "unknown" -and $BuildComm
     }
 }
 
+. (Join-Path $PSScriptRoot 'sidecar.ps1')
+$SidecarFail = $false
 foreach ($s in ($ArmList | ForEach-Object { "$(Get-ArmCsv $_).sysinfo" })) {
     if (Test-Path $s) {
         Add-Content -Path $s -Value $PreflightKv
@@ -371,7 +373,17 @@ foreach ($s in ($ArmList | ForEach-Object { "$(Get-ArmCsv $_).sysinfo" })) {
             "harness_threads=$Threads",
             "harness_arch=$(if ($Arch -ne '') { $Arch } else { 'none' })",
             "harness_dtype=$DType")
+        # The run's keys (#930). Each invocation rewrote the sidecar, so the
+        # binary's pool_size is the last run's; the CSV holds every T.
+        Set-SidecarKey $s 'pool_size' $Threads
+        if (-not (Complete-Sidecar $s @{ benchmark = 'bench_blocking_ab'; class = $DType; bench_cpus = $PCores })) {
+            $SidecarFail = $true
+        }
     }
+}
+if ($SidecarFail) {
+    Write-Host "run_blocking_ab.ps1: a sidecar lacks required keys (above); do not commit it as is"
+    exit 1
 }
 
 Write-Host ""

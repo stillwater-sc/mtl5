@@ -85,3 +85,10 @@ for round in $(seq 1 "$ROUNDS"); do
 done
 { printf '%s\n' "$PREFLIGHT"
   "$SCRIPT_DIR/preflight.sh" --phase after --repo "$ROOT" --report-only; } >>"$csv.sysinfo"
+# The run's keys (#930). The CSV holds every thread count, so pool_size is the
+# list, not the last run's.
+. "$SCRIPT_DIR/sidecar.sh"
+sidecar_put "$csv.sysinfo" "pool_size=$THREADS"
+sidecar_finish "$csv.sysinfo" "benchmark=bench_pool_latency" "class=${BENCH_CLASS:-gaps $(echo $GAPS | tr ' ' ',')}" \
+               "bench_cpus=${BENCH_PCPUS:-unpinned}" \
+    || { echo "run_pool_latency.sh: $csv.sysinfo lacks required keys (above); do not commit it as is" >&2; exit 1; }

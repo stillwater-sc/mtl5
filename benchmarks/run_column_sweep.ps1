@@ -42,14 +42,23 @@ if ($LASTEXITCODE -ne 0 -or -not $commit) {
     $commit = if (Test-Path (Join-Path $root 'COMMIT')) { (Get-Content (Join-Path $root 'COMMIT')).Trim() } else { 'unknown' }
 }
 $plan = (powercfg /getactivescheme) -join ' '
-@(
-    "host=$env:COMPUTERNAME"
-    "cpu=$((Get-CimInstance Win32_Processor).Name.Trim())"
+# The session's record: preflight's machine state (report only, as before: the
+# sweep has never gated on it), and what identifies the run. Each CSV's sidecar
+# is this, plus its binary's --sysinfo and its build (#930).
+. (Join-Path $PSScriptRoot 'sidecar.ps1')
+$preflight = @(& (Join-Path $PSScriptRoot 'preflight.ps1') -Repo $root -ReportOnly -IgnorePath $out 2>$null)
+$dirty = if (& git -C $root status --porcelain --untracked-files=no 2>$null) { '1' } else { '0' }
+$long = (& git -C $root rev-parse --short=12 HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $long) { $long = $commit }
+@($preflight + @(
     "os=$((Get-CimInstance Win32_OperatingSystem).Caption)"
-    "bench_cpu=$cpu"
+    "bench_cpus=$cpu"
     "clock_policy=not changed; $plan"
-    "commit=$commit"
-) | Set-Content (Join-Path $out 'sysinfo.txt')
+    "git_commit=$long"
+    "git_dirty=$dirty"
+    "cmake_build_type=Release"
+)) | Set-Content (Join-Path $out 'sysinfo.txt')
+$SidecarFail = $false
 
 $variants = @(
     @{ name = 'msvc-generic';    toolset = $null;     flags = '' },
@@ -101,10 +110,19 @@ foreach ($v in $variants) {
         Remove-Item -Recurse -Force $dir
         continue
     }
-    # The CSV's sidecar (benchmarks/check_sidecars.sh): the session's record,
-    # and this build's compiler and flags.
-    @((Get-Content (Join-Path $out 'sysinfo.txt')) + "compiler=$compiler" + "build_flags=$($v.flags)") |
-        Set-Content "$csv.sysinfo"
+    # The CSV's sidecar (benchmarks/check_sidecars.sh): the binary's keys, the
+    # session's record, and this build's flags.
+    $keys = @(& $exe.FullName --sysinfo)
+    @(@("label=$($v.name)") + $keys + (Get-Content (Join-Path $out 'sysinfo.txt')) +
+      @("cxx_flags=$($v.flags)", "compiler_identification=$compiler")) | Set-Content "$csv.sysinfo"
+    $class = if ($args -contains '--quick') { 'quick' } else { 'full' }
+    if (-not (Complete-Sidecar "$csv.sysinfo" @{ benchmark = 'bench_column_sweep'; class = $class })) {
+        $SidecarFail = $true
+    }
     Remove-Item -Recurse -Force $dir
 }
 Write-Host "results: $out"
+if ($SidecarFail) {
+    Write-Host "run_column_sweep.ps1: a sidecar lacks required keys (above); do not commit it as is"
+    exit 1
+}
