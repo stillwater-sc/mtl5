@@ -7,6 +7,22 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Wall-clock tracking of `main` on the benchmark machines, and the instruction-count gate on arm64** (issue 944, item 3; #962). This completes #944.
+  - **`benchmarks/tracking/track.sh`** is run by hand when the lab machines are on. Their power is managed manually, so nothing schedules it.
+    - It measures `origin/main` in a scratch worktree, on every machine in `benchmarks/tracking/hosts.txt` at once. Each machine runs under its own #737 profile, with pinned cores and its clock policy. Remote machines go through `remote_session.sh`.
+    - It publishes each session's data into `benchmarks/data/<machine>/mtl5_bench/`, and compares the session with that machine's previous one.
+    - `--pr` commits the results and opens a PR. `--only` runs a subset.
+    - Every row of `hosts.txt` is checked before any session starts, and an interrupted run stops its sessions before removing its worktree.
+  - **`publish_platform.cmake -DDATA_ONLY=ON`** copies a session into `benchmarks/data/` and stops there. The card pages stay on the paired sessions they were published from, since one session has no repeatability band.
+  - **`benchmarks/tracking/track_sessions.py compare`** is the comparison across commits. Per run, it takes the median of the per-entry time ratios, the rule from `analyze_gate.py`, and marks the run slower or faster outside ±2%. It lists the entries outside ±10%, and the sidecar fields that changed besides the commit, such as the compiler, kernel or clock policy. It is a report and gates nothing. Each report's JSON carries a `.sysinfo` naming its two sessions.
+  - **`track_sessions.py page`** writes [`docs/benchmarks/tracking.md`](docs/benchmarks/tracking.md), with the latest report and the history for each machine.
+  - **The instruction-count gate on Linux arm64:** `native-arm64` and `native-fast-arm64` run on `ubuntu-24.04-arm`, so the NEON paths are gated as the x64 ones are. They target baseline armv8-a, since valgrind does not support SVE. Each configuration has its own baseline artifact.
+  - **Per-configuration acceptances:** `benchmarks/regression/accepted.json`'s `max_ir` is now a map from configuration to count. A configuration that isn't listed is still gated, and a single bare number is refused. One number per kernel could not accept the same change in builds that count it differently.
+  - **The first run, at f98777e:** the i7-12700K, Xeon E5-2420 v2, Jetson Orin and Ventuno Q were steady, with every run's median ratio between 0.994 and 1.002. Three entries moved on several machines:
+    - `sparse_cholesky.factor` on a 3-D grid is about 30× faster (#868);
+    - `minres+diag` is 43–55% slower on all four, with the same iteration count. This is #869's overflow-safe M-norm (#963);
+    - the native SOR sweep on AArch64 alternates between two speeds, 1.7× apart, across commits (#964).
+  - Tests: `test_track_sessions.py` (14) and `test_ir_gate.py` (16), both run in `bench-regression.yml`. Docs: `benchmarks/tracking/README.md`, `benchmarks/regression/README.md`.
 - **`condest()`, transposed solves and a checked refactor for native KLU** (issue 946, its optional items, after #951's `rgrowth()` and `rcond()`).
   - **`klu_numeric::condest(A)` and `lu_numeric::condest(A)`** estimate the 1-norm condition number ‖A‖₁‖A⁻¹‖₁, as SuiteSparse's `klu_condest` does. They use Hager's method with Higham's refinements (ACM TOMS 1988, Algorithm 4.1), in at most 11 solves with A and Aᵀ. The estimate is a lower bound. It matched the exact κ₁ (formed column by column) on all four test matrices, among them a 16 × 16 Poisson grid and a 1-D Laplacian of order 200 with κ₁ = 2.0e4.
   - **`klu_numeric::solve_transpose(x, b)` and `lu_numeric::solve_transpose(x, b)`** solve Aᵀx = b. For KLU, Bᵀ is block lower triangular, so the blocks are solved first to last and the row scaling is undone. Both are what `condest` needs, and what an adjoint solve needs. x and b may alias.
@@ -19,7 +35,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
   - **Accepting an intended increase:** the PR commits the kernel, its new count (`max_ir`) and a reason in `benchmarks/regression/accepted.json`. The kernel passes up to that count and no further. Once main's baseline carries the count, the acceptance is reported as stale.
   - **`benchmarks/regression/ir_gate.py`** (`count`, `compare`) uses the Python standard library only, and its own tests run in the workflow (`test_ir_gate.py`: an equal count passes, a doubled one fails, plus acceptances, edges and parsing).
   - **Dispatch tests:** `include/mtl/detail/dispatch_trace.hpp` is a hook (`MTL5_DISPATCH_TRACE`, compiled out otherwise). With it, a test reads which kernel each `mult` took: BLAS, the blocked GEMM, the SIMD GEMV or the generic loop. `test_mult_dispatch.cpp` and `test_mult_dispatch_generic.cpp` check the paths on all eight platforms, with and without the native-fast path. With the blocked-GEMM branch disabled, the first test fails.
-  - **Not yet:** the wall-clock tracking on the benchmark machines, as a local scheduled run publishing into `benchmarks/data/` (#944's item 3, the follow-up). Docs: `benchmarks/regression/README.md`.
+  - The wall-clock tracking on the benchmark machines, #944's item 3, followed in #962 (above). Docs: `benchmarks/regression/README.md`.
 - **Error code 7: a preconditioner that is not positive definite** (issue 949). `minres` and `cg` require a symmetric (Hermitian) positive definite M. Both now stop with `basic_iteration::not_positive_definite` (7), at the first step where vᴴM⁻¹v is negative beyond the rounding of its dot product (n·ε·‖v‖‖M⁻¹v‖), with x as the last valid step left it.
   - **MINRES** used to take the absolute value of a negative vᵀM⁻¹v. On tridiag(1, [4, −3, 4, −3, …], 1) with M = `pc::diagonal` it ran 149 iterations and returned 2, the code of a γ = 0 breakdown, with 96% of the residual left. It now returns 7 before the first iteration.
   - **CG** failed only on ρ == 0 exactly. With an SPD A and M = diag(4, −3, 4, −3, …) it now returns 7 where it formerly reported convergence (0).
@@ -89,6 +105,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **`mtl5_bench` builds under Visual Studio 2026** (#962). The native-fast and blas builds of `mtl5_bench.cpp` failed with C1128: the object file exceeded COFF's section limit. So on both Ryzen NUCs (MSVC 19.52) the platform benchmark ran only its native variant. CI's MSVC 19.44 is still under the limit. The target now builds with `/bigobj` under MSVC and clang-cl. Found by the first tracking run.
 - **CG with a preconditioner scaled far from 1** (issue 955). For M scaled by s, ρ = rᵀM⁻¹r scales as 1/s, but pᵀAp scales as 1/s², so it left double's range beyond 2^±512.
   - **What failed:** at M = 4·2^600·I, pᵀAp underflowed to 0 and CG reported a false breakdown (code 2) after one iteration. At 4·2^-600·I it overflowed, α was 0, and CG ran to its limit (code 1).
   - **The fix:** when pᵀAp is not a normal number, `cg` redoes the step on p̂ = 2^-e p, where 2^e ≤ max|pᵢ|, and applies α p = (ρ/p̂ᵀAp̂)·2^-e·p̂. That is exact, since a power of two scales without rounding. The scaling is applied per value, through `pow2_scaling::scale`, so it stays exact when p has become subnormal (where 2^-e itself would overflow), and e is kept at 0 for a zero or infinite max|pᵢ|.
