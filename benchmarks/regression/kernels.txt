@@ -27,3 +27,4 @@ direct/native_klu/f64
 # iterative
 krylov/cg+ic0/f64
 krylov/bicgstab+ilu0/f64
+krylov/minres+diag/f64     # its per-iteration cost rose 45% unseen (#869, issue 963)

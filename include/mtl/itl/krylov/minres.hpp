@@ -5,6 +5,7 @@
 // Reference: Paige & Saunders (1975), Saad Algorithm 6.13.
 #include <mtl/concepts/vector.hpp>   // FieldVector (#503)
 #include <cmath>
+#include <limits>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/operation/dot.hpp>
 #include <mtl/operation/norms.hpp>
@@ -67,17 +68,36 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     vec::dense_vector<value_type> w(n);
 
     // ||v||_{M^{-1}} = sqrt(v^T z), z = M^{-1} v; real and positive for an SPD
-    // (HPD) M, which MINRES requires. Formed as sqrt(a) sqrt(c) sqrt(|(v/a)^T (z/c)|)
+    // (HPD) M, which MINRES requires.
+    //
+    // The plain v^T z first: one dot product. It is used when it lies well
+    // inside the range, |v^T z| in [min / eps, max]: an overflow anywhere in
+    // the sum gives inf, and a term lost to underflow is then below eps of the
+    // result. Otherwise (issue 963) it is formed as sqrt(a) sqrt(c) sqrt(|(v/a)^T (z/c)|)
     // with a = ||v||_2 (two_norm scales) and c = max |z_i|, so v^T z cannot
     // overflow or underflow for an operator of 2^+-600 (#671), nor when z's
     // entries are finite but its 2-norm is not (z = 2^1023 ones with n = 16).
-    // `tmp` holds v/a and `zs` z/c. For M = I it is a.
+    // The scaled form costs four passes and 2n divisions; on every step it made
+    // MINRES with a diagonal M about 45% slower per iteration (#869, issue 963).
+    // `tmp` holds v/a and `zs` z/c, in the scaled form only.
     // A v^T z negative beyond rounding sets `indefinite_m` (#949); within
     // rounding its absolute value is taken, so an SPD M is unaffected.
     vec::dense_vector<value_type> zs(n);
     bool indefinite_m = false;
     auto m_norm = [&](const vec::dense_vector<value_type>& vv, const vec::dense_vector<value_type>& zz,
                       vec::dense_vector<value_type>& tmp) -> value_type {
+        using mag_t = magnitude_t<value_type>;
+        {
+            const value_type vz = mtl::dot<Accumulator, value_type>(vv, zz);
+            const mag_t avz = abs(vz);
+            if (avz >= std::numeric_limits<mag_t>::min() / std::numeric_limits<mag_t>::epsilon()
+                && avz <= std::numeric_limits<mag_t>::max()) {
+                if (detail::not_positive_definite<Accumulator>(
+                        vz, std::size_t(n), [&] { return std::pair{mtl::two_norm(vv), mtl::two_norm(zz)}; }))
+                    indefinite_m = true;
+                return value_type(sqrt(avz));
+            }
+        }
         const auto a = mtl::two_norm(vv);
         if (a == decltype(a)(0)) return zero;
         const auto c = mtl::infinity_norm(zz);
