@@ -13,6 +13,7 @@
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/itl/krylov/scaled_rhs.hpp>
 #include <mtl/itl/krylov/spd_check.hpp>
+#include <mtl/itl/krylov/pow2_rescale.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/pow2_scaling.hpp>
 
@@ -85,9 +86,11 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // non-negative plain v^T z needs no such test.
     vec::dense_vector<value_type> zs(n);
     bool indefinite_m = false;
+    bool m_norm_plain = false;   // the last m_norm took the plain form
     auto m_norm = [&](const vec::dense_vector<value_type>& vv, const vec::dense_vector<value_type>& zz,
                       vec::dense_vector<value_type>& tmp) -> value_type {
         using mag_t = magnitude_t<value_type>;
+        m_norm_plain = false;
         {
             // Only a non-negative real part takes the plain form. A negative
             // one goes to the scaled form, whose code-7 test (#949) uses the
@@ -102,8 +105,10 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             if constexpr (is_complex_v<value_type>) re = vz.real(); else re = vz;
             if (re >= mag_t(0)
                 && avz >= std::numeric_limits<mag_t>::min() / std::numeric_limits<mag_t>::epsilon()
-                && avz <= std::numeric_limits<mag_t>::max())
+                && avz <= std::numeric_limits<mag_t>::max()) {
+                m_norm_plain = true;
                 return value_type(sqrt(avz));
+            }
         }
         const auto a = mtl::two_norm(vv);
         if (a == decltype(a)(0)) return zero;
@@ -118,6 +123,17 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
                 vz, std::size_t(n), [&] { return std::pair{mtl::two_norm(tmp), mtl::two_norm(zs)}; }))
             indefinite_m = true;
         return value_type(sqrt(a) * sqrt(c) * sqrt(abs(vz)));
+    };
+
+    // Whether the solve z = M^-1 v left the range (issue 971): a non-finite
+    // z, or a nonzero v whose z is zero or subnormal throughout. Asked only
+    // when the M-norm could not take its plain form, so never on the normal path.
+    auto solve_left_range = [&](const vec::dense_vector<value_type>& vv,
+                                const vec::dense_vector<value_type>& zz) -> bool {
+        using mag_t = magnitude_t<value_type>;
+        const mag_t zmax = mtl::infinity_norm(zz);
+        if (!(zmax <= std::numeric_limits<mag_t>::max())) return true;   // inf or NaN
+        return zmax < std::numeric_limits<mag_t>::min() && mtl::infinity_norm(vv) > mag_t(0);
     };
 
     // Initial residual: r = b - A*x
@@ -188,7 +204,28 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         for (size_type i = 0; i < n; ++i)
             v_new(i) = w(i) - alpha * v(i) - beta * v_old(i);
         M.solve(z_new, v_new);
-        value_type beta_new = m_norm(v_new, z_new, w);   // w is free until the next step
+        value_type beta_hat = m_norm(v_new, z_new, w);   // w is free until the next step
+        // The new Lanczos vector is formed before it is normalized, so for M
+        // scaled by s it scales as s^(-1/2), and its solve z_new = M^-1 v_new
+        // as s^(-3/2): beyond about 2^+-700 z_new underflowed to 0 (a false
+        // breakdown, code 2) or overflowed (code 6), while every other
+        // quantity of the step was in range (issue 971). So when the M-norm
+        // could not take its plain form and the solve left the range, the
+        // solve is redone on v-hat = 2^-e v_new, with 2^e <= max |v_new_i|
+        // (pow2_rescale.hpp): z-hat = M^-1 v-hat is then of M^-1's own scale.
+        // beta-hat = ||v-hat||_{M^-1} = 2^-e beta_new exactly, so the
+        // recurrences take beta_new = 2^e beta-hat, and v and z are
+        // v-hat / beta-hat and z-hat / beta-hat, the same vectors. Where the
+        // solve was in range nothing changes, bit for bit: e is 0.
+        int ev = 0;
+        if (!m_norm_plain && solve_left_range(v_new, z_new)) {
+            ev = detail::max_abs_exponent(v_new);
+            detail::scale_by_pow2(v_new, -ev, v_new);
+            M.solve(z_new, v_new);
+            indefinite_m = false;   // the first m_norm read the out-of-range z_new
+            beta_hat = m_norm(v_new, z_new, w);
+        }
+        const value_type beta_new = detail::by_pow2(beta_hat, ev);
         if (indefinite_m) {
             iter.fail(detail::not_positive_definite_code,
                       "minres: the preconditioner is not positive definite (v^T M^-1 v < 0)");
@@ -236,13 +273,14 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
         // Update residual tracking
         eta = -sn_new * eta;
 
-        // Shift Lanczos vectors: v_old <- v, (v, z) <- (v_new, z_new) / beta_new
+        // Shift Lanczos vectors: v_old <- v, (v, z) <- (v_new, z_new) / beta_new,
+        // formed as (v-hat, z-hat) / beta-hat (the same, see above).
         for (size_type i = 0; i < n; ++i)
             v_old(i) = v(i);
-        if (beta_new != zero) {
+        if (beta_hat != zero) {
             for (size_type i = 0; i < n; ++i) {
-                v(i) = v_new(i) / beta_new;
-                z(i) = z_new(i) / beta_new;
+                v(i) = v_new(i) / beta_hat;
+                z(i) = z_new(i) / beta_hat;
             }
         } else {
             for (size_type i = 0; i < n; ++i) {
