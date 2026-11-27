@@ -451,6 +451,16 @@ TEMPLATE_TEST_CASE("genericity: sparse Cholesky, QR, LU refinement and shift-inv
         sparse::iterative_refine(As, facs, bs, xs, opt);
         agree(xs, x, true);
     }
+    SECTION("native_klu and sparse_lu: rgrowth and rcond (issue 946)") {
+        const auto fac = fz::native_klu_factor(A);
+        const auto facs = fz::native_klu_factor(As);
+        agree(facs.rgrowth(), fac.rgrowth(), 1.0, true);
+        agree(facs.rcond(), fac.rcond(), 1.0, true);
+        const auto lu = fz::sparse_lu_numeric(A, fz::sparse_lu_symbolic(A));
+        const auto lus = fz::sparse_lu_numeric(As, fz::sparse_lu_symbolic(As));
+        agree(lus.rgrowth(As), lu.rgrowth(A), 1.0, true);
+        agree(lus.rcond(), lu.rcond(), 1.0, true);
+    }
     SECTION("shift_invert_operator") {
         const sparse::shift_invert_operator<N> op(A, N(1));
         const sparse::shift_invert_operator<S> ops(As, S(1));

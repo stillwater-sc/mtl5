@@ -74,6 +74,54 @@ struct klu_numeric {
     std::size_t num_cols() const { return num_rows(); }
     std::size_t nblocks()  const { return btf.nblocks(); }
 
+    /// A cheap reciprocal condition estimate: min |u_kk| / max |u_kk| over the
+    /// diagonals of every block's U, as SuiteSparse's klu_rcond. O(n). A crude
+    /// first check, not a bound. 1 for n = 0; NaN if a pivot is NaN.
+    Value rcond() const {
+        if (num_rows() == 0) return Value{1};
+        Value lo{0}, hi{0};
+        bool seen = false;
+        for (const auto& bn : block_numeric)
+            if (!detail::lu_fold_pivots(bn.factorU(), lo, hi, seen)) return lo;   // NaN
+        return seen ? lo / hi : Value{1};
+    }
+
+    /// The reciprocal pivot growth, as SuiteSparse's klu_rgrowth: the minimum,
+    /// over the columns j of every diagonal block, of max |B_bb(:, j)| /
+    /// max |U_b(:, j)|, capped at 1. B is the row-scaled, permuted matrix that
+    /// was factored. Near 1 means the pivots fit the values; a tiny value means
+    /// they do not, typically after native_klu_refactor kept a pivot that the
+    /// new values made tiny, and the solve cannot be trusted: factor afresh.
+    /// O(nnz(B) + nnz(U)). 1 for n = 0; NaN if B or U holds a NaN.
+    Value rgrowth() const {
+        using std::abs;
+        const std::size_t n = num_rows();
+        if (n == 0) return Value{1};
+        // amax[j]: the largest |B(i, j)| with i in j's diagonal block.
+        std::vector<Value> amax(n, Value{0});
+        const auto& rp  = B.ref_major();
+        const auto& ci  = B.ref_minor();
+        const auto& dat = B.ref_data();
+        for (std::size_t i = 0; i < n; ++i)
+            for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) {
+                const std::size_t j = ci[k];
+                const Value a = abs(dat[k]);
+                if (!(a == a)) return a;   // a NaN coupling too: solve() reads it
+                if (block_of[j] != block_of[i]) continue;
+                if (a > amax[j]) amax[j] = a;
+            }
+        Value g{1};
+        for (std::size_t blk = 0; blk < nblocks(); ++blk) {
+            const auto& bn = block_numeric[blk];
+            const std::size_t r0 = btf.blocks[blk];
+            // U's column k is the block's column col_perm[k].
+            g = detail::lu_rgrowth(bn.factorU(),
+                                   [&](std::size_t k) { return amax[r0 + bn.symbolic.col_perm[k]]; }, g);
+            if (!(g == g)) return g;
+        }
+        return g;
+    }
+
     /// Solve A*x = b via block back-substitution. x and b have the dimension of
     /// the original matrix A.
     template <typename VecX, typename VecB>
@@ -305,10 +353,18 @@ klu_numeric<Value> native_klu_factor(
 /// Intended for repeated solves of a fixed circuit-matrix pattern with changing
 /// values (SPICE transient analysis; the mp-spice mixed-precision study).
 ///
+/// A reused pivot that the new values make exactly zero throws. One they make
+/// tiny but not zero does NOT: the refactorization returns normally, with
+/// num_perturbed 0, and its solve can be wrong in every digit (issue 946: a
+/// 2 x 2 block pivoted on 2, refactored with 1e-20 in its place). Check
+/// `rgrowth()` on the result -- near 1 is good, a tiny value means the kept
+/// pivots no longer fit -- and call native_klu_factor afresh when it fails.
+/// `rcond()` is a cheaper, cruder check.
+///
 /// \throws std::invalid_argument if A's dimensions do not match `prev`, or A has
 ///                               an entry outside the prior BTF and factor pattern.
-/// \throws std::runtime_error    if a reused pivot is numerically zero for the
-///                               new values (prior pivot sequence invalid).
+/// \throws std::runtime_error    if a reused pivot is exactly zero for the new
+///                               values (prior pivot sequence invalid).
 template <typename Value, typename Parameters>
     requires OrderedField<Value>
 klu_numeric<Value> native_klu_refactor(
