@@ -76,6 +76,25 @@ class Results(unittest.TestCase):
         r["samples_s"] = [1, 2]
         self.assertTrue(cr.check_result(r, False))
 
+    def test_non_finite_timings_are_rejected(self):
+        # #973 review: samples = 10, every time 1 but p25_s NaN. Every ordering
+        # comparison with NaN is false, so the order check passed it.
+        r = result([1.0] * 10, p25_s=float("nan"))
+        self.assertTrue(any("p25_s" in p and "finite" in p for p in cr.check_result(r, False)))
+        for k in ("min_s", "p90_s", "max_s"):
+            for bad in (float("inf"), float("nan")):
+                r = result([1.0] * 10, **{k: bad})
+                self.assertTrue(cr.check_result(r, False), (k, bad))
+        self.assertTrue(cr.check_result(result([1.0] * 10, median_s=float("nan")), False))
+
+    def test_non_numeric_samples_are_a_problem_not_a_crash(self):
+        # #973 review: samples_s = [1, "2", 3] raised TypeError in the sort check.
+        for bad in ([1, "2", 3], [1, None, 3], [1, True, 3], [1, float("nan"), 3]):
+            r = result([1, 2, 3], with_samples=True)
+            r["samples_s"] = bad
+            probs = cr.check_result(r, False)
+            self.assertTrue(any("samples_s[1]" in p for p in probs), bad)
+
     def test_require_samples(self):
         r = result([1, 2, 3])
         self.assertEqual(cr.check_result(r, False), [])
@@ -105,6 +124,9 @@ class Files(unittest.TestCase):
         old = {"schema": "mtl5-bench/1", "results": [{k: v for k, v in result([1, 2, 3]).items() if k != "version"}]}
         self.assertEqual(self.run_main([old]), 1)
         self.assertEqual(self.run_main([{"schema": "other", "results": []}]), 1)
+        # A bad file does not stop the check of the next one.
+        bad = {"schema": "mtl5-bench/1", "results": [dict(result([1, 2, 3], with_samples=True), samples_s=[1, "2", 3])]}
+        self.assertEqual(self.run_main([bad, good]), 1)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(cr.main(["/nonexistent/x.json"]), 2)
 

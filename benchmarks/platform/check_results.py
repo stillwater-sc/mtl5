@@ -26,6 +26,13 @@ from pathlib import Path
 QUANTILES = (("p10_s", 0.10), ("p25_s", 0.25), ("median_s", 0.50), ("p75_s", 0.75), ("p90_s", 0.90))
 
 
+def finite_number(x):
+    """A finite int or float, not a bool. Python's json reads NaN and Infinity,
+    and every ordering comparison with NaN is false, so the order checks below
+    would pass one (#973 review)."""
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
 def quantile_index(n, q):
     """The index of the q-quantile of n sorted samples: min(n - 1, floor(q n))."""
     return min(n - 1, int(math.floor(q * n)))
@@ -38,14 +45,17 @@ def check_result(r, require_samples):
     if not isinstance(v, int) or isinstance(v, bool) or v < 1:
         out.append(f"version must be an integer >= 1, got {v!r}")
     med = r.get("median_s")
-    if not isinstance(med, (int, float)) or med <= 0:
+    if med is None or (finite_number(med) and med <= 0):
         return out   # not timed (failed, or threw): nothing more to check
+    if not finite_number(med):
+        out.append(f"median_s is not a finite number ({med!r})")
+        return out
     names = ["min_s"] + [k for k, _ in QUANTILES[:2]] + ["median_s"] + [k for k, _ in QUANTILES[3:]] + ["max_s"]
     vals = []
     for k in names:
         x = r.get(k)
-        if not isinstance(x, (int, float)) or isinstance(x, bool):
-            out.append(f"{k} missing or not a number ({x!r})")
+        if not finite_number(x):
+            out.append(f"{k} missing or not a finite number ({x!r})")
             return out
         vals.append(x)
     for (a, xa), (b, xb) in zip(zip(names, vals), zip(names[1:], vals[1:])):
@@ -64,6 +74,13 @@ def check_result(r, require_samples):
         return out
     if not isinstance(s, list) or len(s) != n:
         out.append(f"samples_s has {len(s) if isinstance(s, list) else '?'} values, samples = {n}")
+        return out
+    # Every value is checked before any is compared: a string among them made
+    # the sort check raise TypeError, and the remaining files went unchecked.
+    bad = [i for i, x in enumerate(s) if not finite_number(x)]
+    if bad:
+        out.append(f"samples_s[{bad[0]}] is not a finite number ({s[bad[0]]!r})"
+                   + (f", and {len(bad) - 1} more" if len(bad) > 1 else ""))
         return out
     if any(a > b for a, b in zip(s, s[1:])):
         out.append("samples_s is not sorted")

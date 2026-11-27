@@ -260,14 +260,14 @@ def render_report(rep):
         lines.append(f"| {r['run']} | {r['entries']} | {r['skipped']} | {fmt_ratio(r['median_ratio'])} | "
                      f"{fmt_ratio(r['min_ratio'])} | {fmt_ratio(r['max_ratio'])} | "
                      f"{len(r['outside'])} | {r['verdict']} |")
-    lines += ["", "An entry is not compared when it is in only one session (added or removed "
-              "between the commits), its definition version changed (#928), it failed its "
-              "check in either, or it has no timing.", ""]
+    lines += ["", ("An entry is not compared when it is in only one session (added or removed "
+                   "between the commits), its definition version changed (#928), it failed its "
+                   "check in either, or it has no timing."), ""]
     redef = [(r["run"], e) for r in rep["runs"] for e in r.get("redefined", [])]
     if redef:
         lines += ["## Entries whose definition changed", "",
-                  "Their benchmark measures something else since the baseline, so they start a "
-                  "new series and are not compared.", "",
+                  ("Their benchmark measures something else since the baseline, so they start a "
+                   "new series and are not compared."), "",
                   "| run | entry | version |", "|---|---|---|"]
         for run, e in redef:
             lines.append(f"| {run} | {esc(e['entry'])} | {e['from']} to {e['to']} |")
