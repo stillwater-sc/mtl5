@@ -87,7 +87,8 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             zs(i)  = zz(i) / c;
         }
         const value_type vz = mtl::dot<Accumulator, value_type>(tmp, zs);
-        if (detail::not_positive_definite(vz, std::size_t(n), [&] { return mtl::two_norm(tmp) * mtl::two_norm(zs); }))
+        if (detail::not_positive_definite<Accumulator>(
+                vz, std::size_t(n), [&] { return std::pair{mtl::two_norm(tmp), mtl::two_norm(zs)}; }))
             indefinite_m = true;
         return value_type(sqrt(a) * sqrt(c) * sqrt(abs(vz)));
     };

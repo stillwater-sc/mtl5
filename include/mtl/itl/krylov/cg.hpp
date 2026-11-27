@@ -84,8 +84,8 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             }
             // A negative rho: M is not positive definite (#949). It ran on
             // before, with directions that are not A-conjugate in any norm.
-            if (detail::not_positive_definite(rho, std::size_t(n),
-                                              [&] { return mtl::two_norm(r) * mtl::two_norm(z); })) {
+            if (detail::not_positive_definite<Accumulator>(
+                    rho, std::size_t(n), [&] { return std::pair{mtl::two_norm(r), mtl::two_norm(z)}; })) {
                 iter.fail(detail::not_positive_definite_code,
                           "cg: the preconditioner is not positive definite (r^T M^-1 r < 0)");
                 return iter;

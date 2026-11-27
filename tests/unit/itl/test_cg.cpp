@@ -178,3 +178,51 @@ TEST_CASE("cg: a preconditioner that is not positive definite returns 7 (issue 9
         }
     }
 }
+
+// Review of #952: the tolerance n u ||r|| ||z|| must neither overflow while
+// rho is finite, nor use a finer rounding unit than the accumulator's.
+#include <cmath>
+#include <utility>
+#include <mtl/itl/krylov/spd_check.hpp>
+namespace {
+// M = [[0, 1], [1, 1/2]], indefinite: M^-1 = [[-1/2, 1], [1, 0]].
+struct indefinite_2x2_949 {
+    template <typename VecX, typename VecB>
+    void solve(VecX& z, const VecB& v) const {
+        const double v0 = v(0), v1 = v(1);
+        z(0) = -0.5 * v0 + v1;
+        z(1) = v0;
+    }
+};
+} // namespace
+
+TEST_CASE("cg: code 7 when ||r|| ||z|| overflows but rho does not (issue 949)", "[itl][cg][949]") {
+    // A = I, b = 0, x0 = (-2^512, 0): r = (2^512, 0), z = (-2^511, 2^512),
+    // rho = -2^1023 is finite; ||r|| ||z|| is not.
+    mat::dense2D<double> A = {{1.0, 0.0}, {0.0, 1.0}};
+    vec::dense_vector<double> b(2, 0.0), x(2, 0.0);
+    x(0) = -0x1p512;
+    const indefinite_2x2_949 M;
+    itl::basic_iteration<double> iter(0x1p512, 50, 1e-10);
+    REQUIRE(itl::cg(A, x, b, M, iter) == 7);
+    CHECK(x(0) == -0x1p512);
+    CHECK(x(1) == 0.0);
+}
+
+TEST_CASE("not_positive_definite: the tolerance's rounding unit and range (issue 949)", "[itl][949]") {
+    namespace d = itl::detail;
+    // A dot product of 5 terms of order 1 that rounds to -2^-23: within a
+    // float accumulator's rounding, far outside double's.
+    const auto norms = [] { return std::pair{std::sqrt(5.0), std::sqrt(3.0)}; };
+    CHECK(d::not_positive_definite(-0x1p-23, 5, norms));
+    CHECK_FALSE(d::not_positive_definite<float>(-0x1p-23, 5, norms));
+    CHECK(d::not_positive_definite<float>(-1.0, 5, norms));     // still found
+    CHECK(d::dot_rounding_unit<float, double>() == double(std::numeric_limits<float>::epsilon()));
+    CHECK(d::dot_rounding_unit<long double, double>() == std::numeric_limits<double>::epsilon());
+    // Norms whose product overflows, around a finite negative d.
+    CHECK(d::not_positive_definite(-0x1p1023, 2, [] { return std::pair{0x1p512, 0x1.2p512}; }));
+    // Rounding-sized negatives, and positives and NaN, are not a failure.
+    CHECK_FALSE(d::not_positive_definite(-1e-17, 5, norms));
+    CHECK_FALSE(d::not_positive_definite(1.0, 5, norms));
+    CHECK_FALSE(d::not_positive_definite(std::nan(""), 5, norms));
+}
