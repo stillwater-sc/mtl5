@@ -770,7 +770,11 @@ TEST_CASE("native_klu_refactor: the opt-in growth threshold (issue 946)", "[spar
         FAIL("no klu_growth_error");
     } catch (const klu_growth_error& e) {
         CHECK(e.rgrowth < 1e-15);
-        CHECK(std::string(e.what()).find("factor afresh") != std::string::npos);
+        const std::string what = e.what();
+        CHECK(what.find("factor afresh") != std::string::npos);
+        // Both values readable, not %f's 0.000000 (review of #956).
+        CHECK(what.find("min_rgrowth 1.000000e-08") != std::string::npos);
+        CHECK(what.find("0.000000 ") == std::string::npos);
     }
     // A NaN growth is rejected too.
     REQUIRE_THROWS_AS(native_klu_refactor(two_by_two(std::nan("")), fac, {.min_rgrowth = 1e-8}), klu_growth_error);

@@ -27,6 +27,8 @@
 //            Davis & Palamadai Natarajan, "Algorithm 907: KLU", ACM TOMS 2010.
 
 #include <cstddef>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -582,12 +584,15 @@ klu_numeric<Value> native_klu_refactor(
     klu_numeric<Value> result = native_klu_refactor(A, prev);
     if (opt.min_rgrowth > Value{0}) {
         const Value g = result.rgrowth();
-        if (!(g >= opt.min_rgrowth))
-            throw klu_growth_error(
-                "native_klu_refactor: reciprocal pivot growth " + std::to_string(static_cast<double>(g))
-                + " is below min_rgrowth " + std::to_string(static_cast<double>(opt.min_rgrowth))
-                + ": the kept pivots do not fit the new values; factor afresh",
-                static_cast<double>(g));
+        if (!(g >= opt.min_rgrowth)) {
+            // Scientific notation: std::to_string's %f printed 1e-8 as 0.000000.
+            std::ostringstream os;
+            os << std::scientific << std::setprecision(6)
+               << "native_klu_refactor: reciprocal pivot growth " << static_cast<double>(g)
+               << " is below min_rgrowth " << static_cast<double>(opt.min_rgrowth)
+               << ": the kept pivots do not fit the new values; factor afresh";
+            throw klu_growth_error(os.str(), static_cast<double>(g));
+        }
     }
     return result;
 }
