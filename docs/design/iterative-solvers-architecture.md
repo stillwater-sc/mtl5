@@ -39,7 +39,11 @@ int err = iter;                 // 0 = converged, 1 = max_iter exceeded
 
 The other codes are a solver's breakdown (2 to 5, described in each solver) and
 6 (`basic_iteration::non_finite`), a NaN or Inf residual. A NaN in b stops the
-solve at its first test instead of running to `max_iter` (issue 924). Each solver
+solve at its first test instead of running to `max_iter` (issue 924). Code 7
+(`basic_iteration::not_positive_definite`) means that a solver requiring a
+symmetric (Hermitian) positive definite preconditioner found M not to be one: a
+vᴴM⁻¹v negative beyond rounding. `minres` and `cg` report it, at the first such
+step, with x as the last valid step left it (issue 949). Each solver
 works on its own copy of `b`, so `x` may alias `b`. The dot-product solvers scale
 an extreme `b` by an exact power of two (`krylov/scaled_rhs.hpp`).
 

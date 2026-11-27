@@ -7,6 +7,12 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Error code 7: a preconditioner that is not positive definite** (issue 949). `minres` and `cg` require a symmetric (Hermitian) positive definite M. Both now stop with `basic_iteration::not_positive_definite` (7), at the first step where vᴴM⁻¹v is negative beyond the rounding of its dot product (n·ε·‖v‖‖M⁻¹v‖), with x as the last valid step left it.
+  - **MINRES** used to take the absolute value of a negative vᵀM⁻¹v. On tridiag(1, [4, −3, 4, −3, …], 1) with M = `pc::diagonal` it ran 149 iterations and returned 2, the code of a γ = 0 breakdown, with 96% of the residual left. It now returns 7 before the first iteration.
+  - **CG** failed only on ρ == 0 exactly. With an SPD A and M = diag(4, −3, 4, −3, …) it now returns 7 where it formerly reported convergence (0).
+  - An SPD M is unaffected, including at 2^±600 for MINRES and 2^±300 for CG. (CG with M at 2^±600 fails with or without this change: its dot products are not range-scaled as MINRES's are, #671.)
+  - The imaginary part of a complex vᴴM⁻¹v is not tested. An ill-conditioned HPD M can give one through the rounding of its solve, of order cond(M)·ε, so no tolerance independent of M separates the two.
+  - The test is `itl/krylov/spd_check.hpp`. `examples/phase13_krylov_multigrid/krylov_comparison.cpp` Part 3 now shows 7. Tests: `test_minres.cpp` and `test_cg.cpp` ([949]).
 - **Pivot growth and rcond for native KLU and sparse LU** (issue 946). `native_klu_refactor` keeps the earlier pivot sequence. A pivot that the new values make exactly zero throws. One they make tiny but not zero was accepted: `num_perturbed` stayed 0, and the solve could be wrong in every digit. Two checks, after SuiteSparse's `klu_rgrowth` and `klu_rcond`, let a caller detect this and factor afresh:
   - **`klu_numeric::rgrowth()`** is the reciprocal pivot growth: the minimum, over the columns of every diagonal block, of max |B(:, j)| / max |U(:, j)|, capped at 1. It costs O(nnz(B) + nnz(U)). The issue's 2 × 2 example (pivot on 2, refactored with 1e-20 in its place) gives about 1e-20 after the refactor, and more than 0.1 when factored afresh. On SuiteSparse's `adder_dcop_01` → `_02` circuit sequence, measured through mtl5-python, the block growth max |U| / max |B| was 1.7 for a fresh factorization and 4.4e35 for the refactor.
   - **`klu_numeric::rcond()`** is min |u_kk| / max |u_kk| over every block's U, in O(n). It is a cruder check.

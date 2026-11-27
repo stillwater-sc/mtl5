@@ -7,12 +7,17 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/itl/krylov/scaled_rhs.hpp>
+#include <mtl/itl/krylov/spd_check.hpp>
 
 namespace mtl::itl {
 
 /// Preconditioned Conjugate Gradient method.
 /// Solves A*x = b where A is symmetric positive definite.
-/// M is a preconditioner satisfying M.solve(x, b).
+/// M is a preconditioner satisfying M.solve(x, b), symmetric (Hermitian)
+/// positive definite. An M found not to be -- rho = r^H M^{-1} r negative
+/// beyond rounding for an r that has not converged -- stops the solve with
+/// error code 7 (basic_iteration::not_positive_definite), with x as the last
+/// step left it (#949). An exactly zero rho stays a breakdown (2).
 /// iter is a convergence controller (basic_iteration or derived).
 ///
 /// Accumulator (optional): accumulation type for the two dot products and
@@ -75,6 +80,14 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             // beta 0 / 0 (issue 924).
             if (rho == value_type(0)) {
                 iter.fail(2, "cg breakdown: rho == 0");
+                return iter;
+            }
+            // A negative rho: M is not positive definite (#949). It ran on
+            // before, with directions that are not A-conjugate in any norm.
+            if (detail::not_positive_definite(rho, std::size_t(n),
+                                              [&] { return mtl::two_norm(r) * mtl::two_norm(z); })) {
+                iter.fail(detail::not_positive_definite_code,
+                          "cg: the preconditioner is not positive definite (r^T M^-1 r < 0)");
                 return iter;
             }
             r_is_true = false;
