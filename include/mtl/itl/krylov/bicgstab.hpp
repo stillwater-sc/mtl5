@@ -7,6 +7,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/itl/krylov/scaled_rhs.hpp>
+#include <mtl/itl/krylov/pow2_rescale.hpp>
 
 namespace mtl::itl {
 
@@ -122,12 +123,31 @@ int bicgstab(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter)
             apply_operator<Accumulator>(A, shat, t);
 
             // omega = dot(t, s) / dot(t, t)
+            //
+            // t^T t leaves the range first (issue 958). For a preconditioner
+            // scaled by s, p-hat, v, s-hat and t scale as 1/s, and rho, r*^T v
+            // and t^T s as 1/s, but t^T t as 1/s^2: at M = 4 * 2^600 I it
+            // underflowed to 0 (a false breakdown, code 4), at 4 * 2^-600 I it
+            // overflowed, omega was 0 (code 5). So when t^T t is not a normal
+            // number omega is formed from t-hat = 2^-e t (pow2_rescale.hpp):
+            //   omega = (t^T s) / (t^T t) = 2^-e (t-hat^T s) / (t-hat^T t-hat),
+            // exactly, since a power of two scales without rounding. Where
+            // t^T t is normal nothing changes, bit for bit. One that is zero
+            // after the rescaling is a true zero: a breakdown. Ax holds t-hat;
+            // it is free until the next true residual.
             value_type tt = mtl::dot<Accumulator, value_type>(t, t);
-            if (tt == value_type(0)) {
-                iter.fail(4, "bicgstab breakdown: dot(t, t) == 0");
-                return iter;
+            if (detail::is_normal_magnitude(tt)) {
+                omega = mtl::dot<Accumulator, value_type>(t, s) / tt;
+            } else {
+                const int e = detail::max_abs_exponent(t);
+                detail::scale_by_pow2(t, -e, Ax);
+                const value_type tth = mtl::dot<Accumulator, value_type>(Ax, Ax);
+                if (tth == value_type(0)) {
+                    iter.fail(4, "bicgstab breakdown: dot(t, t) == 0");
+                    return iter;
+                }
+                omega = detail::by_pow2(mtl::dot<Accumulator, value_type>(Ax, s) / tth, -e);
             }
-            omega = mtl::dot<Accumulator, value_type>(t, s) / tt;
             // omega == 0 stalls x and divides the next beta by zero (issue 866).
             if (omega == value_type(0)) {
                 for (size_type i = 0; i < n; ++i)
