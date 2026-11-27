@@ -238,8 +238,10 @@ int main() {
         rows.push_back(run("MINRES", "diag(A)", A_si, b3, 500, [&](vec_t& x, auto& it) { return itl::minres(A_si, x, b3, D, it); }));
         rows.push_back(run("MINRES", "|diag(A)|", A_si, b3, 500, [&](vec_t& x, auto& it) { return itl::minres(A_si, x, b3, AD, it); }));
         print(rows);
-        std::cout << "With diag(A), MINRES breaks down (info 2) after many iterations with most\n";
-        std::cout << "of the residual left. |diag(A)| is valid, but on this matrix, whose\n";
+        std::cout << "With diag(A), MINRES stops at once with info 7: r0^T M^{-1} r0 < 0, so M\n";
+        std::cout << "is not positive definite (before issue 949 it took the absolute value,\n";
+        std::cout << "and broke down with info 2 after 149 iterations, with most of the residual\n";
+        std::cout << "left). |diag(A)| is valid, but on this matrix, whose\n";
         std::cout << "eigenvalues sit in two tight clusters, it has nothing to improve.\n";
     }
 

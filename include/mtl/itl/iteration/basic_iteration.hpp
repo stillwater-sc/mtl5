@@ -13,8 +13,9 @@ namespace mtl::itl {
 /// Convergence test: resid <= rtol * norm_r0  ||  resid <= atol
 ///
 /// Error codes: 0 converged, 1 max_iter reached, 2 to 5 a solver's breakdown
-/// (see the solver), and `non_finite` (6) when a residual handed to finished()
-/// is NaN or infinite.
+/// (see the solver), `non_finite` (6) when a residual handed to finished()
+/// is NaN or infinite, and `not_positive_definite` (7) when a solver that
+/// requires an SPD (HPD) preconditioner finds that M is not (minres, cg; #949).
 template <typename Real>
 class basic_iteration {
 public:
@@ -58,6 +59,11 @@ public:
 
     /// Error code of a residual that is NaN or infinite.
     static constexpr int non_finite = 6;
+
+    /// Error code of a preconditioner found not to be positive definite: a
+    /// v^H M^{-1} v negative beyond rounding, in a solver that requires an SPD
+    /// (HPD) M. The same code in every solver (#949).
+    static constexpr int not_positive_definite = 7;
 
     /// Test convergence given scalar residual norm
     bool finished(Real r) {

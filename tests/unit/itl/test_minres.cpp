@@ -88,3 +88,96 @@ TEST_CASE("MINRES with diagonal PC", "[itl][minres]") {
     for (std::size_t i = 0; i < n; ++i)
         REQUIRE_THAT(Ax(i), Catch::Matchers::WithinAbs(b(i), 1e-6));
 }
+
+// Issue 949: an M that is not positive definite stops MINRES with code 7.
+namespace {
+// diag(d) as a preconditioner: M.solve(z, v) is z = v ./ d.
+struct given_diagonal_949 {
+    vec::dense_vector<double> d;
+    template <typename VecX, typename VecB>
+    void solve(VecX& z, const VecB& v) const {
+        for (std::size_t i = 0; i < d.size(); ++i) z(i) = v(i) / d(i);
+    }
+};
+
+// tridiag(1, [4, -3, 4, -3, ...], 1), the issue's indefinite matrix.
+mat::compressed2D<double> alternating_949(std::size_t n) {
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << (i % 2 == 0 ? 4.0 : -3.0);
+            if (i > 0)     ins[i][i - 1] << 1.0;
+            if (i + 1 < n) ins[i][i + 1] << 1.0;
+        }
+    }
+    return A;
+}
+
+double relres_949(const mat::compressed2D<double>& A, const vec::dense_vector<double>& x,
+                  const vec::dense_vector<double>& b) {
+    vec::dense_vector<double> r = A * x;
+    for (std::size_t i = 0; i < r.size(); ++i) r(i) = b(i) - r(i);
+    return mtl::two_norm(r) / mtl::two_norm(b);
+}
+} // namespace
+
+TEST_CASE("minres: a preconditioner that is not positive definite returns 7 (issue 949)",
+          "[itl][minres][949]") {
+    const std::size_t n = 50;
+    const auto A = alternating_949(n);
+    vec::dense_vector<double> b(n, 1.0);
+    using csr = mat::compressed2D<double>;
+    STATIC_REQUIRE(itl::basic_iteration<double>::not_positive_definite == 7);
+
+    SECTION("M = diag(A), indefinite: 7 at once, not 2 after 149 iterations") {
+        vec::dense_vector<double> x(n, 0.0);
+        itl::pc::diagonal<csr> M(A);
+        itl::basic_iteration<double> iter(b, 500, 1e-10);
+        REQUIRE(itl::minres(A, x, b, M, iter) == 7);
+        CHECK(iter.iterations() == 0);
+        for (std::size_t i = 0; i < n; ++i) CHECK(x(i) == 0.0);
+    }
+
+    SECTION("M = |diag(A)|, SPD: unchanged, 0 in 18") {
+        vec::dense_vector<double> x(n, 0.0), d(n);
+        for (std::size_t i = 0; i < n; ++i) d(i) = (i % 2 == 0 ? 4.0 : 3.0);
+        given_diagonal_949 M{d};
+        itl::basic_iteration<double> iter(b, 500, 1e-10);
+        REQUIRE(itl::minres(A, x, b, M, iter) == 0);
+        CHECK(iter.iterations() == 18);
+        CHECK(relres_949(A, x, b) < 1e-10);
+    }
+
+    SECTION("found at a later Lanczos step, x as the last valid step left it") {
+        // r0 = e0 and a tridiagonal A: the Lanczos vectors reach index k at
+        // step k, and M is negative only at index 5.
+        const auto T = make_tridiagonal(n, 4.0, 1.0);
+        vec::dense_vector<double> e0(n, 0.0), d(n, 4.0);
+        e0(0) = 1.0;
+        d(5) = -4.0;
+        given_diagonal_949 M{d};
+        vec::dense_vector<double> x(n, 0.0);
+        itl::basic_iteration<double> iter(e0, 500, 1e-12);
+        REQUIRE(itl::minres(T, x, e0, M, iter) == 7);
+        const int k = iter.iterations();
+        REQUIRE(k >= 2);
+        // The same solve stopped by the limit just before that step.
+        vec::dense_vector<double> y(n, 0.0);
+        itl::basic_iteration<double> limit(e0, k - 1, 1e-12);
+        REQUIRE(itl::minres(T, y, e0, M, limit) == 1);
+        for (std::size_t i = 0; i < n; ++i) CHECK(x(i) == y(i));
+        CHECK(mtl::two_norm(x) > 0.0);
+    }
+
+    SECTION("an SPD M at 2^+-600 is unaffected") {
+        const auto T = make_tridiagonal(n, 4.0, -1.0);
+        for (const double s : {0x1p600, 0x1p-600}) {
+            vec::dense_vector<double> x(n, 0.0), d(n, 4.0 * s);
+            given_diagonal_949 M{d};
+            itl::basic_iteration<double> iter(b, 500, 1e-10);
+            REQUIRE(itl::minres(T, x, b, M, iter) == 0);
+            CHECK(relres_949(T, x, b) < 1e-10);
+        }
+    }
+}

@@ -11,6 +11,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/itl/krylov/scaled_rhs.hpp>
+#include <mtl/itl/krylov/spd_check.hpp>
 #include <mtl/math/identity.hpp>
 #include <mtl/math/pow2_scaling.hpp>
 
@@ -20,6 +21,11 @@ namespace mtl::itl {
 /// Solves A*x = b with preconditioner M and iteration controller iter.
 /// A must be symmetric and M symmetric positive definite (Hermitian for a
 /// complex system): the Lanczos process runs in the M^{-1} inner product.
+/// An M found not to be -- a v^H M^{-1} v negative beyond rounding, at the
+/// initial residual or at a Lanczos step -- stops the solve with error code 7
+/// (basic_iteration::not_positive_definite), with x as the last valid step
+/// left it (#949). Formerly its absolute value was taken, and the solve ran on
+/// a Lanczos process that is not defined, to a generic breakdown (2) much later.
 ///
 /// Accumulator (optional): accumulation type for the dot products and the
 /// matrix-vector products (see math/accumulator_traits.hpp, #158).
@@ -66,7 +72,10 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // overflow or underflow for an operator of 2^+-600 (#671), nor when z's
     // entries are finite but its 2-norm is not (z = 2^1023 ones with n = 16).
     // `tmp` holds v/a and `zs` z/c. For M = I it is a.
+    // A v^T z negative beyond rounding sets `indefinite_m` (#949); within
+    // rounding its absolute value is taken, so an SPD M is unaffected.
     vec::dense_vector<value_type> zs(n);
+    bool indefinite_m = false;
     auto m_norm = [&](const vec::dense_vector<value_type>& vv, const vec::dense_vector<value_type>& zz,
                       vec::dense_vector<value_type>& tmp) -> value_type {
         const auto a = mtl::two_norm(vv);
@@ -77,7 +86,11 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             tmp(i) = vv(i) / a;
             zs(i)  = zz(i) / c;
         }
-        return value_type(sqrt(a) * sqrt(c) * sqrt(abs(mtl::dot<Accumulator, value_type>(tmp, zs))));
+        const value_type vz = mtl::dot<Accumulator, value_type>(tmp, zs);
+        if (detail::not_positive_definite<Accumulator>(
+                vz, std::size_t(n), [&] { return std::pair{mtl::two_norm(tmp), mtl::two_norm(zs)}; }))
+            indefinite_m = true;
+        return value_type(sqrt(a) * sqrt(c) * sqrt(abs(vz)));
     };
 
     // Initial residual: r = b - A*x
@@ -87,6 +100,11 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     const auto r0_norm = mtl::two_norm(v);
     M.solve(z, v);
     value_type beta = m_norm(v, z, w);
+    if (indefinite_m) {
+        iter.fail(detail::not_positive_definite_code,
+                  "minres: the preconditioner is not positive definite (r0^T M^-1 r0 < 0)");
+        return iter;
+    }
 
     // ||r0||_{M^-1} = 0: r0 = 0, or an M^-1 that maps r0 to 0. The iteration
     // object records the residual, rather than keeping the state of an
@@ -144,6 +162,11 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             v_new(i) = w(i) - alpha * v(i) - beta * v_old(i);
         M.solve(z_new, v_new);
         value_type beta_new = m_norm(v_new, z_new, w);   // w is free until the next step
+        if (indefinite_m) {
+            iter.fail(detail::not_positive_definite_code,
+                      "minres: the preconditioner is not positive definite (v^T M^-1 v < 0)");
+            return iter;
+        }
 
         // Apply previous Givens rotations to column [beta, alpha, beta_new]
         // of the tridiagonal matrix.
