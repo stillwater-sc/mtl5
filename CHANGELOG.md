@@ -139,13 +139,21 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **MINRES with a preconditioner scaled beyond about 2^±700** (issue 971; #977). The new Lanczos vector is formed before it is normalized, so for M scaled by s it scales as s^(−1/2), and its solve z_new = M⁻¹v_new as s^(−3/2). That solve left double's range first, while every other quantity of the step stayed in range out to about 2^±1000.
+  - **What failed:** A = tridiag(−1, 4, −1), n = 50, M = diag(4s). From 2^750 up, a false breakdown (code 2) at the second iteration; from 2^−700 down, a non-finite step (code 6).
+  - **The fix:** when the M-norm could not take its plain form, and the solve left the range (z_new non-finite, or zero or subnormal throughout while v_new is not), the solve is redone on v̂ = 2⁻ᵉv_new.
+    - β̂ = 2⁻ᵉβ_new exactly, so the recurrences take β_new = 2ᵉβ̂, and v and z are normalized by β̂: the same vectors.
+    - The code-7 flag of the discarded first M-norm is cleared.
+    - The normal path runs nothing extra, and the 128² Poisson benchmark takes the same time.
+  - **The result:** from 2^±300 to 2^±1000, MINRES takes the iterations of s = 1, with x within rounding. A preconditioner that is not positive definite, reached only at a later Lanczos step, still returns 7 at 2^±900, at the same step.
+  - Tests: `test_minres.cpp`.
 - **MINRES about 45% slower per iteration since #869** (issue 963; #968). #869 made MINRES form ‖v‖_{M⁻¹} = √(vᵀz) the overflow-safe way on every iteration: two norms, 2n divisions and a dot product. One dot product is enough except near the ends of the range.
   - **Found by:** the first wall-clock tracking run (#944). `minres+diag` was 1.43–1.55× slower under GCC and 1.85–1.93× under MSVC, on every machine and variant, with the same iteration count. A standalone timing with headers from three commits isolated it to #869.
   - **The fix:** `m_norm` takes the plain vᵀz when its real part is non-negative and |vᵀz| lies in [min/ε, max], and the scaled form otherwise. The #671 cases (2^±600, z = 2^1023·ones) are unchanged.
   - **Negative values still take the scaled form,** so the code-7 test (#949) gets finite norms. The plain norms can overflow where vᵀz does not (16 entries of v = 2⁻⁸ with M = diag(−2⁻¹⁰³¹)), and the infinite tolerance passed an indefinite M (#968 review).
   - **Measured:** 128² Poisson grid, `pc::diagonal`, an i7-12700K P-core, 233 iterations in all three. 30.3 ms on main before the fix, 21.7 ms after, 20.5 ms before #869.
   - **Gated from now on:** `krylov/minres+diag/f64` joins the instruction-count gate's kernels, which now number 15. The gate counted CG and BiCGSTAB, not MINRES, which is how the rise got through.
-  - **Not addressed:** MINRES breaks down (code 2) at a preconditioner scaled by 2^900, with or without this change.
+  - **Not addressed here:** MINRES broke down (code 2) at a preconditioner scaled by 2^900. That was fixed in #977 (above).
   - Tests: `test_minres.cpp`.
 - **BiCG and BiCGSTAB with a preconditioner scaled beyond 2^±512** (issue 958; #967). The same exposure as CG's (issue 955): one product in the step scales as 1/s² while the rest scale as 1/s.
   - **What failed:** BiCG's p̃ᴴAp underflowed at 2^600, a false breakdown (code 3), and overflowed at 2^−600, so α = 0 and it ran to its limit. BiCGSTAB's ω denominator tᵀt gave code 4 at 2^600 and code 5 at 2^−600, after one iteration.
