@@ -202,6 +202,23 @@ TEST_CASE("minres: a preconditioner that is not positive definite returns 7 (iss
         }
     }
 
+    SECTION("a negative v^T M^-1 v whose norms overflow still returns 7 (issue 963)") {
+        // #968 review. A = I, b = 2^-8 ones (n = 16), M = diag(-2^-1031):
+        // z = M^-1 r0 = -2^1023 ones, r0^T z = -2^1019 is in range, but
+        // ||z||_2 = 2^1025 overflows. Taken plainly, the code-7 tolerance
+        // n eps ||r0|| ||z|| was infinite and MINRES went on with |r0^T z|.
+        const std::size_t m = 16;
+        mat::dense2D<double> I(m, m);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < m; ++j) I(i, j) = (i == j ? 1.0 : 0.0);
+        vec::dense_vector<double> b16(m, 0x1p-8), x(m, 0.0), d(m, -0x1p-1031);
+        given_diagonal_949 M{d};
+        itl::basic_iteration<double> iter(b16, 50, 1e-10);
+        CHECK(itl::minres(I, x, b16, M, iter) == 7);
+        CHECK(iter.iterations() == 0);
+        for (std::size_t i = 0; i < m; ++i) CHECK(x(i) == 0.0);
+    }
+
     SECTION("an SPD M at 2^+-600 is unaffected") {
         const auto T = make_tridiagonal(n, 4.0, -1.0);
         for (const double s : {0x1p600, 0x1p-600}) {

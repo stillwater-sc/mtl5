@@ -81,22 +81,29 @@ int minres(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
     // MINRES with a diagonal M about 45% slower per iteration (#869, issue 963).
     // `tmp` holds v/a and `zs` z/c, in the scaled form only.
     // A v^T z negative beyond rounding sets `indefinite_m` (#949); within
-    // rounding its absolute value is taken, so an SPD M is unaffected.
+    // rounding its absolute value is taken, so an SPD M is unaffected. A
+    // non-negative plain v^T z needs no such test.
     vec::dense_vector<value_type> zs(n);
     bool indefinite_m = false;
     auto m_norm = [&](const vec::dense_vector<value_type>& vv, const vec::dense_vector<value_type>& zz,
                       vec::dense_vector<value_type>& tmp) -> value_type {
         using mag_t = magnitude_t<value_type>;
         {
+            // Only a non-negative real part takes the plain form. A negative
+            // one goes to the scaled form, whose code-7 test (#949) uses the
+            // norms of v/a and z/c: the norms of v and z themselves can
+            // overflow where v^T z does not (16 entries of v = 2^-8 and
+            // z = -2^1023: v^T z = -2^1019, ||z|| = inf), and an infinite
+            // tolerance would pass a preconditioner that is not positive
+            // definite (#968 review).
             const value_type vz = mtl::dot<Accumulator, value_type>(vv, zz);
             const mag_t avz = abs(vz);
-            if (avz >= std::numeric_limits<mag_t>::min() / std::numeric_limits<mag_t>::epsilon()
-                && avz <= std::numeric_limits<mag_t>::max()) {
-                if (detail::not_positive_definite<Accumulator>(
-                        vz, std::size_t(n), [&] { return std::pair{mtl::two_norm(vv), mtl::two_norm(zz)}; }))
-                    indefinite_m = true;
+            mag_t re;
+            if constexpr (is_complex_v<value_type>) re = vz.real(); else re = vz;
+            if (re >= mag_t(0)
+                && avz >= std::numeric_limits<mag_t>::min() / std::numeric_limits<mag_t>::epsilon()
+                && avz <= std::numeric_limits<mag_t>::max())
                 return value_type(sqrt(avz));
-            }
         }
         const auto a = mtl::two_norm(vv);
         if (a == decltype(a)(0)) return zero;
