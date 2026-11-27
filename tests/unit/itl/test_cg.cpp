@@ -182,6 +182,7 @@ TEST_CASE("cg: a preconditioner that is not positive definite returns 7 (issue 9
 // Review of #952: the tolerance n u ||r|| ||z|| must neither overflow while
 // rho is finite, nor use a finer rounding unit than the accumulator's.
 #include <cmath>
+#include <tuple>
 #include <utility>
 #include <mtl/itl/krylov/spd_check.hpp>
 namespace {
@@ -293,4 +294,21 @@ TEST_CASE("cg: the rescaled step when p reaches the subnormal range (issue 955)"
     double err = 0.0;
     for (std::size_t i = 0; i < n; ++i) err = std::max(err, std::abs(x(i) - x1(i)));
     CHECK(err < 1e-12);
+}
+
+TEST_CASE("cg: the rescaled coefficient when rho / p-hat^T A p-hat leaves the range (issue 958)", "[itl][cg][955][958]") {
+    // #967 review, the same in cg: A = [2^-200], M^-1 = 2^900 gives
+    // rho = 2^900 and p-hat^T A p-hat = 2^-200, whose quotient 2^1100 is inf,
+    // while the coefficient 2^-900 rho / (p-hat^T A p-hat) = 2^200 is not. The
+    // mirror case underflowed to 0. One step solves a 1x1 system exactly.
+    for (const auto [a, m, want] : {std::tuple{0x1p-200, 0x1p-900, 0x1p200},
+                                    std::tuple{0x1p200, 0x1p900, 0x1p-200}}) {
+        CAPTURE(std::ilogb(a));
+        mat::dense2D<double> A = {{a}};
+        vec::dense_vector<double> b(1, 1.0), x(1, 0.0), d(1, m);
+        given_diagonal_949 M{d};
+        itl::basic_iteration<double> iter(b, 10, 1e-10);
+        CHECK(itl::cg(A, x, b, M, iter) == 0);
+        CHECK(x(0) == want);
+    }
 }

@@ -9,6 +9,7 @@
 #include <mtl/operation/mult.hpp>
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/itl/krylov/scaled_rhs.hpp>
+#include <mtl/itl/krylov/pow2_rescale.hpp>
 #include <mtl/functor/scalar/conj.hpp>
 
 namespace mtl::itl {
@@ -125,26 +126,64 @@ int bicg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             // q_tilde = A^H * p_tilde (issue 924: A^T did not converge for complex)
             apply_adjoint<Accumulator>(A, p_tilde, q_tilde, tmp);
 
-            // p~^T A p == 0 is a breakdown: alpha was rho / 0 (issue 866).
+            // alpha = rho / p~^H A p, then x += alpha p, r -= alpha A p and
+            // r~ -= conj(alpha) A^H p~.
+            //
+            // p~^H A p leaves the range first (issue 958). For a preconditioner
+            // scaled by s, p and p~ each scale as 1/s and rho = r~^T z as 1/s,
+            // but p~^H A p as 1/s^2: at M = 4 * 2^600 I it underflowed to 0 (a
+            // false breakdown, code 3), at 4 * 2^-600 I it overflowed, alpha
+            // was 0 and the solve ran to its limit. So when it is not a normal
+            // number the step is redone on p-hat = 2^-e p and p~-hat = 2^-f p~,
+            // each with its own power of two (pow2_rescale.hpp). With
+            // d = p~-hat^H A p-hat = 2^-(e+f) p~^H A p, so alpha = 2^-(e+f) rho / d:
+            //   alpha p    = (2^-f rho / d) p-hat,  alpha A p = (2^-f rho / d) A p-hat,
+            //   conj(alpha) A^H p~ = conj(2^-e rho / d) A^H p~-hat,
+            // exactly, since a power of two scales without rounding; the
+            // coefficients are formed by scaled_quotient, since rho / d itself
+            // can leave the range where 2^-f rho / d does not. Where
+            // p~^H A p is normal nothing changes, bit for bit. One that is zero
+            // after the rescaling is a true zero: a breakdown (issue 866).
+            // z and z~ are recomputed below, so they and Ax hold the rescaled
+            // vectors.
             const value_type ptq = mtl::dot<Accumulator, value_type>(p_tilde, q);
-            if (ptq == value_type(0)) {
-                iter.fail(3, "bicg breakdown: dot(p_tilde, A p) == 0");
-                return iter;
+            value_type c  = value_type(0);    // x += c u, r -= c w
+            value_type ct = value_type(0);    // r~ -= ct wt
+            const vec::dense_vector<value_type>* u  = &p;
+            const vec::dense_vector<value_type>* w  = &q;
+            const vec::dense_vector<value_type>* wt = &q_tilde;
+            if (detail::is_normal_magnitude(ptq)) {
+                c  = rho / ptq;
+                ct = conj_t::apply(c);
+            } else {
+                const int e = detail::max_abs_exponent(p);
+                const int f = detail::max_abs_exponent(p_tilde);
+                detail::scale_by_pow2(p, -e, z);                    // z  = p-hat
+                detail::scale_by_pow2(p_tilde, -f, z_tilde);        // z~ = p~-hat
+                apply_operator<Accumulator>(A, z, Ax);              // Ax = A p-hat
+                apply_adjoint<Accumulator>(A, z_tilde, q_tilde, tmp);   // q~ = A^H p~-hat
+                const value_type d = mtl::dot<Accumulator, value_type>(z_tilde, Ax);
+                if (d == value_type(0)) {
+                    iter.fail(3, "bicg breakdown: dot(p_tilde, A p) == 0");
+                    return iter;
+                }
+                c  = detail::scaled_quotient(rho, d, -f);
+                ct = conj_t::apply(detail::scaled_quotient(rho, d, -e));
+                u = &z;
+                w = &Ax;
             }
-            value_type alpha = rho / ptq;
 
             // x += alpha * p
             for (size_type i = 0; i < n; ++i)
-                x(i) += alpha * p(i);
+                x(i) += c * (*u)(i);
 
             // r -= alpha * q
             for (size_type i = 0; i < n; ++i)
-                r(i) -= alpha * q(i);
+                r(i) -= c * (*w)(i);
 
             // r_tilde -= conj(alpha) * q_tilde
-            const value_type calpha = conj_t::apply(alpha);
             for (size_type i = 0; i < n; ++i)
-                r_tilde(i) -= calpha * q_tilde(i);
+                r_tilde(i) -= ct * (*wt)(i);
 
             // z = M^{-1} r, z_tilde = M^{-H} r_tilde
             M.solve(z, r);

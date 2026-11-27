@@ -8,7 +8,7 @@
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/itl/krylov/scaled_rhs.hpp>
 #include <mtl/itl/krylov/spd_check.hpp>
-#include <mtl/math/pow2_scaling.hpp>
+#include <mtl/itl/krylov/pow2_rescale.hpp>
 #include <limits>
 
 namespace mtl::itl {
@@ -126,45 +126,26 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             // is zero after the rescaling is a true zero, as on an indefinite A
             // (issue 866): a breakdown.
             const value_type pq = mtl::dot<Accumulator, value_type>(p, q);
-            using mag_t = magnitude_t<value_type>;
-            using std::abs;
-            const mag_t apq = abs(pq);
             value_type c = value_type(0);       // the step: x += c u, r -= c w
             const vec::dense_vector<value_type>* u = &p;
             const vec::dense_vector<value_type>* w = &q;
-            if (apq >= std::numeric_limits<mag_t>::min() && apq <= std::numeric_limits<mag_t>::max()) {
+            if (detail::is_normal_magnitude(pq)) {
                 c = rho / pq;
             } else {
-                mag_t pmax(0);
-                for (size_type i = 0; i < n; ++i) {
-                    const mag_t a = abs(p(i));
-                    if (a > pmax) pmax = a;
-                }
-                // e = 0 for a zero or infinite pmax (NaN cannot win the max):
-                // std::ilogb, which the floating-point specialization calls,
-                // gives INT_MIN-like and INT_MAX values there, and -e would
-                // overflow. A zero p then gives a zero p-hat^T A p-hat, the
-                // breakdown below; an infinite one a non-finite step (code 6).
-                const int e = (pmax > mag_t(0) && pmax <= std::numeric_limits<mag_t>::max())
-                                  ? math::pow2_scaling<mag_t>::exponent(pmax) : 0;
-                // 2^-e per value, through pow2_scaling::scale, which is exact
-                // also where 2^-e itself is not representable (a subnormal
-                // pmax, e down to -1074): a factor 2^1074 would be inf.
-                auto by_pow2 = [](const value_type& v, int k) -> value_type {
-                    if constexpr (is_complex_v<value_type>)
-                        return value_type(math::pow2_scaling<mag_t>::scale(v.real(), k),
-                                          math::pow2_scaling<mag_t>::scale(v.imag(), k));
-                    else
-                        return math::pow2_scaling<value_type>::scale(v, k);
-                };
-                for (size_type i = 0; i < n; ++i) q(i) = by_pow2(p(i), -e);   // q holds p-hat
+                // 2^-e per value (pow2_rescale.hpp), exact also where 2^-e
+                // itself is not representable (a subnormal max |p_i|, e down
+                // to -1074): a factor 2^1074 would be inf. e is 0 for a zero
+                // or infinite p: a zero p then gives a zero p-hat^T A p-hat,
+                // the breakdown below; an infinite one a non-finite step (code 6).
+                const int e = detail::max_abs_exponent(p);
+                detail::scale_by_pow2(p, -e, q);                             // q holds p-hat
                 apply_operator<Accumulator>(A, q, Ax);                       // Ax = A p-hat
                 const value_type pqh = mtl::dot<Accumulator, value_type>(q, Ax);
                 if (pqh == value_type(0)) {
                     iter.fail(2, "cg breakdown: dot(p, A p) == 0");
                     return iter;
                 }
-                c = by_pow2(rho / pqh, -e);
+                c = detail::scaled_quotient(rho, pqh, -e);
                 u = &q;
                 w = &Ax;
             }
