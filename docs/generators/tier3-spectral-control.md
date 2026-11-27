@@ -123,7 +123,7 @@ auto randsym_indefinite(std::size_t n, T kappa, int mode, std::size_t num_negati
 ```
 
 It builds the mode form's spectrum and negates `num_negative` of its eigenvalues. This is the usual specification for testing indefinite solvers and inertia code (LDLᵀ, MINRES, `inertia` / `is_indefinite`).
-- **cond₂(A) = κ:** the signs do not change max|λ| / min|λ|.
+- **cond₂(A) = κ for n ≥ 2:** the signs do not change max|λ| / min|λ|. For n = 1 the matrix is [1], or [−1] with one negative eigenvalue, whatever κ is, so its condition number is 1. For n = 0 it is empty.
 - **The inertia** is (n − `num_negative`, `num_negative`, 0).
 - **Which eigenvalues are negated:** a random subset of the positions, drawn from the engine after the spectrum, as LAPACK's `DLATMS` does with `RSIGN = 'T'`. The draw uses the raw engine stream, so a seed negates the same positions with every compiler and standard library.
 - **`num_negative = 0`** draws nothing for the subset, and gives `randsym(n, kappa, mode)`'s matrix for the same seed.

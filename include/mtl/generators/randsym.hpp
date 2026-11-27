@@ -67,9 +67,12 @@ auto randsym(std::size_t n, T kappa, int mode = 3) {
 /// with `num_negative` of them negated (issue 961). The negated positions are
 /// a random subset of the spectrum, drawn from `gen` after it, as LAPACK's
 /// DLATMS does with RSIGN = 'T'. So
-///   - cond_2(A) = max |lambda| / min |lambda| = kappa, as for randsym: the
-///     signs do not change the magnitudes;
+///   - for n >= 2, cond_2(A) = max |lambda| / min |lambda| = kappa, as for
+///     randsym: the signs do not change the magnitudes;
 ///   - the inertia is (n - num_negative, num_negative, 0).
+/// n = 1 gives the 1x1 matrix [1], or [-1] with one negative, whatever kappa
+/// is (make_sigma's single value is 1), so its condition number is 1; n = 0
+/// gives an empty matrix, with num_negative = 0.
 /// The subset is a partial Fisher-Yates shuffle over the raw engine stream
 /// (detail::random_unit), so a seed gives the same matrix with every compiler
 /// and standard library. With num_negative == 0 nothing is drawn for it, and

@@ -176,6 +176,13 @@ TEST_CASE("randsym_indefinite: argument checks (issue 961)", "[generators][rands
     CHECK_THROWS_AS(generators::randsym_indefinite<double>(4, 10.0, 6, 1, std::uint64_t(1)), std::invalid_argument);
     CHECK_NOTHROW(generators::randsym_indefinite<double>(4, 10.0, 3, 4, std::uint64_t(1)));
     CHECK_NOTHROW(generators::randsym_indefinite<double>(0, 10.0, 3, 0, std::uint64_t(1)));
+    // n = 1: make_sigma's single value is 1 whatever kappa is, so A = [+-1]
+    // (Q is +-1) and cond(A) = 1, not kappa (#970 review). n = 0 is empty.
+    const auto P1 = generators::randsym_indefinite<double>(1, 10.0, 3, 0, std::uint64_t(1));
+    const auto N1 = generators::randsym_indefinite<double>(1, 10.0, 3, 1, std::uint64_t(1));
+    CHECK(P1(0, 0) == 1.0);
+    CHECK(N1(0, 0) == -1.0);
+    CHECK(generators::randsym_indefinite<double>(0, 10.0, 3, 0, std::uint64_t(1)).num_rows() == 0);
     // The non-deterministic form: still the inertia asked for.
     const auto A = generators::randsym_indefinite<double>(6, 10.0, 3, 2);
     CHECK(inertia(A).negative == 2);
