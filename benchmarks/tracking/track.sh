@@ -3,8 +3,7 @@
 #
 #   benchmarks/tracking/track.sh [options]
 #
-# Run from a dedicated, clean checkout (a clone or worktree used for nothing
-# else). In order:
+# Run from a clean checkout. In order:
 #   1. Fetches origin and resolves --ref (default origin/main) to a commit, then
 #      checks that commit out, detached, in a scratch worktree under
 #      build-platform/track/. The sessions measure that commit, whatever this
@@ -40,8 +39,8 @@
 # skipped; the others still publish. Exit 0 when every selected machine
 # published; 1 when some did not; 2 on bad usage or an unusable checkout.
 #
-# Scheduling: a cron entry or a systemd timer on the machine that drives the
-# lab; see benchmarks/tracking/README.md.
+# Run on demand, by hand, when the lab machines are powered on: their power is
+# managed manually, so nothing schedules this (benchmarks/tracking/README.md).
 set -uo pipefail
 # One { ... } block, parsed before it runs (as in remote_session.sh): --pr
 # switches this checkout's branch, which may change this file under it.

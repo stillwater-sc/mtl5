@@ -102,8 +102,8 @@ the unit tier check that `mult` still reaches BLAS, the blocked GEMM or the SIMD
 GEMV. See [regression/README.md](regression/README.md).
 
 What instruction counts cannot see (caches, vectorization, threading) is
-tracked on the benchmark machines instead, and reported, not gated.
-`tracking/track.sh` runs the platform benchmark on `main` on every machine at
+tracked on the benchmark machines instead, on demand and reported, not gated.
+`tracking/track.sh`, run by hand when the lab machines are on, runs the platform benchmark on `main` on every machine at
 once, publishes each session's data, and compares it with that machine's
 previous session. The comparison uses the median of each run's per-entry time
 ratios, as `analyze_gate.py` does. The results are on

@@ -10,14 +10,14 @@ shared runners does.
 
 | file | what |
 |---|---|
-| `track.sh` | the driver: measures `origin/main` on every machine at once, publishes and compares |
+| `track.sh` | the driver, run by hand: measures `origin/main` on every machine at once, publishes and compares |
 | `hosts.txt` | the machines: name, ssh host (or `local`), profile |
 | `track_sessions.py` | `compare` two sessions of one machine across commits; `page` writes `docs/benchmarks/tracking.md` |
 | `test_track_sessions.py` | its tests, run by `bench-regression.yml` |
 
 ## One run
 
-From a clean checkout used only for this:
+When the machines are on, from a clean checkout:
 
 ```bash
 benchmarks/tracking/track.sh                           # every machine in hosts.txt, class medium
@@ -79,26 +79,27 @@ and this measures the change between two commits.
 The exit status is 0 whenever the report was written, whatever it found. It is 1
 when the sessions are of different machines or classes, or share no run.
 
-## Scheduling
+## When to run it
 
-The decision in #944 is a local scheduled run, not a self-hosted GitHub runner.
-Use a dedicated clone on the machine that drives the lab, one that can reach
-every host in `hosts.txt` over ssh without a password:
+On demand, by hand. The benchmark machines are lab machines whose power is
+managed manually, so a scheduled job could not count on them being up, and #944
+puts this outside CI for the same reason. Run it when the machines are on:
+before a release, or after a change aimed at caches, vectorization or
+threading. The automated check on every PR is the instruction-count gate in
+`../regression/`.
+
+Use a clean checkout that can reach every host in `hosts.txt` over ssh without
+a password. Before the run, check that the machines are up:
 
 ```bash
-git clone git@github.com:stillwater-sc/mtl5 ~/mtl5-track
+for h in $(awk '!/^#/ && $2 != "local" {print $2}' benchmarks/tracking/hosts.txt); do
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$h" true && echo "$h up" || echo "$h DOWN"
+done
 ```
 
-Then add a crontab entry. Weekly at 03:00 on Sunday:
-
-```cron
-0 3 * * 0  cd ~/mtl5-track && benchmarks/tracking/track.sh --pr >> ~/mtl5-track.log 2>&1
-```
-
-Each run leaves the clone on its `bench/track-<tag>` branch. The next run
-branches from the newly fetched `origin/main`, so this is harmless. `--pr`
-needs `gh` to be logged in. Nightly also works (`0 3 * * *`), at the cost of a
-PR a night.
+A machine that is off is reported and skipped; `--only` limits a run to the
+machines that are on. `--pr` needs `gh` to be logged in, and leaves the
+checkout on the `bench/track-<tag>` branch it opened.
 
 ## A new machine
 

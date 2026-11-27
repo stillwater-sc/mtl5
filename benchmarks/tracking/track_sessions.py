@@ -305,7 +305,7 @@ def cmd_page(a):
     lines = [
         "# Wall-clock tracking",
         "",
-        "Each benchmark machine runs `mtl5_bench` on `main` from time to time, and each session",
+        "When the lab machines are on, each runs `mtl5_bench` on `main` (on demand), and each session",
         "is compared with that machine's previous one (#944). The instruction-count gate on",
         "every PR (`bench-regression.yml`) catches extra work. This page catches what",
         "instruction counts cannot see: caches, vectorization and threading. It is a report and",
