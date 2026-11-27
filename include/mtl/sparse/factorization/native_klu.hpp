@@ -242,11 +242,8 @@ struct klu_numeric {
         if (A.num_rows() != n || A.num_cols() != n)
             throw std::invalid_argument("klu_numeric::condest: matrix dimensions do not match the factorization");
         if (n == 0) return Value{1};
-        const Value anorm = detail::csr_norm1(A);
-        const Value inv = detail::inverse_norm1_estimate<Value>(
-            n, [&](auto& y, const auto& x) { solve(y, x); },
-               [&](auto& z, const auto& x) { solve_transpose(z, x); });
-        return anorm * inv;
+        return detail::condest_1(A, [&](auto& y, const auto& x) { solve(y, x); },
+                                    [&](auto& z, const auto& x) { solve_transpose(z, x); });
     }
 };
 

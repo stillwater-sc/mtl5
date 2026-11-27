@@ -787,3 +787,52 @@ TEST_CASE("native_klu_refactor: the opt-in growth threshold (issue 946)", "[spar
     CHECK_THAT(x(0), WithinAbs(1.0, 1e-15));
     CHECK_THAT(x(1), WithinAbs(1.0, 1e-15));
 }
+
+// Review of #956: condest is independent of A's scale. Unscaled, ||A||_1
+// overflowed for A = 1e308 [[1, 1], [1, -1]] (cond_1 = 2), and 2 ||y||_1
+// overflowed in the last probe for A = 2^-1022 I (cond_1 = 1).
+TEST_CASE("condest: a matrix at the ends of double's range (issue 946)", "[sparse][klu][946]") {
+    namespace fz = sparse::factorization;
+    auto scaled = [](const csr946& A, double s) {
+        csr946 B(A.num_rows(), A.num_cols());
+        {
+            mat::inserter<csr946> ins(B);
+            const auto& rp = A.ref_major();
+            const auto& ci = A.ref_minor();
+            const auto& dat = A.ref_data();
+            for (std::size_t i = 0; i < A.num_rows(); ++i)
+                for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) ins[i][ci[k]] << s * dat[k];
+        }
+        return B;
+    };
+    auto both = [](const csr946& A) {
+        const auto lu = fz::sparse_lu_numeric(A, fz::sparse_lu_symbolic(A));
+        return std::pair{native_klu_factor(A).condest(A), lu.condest(A)};
+    };
+    csr946 H(2, 2);
+    {
+        mat::inserter<csr946> ins(H);
+        ins[0][0] << 1e308; ins[0][1] << 1e308; ins[1][0] << 1e308; ins[1][1] << -1e308;
+    }
+    const auto [kh, lh] = both(H);
+    CHECK_THAT(kh, Catch::Matchers::WithinRel(2.0, 1e-12));
+    CHECK_THAT(lh, Catch::Matchers::WithinRel(2.0, 1e-12));
+
+    csr946 T(2, 2);
+    {
+        mat::inserter<csr946> ins(T);
+        ins[0][0] << 0x1p-1022; ins[1][1] << 0x1p-1022;
+    }
+    const auto [kt, lt] = both(T);
+    CHECK(kt == 1.0);
+    CHECK(lt == 1.0);
+
+    // An exact power-of-two scaling changes nothing.
+    const auto A = three_blocks();
+    const auto [k1, l1] = both(A);
+    for (const double s : {0x1p600, 0x1p-600}) {
+        const auto [ks, ls] = both(scaled(A, s));
+        CHECK_THAT(ks, Catch::Matchers::WithinRel(k1, 1e-12));
+        CHECK_THAT(ls, Catch::Matchers::WithinRel(l1, 1e-12));
+    }
+}

@@ -43,6 +43,7 @@
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/concepts/scalar.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <mtl/math/pow2_scaling.hpp>
 #include <mtl/sparse/util/csc.hpp>
 #include <mtl/sparse/util/permutation.hpp>
 #include <mtl/sparse/factorization/triangular_solve.hpp>
@@ -98,25 +99,39 @@ Value lu_rgrowth(const util::csc_matrix<Value, SizeType>& U, ColMax&& amax_of, V
     return g;
 }
 
-/// ||A||_1, the largest column sum of |A(i, j)|, for a square CSR A. NaN if A
-/// holds one.
+/// ||A||_1, the largest column sum of |A(i, j)|, for a square CSR A, as
+/// m 2^e: 2^e <= max |A(i, j)| < 2^(e+1), so m is in [1, 2n) and neither the
+/// sums nor m overflow, whatever A's scale (e = 0 and m = 0 for A = 0). NaN if
+/// A holds one, or an infinity.
 template <typename Value, typename Parameters>
-Value csr_norm1(const mat::compressed2D<Value, Parameters>& A) {
+Value csr_norm1_scaled(const mat::compressed2D<Value, Parameters>& A, int& e) {
     using std::abs;
-    std::vector<Value> col(A.num_cols(), Value{0});
+    e = 0;
     const auto& ci  = A.ref_minor();
     const auto& dat = A.ref_data();
+    Value amax{0};
     for (std::size_t k = 0; k < A.nnz(); ++k) {
         const Value a = abs(dat[k]);
-        if (!(a == a)) return a;
-        col[ci[k]] += a;
+        if (!(a == a) || !(a - a == Value{0})) return a - a;   // NaN, also for an infinity
+        if (a > amax) amax = a;
     }
+    if (amax == Value{0}) return amax;
+    e = math::pow2_scaling<Value>::exponent(amax);
+    std::vector<Value> col(A.num_cols(), Value{0});
+    for (std::size_t k = 0; k < A.nnz(); ++k)
+        col[ci[k]] += math::pow2_scaling<Value>::scale(abs(dat[k]), -e);
     Value m{0};
-    for (const Value& c : col) {
-        if (!(c == c)) return c;
+    for (const Value& c : col)
         if (c > m) m = c;
-    }
     return m;
+}
+
+/// ||A||_1 itself (it overflows where the norm does).
+template <typename Value, typename Parameters>
+Value csr_norm1(const mat::compressed2D<Value, Parameters>& A) {
+    int e = 0;
+    const Value m = csr_norm1_scaled(A, e);
+    return e == 0 ? m : math::pow2_scaling<Value>::scale(m, e);
 }
 
 /// An estimate of ||A^{-1}||_1 from solves with A and A^T: Hager's method with
@@ -127,12 +142,24 @@ Value csr_norm1(const mat::compressed2D<Value, Parameters>& A) {
 /// exact or within a factor of 3 in practice. `solve(y, x)` computes A^{-1} x
 /// and `solve_t(z, x)` A^{-T} x, on dense_vector<Value>. NaN if a solve gives a
 /// NaN.
+///
+/// `probe_exp` scales every vector handed to a solve by 2^probe_exp (exact),
+/// so the estimate returned is of 2^probe_exp ||A^{-1}||_1. condest_1 picks it
+/// so that the solves' results are of the size of cond(A), not of ||A^{-1}||,
+/// which keeps them finite for a matrix of any scale whose condition number is.
 template <typename Value, typename Solve, typename SolveT>
-Value inverse_norm1_estimate(std::size_t n, Solve&& solve, SolveT&& solve_t) {
+Value inverse_norm1_estimate(std::size_t n, Solve&& solve_raw, SolveT&& solve_t_raw, int probe_exp = 0) {
     using std::abs;
     if (n == 0) return Value{0};
     using vec_t = vec::dense_vector<Value>;
-    vec_t x(n, Value{1} / Value(n)), y(n), xi(n), xi_old(n), z(n);
+    vec_t x(n, Value{1} / Value(n)), y(n), xi(n), xi_old(n), z(n), probe(n);
+    auto scaled = [&](const vec_t& v) -> const vec_t& {
+        if (probe_exp == 0) return v;
+        for (std::size_t i = 0; i < n; ++i) probe(i) = math::pow2_scaling<Value>::scale(v(i), probe_exp);
+        return probe;
+    };
+    auto solve   = [&](vec_t& out, const vec_t& in) { solve_raw(out, scaled(in)); };
+    auto solve_t = [&](vec_t& out, const vec_t& in) { solve_t_raw(out, scaled(in)); };
     auto norm1 = [&](const vec_t& v) {
         Value t{0};
         for (std::size_t i = 0; i < n; ++i) t += abs(v(i));
@@ -171,9 +198,33 @@ Value inverse_norm1_estimate(std::size_t n, Solve&& solve, SolveT&& solve_t) {
         x(i) = (i % 2 == 0) ? t : -t;
     }
     solve(y, x);
-    const Value alt = Value(2) * norm1(y) / (Value(3) * Value(n));
+    // 2 ||y||_1 / (3n), divided first: doubling ||y||_1 could overflow.
+    const Value alt = norm1(y) / (Value(3) * Value(n)) * Value(2);
     if (!(alt == alt)) return alt;
     return alt > est ? alt : est;
+}
+
+/// ||A||_1 ||A^{-1}||_1, estimated, for condest(): from solve(y, x) = A^{-1} x
+/// and solve_t(z, x) = A^{-T} x. Range-safe: with 2^e <= max |A(i, j)|, the
+/// probes are scaled by 2^(e-2), so each solve's result is about cond(A) / (4
+/// ||A||_1 / 2^e) in size, and the result is m 2^e times the estimate of
+/// ||A^{-1}||_1, combined as m (2^(e - probe_exp) est). The probe exponent is
+/// kept above the subnormal range by twice the mantissa width, so a probe
+/// keeps its precision. 1 for n = 0; NaN for a NaN or infinite A, or solve.
+template <typename Value, typename Parameters, typename Solve, typename SolveT>
+Value condest_1(const mat::compressed2D<Value, Parameters>& A, Solve&& solve, SolveT&& solve_t) {
+    const std::size_t n = A.num_rows();
+    if (n == 0) return Value{1};
+    int e = 0;
+    const Value m = csr_norm1_scaled(A, e);
+    if (!(m == m)) return m;
+    if (m == Value{0}) return Value{0} / Value{0};   // A = 0: singular, as no factorization would allow
+    using lim = std::numeric_limits<Value>;
+    const int lo = lim::min_exponent + 2 * lim::digits;
+    const int pe = std::max(e - 2, lo);
+    const Value est = inverse_norm1_estimate<Value>(n, solve, solve_t, pe);
+    if (!(est == est)) return est;
+    return m * math::pow2_scaling<Value>::scale(est, e - pe);
 }
 } // namespace detail
 
@@ -314,11 +365,8 @@ struct lu_numeric {
                 "lu_numeric::condest: matrix dimensions do not match the factorization");
         if (n == 0) return Value{1};
         require_factor("lu_numeric::condest");
-        const Value anorm = detail::csr_norm1(A);
-        const Value inv = detail::inverse_norm1_estimate<Value>(
-            n, [&](auto& y, const auto& x) { solve(y, x); },
-               [&](auto& z, const auto& x) { solve_transpose(z, x); });
-        return anorm * inv;
+        return detail::condest_1(A, [&](auto& y, const auto& x) { solve(y, x); },
+                                    [&](auto& z, const auto& x) { solve_transpose(z, x); });
     }
 
     /// Install recomputed VALUES on the already-installed factor pattern, keeping
