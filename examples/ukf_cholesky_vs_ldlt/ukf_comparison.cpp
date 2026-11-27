@@ -15,10 +15,13 @@
 //   - On an SPD covariance the two are equally accurate, at any condition
 //     number: the filters give the same final error in every scenario, and
 //     both factorizations' residuals stay at rounding level up to cond 1e15.
-//     Cholesky is backward stable for any SPD matrix (Higham, "Accuracy and
-//     Stability of Numerical Algorithms", Thm 10.3), and a scalar square root
-//     is perfectly conditioned: a relative error e in its argument becomes
-//     e/2. LDL^T does not avoid the square root either: its sigma points use
+//     When Cholesky completes, its backward error is small at any condition
+//     number (Higham, "Accuracy and Stability of Numerical Algorithms", Thm
+//     10.3). Completion is guaranteed for c n^(3/2) cond(P) eps < 1; beyond
+//     it a rounded pivot can come out non-positive and the factorization
+//     stops, as LDL^T's D gets an entry <= 0. Neither fails silently. A
+//     scalar square root is perfectly conditioned: a relative error e in its
+//     argument becomes e/2. LDL^T does not avoid the square root either: its sigma points use
 //     sqrt(D_k).
 //   - A tiny measurement noise does not make P ill-conditioned here: the
 //     process noise Q, added at every predict step, keeps its eigenvalues up.
@@ -940,6 +943,7 @@ int main() {
         bool chol_ok = true, ldlt_ok = true;
         int chol_div = -1, ldlt_div = -1;
         double chol_err = 0.0, ldlt_err = 0.0;
+        double ldlt_max_cond = 0.0;   // the LDL^T run's largest posterior cond(P), as run_scenario's
 
         for (int method_idx = 0; method_idx < 2; ++method_idx) {
             FactMethod method = (method_idx == 0) ? FactMethod::Cholesky : FactMethod::LDLT;
@@ -1065,6 +1069,10 @@ int main() {
                 for (std::size_t i = 0; i < NX; ++i)
                     for (std::size_t j = i + 1; j < NX; ++j)
                         P(j, i) = P(i, j);
+                if (method == FactMethod::LDLT) {
+                    const double c = condition_number(P);
+                    if (std::isfinite(c) && c > ldlt_max_cond) ldlt_max_cond = c;
+                }
 
                 double err = 0.0;
                 for (std::size_t i = 0; i < NX; ++i) {
@@ -1096,6 +1104,8 @@ int main() {
         sum.ldlt_done = ldlt_ok;
         sum.chol_err = chol_err;
         sum.ldlt_err = ldlt_err;
+        sum.max_cond = ldlt_max_cond;
+        std::cout << "  largest cond(P): " << std::scientific << std::setprecision(2) << sum.max_cond << "\n";
         summaries.push_back(sum);
     }
 
@@ -1121,9 +1131,11 @@ int main() {
     if (spd_all_ok)
         std::cout << "- On SPD matrices up to cond 1e15 both factorizations' residuals stay at rounding\n"
                   << "  level: at most " << spd_max_cr << " (Cholesky) and " << spd_max_lr << " (LDL^T).\n"
-                  << "  Cholesky is backward stable for any SPD matrix, and a scalar square root halves a\n"
-                  << "  relative error, it does not grow it. There is no condition number above which\n"
-                  << "  LDL^T is the safer choice, and LDL^T's sigma points take sqrt(D_k) anyway.\n";
+                  << "  When Cholesky completes, its backward error is small at any condition number; it\n"
+                  << "  is guaranteed to complete for c n^(3/2) cond(P) eps < 1, and beyond that it stops\n"
+                  << "  rather than return a poor factor (as LDL^T's D gets an entry <= 0). A scalar\n"
+                  << "  square root halves a relative error. Neither method is the safer choice above\n"
+                  << "  some condition number, and LDL^T's sigma points take sqrt(D_k) anyway.\n";
     std::cout << "- On an indefinite matrix the two differ in kind: Cholesky "
               << (indef_chol_all_fail ? "stops on every one" : "does not always stop") << ", while\n"
               << "  LDL^T returns, with a negative D entry. Unpivoted LDL^T is not stable there: its\n"

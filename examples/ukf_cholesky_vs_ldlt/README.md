@@ -17,9 +17,12 @@ matrices directly. Its conclusion is computed from the run.
     W₀ ≈ −10⁶, see [`../ukf_bearing_only`](../ukf_bearing_only).
   - On SPD matrices up to cond 1e15, both factorizations' residuals stay at
     1e-16.
-  - Cholesky is backward stable for any SPD matrix (Higham, *Accuracy and
-    Stability of Numerical Algorithms*, Thm 10.3). A scalar square root halves a
-    relative error rather than growing it.
+  - When Cholesky completes, its backward error is small at any condition
+    number (Higham, *Accuracy and Stability of Numerical Algorithms*, Thm 10.3).
+    Completion is guaranteed for c·n^{3/2}·κ(P)·ε < 1. Beyond that, a rounded
+    pivot can come out non-positive and the factorization stops, as unpivoted
+    LDLᵀ's D then gets an entry ≤ 0.
+  - A scalar square root halves a relative error rather than growing it.
   - LDLᵀ doesn't avoid the square root: its sigma points take √D_k.
 - **A tiny measurement noise doesn't make P ill-conditioned here.** cond(P)
   stays below 7e3 even with R = diag(1e-14, 1e-2). The process noise Q, added at

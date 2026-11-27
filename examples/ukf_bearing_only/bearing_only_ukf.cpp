@@ -25,9 +25,12 @@
 //   - float32 fails because of the weights, not the factorization. At
 //     alpha = 1e-3, W_0 = lambda / (n + lambda) is about -1e6 and the other
 //     weights about 1.25e5, so the weighted sums cancel six of float32's seven
-//     digits. The covariance P^- - K S K^T then loses its positive
-//     definiteness, and BOTH filters stop, at the same step. With alpha = 1
-//     (W_0 = 0) both float32 filters run to the end.
+//     digits. The step-0 bias is 2.2e-2 at cond(P) = 1, and the two float32
+//     filters, identical until the rounding of the two factorizations
+//     differs, drift up to 1.9 apart; at alpha = 1 (W_0 = 0) they stay within
+//     6.6e-5. A covariance P^- - K S K^T that the cancellation makes
+//     indefinite would stop both filters (run_filter reports where); this
+//     run does not reach one.
 //   - An indefinite P is where the methods differ in kind: Cholesky stops,
 //     and LDL^T's D shows the inertia. For a matrix that needs pivoting to be
 //     factored at all, see ldlt_bk (Bunch-Kaufman).

@@ -33,7 +33,10 @@ So $LDL^T$ doesn't avoid the square root here. Its sigma points take $\sqrt{D_k}
 
 ## Why the condition number is not the issue
 
-- **Cholesky is backward stable for every SPD matrix, whatever its condition number** (Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., Thm 10.3). The computed $\hat{L}$ is the exact factor of $P + \Delta P$, with $\|\Delta P\| \le c\, n\, \varepsilon\, \|P\|$. There is no condition number above which it "degrades".
+- **When Cholesky completes, its backward error is small, whatever the condition number** (Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed., Thm 10.3). The computed $\hat{L}$ is the exact factor of $P + \Delta P$, with $\|\Delta P\| \le c\, n\, \varepsilon\, \|P\|$.
+  - **Completion is the caveat.** It is guaranteed when $c\, n^{3/2}\, \kappa(P)\, \varepsilon < 1$. Beyond that, a rounded pivot can come out non-positive, and the factorization stops with an error rather than returning a poor factor.
+  - **The same holds for unpivoted $LDL^T$**, whose $D$ then gets an entry $\le 0$.
+  - **What does not happen:** a factorization that "succeeds" but has lost accuracy. Neither method degrades silently above some condition number.
 - **A scalar square root is perfectly conditioned.** A relative error $\varepsilon$ in its argument becomes $\varepsilon / 2$ in its result. It halves the relative error rather than growing it. A small pivot is not a less accurate pivot.
 - **Unpivoted $LDL^T$ has the same kind of backward-error bound on an SPD matrix.**
 
