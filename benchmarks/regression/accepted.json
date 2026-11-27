@@ -1,0 +1,4 @@
+{
+  "_comment": "Accepted instruction-count increases (#944). A PR that makes a kernel deliberately costlier adds the kernel here, with the count its run measured (the job summary prints it) and the reason. The gate then passes that kernel up to max_ir. After the merge the new main baseline carries the count, and the entry is reported as stale; remove it in a later PR. See benchmarks/regression/README.md.",
+  "kernels": {}
+}

@@ -1,0 +1,29 @@
+# The kernels the instruction-count gate measures (#944): mtl5_bench registry
+# ids, one per line, each run once at the `small` class under callgrind
+# (benchmarks/regression/README.md). Keep the set small: every kernel costs a
+# valgrind run of every configuration, on every PR.
+#
+# Adding or removing a kernel is not a regression: a kernel with no baseline is
+# reported as new, and one missing from this run as removed.
+
+# dense
+blas3/gemm/f64
+blas3/gemm/f32
+blas2/gemv/f64
+blas1/dot/f64
+blas1/two_norm/f64
+blas1/axpy/f64
+
+# dense factorizations
+factor/lu/f64
+factor/cholesky/f64
+factor/qr/f64
+
+# sparse
+sparse/spmv/f64
+sparse/lower_solve_level/f64
+direct/native_klu/f64
+
+# iterative
+krylov/cg+ic0/f64
+krylov/bicgstab+ilu0/f64

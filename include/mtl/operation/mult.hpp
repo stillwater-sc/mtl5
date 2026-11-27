@@ -27,6 +27,7 @@
 // every other threaded operation header -- dot, axpy, scale, norms, lu,
 // cholesky -- includes it unconditionally.
 #include <mtl/detail/thread_pool.hpp>
+#include <mtl/detail/dispatch_trace.hpp>   // MTL5_DISPATCH_HIT, a test hook (#944)
 #include <vector>
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -826,6 +827,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
         detail::mult_sparse_crs_par<Accumulator>(A, x, y);
         return;
     } else if constexpr (!interface::accumulator_allows_blas_v<Accumulator>) {
+        MTL5_DISPATCH_HIT(gemv_generic);
         detail::mult_generic_par<Accumulator>(A, x, y);
         return;
     } else {
@@ -846,6 +848,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
         // An empty A (#693): BLAS returns without touching y when either
         // dimension is 0, but y = A*x over an empty inner dimension is 0, as the
         // generic path makes it. Set it here and skip the call.
+        MTL5_DISPATCH_HIT(gemv_blas);
         if (m == 0 || n == 0) {
             for (std::size_t i = 0; i < y.size(); ++i) y(i) = math::zero<T>();
             return;
@@ -882,6 +885,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
                   std::is_same_v<typename M::value_type, typename VIn::value_type> &&
                   std::is_same_v<typename M::value_type, typename VOut::value_type>) {
         using T = typename M::value_type;
+        MTL5_DISPATCH_HIT(gemv_simd);
         const std::size_t mm = A.num_rows();
         const std::size_t nn = A.num_cols();
         if constexpr (interface::is_row_major_v<M>) {
@@ -915,6 +919,7 @@ void mult(const M& A, const VIn& x, VOut& y) {
 #endif
     // Everything the accelerated paths could not take -- every software-emulated
     // format among them -- lands here, and lands here THREADED (#446).
+    MTL5_DISPATCH_HIT(gemv_generic);
     detail::mult_generic_par(A, x, y);
     }
 }
@@ -1085,6 +1090,7 @@ void mult(const MA& A, const MB& B, MC& C) {
             const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
             const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
             const unsigned nthreads = detail::gemm_default_threads();
+            MTL5_DISPATCH_HIT(gemm_blocked);
             if constexpr (interface::is_row_major_v<MC>) {
                 detail::gemm_blocked<double, float>(M, N, K, math::one<double>(),
                                                     A.data(), a_rs, a_cs,
@@ -1139,6 +1145,7 @@ void mult(const MA& A, const MB& B, MC& C) {
             const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
             const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
             const unsigned nthreads = detail::gemm_default_threads();
+            MTL5_DISPATCH_HIT(gemm_blocked);
             if constexpr (interface::is_row_major_v<MC>) {
                 detail::gemm_blocked<Accumulator, TAB>(M, N, K, math::one<Accumulator>(),
                                                        A.data(), a_rs, a_cs,
@@ -1156,6 +1163,7 @@ void mult(const MA& A, const MB& B, MC& C) {
         // Custom accumulator: external BLAS / native-fast GEMM use hardware-fixed
         // accumulation, so route to the accumulator-aware generic kernel -- which
         // still partitions its output rows across the pool (#446).
+        MTL5_DISPATCH_HIT(gemm_generic);
         detail::mult_generic_par<Accumulator>(A, B, C);
         return;
     } else {
@@ -1184,6 +1192,7 @@ void mult(const MA& A, const MB& B, MC& C) {
         // is empty: BLIS rejects k == 0 with ld 0 and leaves C untouched,
         // where OpenBLAS accepts it and zeroes C.
         auto ld = [](int d) { return d < 1 ? 1 : d; };
+        MTL5_DISPATCH_HIT(gemm_blas);
         constexpr bool ra = interface::is_row_major_v<MA>;
         constexpr bool rb = interface::is_row_major_v<MB>;
         if constexpr (interface::is_row_major_v<MC>) {
@@ -1229,6 +1238,7 @@ void mult(const MA& A, const MB& B, MC& C) {
         const std::ptrdiff_t b_rs = interface::is_row_major_v<MB> ? static_cast<std::ptrdiff_t>(B.num_cols()) : 1;
         const std::ptrdiff_t b_cs = interface::is_row_major_v<MB> ? 1 : static_cast<std::ptrdiff_t>(B.num_rows());
         const unsigned nthreads = detail::gemm_default_threads();
+        MTL5_DISPATCH_HIT(gemm_blocked);
         if constexpr (interface::is_row_major_v<MC>) {
             detail::gemm_blocked<T>(M, N, K, math::one<T>(),
                                     A.data(), a_rs, a_cs,
@@ -1248,6 +1258,7 @@ void mult(const MA& A, const MB& B, MC& C) {
 #endif
     // Same as the mat*vec tail: whatever the blocked/BLAS gates rejected still
     // gets its output rows spread over the pool (#446).
+    MTL5_DISPATCH_HIT(gemm_generic);
     detail::mult_generic_par(A, B, C);
     }
 }

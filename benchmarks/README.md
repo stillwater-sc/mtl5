@@ -50,6 +50,8 @@ benchmarks/
   bench_all.cpp          dense BLAS/LAPACK driver (sizes/sweeps/suites + --label)
   mtl5_bench.cpp         the platform benchmark: probes + every registered operation, checked (#721)
   platform/              mtl5_bench's registry, probes, runner and entries (entries_*.hpp)
+  regression/            the instruction-count gate on every PR: kernels.txt, ir_gate.py,
+                         accepted.json (#944; see regression/README.md)
   bench_klu.cpp          sparse scoreboard: native KLU vs SuiteSparse KLU (#138)
   bench_superlu.cpp      sparse scoreboard: native LU vs SuperLU (#186)
   bench_sparse.cpp       level-scheduled sparse triangular-solve scaling (#297)
@@ -86,6 +88,16 @@ cmake --preset release && cmake --build build-release -j$(nproc)
 That preset links no external library, so it builds every benchmark in its
 native-only configuration — enough to run them, but the vendor comparison
 columns stay empty. See the per-backend builds below.
+
+## The regression gate on every PR (#944)
+
+CI does not time anything: shared runners vary too much (#454). What it does
+gate on is instruction counts. `bench-regression.yml` runs a fixed set of
+`mtl5_bench` entries once each under callgrind (`mtl5_bench --count`) and fails
+a PR whose count for a kernel rose more than 2% above main's, unless the PR
+accepts the increase in `benchmarks/regression/accepted.json`. Dispatch tests in
+the unit tier check that `mult` still reaches BLAS, the blocked GEMM or the SIMD
+GEMV. See [regression/README.md](regression/README.md).
 
 ## Platform benchmark: `mtl5_bench` (#721)
 
