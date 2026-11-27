@@ -176,9 +176,10 @@ TEST_CASE("minres: a preconditioner that is not positive definite returns 7 (iss
     SECTION("the plain and the scaled M-norm agree (issue 963)") {
         // v^T M^-1 v is formed plainly when it lies in [min / eps, max], and
         // scaled otherwise: at 2^+-300 it is about 2^-+300, plain; at 2^+-600
-        // it would underflow or overflow, scaled. All take the iterations of
-        // s = 1, to x within rounding. (2^900 breaks down, code 2, with or
-        // without issue 963's change: a limit of MINRES's range, not of m_norm.)
+        // it would underflow or overflow, scaled. Beyond about 2^+-700 the
+        // new Lanczos vector's solve itself left the range (code 2 above,
+        // code 6 below), and is redone on a power-of-two scaled copy (issue
+        // 971). All take the iterations of s = 1, to x within rounding.
         const auto T = make_tridiagonal(n, 4.0, -1.0);
         auto solve = [&](double s, vec::dense_vector<double>& x) {
             vec::dense_vector<double> d(n, 4.0 * s);
@@ -190,7 +191,8 @@ TEST_CASE("minres: a preconditioner that is not positive definite returns 7 (iss
         vec::dense_vector<double> x1(n, 0.0);
         const auto [c1, it1] = solve(1.0, x1);
         REQUIRE(c1 == 0);
-        for (const double s : {0x1p300, 0x1p-300, 0x1p600, 0x1p-600}) {
+        for (const double s : {0x1p300, 0x1p-300, 0x1p600, 0x1p-600, 0x1p700, 0x1p-700,
+                               0x1p750, 0x1p-750, 0x1p900, 0x1p-900, 0x1p1000, 0x1p-1000}) {
             CAPTURE(std::ilogb(s));
             vec::dense_vector<double> x(n, 0.0);
             const auto [c, it] = solve(s, x);
@@ -217,6 +219,39 @@ TEST_CASE("minres: a preconditioner that is not positive definite returns 7 (iss
         CHECK(itl::minres(I, x, b16, M, iter) == 7);
         CHECK(iter.iterations() == 0);
         for (std::size_t i = 0; i < m; ++i) CHECK(x(i) == 0.0);
+    }
+
+    SECTION("code 7 at a later Lanczos step, with M at 2^+-900 (issue 971)") {
+        // As "found at a later Lanczos step", scaled: the step that reaches
+        // index 5 runs on the rescaled solve, whose M-norm must still see the
+        // negative entry. The out-of-range first M-norm must not mask it, nor
+        // invent one.
+        const auto T = make_tridiagonal(n, 4.0, 1.0);
+        vec::dense_vector<double> e0(n, 0.0);
+        e0(0) = 1.0;
+        int k1 = 0;
+        {
+            vec::dense_vector<double> d(n, 4.0), x(n, 0.0);
+            d(5) = -4.0;
+            given_diagonal_949 M{d};
+            itl::basic_iteration<double> iter(e0, 500, 1e-12);
+            REQUIRE(itl::minres(T, x, e0, M, iter) == 7);
+            k1 = iter.iterations();
+        }
+        for (const double s : {0x1p900, 0x1p-900}) {
+            CAPTURE(std::ilogb(s));
+            vec::dense_vector<double> d(n, 4.0 * s), x(n, 0.0);
+            d(5) = -4.0 * s;
+            given_diagonal_949 M{d};
+            itl::basic_iteration<double> iter(e0, 500, 1e-12);
+            CHECK(itl::minres(T, x, e0, M, iter) == 7);
+            CHECK(iter.iterations() == k1);
+            // An SPD M at the same scale converges: no false code 7.
+            vec::dense_vector<double> dp(n, 4.0 * s), y(n, 0.0);
+            given_diagonal_949 P{dp};
+            itl::basic_iteration<double> it2(e0, 500, 1e-12);
+            CHECK(itl::minres(T, y, e0, P, it2) == 0);
+        }
     }
 
     SECTION("an SPD M at 2^+-600 is unaffected") {
