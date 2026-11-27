@@ -8,6 +8,18 @@
 //
 //   mtl5_bench [--class small|medium|large] [--json out.json] [--label name]
 //              [--filter substr] [--list]
+//   mtl5_bench --count area/op/dtype [--class small|medium|large]
+//
+// --count runs ONE entry once, untimed, for an instruction counter: setup()
+// and a warm-up run, setup() again, then run() inside
+// mtl5_bench_counted_region(), and check(). Under
+//   valgrind --tool=callgrind --toggle-collect=mtl5_bench_counted_region
+// only that call is counted, so setup, the warm-up and the check are not.
+// No probes and no output files. Default class: small. It is what the
+// instruction-count gate runs (benchmarks/regression/, #944). The line it
+// prints says whether MTL5_ENABLE_BLOCKING_OVERRIDE is compiled in: the gate
+// pins the GEMM blocking through it, so its counts do not depend on the
+// runner's caches.
 //
 // --json writes the results and, beside them, out.json.sysinfo: the machine,
 // the build (commit, flags, SIMD target) and the thread count, the same
@@ -42,6 +54,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -73,7 +87,10 @@ void usage(std::ostream& os) {
           "  --baseline FILE.json from the same build at fewer threads (normally 1):\n"
           "             report each entry's speedup and parallel efficiency against it\n"
           "  --filter   run only entries whose area/op/dtype contains SUBSTR\n"
-          "  --list     print the registered entries and exit\n";
+          "  --list     print the registered entries and exit\n"
+          "       mtl5_bench --count AREA/OP/DTYPE [--class small|medium|large]\n"
+          "  --count    run that one entry once, untimed, for an instruction counter\n"
+          "             (callgrind --toggle-collect=mtl5_bench_counted_region); default class small\n";
 }
 
 std::string json_escape(const std::string& s) {
@@ -106,6 +123,51 @@ std::string num(double v) {
 }
 
 std::string id_of(const bp::entry& e) { return e.area + "/" + e.op + "/" + e.dtype; }
+
+} // namespace
+
+/// The one call `--count` measures. extern "C" and never inlined, so that
+/// callgrind's --toggle-collect can name it exactly; the asm barrier keeps the
+/// compiler from treating it as pure. Everything run() does is counted,
+/// whatever it inlines or calls.
+extern "C"
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+void mtl5_bench_counted_region(const std::function<void()>& run) {
+    run();
+#if !defined(_MSC_VER)
+    __asm__ __volatile__("" ::: "memory");
+#endif
+}
+
+namespace {
+
+/// --count: one entry, run once, untimed. 0 if its check passed, 1 if not.
+int count_entry(const bp::entry& e, bp::size_class cls) {
+    try {
+        bp::problem p = e.make(cls);
+        p.setup(); p.run();      // warm-up: lazy initialization is not counted
+        p.setup();
+        mtl5_bench_counted_region(p.run);
+        const bp::check_result c = p.check();
+        std::cout << "count " << id_of(e) << " " << p.shape << " class=" << bp::to_string(cls)
+                  << " check=" << (c.ok ? "ok" : "FAIL") << " error=" << c.error
+                  << " tolerance=" << c.tolerance
+#if defined(MTL5_ENABLE_BLOCKING_OVERRIDE)
+                  << " blocking_override=on"
+#else
+                  << " blocking_override=off"
+#endif
+                  << "\n";
+        return c.ok ? 0 : 1;
+    } catch (const std::exception& ex) {
+        std::cerr << "count " << id_of(e) << " threw: " << ex.what() << "\n";
+        return 1;
+    }
+}
 
 /// A --baseline run: its thread count and each entry's median, read back from
 /// the JSON this program writes (its own format, so a small scanner suffices).
@@ -373,7 +435,8 @@ bool write_card(const std::string& path, const std::string& label, const std::st
 
 int main(int argc, char** argv) {
     bp::size_class cls = bp::size_class::medium;
-    std::string json_path, card_path, filter, machine, baseline_path, label = kDefaultLabel;
+    bool class_given = false;
+    std::string json_path, card_path, filter, machine, baseline_path, count_id, label = kDefaultLabel;
     bool list = false;
     for (int i = 1; i < argc; ++i) {
         auto need = [&](const char* flag) -> std::string {
@@ -382,6 +445,7 @@ int main(int argc, char** argv) {
         };
         if (!std::strcmp(argv[i], "--class")) {
             const std::string c = need("--class");
+            class_given = true;
             if (c == "small") cls = bp::size_class::small;
             else if (c == "medium") cls = bp::size_class::medium;
             else if (c == "large") cls = bp::size_class::large;
@@ -393,6 +457,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--baseline")) baseline_path = need("--baseline");
         else if (!std::strcmp(argv[i], "--filter")) filter = need("--filter");
         else if (!std::strcmp(argv[i], "--list"))   list = true;
+        else if (!std::strcmp(argv[i], "--count"))  count_id = need("--count");
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) { usage(std::cout); return 0; }
         else { std::cerr << "unknown argument '" << argv[i] << "'\n"; usage(std::cerr); return 2; }
     }
@@ -404,6 +469,13 @@ int main(int argc, char** argv) {
     bp::direct_entries::register_all(reg);
     bp::iterative::register_all(reg);
     bp::mixed::register_all(reg);
+
+    if (!count_id.empty()) {
+        for (const auto& e : reg.entries())
+            if (id_of(e) == count_id) return count_entry(e, class_given ? cls : bp::size_class::small);
+        std::cerr << "no entry is named '" << count_id << "' (see --list)\n";
+        return 2;
+    }
 
     std::vector<const bp::entry*> selected;
     for (const auto& e : reg.entries())

@@ -1,0 +1,164 @@
+name: Benchmark regression
+
+# The instruction-count gate (#944). Each kernel in
+# benchmarks/regression/kernels.txt runs once under callgrind, through
+# `mtl5_bench --count`, and its instruction count (Ir) is compared with main's.
+# A rise of more than 2% fails the PR, unless benchmarks/regression/accepted.json
+# accepts it (the kernel, the new count and the reason, committed in the PR).
+#
+# Why instruction counts and not time: shared runners cannot time anything. The
+# same binary varied by 31% on an idle machine (#454), and
+# docs/performance/benchmarking-methodology.md explains the rest. An instruction
+# count repeats exactly on one binary, whatever the runner's load. What it does
+# not see (cache, SIMD width, threads) is measured by the wall-clock runs on the
+# benchmark machines, which are reports, not gates (benchmarks/regression/README.md).
+#
+# The baseline: every push to main uploads its counts as an artifact. A PR
+# downloads the counts of main's latest successful run and compares. With no
+# baseline (the first run, an expired artifact) the gate reports and passes.
+#
+# PATHS: the same list as ci.yml and regression.yml; keep the copies the same.
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-site/**'
+      - 'benchmarks/data/**'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
+      - 'LICENSE'
+      - '.coderabbit.yaml'
+      - '.nojekyll'
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - 'docs-site/**'
+      - 'benchmarks/data/**'
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.svg'
+      - 'LICENSE'
+      - '.coderabbit.yaml'
+      - '.nojekyll'
+    types: [ opened, synchronize, reopened ]
+
+permissions:
+  contents: read
+  actions: read     # gh run list / gh run download of main's baseline
+
+concurrency:
+  group: bench-regression-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ir-gate:
+    name: Instruction counts (${{ matrix.config }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The portable kernels: what a default build runs.
+          - config: native
+            cmake_flags: ""
+          # The blocked GEMM and SIMD GEMV over Highway, the native-fast
+          # variant of the platform benchmark.
+          - config: native-fast
+            cmake_flags: -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_FAST_GEMM=ON
+
+    # Same trusted-run gate as ci.yml: forked PRs skip sccache so they cannot
+    # poison the shared GHA cache.
+    env:
+      SCCACHE_LAUNCHER: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'sccache' || '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up sccache
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Test the gate script
+        run: python3 benchmarks/regression/test_ir_gate.py
+
+      # MTL5_ENABLE_BLOCKING_OVERRIDE lets ir_gate.py pin the GEMM blocking,
+      # which is otherwise derived from the runner's caches (ir_gate.py's
+      # PINNED_ENV says why). ir_gate.py refuses a build without it.
+      - name: Configure
+        run: >
+          cmake -B build-ir
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS=-DMTL5_ENABLE_BLOCKING_OVERRIDE
+          -DMTL5_BUILD_BENCHMARKS=ON
+          -DMTL5_BUILD_TESTS=OFF
+          -DMTL5_BUILD_EXAMPLES=OFF
+          ${{ matrix.cmake_flags }}
+
+      - name: Build mtl5_bench
+        run: cmake --build build-ir --parallel 2 --target mtl5_bench
+
+      - name: Count instructions
+        run: >
+          python3 benchmarks/regression/ir_gate.py count
+          --bench build-ir/benchmarks/mtl5_bench
+          --kernels benchmarks/regression/kernels.txt
+          --config ${{ matrix.config }}
+          --out ir-counts.json
+
+      # On main this is the baseline every later PR compares with. On a PR it
+      # is kept for inspection.
+      - name: Upload the counts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ir-counts-${{ matrix.config }}
+          path: ir-counts.json
+          retention-days: 90
+
+      # main's latest successful push run. This run is still in progress, so it
+      # is never its own baseline. Nothing found leaves baseline/ empty, which
+      # the compare step reports as "no baseline".
+      - name: Fetch main's baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIG: ${{ matrix.config }}
+        run: |
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow bench-regression.yml \
+                     --branch main --event push --status success --limit 1 \
+                     --json databaseId -q '.[0].databaseId')
+          mkdir -p baseline
+          if [ -n "$run_id" ]; then
+            echo "baseline: run $run_id"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" -n "ir-counts-$CONFIG" -D baseline \
+              || echo "run $run_id has no ir-counts-$CONFIG artifact"
+          else
+            echo "no successful main run of bench-regression.yml yet"
+          fi
+
+      # On a PR the gate: a regression fails the job. On main a report against
+      # the previous main run, which does not fail: the PR was gated already.
+      - name: Compare with main
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set +e
+          python3 benchmarks/regression/ir_gate.py compare \
+            --baseline baseline/ir-counts.json --current ir-counts.json \
+            --accepted benchmarks/regression/accepted.json \
+            --threshold 0.02 --summary "$GITHUB_STEP_SUMMARY"
+          status=$?
+          if [ "$EVENT" != pull_request ]; then exit 0; fi
+          exit $status
