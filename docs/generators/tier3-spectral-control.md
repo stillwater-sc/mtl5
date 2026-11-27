@@ -110,7 +110,25 @@ template <typename T = double>
 auto randsym(std::size_t n, T kappa, int mode = 3) -> mat::dense2D<T>;
 ```
 
-A = Q * Λ * Q^T. Same mode system for eigenvalue distribution. Result is symmetric by construction.
+A = Q * Λ * Q^T, symmetric by construction.
+- **The eigenvalue form** takes any real spectrum, including negative and zero eigenvalues.
+- **The mode form** uses the same mode system as `randsvd`, with λ ∈ [1/κ, 1]. Its result is therefore **positive definite**, the same kind of matrix as `randspd(n, kappa, mode)`. For an indefinite matrix with this conditioning, use `randsym_indefinite`.
+
+### `randsym_indefinite<T>(...)` — `include/mtl/generators/randsym.hpp` (#961)
+
+```cpp
+template <typename T = double>
+auto randsym_indefinite(std::size_t n, T kappa, int mode, std::size_t num_negative) -> mat::dense2D<T>;
+// plus the std::uint64_t seed and std::mt19937_64& forms, as for every random generator
+```
+
+It builds the mode form's spectrum and negates `num_negative` of its eigenvalues. This is the usual specification for testing indefinite solvers and inertia code (LDLᵀ, MINRES, `inertia` / `is_indefinite`).
+- **cond₂(A) = κ for n ≥ 2:** the signs do not change max|λ| / min|λ|. For n = 1 the matrix is [1], or [−1] with one negative eigenvalue, whatever κ is, so its condition number is 1. For n = 0 it is empty.
+- **The inertia** is (n − `num_negative`, `num_negative`, 0).
+- **Which eigenvalues are negated:** a random subset of the positions, drawn from the engine after the spectrum, as LAPACK's `DLATMS` does with `RSIGN = 'T'`. The draw uses the raw engine stream, so a seed negates the same positions with every compiler and standard library.
+- **`num_negative = 0`** draws nothing for the subset, and gives `randsym(n, kappa, mode)`'s matrix for the same seed.
+- **`num_negative > n`** throws `std::invalid_argument`, as do a κ < 1 and a mode outside 1–5.
+- **Why a separate name:** an overload `randsym(n, kappa, mode, num_negative)` would have the same parameter types as the seeded `randsym(n, kappa, mode, std::uint64_t seed)`, since `std::size_t` and `std::uint64_t` are the same type on most platforms.
 
 ### `randspd<T>(...)` — `include/mtl/generators/randspd.hpp`
 
@@ -120,7 +138,7 @@ Same as `randsym`, but it throws `std::invalid_argument` unless all eigenvalues 
 
 ### Reproducible draws (#844)
 
-Every random generator has three forms: `randorth`, `randsvd`, `randsym` and `randspd`, plus `fill_random`, `random_vector` and `random_matrix` in `operation/random.hpp`.
+Every random generator has three forms: `randorth`, `randsvd`, `randsym`, `randsym_indefinite` and `randspd`, plus `fill_random`, `random_vector` and `random_matrix` in `operation/random.hpp`.
 
 | Form | Example | Draws |
 |---|---|---|
@@ -155,7 +173,7 @@ Tests eigenvalue sensitivity — has nearly-equal eigenvalue pairs.
 |------|-------------------|
 | `test_randorth` | Q^T·Q ≈ I (Frobenius norm of error < tol) |
 | `test_randsvd` | SVD of result recovers prescribed σ; test all 5 modes; cond = κ exactly |
-| `test_randsym` | A = A^T; eigenvalues match prescribed λ (sorted) |
+| `test_randsym` | A = A^T; eigenvalues match prescribed λ (sorted). `randsym_indefinite`: the inertia, \|λ\| equal to `make_sigma`'s in every mode (so cond = κ), bitwise symmetry, seed reproducibility, `num_negative = 0` equals `randsym`, the negated positions pinned for one seed, argument checks |
 | `test_randspd` | A = A^T; eigenvalues positive and match; Cholesky succeeds |
 | `test_rosser` | Symmetry; dimension = 8; trace. The 8 eigenvalues are checked in `test_generator_properties` |
 | `test_wilkinson` | Tridiagonal structure; symmetry; known dimension; diagonal values |
