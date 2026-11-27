@@ -105,6 +105,25 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **MINRES about 45% slower per iteration since #869** (issue 963; #968). #869 made MINRES form ‖v‖_{M⁻¹} = √(vᵀz) the overflow-safe way on every iteration: two norms, 2n divisions and a dot product. One dot product is enough except near the ends of the range.
+  - **Found by:** the first wall-clock tracking run (#944). `minres+diag` was 1.43–1.55× slower under GCC and 1.85–1.93× under MSVC, on every machine and variant, with the same iteration count. A standalone timing with headers from three commits isolated it to #869.
+  - **The fix:** `m_norm` takes the plain vᵀz when its real part is non-negative and |vᵀz| lies in [min/ε, max], and the scaled form otherwise. The #671 cases (2^±600, z = 2^1023·ones) are unchanged.
+  - **Negative values still take the scaled form,** so the code-7 test (#949) gets finite norms. The plain norms can overflow where vᵀz does not (16 entries of v = 2⁻⁸ with M = diag(−2⁻¹⁰³¹)), and the infinite tolerance passed an indefinite M (#968 review).
+  - **Measured:** 128² Poisson grid, `pc::diagonal`, an i7-12700K P-core, 233 iterations in all three. 30.3 ms on main before the fix, 21.7 ms after, 20.5 ms before #869.
+  - **Gated from now on:** `krylov/minres+diag/f64` joins the instruction-count gate's kernels, which now number 15. The gate counted CG and BiCGSTAB, not MINRES, which is how the rise got through.
+  - **Not addressed:** MINRES breaks down (code 2) at a preconditioner scaled by 2^900, with or without this change.
+  - Tests: `test_minres.cpp`.
+- **BiCG and BiCGSTAB with a preconditioner scaled beyond 2^±512** (issue 958; #967). The same exposure as CG's (issue 955): one product in the step scales as 1/s² while the rest scale as 1/s.
+  - **What failed:** BiCG's p̃ᴴAp underflowed at 2^600, a false breakdown (code 3), and overflowed at 2^−600, so α = 0 and it ran to its limit. BiCGSTAB's ω denominator tᵀt gave code 4 at 2^600 and code 5 at 2^−600, after one iteration.
+  - **The fix,** as in `cg`, when the product is not a normal number:
+    - **`bicg`** redoes the step on p̂ = 2⁻ᵉp and p̃̂ = 2⁻ᶠp̃, each with its own exponent. x and r take 2⁻ᶠρ/d, and r̃ takes conj(2⁻ᵉρ/d).
+    - **`bicgstab`** forms ω = 2⁻ᵉ(t̂ᵀs)/(t̂ᵀt̂).
+    - **Unchanged:** a normal product takes the old path, bit for bit. A product still zero after rescaling is a true breakdown.
+  - **The coefficient's quotient no longer leaves the range.** ρ/d can leave the range where 2ᵏρ/d does not: A = [2⁻²⁰⁰] with M⁻¹ = 2⁹⁰⁰ gave inf. `detail::scaled_quotient` divides the mantissas and applies one power of two. `cg` from #959 had the same quotient and uses it now too (#967 review).
+  - **Shared helpers:** the exponent and the per-value scaling moved from `cg.hpp` into `itl/krylov/pow2_rescale.hpp`, which all three solvers use.
+  - **The result:** at 2^±300, ±600 and ±900, BiCG (real and complex, nonsymmetric) and BiCGSTAB take the iterations of s = 1, to the same bits. In 12 of BiCG's 163 rescaled test steps the two exponents differ.
+  - **Not changed:** QMR passes at every scale (#959's audit).
+  - Tests: `test_bicg.cpp` and `test_bicgstab.cpp` ([958]), plus the 1×1 quotient cases in `test_cg.cpp`.
 - **`mtl5_bench` builds under Visual Studio 2026** (#962). The native-fast and blas builds of `mtl5_bench.cpp` failed with C1128: the object file exceeded COFF's section limit. So on both Ryzen NUCs (MSVC 19.52) the platform benchmark ran only its native variant. CI's MSVC 19.44 is still under the limit. The target now builds with `/bigobj` under MSVC and clang-cl. Found by the first tracking run.
 - **CG with a preconditioner scaled far from 1** (issue 955). For M scaled by s, ρ = rᵀM⁻¹r scales as 1/s, but pᵀAp scales as 1/s², so it left double's range beyond 2^±512.
   - **What failed:** at M = 4·2^600·I, pᵀAp underflowed to 0 and CG reported a false breakdown (code 2) after one iteration. At 4·2^-600·I it overflowed, α was 0, and CG ran to its limit (code 1).
@@ -112,7 +131,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - Where pᵀAp is normal nothing changes, bit for bit, and the normal step costs nothing extra.
     - A pᵀAp that is still 0 after rescaling is a true zero, as on an indefinite A (issue 866), and is still a breakdown.
   - **The result:** CG now converges in the same 17 iterations, to the same bits, from 2^±300 to 2^±900. Past about 2^±950, z = M⁻¹r itself reaches the subnormal range.
-  - **Audited:** CGS, TFQMR, MINRES and GMRES pass at 2^±600. BiCG and BiCGSTAB fail there, and are filed separately.
+  - **Audited:** CGS, TFQMR, MINRES and GMRES pass at 2^±600. BiCG and BiCGSTAB failed there, and were fixed in #967 (above).
   - Tests: `test_cg.cpp` ([955]); #952's code-7 test now runs to 2^±600.
 - **The UKF examples' conclusions now match their output** (issue 953). `ukf_comparison` and `bearing_only_ukf` concluded that Cholesky's square roots lose precision on an ill-conditioned P, and that LDLᵀ avoids them. Their own output showed the opposite.
   - **`ukf_comparison`.** Both filters complete every scenario, with final errors that agree to 2.2e-7. cond(P) never exceeds 6.8e3, because the process noise keeps P's eigenvalues up. On SPD matrices up to cond 1e15 both residuals stay at 1e-16.
