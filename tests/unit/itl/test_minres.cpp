@@ -12,6 +12,9 @@
 #include <mtl/itl/pc/diagonal.hpp>
 #include <mtl/itl/iteration/basic_iteration.hpp>
 #include <mtl/itl/krylov/minres.hpp>
+#include <algorithm>
+#include <cmath>
+#include <utility>
 
 using namespace mtl;
 
@@ -168,6 +171,52 @@ TEST_CASE("minres: a preconditioner that is not positive definite returns 7 (iss
         REQUIRE(itl::minres(T, y, e0, M, limit) == 1);
         for (std::size_t i = 0; i < n; ++i) CHECK(x(i) == y(i));
         CHECK(mtl::two_norm(x) > 0.0);
+    }
+
+    SECTION("the plain and the scaled M-norm agree (issue 963)") {
+        // v^T M^-1 v is formed plainly when it lies in [min / eps, max], and
+        // scaled otherwise: at 2^+-300 it is about 2^-+300, plain; at 2^+-600
+        // it would underflow or overflow, scaled. All take the iterations of
+        // s = 1, to x within rounding. (2^900 breaks down, code 2, with or
+        // without issue 963's change: a limit of MINRES's range, not of m_norm.)
+        const auto T = make_tridiagonal(n, 4.0, -1.0);
+        auto solve = [&](double s, vec::dense_vector<double>& x) {
+            vec::dense_vector<double> d(n, 4.0 * s);
+            given_diagonal_949 M{d};
+            itl::basic_iteration<double> iter(b, 500, 1e-10);
+            const int code = itl::minres(T, x, b, M, iter);
+            return std::pair{code, iter.iterations()};
+        };
+        vec::dense_vector<double> x1(n, 0.0);
+        const auto [c1, it1] = solve(1.0, x1);
+        REQUIRE(c1 == 0);
+        for (const double s : {0x1p300, 0x1p-300, 0x1p600, 0x1p-600}) {
+            CAPTURE(std::ilogb(s));
+            vec::dense_vector<double> x(n, 0.0);
+            const auto [c, it] = solve(s, x);
+            REQUIRE(c == 0);
+            CHECK(it == it1);
+            double err = 0.0;
+            for (std::size_t i = 0; i < n; ++i) err = std::max(err, std::abs(x(i) - x1(i)));
+            CHECK(err < 1e-12 * mtl::two_norm(x1));
+        }
+    }
+
+    SECTION("a negative v^T M^-1 v whose norms overflow still returns 7 (issue 963)") {
+        // #968 review. A = I, b = 2^-8 ones (n = 16), M = diag(-2^-1031):
+        // z = M^-1 r0 = -2^1023 ones, r0^T z = -2^1019 is in range, but
+        // ||z||_2 = 2^1025 overflows. Taken plainly, the code-7 tolerance
+        // n eps ||r0|| ||z|| was infinite and MINRES went on with |r0^T z|.
+        const std::size_t m = 16;
+        mat::dense2D<double> I(m, m);
+        for (std::size_t i = 0; i < m; ++i)
+            for (std::size_t j = 0; j < m; ++j) I(i, j) = (i == j ? 1.0 : 0.0);
+        vec::dense_vector<double> b16(m, 0x1p-8), x(m, 0.0), d(m, -0x1p-1031);
+        given_diagonal_949 M{d};
+        itl::basic_iteration<double> iter(b16, 50, 1e-10);
+        CHECK(itl::minres(I, x, b16, M, iter) == 7);
+        CHECK(iter.iterations() == 0);
+        for (std::size_t i = 0; i < m; ++i) CHECK(x(i) == 0.0);
     }
 
     SECTION("an SPD M at 2^+-600 is unaffected") {
