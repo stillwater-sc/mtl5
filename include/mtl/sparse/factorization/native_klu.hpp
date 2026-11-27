@@ -193,6 +193,80 @@ struct klu_numeric {
         for (std::size_t j = 0; j < n; ++j)
             x(btf.col_perm[j]) = static_cast<typename VecX::value_type>(y[j]);
     }
+
+    /// Solve A^T x = b (the transpose, not the conjugate transpose). With
+    /// B = P R A Q, A^T = Q B^T P R^{-1}, so B^T y = Q^T b with y = P R^{-1} x.
+    /// B^T is block LOWER triangular: the first block is solved first, and its
+    /// coupling is subtracted from the later blocks' right-hand sides. Each
+    /// block's transposed solve is lu_numeric::solve_transpose. It is what
+    /// condest() needs, and what an adjoint (sensitivity) solve needs.
+    template <typename VecX, typename VecB>
+    void solve_transpose(VecX& x, const VecB& b) const {
+        const std::size_t n = num_rows();
+        if (static_cast<std::size_t>(x.size()) != n || static_cast<std::size_t>(b.size()) != n)
+            throw std::invalid_argument("klu_numeric::solve_transpose: vector size mismatch");
+        std::vector<Value> y(n);
+        for (std::size_t j = 0; j < n; ++j) y[j] = static_cast<Value>(b(btf.col_perm[j]));
+        const auto& rp  = B.ref_major();
+        const auto& ci  = B.ref_minor();
+        const auto& dat = B.ref_data();
+        for (std::size_t blk = 0; blk < nblocks(); ++blk) {
+            const std::size_t r0 = btf.blocks[blk];
+            const std::size_t r1 = btf.blocks[blk + 1];
+            detail::klu_slice<Value> part{y.data() + r0, r1 - r0};
+            block_numeric[blk].solve_transpose(part, part);   // reads all of part before it writes
+            // Row i of this block couples to the later blocks' columns j: in
+            // B^T that is column i, so y_j -= B(i, j) y_i.
+            for (std::size_t i = r0; i < r1; ++i)
+                for (std::size_t k = rp[i]; k < rp[i + 1]; ++k)
+                    if (block_of[ci[k]] > blk) y[ci[k]] -= dat[k] * y[i];
+        }
+        // y_i = x[p[i]] / r[p[i]]
+        const bool scaled = !row_scale.empty();
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t orow = btf.row_perm[i];
+            x(orow) = static_cast<typename VecX::value_type>(scaled ? row_scale[orow] * y[i] : y[i]);
+        }
+    }
+
+    /// An estimate of the 1-norm condition number ||A||_1 ||A^{-1}||_1, as
+    /// SuiteSparse's klu_condest: Hager's method with Higham's refinements
+    /// (detail::inverse_norm1_estimate in sparse_lu.hpp), from at most 11
+    /// solves with A and A^T. A lower bound, exact or within a factor of 3 in
+    /// practice. `A` is the matrix factored, unscaled: the row scaling is
+    /// undone by the solves. 1 for n = 0; NaN if A or a solve holds a NaN.
+    /// \throws std::invalid_argument if A's dimensions are not n x n.
+    template <typename Parameters>
+    Value condest(const mat::compressed2D<Value, Parameters>& A) const {
+        const std::size_t n = num_rows();
+        if (A.num_rows() != n || A.num_cols() != n)
+            throw std::invalid_argument("klu_numeric::condest: matrix dimensions do not match the factorization");
+        if (n == 0) return Value{1};
+        const Value anorm = detail::csr_norm1(A);
+        const Value inv = detail::inverse_norm1_estimate<Value>(
+            n, [&](auto& y, const auto& x) { solve(y, x); },
+               [&](auto& z, const auto& x) { solve_transpose(z, x); });
+        return anorm * inv;
+    }
+};
+
+/// Options of native_klu_refactor's checked form (issue 946).
+template <typename Value>
+struct klu_refactor_options {
+    /// The smallest rgrowth() the refactorization may have. 0, the default,
+    /// checks nothing. Otherwise a smaller growth (or a NaN) throws
+    /// klu_growth_error, so that an analyze-once, factor-many loop (a SPICE
+    /// transient) can catch it and call native_klu_factor afresh. KLU's own
+    /// guidance is that a growth near 1 is good; a threshold such as 1e-8
+    /// rejects only a refactorization whose kept pivots no longer fit.
+    Value min_rgrowth{};
+};
+
+/// Thrown by native_klu_refactor when the refactorization's rgrowth() is below
+/// klu_refactor_options::min_rgrowth. `rgrowth` is the measured growth.
+struct klu_growth_error : std::runtime_error {
+    double rgrowth;
+    klu_growth_error(const std::string& what, double g) : std::runtime_error(what), rgrowth(g) {}
 };
 
 /// Factor A using native KLU: BTF, then a left-looking LU of each diagonal
@@ -359,7 +433,9 @@ klu_numeric<Value> native_klu_factor(
 /// 2 x 2 block pivoted on 2, refactored with 1e-20 in its place). Check
 /// `rgrowth()` on the result -- near 1 is good, a tiny value means the kept
 /// pivots no longer fit -- and call native_klu_factor afresh when it fails.
-/// `rcond()` is a cheaper, cruder check.
+/// `rcond()` is a cheaper, cruder check, and `condest(A)` an estimate of the
+/// condition number itself. The overload taking klu_refactor_options makes the
+/// growth check and throws klu_growth_error.
 ///
 /// \throws std::invalid_argument if A's dimensions do not match `prev`, or A has
 ///                               an entry outside the prior BTF and factor pattern.
@@ -486,6 +562,36 @@ klu_numeric<Value> native_klu_refactor(
             sparse_lu_refactor(block, prev.block_numeric[blk]));
     }
 
+    return result;
+}
+
+/// native_klu_refactor, then the check `opt` asks for: with opt.min_rgrowth
+/// > 0, a result whose rgrowth() is below it, or NaN, throws klu_growth_error
+/// instead of being returned (issue 946). `prev` is untouched either way, as in
+/// the unchecked form.
+///
+///     try { fac = native_klu_refactor(A, fac, {.min_rgrowth = 1e-8}); }
+///     catch (const klu_growth_error&) { fac = native_klu_factor(A); }
+///
+/// \throws klu_growth_error  if the growth check fails.
+/// \throws as native_klu_refactor(A, prev) otherwise.
+template <typename Value, typename Parameters>
+    requires OrderedField<Value>
+klu_numeric<Value> native_klu_refactor(
+    const mat::compressed2D<Value, Parameters>& A,
+    const klu_numeric<Value>& prev,
+    const std::type_identity_t<klu_refactor_options<Value>>& opt)
+{
+    klu_numeric<Value> result = native_klu_refactor(A, prev);
+    if (opt.min_rgrowth > Value{0}) {
+        const Value g = result.rgrowth();
+        if (!(g >= opt.min_rgrowth))
+            throw klu_growth_error(
+                "native_klu_refactor: reciprocal pivot growth " + std::to_string(static_cast<double>(g))
+                + " is below min_rgrowth " + std::to_string(static_cast<double>(opt.min_rgrowth))
+                + ": the kept pivots do not fit the new values; factor afresh",
+                static_cast<double>(g));
+    }
     return result;
 }
 

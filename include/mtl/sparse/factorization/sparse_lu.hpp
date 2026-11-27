@@ -97,6 +97,84 @@ Value lu_rgrowth(const util::csc_matrix<Value, SizeType>& U, ColMax&& amax_of, V
     }
     return g;
 }
+
+/// ||A||_1, the largest column sum of |A(i, j)|, for a square CSR A. NaN if A
+/// holds one.
+template <typename Value, typename Parameters>
+Value csr_norm1(const mat::compressed2D<Value, Parameters>& A) {
+    using std::abs;
+    std::vector<Value> col(A.num_cols(), Value{0});
+    const auto& ci  = A.ref_minor();
+    const auto& dat = A.ref_data();
+    for (std::size_t k = 0; k < A.nnz(); ++k) {
+        const Value a = abs(dat[k]);
+        if (!(a == a)) return a;
+        col[ci[k]] += a;
+    }
+    Value m{0};
+    for (const Value& c : col) {
+        if (!(c == c)) return c;
+        if (c > m) m = c;
+    }
+    return m;
+}
+
+/// An estimate of ||A^{-1}||_1 from solves with A and A^T: Hager's method with
+/// Higham's refinements (Higham, "FORTRAN codes for estimating the one-norm of
+/// a real or complex matrix", ACM TOMS 14(4), 1988; Algorithm 4.1), as
+/// SuiteSparse's klu_condest. At most five pairs of solves and one more, so
+/// O(5 nnz(L + U)). The estimate is a lower bound of ||A^{-1}||_1, and is
+/// exact or within a factor of 3 in practice. `solve(y, x)` computes A^{-1} x
+/// and `solve_t(z, x)` A^{-T} x, on dense_vector<Value>. NaN if a solve gives a
+/// NaN.
+template <typename Value, typename Solve, typename SolveT>
+Value inverse_norm1_estimate(std::size_t n, Solve&& solve, SolveT&& solve_t) {
+    using std::abs;
+    if (n == 0) return Value{0};
+    using vec_t = vec::dense_vector<Value>;
+    vec_t x(n, Value{1} / Value(n)), y(n), xi(n), xi_old(n), z(n);
+    auto norm1 = [&](const vec_t& v) {
+        Value t{0};
+        for (std::size_t i = 0; i < n; ++i) t += abs(v(i));
+        return t;
+    };
+    Value est{0};
+    for (int k = 0; k < 5; ++k) {
+        solve(y, x);
+        const Value ny = norm1(y);
+        if (!(ny == ny)) return ny;
+        if (k > 0 && !(ny > est)) break;      // no increase: the last estimate stands
+        est = ny;
+        bool same_sign = (k > 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            xi(i) = (y(i) < Value{0}) ? -Value{1} : Value{1};
+            if (k > 0 && !(xi(i) == xi_old(i))) same_sign = false;
+        }
+        if (same_sign) break;                  // the sign pattern repeated: converged
+        solve_t(z, xi);
+        std::size_t j = 0;
+        Value zmax = abs(z(0)), ztx{0};
+        for (std::size_t i = 0; i < n; ++i) {
+            const Value a = abs(z(i));
+            if (!(a == a)) return a;
+            if (a > zmax) { zmax = a; j = i; }
+            ztx += z(i) * x(i);
+        }
+        if (k > 0 && !(zmax > ztx)) break;     // Hager's test: x is a local maximum
+        for (std::size_t i = 0; i < n; ++i) { x(i) = Value{0}; xi_old(i) = xi(i); }
+        x(j) = Value{1};
+    }
+    // Higham's extra vector, x_i = (-1)^i (1 + i / (n - 1)): it catches the
+    // matrices on which the iteration above stops at a poor local maximum.
+    for (std::size_t i = 0; i < n; ++i) {
+        const Value t = n > 1 ? Value{1} + Value(i) / Value(n - 1) : Value{1};
+        x(i) = (i % 2 == 0) ? t : -t;
+    }
+    solve(y, x);
+    const Value alt = Value(2) * norm1(y) / (Value(3) * Value(n));
+    if (!(alt == alt)) return alt;
+    return alt > est ? alt : est;
+}
 } // namespace detail
 
 /// Result of numeric LU factorization.
@@ -185,6 +263,62 @@ struct lu_numeric {
             if (a > amax[ci[k]]) amax[ci[k]] = a;
         }
         return detail::lu_rgrowth(U_, [&](std::size_t k) { return amax[symbolic.col_perm[k]]; });
+    }
+
+    /// Solve A^T x = b (the transpose, not the conjugate transpose). With
+    /// P A Q = L U, A^T = Q U^T L^T P, so U^T L^T (P x) = Q^T b: a forward
+    /// solve with U^T, a back solve with L^T, then the row permutation. x and
+    /// b may be the same vector. Serial: the transposed solves have no schedule.
+    /// \throws std::logic_error if no factor is installed (n > 0).
+    /// \throws std::invalid_argument on a size mismatch.
+    template <typename VecX, typename VecB>
+    void solve_transpose(VecX& x, const VecB& b) const {
+        const std::size_t n = symbolic.n;
+        if (static_cast<std::size_t>(x.size()) != n || static_cast<std::size_t>(b.size()) != n)
+            throw std::invalid_argument(
+                "lu_numeric::solve_transpose: vector size mismatch (expected " + std::to_string(n) + ")");
+        if (n == 0) return;
+        require_factor("lu_numeric::solve_transpose");
+        std::vector<Value> w(n);
+        for (std::size_t i = 0; i < n; ++i) w[i] = static_cast<Value>(b(symbolic.col_perm[i]));
+        // U^T v = w, forward: column k of U holds U(i, k) for i <= k, diagonal last.
+        for (std::size_t k = 0; k < n; ++k) {
+            const std::size_t last = U_.col_ptr[k + 1] - 1;
+            Value t = w[k];
+            for (std::size_t p = U_.col_ptr[k]; p < last; ++p) t -= U_.values[p] * w[U_.row_ind[p]];
+            w[k] = t / U_.values[last];
+        }
+        // L^T u = v, backward: column k of L holds L(i, k) for i >= k, diagonal
+        // first (1, divided by as the forward solve does).
+        for (std::size_t k = n; k-- > 0; ) {
+            const std::size_t first = L_.col_ptr[k];
+            Value t = w[k];
+            for (std::size_t p = first + 1; p < L_.col_ptr[k + 1]; ++p) t -= L_.values[p] * w[L_.row_ind[p]];
+            w[k] = t / L_.values[first];
+        }
+        for (std::size_t i = 0; i < n; ++i)
+            x(row_perm[i]) = static_cast<typename VecX::value_type>(w[i]);
+    }
+
+    /// An estimate of the 1-norm condition number ||A||_1 ||A^{-1}||_1, as
+    /// SuiteSparse's klu_condest: Hager's method with Higham's refinements
+    /// (detail::inverse_norm1_estimate), from at most 11 solves. A lower bound,
+    /// exact or within a factor of 3 in practice. Far more telling than rcond()
+    /// and far cheaper than forming A^{-1}. `A` must be the matrix this
+    /// factorization is of. 1 for n = 0; NaN if A or a solve holds a NaN.
+    template <typename Parameters>
+    Value condest(const mat::compressed2D<Value, Parameters>& A) const {
+        const std::size_t n = symbolic.n;
+        if (A.num_rows() != n || A.num_cols() != n)
+            throw std::invalid_argument(
+                "lu_numeric::condest: matrix dimensions do not match the factorization");
+        if (n == 0) return Value{1};
+        require_factor("lu_numeric::condest");
+        const Value anorm = detail::csr_norm1(A);
+        const Value inv = detail::inverse_norm1_estimate<Value>(
+            n, [&](auto& y, const auto& x) { solve(y, x); },
+               [&](auto& z, const auto& x) { solve_transpose(z, x); });
+        return anorm * inv;
     }
 
     /// Install recomputed VALUES on the already-installed factor pattern, keeping
