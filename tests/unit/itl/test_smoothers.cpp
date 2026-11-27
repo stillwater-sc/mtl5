@@ -11,6 +11,7 @@
 #include <mtl/itl/smoother/jacobi.hpp>
 #include <mtl/itl/smoother/sor.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <type_traits>
 
 using namespace mtl;
 
@@ -613,4 +614,99 @@ TEST_CASE("backward / symmetric SOR edge cases: 1x1 and empty (#291)",
         bwd_s(xb, b); REQUIRE(xb.size() == 0);
         ssor_s(xs, b); REQUIRE(xs.size() == 0);
     }
+}
+
+// Issue 964: the compressed2D SOR and Gauss-Seidel sweeps sum the off-diagonal
+// terms as two loops around the diagonal's position, instead of one loop that
+// tests every column index. The same terms in the same order: every sweep must
+// match the per-entry-test form bit for bit, forward and backward, with and
+// without an Accumulator, on rows whose diagonal is first, last or in between.
+namespace {
+// The per-entry-test reference: x_i = omega * d_i (b_i - sigma_i) + (1 - omega) x_i.
+// omega = 1 is Gauss-Seidel's x_i = d_i (b_i - sigma_i), which is not the same
+// expression, so it is done separately.
+template <typename Acc>
+void reference_sweep_964(const mat::compressed2D<double>& A, vec::dense_vector<double>& x,
+                         const vec::dense_vector<double>& b, double omega, bool gs, bool ascending) {
+    const auto& st = A.ref_major();
+    const auto& ix = A.ref_minor();
+    const auto& dt = A.ref_data();
+    const std::size_t n = A.num_rows();
+    for (std::size_t step = 0; step < n; ++step) {
+        const std::size_t i = ascending ? step : n - 1 - step;
+        double sigma, dinv = 0.0;
+        for (std::size_t k = st[i]; k < st[i + 1]; ++k)
+            if (ix[k] == i) dinv = 1.0 / dt[k];
+        if constexpr (std::is_void_v<Acc>) {
+            sigma = 0.0;
+            for (std::size_t k = st[i]; k < st[i + 1]; ++k)
+                if (ix[k] != i) sigma += dt[k] * x(ix[k]);
+        } else {
+            using AT = math::accumulator_traits<Acc, double>;
+            Acc acc{};
+            AT::clear(acc);
+            for (std::size_t k = st[i]; k < st[i + 1]; ++k)
+                if (ix[k] != i) AT::add_product(acc, dt[k], x(ix[k]));
+            sigma = AT::template value<double>(acc);
+        }
+        if (gs) {
+            x(i) = dinv * (b(i) - sigma);
+        } else {
+            const double gs_update = dinv * (b(i) - sigma);
+            x(i) = omega * gs_update + (1.0 - omega) * x(i);
+        }
+    }
+}
+// Unsymmetric, varying row lengths, and the diagonal first in row 0, last in
+// the last row, and in between elsewhere.
+mat::compressed2D<double> matrix_964(std::size_t n) {
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 5.0 + 0.1 * double(i % 7);
+            if (i > 0)     ins[i][i - 1] << -1.3 + 0.01 * double(i % 5);
+            if (i > 2)     ins[i][i - 3] << 0.37;
+            if (i + 1 < n) ins[i][i + 1] << -0.71;
+            if (i + 4 < n && i % 2 == 0) ins[i][i + 4] << 0.123 * double(i % 3 + 1);
+        }
+    }
+    return A;
+}
+bool same_bits_964(const vec::dense_vector<double>& a, const vec::dense_vector<double>& b) {
+    for (std::size_t i = 0; i < a.size(); ++i) if (!(a(i) == b(i))) return false;
+    return true;
+}
+template <typename Acc>
+void check_964() {
+    const std::size_t n = 40;
+    const auto A = matrix_964(n);
+    vec::dense_vector<double> b(n), x0(n);
+    for (std::size_t i = 0; i < n; ++i) { b(i) = 1.0 + 0.3 * double(i % 4); x0(i) = 0.1 * double(i % 9) - 0.2; }
+    for (const bool asc : {true, false}) {
+        CAPTURE(asc);
+        // SOR, omega = 1.5: two sweeps, so the second reads the first's x.
+        itl::smoother::sor<mat::compressed2D<double>, Acc> sor(A, 1.5);
+        vec::dense_vector<double> x = x0, r = x0;
+        for (int s = 0; s < 2; ++s) {
+            if (asc) sor.forward(x, b); else sor.backward(x, b);
+            reference_sweep_964<Acc>(A, r, b, 1.5, false, asc);
+        }
+        CHECK(same_bits_964(x, r));
+        // Gauss-Seidel.
+        itl::smoother::gauss_seidel<mat::compressed2D<double>, Acc> gs(A);
+        x = x0; r = x0;
+        for (int s = 0; s < 2; ++s) {
+            if (asc) gs.forward(x, b); else gs.backward(x, b);
+            reference_sweep_964<Acc>(A, r, b, 1.0, true, asc);
+        }
+        CHECK(same_bits_964(x, r));
+    }
+}
+} // namespace
+
+TEST_CASE("CSR SOR and Gauss-Seidel sweeps match the per-entry form bit for bit (issue 964)",
+          "[itl][smoother][sparse][964]") {
+    check_964<void>();
+    check_964<long double>();
 }

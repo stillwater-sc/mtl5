@@ -143,22 +143,34 @@ private:
         const auto& data    = A_.ref_data();
         for (size_type step = 0; step < n; ++step) {
             const size_type i = ascending ? step : (n - 1 - step);
+            // The off-diagonal sum, as two loops around the diagonal's position
+            // (found once, at construction) instead of one loop that tests every
+            // column index (issue 964). The same terms in the same order, so the
+            // same bits. The test-per-entry loop is short (a 5-point row has 4
+            // off-diagonal entries) and branchy, and on AArch64 its speed
+            // depended on where it fell relative to a 64-byte boundary: the same
+            // instructions ran a 512^2 SOR sweep in 2.9 or 5.0 ms on the Ventuno
+            // Q, flipping between commits that never touched this file.
+            // (compressed2D holds one entry per (row, column), so the diagonal
+            // is at one position.)
+            const size_type d = dia_pos_[i];
             value_type sigma;
             if constexpr (std::is_void_v<Accumulator>) {
                 sigma = math::zero<value_type>();
-                for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
-                    if (indices[k] != i)
-                        sigma += data[k] * x(indices[k]);
-                }
+                for (size_type k = starts[i]; k < d; ++k)
+                    sigma += data[k] * x(indices[k]);
+                for (size_type k = d + 1; k < starts[i + 1]; ++k)
+                    sigma += data[k] * x(indices[k]);
             } else {
                 using AT = math::accumulator_traits<Accumulator, value_type>;
                 Accumulator acc{};
                 AT::clear(acc);
-                for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
-                    if (indices[k] != i)
-                        AT::add_product(acc, static_cast<value_type>(data[k]),
-                                             static_cast<value_type>(x(indices[k])));
-                }
+                for (size_type k = starts[i]; k < d; ++k)
+                    AT::add_product(acc, static_cast<value_type>(data[k]),
+                                         static_cast<value_type>(x(indices[k])));
+                for (size_type k = d + 1; k < starts[i + 1]; ++k)
+                    AT::add_product(acc, static_cast<value_type>(data[k]),
+                                         static_cast<value_type>(x(indices[k])));
                 sigma = AT::template value<value_type>(acc);
             }
             x(i) = dia_inv_(i) * (b(i) - sigma);
