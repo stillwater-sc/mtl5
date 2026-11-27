@@ -1,0 +1,10 @@
+derived_by=benchmarks/tracking/track_sessions.py compare
+schema=mtl5-track/1
+machine=ryzen-9-8945hs
+class=medium
+baseline_session=20261112T032806Z
+baseline_commit=cd6762a6e989
+new_session=20261127T143612Z
+new_commit=57512adcb8fe
+run_band_pct=2
+entry_band_pct=10
