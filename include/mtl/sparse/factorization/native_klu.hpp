@@ -105,9 +105,9 @@ struct klu_numeric {
         for (std::size_t i = 0; i < n; ++i)
             for (std::size_t k = rp[i]; k < rp[i + 1]; ++k) {
                 const std::size_t j = ci[k];
-                if (block_of[j] != block_of[i]) continue;
                 const Value a = abs(dat[k]);
-                if (!(a == a)) return a;
+                if (!(a == a)) return a;   // a NaN coupling too: solve() reads it
+                if (block_of[j] != block_of[i]) continue;
                 if (a > amax[j]) amax[j] = a;
             }
         Value g{1};

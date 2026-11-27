@@ -526,18 +526,22 @@ using csr946 = mat::compressed2D<double>;
 // [[a00, 1], [1, 1]], one irreducible 2 x 2 block.
 csr946 two_by_two(double a00) {
     csr946 A(2, 2);
-    mat::inserter<csr946> ins(A);
-    ins[0][0] << a00; ins[0][1] << 1.0; ins[1][0] << 1.0; ins[1][1] << 1.0;
+    {
+        mat::inserter<csr946> ins(A);
+        ins[0][0] << a00; ins[0][1] << 1.0; ins[1][0] << 1.0; ins[1][1] << 1.0;
+    }   // finalized before the return, elided or not
     return A;
 }
 
 // [[5, 1, 0], [0, a11, 1], [0, 1, 1]]: a 1 x 1 block, then the 2 x 2 one.
 csr946 two_blocks(double a11) {
     csr946 A(3, 3);
-    mat::inserter<csr946> ins(A);
-    ins[0][0] << 5.0; ins[0][1] << 1.0;
-    ins[1][1] << a11; ins[1][2] << 1.0;
-    ins[2][1] << 1.0; ins[2][2] << 1.0;
+    {
+        mat::inserter<csr946> ins(A);
+        ins[0][0] << 5.0; ins[0][1] << 1.0;
+        ins[1][1] << a11; ins[1][2] << 1.0;
+        ins[2][1] << 1.0; ins[2][2] << 1.0;
+    }
     return A;
 }
 
@@ -597,6 +601,22 @@ TEST_CASE("native_klu: rgrowth and rcond expose a refactor on stale pivots (issu
         const auto re  = native_klu_refactor(two_blocks(std::nan("")), fac);
         CHECK(std::isnan(re.rgrowth()));
         CHECK(std::isnan(re.rcond()));
+    }
+
+    SECTION("a NaN in a coupling between blocks is reported too") {
+        // [[1, c], [0, 1]]: two 1 x 1 blocks, c above them. solve() reads c.
+        auto upper = [](double c) {
+            csr946 A(2, 2);
+            {
+                mat::inserter<csr946> ins(A);
+                ins[0][0] << 1.0; ins[0][1] << c; ins[1][1] << 1.0;
+            }
+            return A;
+        };
+        const auto fac = native_klu_factor(upper(1.0));
+        REQUIRE(fac.nblocks() == 2);
+        CHECK(fac.rgrowth() == 1.0);
+        CHECK(std::isnan(native_klu_refactor(upper(std::nan("")), fac).rgrowth()));
     }
 
     SECTION("an empty matrix") {
