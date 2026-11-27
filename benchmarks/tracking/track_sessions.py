@@ -68,7 +68,9 @@ def sidecar(path):
 
 
 def entries(path):
-    """The run's JSON, and its entries by (area, op, dtype, shape): (median_s or None, ok)."""
+    """The run's JSON, and its entries by (area, op, dtype, shape):
+    (median_s or None, ok, version or None). A result written before #928 has
+    no version."""
     data = json.loads(Path(path).read_text())
     res = {}
     for r in data.get("results", []):
@@ -76,7 +78,9 @@ def entries(path):
         check = r.get("check") or {}
         ok = bool(check.get("ok")) and not r.get("error")
         t = r.get("median_s")
-        res[key] = (t if isinstance(t, (int, float)) and t > 0 else None, ok)
+        v = r.get("version")
+        res[key] = (t if isinstance(t, (int, float)) and t > 0 else None, ok,
+                    v if isinstance(v, int) and not isinstance(v, bool) else None)
     return data, res
 
 
@@ -101,12 +105,19 @@ def compare_run(base_path, new_path, entry_band):
     """One run's comparison: the ratios, their median, and the entries outside the band."""
     _, base = entries(base_path)
     _, new = entries(new_path)
-    ratios, outside, skipped = [], [], []
+    ratios, outside, skipped, redefined = [], [], [], []
     for key in sorted(set(base) | set(new), key=label):
         if key not in base or key not in new:
             skipped.append((label(key), "only in the new session" if key in new else "only in the baseline"))
             continue
-        (tb, okb), (tn, okn) = base[key], new[key]
+        (tb, okb, vb), (tn, okn, vn) = base[key], new[key]
+        # A changed definition (#928) measures something else: a new series,
+        # never a ratio. A session from before #928 records no version, and
+        # is compared as before.
+        if vb is not None and vn is not None and vb != vn:
+            skipped.append((label(key), f"definition changed (version {vb} to {vn})"))
+            redefined.append({"entry": label(key), "from": vb, "to": vn})
+            continue
         if not (okb and okn):
             skipped.append((label(key), "failed its check"))
             continue
@@ -119,7 +130,7 @@ def compare_run(base_path, new_path, entry_band):
             outside.append({"entry": label(key), "baseline_s": tb, "new_s": tn, "ratio": r})
     outside.sort(key=lambda e: -e["ratio"])
     med = statistics.median(ratios) if ratios else None
-    return {"ratios": ratios, "median": med, "outside": outside, "skipped": skipped}
+    return {"ratios": ratios, "median": med, "outside": outside, "skipped": skipped, "redefined": redefined}
 
 
 def env_changes(base_dir, new_dir, runs):
@@ -197,6 +208,7 @@ def cmd_compare(a):
             "verdict": verdict(c["median"], a.run_band),
             "outside": c["outside"],
             "skipped": len(c["skipped"]),
+            "redefined": c["redefined"],
         })
 
     md = render_report(report)
@@ -248,8 +260,18 @@ def render_report(rep):
         lines.append(f"| {r['run']} | {r['entries']} | {r['skipped']} | {fmt_ratio(r['median_ratio'])} | "
                      f"{fmt_ratio(r['min_ratio'])} | {fmt_ratio(r['max_ratio'])} | "
                      f"{len(r['outside'])} | {r['verdict']} |")
-    lines += ["", "An entry is not compared when it is in only one session (added or removed "
-              "between the commits), failed its check in either, or has no timing.", ""]
+    lines += ["", ("An entry is not compared when it is in only one session (added or removed "
+                   "between the commits), its definition version changed (#928), it failed its "
+                   "check in either, or it has no timing."), ""]
+    redef = [(r["run"], e) for r in rep["runs"] for e in r.get("redefined", [])]
+    if redef:
+        lines += ["## Entries whose definition changed", "",
+                  ("Their benchmark measures something else since the baseline, so they start a "
+                   "new series and are not compared."), "",
+                  "| run | entry | version |", "|---|---|---|"]
+        for run, e in redef:
+            lines.append(f"| {run} | {esc(e['entry'])} | {e['from']} to {e['to']} |")
+        lines.append("")
     if rep["runs_not_compared"]:
         lines += ["Runs in only one session, not compared: "
                   + ", ".join(f"`{x}`" for x in rep["runs_not_compared"]) + ".", ""]

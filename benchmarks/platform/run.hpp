@@ -26,9 +26,13 @@ namespace mtl::bench::platform {
 
 struct record {
     std::string area, op, dtype, shape;
+    int version = 1;              // the entry's definition version (#928)
     double median_s = 0.0;
     double min_s = 0.0;
+    // The spread of the timed samples (#929), by sample_quantile.
+    double p10_s = 0.0, p25_s = 0.0, p75_s = 0.0, p90_s = 0.0, max_s = 0.0;
     std::size_t samples = 0;
+    std::vector<double> sorted_samples;   // kept only for --samples
     double flops = 0.0, bytes = 0.0;
     double gflops = 0.0;          // flops / median
     double gbytes_per_s = 0.0;    // bytes / median
@@ -83,10 +87,24 @@ inline double peak_for(const probe_results& p, const std::string& dtype) {
     return dtype == "f32" ? p.fma_peak_f32_gflops : p.fma_peak_f64_gflops;
 }
 
-inline record run_entry(const entry& e, size_class cls, const probe_results& probes) {
+/// The q-quantile of n sorted samples (#929): sorted[min(n - 1, floor(q n))].
+/// For q = 0.5 this is sorted[n / 2], the median_s mtl5_bench has always
+/// written (the upper middle for an even n). For n < 10, p10 is sorted[0],
+/// min_s; max_s is sorted[n - 1]. Every value is a sample, not an
+/// interpolation, so each one is a time that was measured.
+inline double sample_quantile(const std::vector<double>& sorted, double q) {
+    const std::size_t n = sorted.size();
+    if (n == 0) return 0.0;
+    std::size_t i = static_cast<std::size_t>(q * double(n));
+    if (i > n - 1) i = n - 1;
+    return sorted[i];
+}
+
+inline record run_entry(const entry& e, size_class cls, const probe_results& probes,
+                        bool keep_samples = false) {
     using clock = std::chrono::steady_clock;
     record r;
-    r.area = e.area; r.op = e.op; r.dtype = e.dtype;
+    r.area = e.area; r.op = e.op; r.dtype = e.dtype; r.version = e.version;
     try {
         problem p = e.make(cls);
         r.shape = p.shape; r.flops = p.flops; r.bytes = p.bytes; r.roofline = p.roofline;
@@ -106,8 +124,14 @@ inline record run_entry(const entry& e, size_class cls, const probe_results& pro
         }
         std::sort(samples.begin(), samples.end());
         r.samples  = samples.size();
-        r.median_s = samples[samples.size() / 2];
+        r.median_s = sample_quantile(samples, 0.5);
         r.min_s    = samples.front();
+        r.p10_s    = sample_quantile(samples, 0.10);
+        r.p25_s    = sample_quantile(samples, 0.25);
+        r.p75_s    = sample_quantile(samples, 0.75);
+        r.p90_s    = sample_quantile(samples, 0.90);
+        r.max_s    = samples.back();
+        if (keep_samples) r.sorted_samples = samples;
         // check() reads what the last run() left; setup() came before it.
         r.check = p.check();
     } catch (const std::exception& ex) {

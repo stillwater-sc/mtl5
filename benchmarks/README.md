@@ -440,6 +440,40 @@ The registry covers 135 entries, and 156 in a build with the direct-solver refer
 
 All sparse inputs are generated: 2D Poisson, unsymmetric convection–diffusion, scrambled copies of both, and a planted block-triangular matrix. Nothing is downloaded. The orderings have no work model; they're timed and checked, and reported as `n/a`.
 
+### What each result records
+
+Each entry in the JSON's `results` has these fields:
+- **The id:** `area`, `op`, `dtype` and `shape`.
+- **The definition version:** `version`.
+- **The timing:** `median_s`, `min_s` and `samples`, plus the spread `p10_s`, `p25_s`, `p75_s`, `p90_s` and `max_s`.
+- **The work model and rates:** `flops`, `bytes`, `gflops`, `gbytes_per_s` and `roofline_pct`.
+- **The check:** `check`.
+
+The schema is still `mtl5-bench/1`, because the newer fields are additive. A reader treats a missing `version` as 0 and missing quantiles as unknown.
+
+**The spread (#929).** One run times an entry `samples` times, between 3 and 1000 within the class's time budget, and sorts the times. Every reported time is one of those samples, never an interpolation. The q-quantile is `sorted[min(n − 1, floor(q·n))]`:
+- `median_s` is `sorted[n / 2]`, the same value mtl5_bench has always written (the upper middle for an even n);
+- `min_s` is the first sample and `max_s` the last;
+- with fewer than 10 samples, `p10_s` equals `min_s`.
+
+A median whose p10–p90 range is wide comes from a run that scattered: on an unpinned or shared machine the same median can hide a 40% spread. `mtl5_bench --samples` also writes the sorted samples as `samples_s`. That is off by default, since it can be 1000 numbers per result. `benchmarks/platform/check_results.py` checks the fields, and with `--samples` each quantile against its sample. CI runs it on every platform's smoke session.
+
+**The definition version (#928).** A trend compares one entry's results across commits, so it must not compare two different benchmarks that share an id. Each entry has an integer `version`, set where it is registered (`r.add(area, op, dtype, make, version)` in `benchmarks/platform/entries_*.hpp`; the default is 1).
+- **Bump it** whenever a run of the new code would not measure the same thing:
+  - the problem: its size, generator, matrix, sparsity pattern or right-hand side, also when the shape string stays the same;
+  - the work model: `flops` or `bytes`;
+  - what the check compares.
+- **Don't bump it** for a faster implementation of the same thing. That change is what a trend is for.
+
+A changed version starts a new series: `tracking/track_sessions.py` and `compare_sessions.py` list such entries as not compared, instead of reporting a ratio. A session written before #928 has no versions, and is compared as before. The entries whose definition changed since #721:
+
+| entry | version | from | what changed |
+|---|---|---|---|
+| `blas2/symv/f64` | 2 | 3ef8065 (#745, 2026-11-08) | the byte model charges one triangle of A, not all of it (#743) |
+| `krylov/tfqmr+ilu0/f64` | 2 | e096dbb (#752, 2026-11-08) | it runs on convection–diffusion, not the SPD Poisson matrix, at the same shape |
+
+Every published session in `benchmarks/data/` was measured after both commits, so their `symv` and `tfqmr+ilu0` results are version 2's definitions, although they carry no version. #750 lifted the 64² cap on the `ic_0` and `ildl` preconditioner entries. It also changed their shape string, so those ids changed and they stay at 1.
+
 ### Coverage is enforced
 
 `benchmarks/check_coverage.sh path/to/mtl5_bench` checks that the catalogue

@@ -78,7 +78,7 @@ constexpr const char* kDefaultLabel = "native";
 
 void usage(std::ostream& os) {
     os << "usage: mtl5_bench [--class small|medium|large] [--json FILE] [--card FILE]\n"
-          "                  [--label NAME] [--machine NAME] [--filter SUBSTR] [--list]\n"
+          "                  [--label NAME] [--machine NAME] [--filter SUBSTR] [--samples] [--list]\n"
           "  --class    problem sizes (default: medium)\n"
           "  --json     write results to FILE and provenance to FILE.sysinfo\n"
           "  --card     write a markdown capability card to FILE\n"
@@ -87,6 +87,7 @@ void usage(std::ostream& os) {
           "  --baseline FILE.json from the same build at fewer threads (normally 1):\n"
           "             report each entry's speedup and parallel efficiency against it\n"
           "  --filter   run only entries whose area/op/dtype contains SUBSTR\n"
+          "  --samples  also write each result's sorted timed samples (samples_s) to the JSON\n"
           "  --list     print the registered entries and exit\n"
           "       mtl5_bench --count AREA/OP/DTYPE [--class small|medium|large]\n"
           "  --count    run that one entry once, untimed, for an instruction counter\n"
@@ -260,8 +261,12 @@ bool write_json(const std::string& path, const std::string& label, const std::st
         const auto& r = rs[i];
         os << "    {\"area\": \"" << json_escape(r.area) << "\", \"op\": \"" << json_escape(r.op)
            << "\", \"dtype\": \"" << json_escape(r.dtype) << "\", \"shape\": \"" << json_escape(r.shape)
-           << "\",\n     \"median_s\": " << num(r.median_s) << ", \"min_s\": " << num(r.min_s)
+           << "\", \"version\": " << r.version
+           << ",\n     \"median_s\": " << num(r.median_s) << ", \"min_s\": " << num(r.min_s)
            << ", \"samples\": " << r.samples
+           << ", \"p10_s\": " << num(r.p10_s) << ", \"p25_s\": " << num(r.p25_s)
+           << ", \"p75_s\": " << num(r.p75_s) << ", \"p90_s\": " << num(r.p90_s)
+           << ", \"max_s\": " << num(r.max_s)
            << ", \"flops\": " << num(r.flops) << ", \"bytes\": " << num(r.bytes)
            << ",\n     \"gflops\": " << num(r.gflops) << ", \"gbytes_per_s\": " << num(r.gbytes_per_s)
            << ", \"roofline_gflops\": " << num(r.roofline_gflops)
@@ -273,6 +278,12 @@ bool write_json(const std::string& path, const std::string& label, const std::st
            << ", \"error\": " << num(r.check.error) << ", \"tolerance\": " << num(r.check.tolerance)
            << ", \"metric\": \"" << json_escape(r.check.what) << "\"}";
         if (!r.error.empty()) os << ", \"exception\": \"" << json_escape(r.error) << "\"";
+        if (!r.sorted_samples.empty()) {
+            os << ",\n     \"samples_s\": [";
+            for (std::size_t k = 0; k < r.sorted_samples.size(); ++k)
+                os << (k ? ", " : "") << num(r.sorted_samples[k]);
+            os << "]";
+        }
         os << "}" << (i + 1 < rs.size() ? "," : "") << "\n";
     }
     os << "  ],\n  \"skipped\": [";
@@ -437,7 +448,7 @@ int main(int argc, char** argv) {
     bp::size_class cls = bp::size_class::medium;
     bool class_given = false;
     std::string json_path, card_path, filter, machine, baseline_path, count_id, label = kDefaultLabel;
-    bool list = false;
+    bool list = false, keep_samples = false;
     for (int i = 1; i < argc; ++i) {
         auto need = [&](const char* flag) -> std::string {
             if (i + 1 >= argc) { std::cerr << flag << " needs a value\n"; usage(std::cerr); std::exit(2); }
@@ -457,6 +468,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--baseline")) baseline_path = need("--baseline");
         else if (!std::strcmp(argv[i], "--filter")) filter = need("--filter");
         else if (!std::strcmp(argv[i], "--list"))   list = true;
+        else if (!std::strcmp(argv[i], "--samples")) keep_samples = true;
         else if (!std::strcmp(argv[i], "--count"))  count_id = need("--count");
         else if (!std::strcmp(argv[i], "--help") || !std::strcmp(argv[i], "-h")) { usage(std::cout); return 0; }
         else { std::cerr << "unknown argument '" << argv[i] << "'\n"; usage(std::cerr); return 2; }
@@ -545,7 +557,7 @@ int main(int argc, char** argv) {
     std::vector<bp::record> results;
     int failures = 0;
     for (const auto* e : selected) {
-        bp::record r = bp::run_entry(*e, cls, pr);
+        bp::record r = bp::run_entry(*e, cls, pr, keep_samples);
         if (const auto it = base.median.find(id_of(*e)); it != base.median.end() && r.median_s > 0.0) {
             r.speedup = it->second / r.median_s;
             r.efficiency = r.speedup / (double(threads) / double(base.threads));

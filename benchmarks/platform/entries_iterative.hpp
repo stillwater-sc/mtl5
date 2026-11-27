@@ -652,7 +652,7 @@ inline void register_all(registry& r) {
     r.add("krylov", "cgs+ilu0", "f64", krylov<5>);
     r.add("krylov", "gmres30+ilu0", "f64", krylov<6>);
     r.add("krylov", "qmr+ilu0", "f64", krylov<7>);
-    r.add("krylov", "tfqmr+ilu0", "f64", krylov<8>);
+    r.add("krylov", "tfqmr+ilu0", "f64", krylov<8>, 2);   // v2: convection-diffusion, not Poisson (#752)
     r.add("krylov", "idr_s1+ilu0", "f64", krylov<10>);
     r.add("krylov", "idr_s2+ilu0", "f64", krylov<11>);
     r.add("krylov", "idr_s4+ilu0", "f64", krylov<9>);
