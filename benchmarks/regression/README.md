@@ -8,16 +8,28 @@ on one binary whatever the runner's load.
 
 | Check | Where | Blocks a merge | What it catches |
 |---|---|---|---|
-| Instruction counts (`bench-regression.yml`) | Linux x64, every PR | yes, above 2% | an extra copy, a temporary an expression template started building, a worse algorithm, a fast path that stopped being taken |
+| Instruction counts (`bench-regression.yml`) | Linux x64 and Linux arm64, every PR | yes, above 2% | an extra copy, a temporary an expression template started building, a worse algorithm, a fast path that stopped being taken |
 | Dispatch tests (`tests/unit/operation/test_mult_dispatch*.cpp`) | the unit tier, all 8 platforms | yes | `mult` no longer reaching BLAS, the blocked GEMM or the SIMD GEMV |
-| Wall-clock runs on the benchmark machines | local scheduled runs, published into `benchmarks/data/` | no: a report | cache, SIMD-width and threading effects, which an instruction count cannot see (a follow-up of #944) |
+| Wall-clock runs on the benchmark machines | on demand, by hand, when the lab machines are on; published into `benchmarks/data/` ([`../tracking/`](../tracking/README.md)) | no: a report | cache, SIMD-width and threading effects, which an instruction count cannot see |
 
 ## The instruction-count gate
 
-`bench-regression.yml` builds `mtl5_bench` twice:
+`bench-regression.yml` builds `mtl5_bench` in four configurations:
 
-- `native`: the portable kernels;
-- `native-fast`: the blocked GEMM and SIMD GEMV over Highway.
+| configuration | runner | build |
+|---|---|---|
+| `native` | `ubuntu-24.04` (x64) | the portable kernels |
+| `native-fast` | `ubuntu-24.04` (x64) | the blocked GEMM and SIMD GEMV over Highway |
+| `native-arm64` | `ubuntu-24.04-arm` | the portable kernels |
+| `native-fast-arm64` | `ubuntu-24.04-arm` | the blocked GEMM and SIMD GEMV over Highway, on NEON |
+
+The arm64 pair covers the code that only an AArch64 build compiles: the NEON
+paths of the SIMD kernels, which the Jetson and the Ventuno Q run. Neither
+build uses `-march=native`, so both target baseline armv8-a. Valgrind does
+not support SVE, which the hosted arm64 runners' cores have.
+
+Each configuration is compared only with main's counts for the same
+configuration: its own baseline artifact, `ir-counts-<configuration>`.
 
 For each kernel in [`kernels.txt`](kernels.txt), `ir_gate.py count` runs
 
@@ -76,16 +88,20 @@ makes the change commits the acceptance in
 {
   "kernels": {
     "blas3/gemm/f64": {
-      "max_ir": 4812000,
+      "max_ir": {"native-fast": 4812000, "native-fast-arm64": 5104000},
       "reason": "#NNN: packs B once more for the edge tile"
     }
   }
 }
 ```
 
-- `max_ir` is the count the PR's run measured, which the job summary prints. The
-  kernel passes up to that count and no further, so a later regression on top of
-  the accepted one still fails.
+- `max_ir` maps each configuration that the change makes costlier to the count
+  that configuration's job measured, which its job summary prints. The kernel
+  passes up to that count and no further, so a later regression on top of the
+  accepted one still fails.
+- **One count per configuration.** Each build counts a kernel differently, so a
+  configuration that is not listed is not accepted: its rise still fails. A bare
+  number for all configurations is refused.
 - `reason` is required, and should name the issue or PR.
 - After the merge, main's baseline carries the new count, and the gate reports
   the acceptance as stale. Remove it in a later PR. A stale acceptance doesn't

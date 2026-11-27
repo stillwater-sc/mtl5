@@ -52,6 +52,8 @@ benchmarks/
   platform/              mtl5_bench's registry, probes, runner and entries (entries_*.hpp)
   regression/            the instruction-count gate on every PR: kernels.txt, ir_gate.py,
                          accepted.json (#944; see regression/README.md)
+  tracking/              wall-clock tracking of main on the benchmark machines: track.sh,
+                         hosts.txt, track_sessions.py (#944; see tracking/README.md)
   bench_klu.cpp          sparse scoreboard: native KLU vs SuiteSparse KLU (#138)
   bench_superlu.cpp      sparse scoreboard: native LU vs SuperLU (#186)
   bench_sparse.cpp       level-scheduled sparse triangular-solve scaling (#297)
@@ -98,6 +100,15 @@ a PR whose count for a kernel rose more than 2% above main's, unless the PR
 accepts the increase in `benchmarks/regression/accepted.json`. Dispatch tests in
 the unit tier check that `mult` still reaches BLAS, the blocked GEMM or the SIMD
 GEMV. See [regression/README.md](regression/README.md).
+
+What instruction counts cannot see (caches, vectorization, threading) is
+tracked on the benchmark machines instead, on demand and reported, not gated.
+`tracking/track.sh`, run by hand when the lab machines are on, runs the platform benchmark on `main` on every machine at
+once, publishes each session's data, and compares it with that machine's
+previous session. The comparison uses the median of each run's per-entry time
+ratios, as `analyze_gate.py` does. The results are on
+[the tracking page](../docs/benchmarks/tracking.md). See
+[tracking/README.md](tracking/README.md).
 
 ## Platform benchmark: `mtl5_bench` (#721)
 
@@ -312,7 +323,8 @@ Then it does three things:
    - The session's cards follow, one section per run. Each run's full entry
      table is folded into a `<details>` block.
    - The page always shows the **latest** published session. Publishing an older
-     one archives its data and leaves the page alone.
+     one archives its data and leaves the page alone. So does `DATA_ONLY=ON`,
+     which the tracking sessions use.
    - The page is generated, so don't edit it by hand. Publish a new session
      instead.
 3. **Registers the page** in `docs-site/sync-content.mjs`'s `FILE_MAP`, if it
@@ -337,6 +349,7 @@ Options, each a `-D` before `-P`:
 | option | effect |
 |---|---|
 | `DRY_RUN=ON` | validate and report what would be written; write nothing |
+| `DATA_ONLY=ON` | copy the session into `benchmarks/data/` and stop: no card page, `FILE_MAP` or `systems.md` change (the tracking sessions, #944) |
 | `PRELIMINARY=ON` | mark the page preliminary: measured outside #737's methodology (cores not pinned, clock policy not applied, one session) |
 | `NOTE="..."` | a sentence for the page, after the preliminary mark |
 | `ALLOW_DIRTY=ON` | accept runs built from a dirty tree; the page says so |

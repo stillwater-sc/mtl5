@@ -121,6 +121,9 @@ const FILE_MAP = {
   'benchmarks/cache-blocking-ab.md':            'benchmarks/cache-blocking-ab.md',
   'benchmarks/register-tile-sweep.md':          'benchmarks/register-tile-sweep.md',
   'benchmarks/run-contract.md':                 'benchmarks/run-contract.md',
+  // Wall-clock tracking of main on the machines (#944), written by
+  // benchmarks/tracking/track_sessions.py page.
+  'benchmarks/tracking.md':                     'benchmarks/tracking.md',
 
   // ── Design ──────────────────────────────────────────────────────
   'sparse-direct-solvers-design.md':            'design/sparse-direct-solvers.md',

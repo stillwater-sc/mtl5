@@ -1,6 +1,6 @@
 name: Benchmark regression
 
-# The instruction-count gate (#944). Each kernel in
+# The instruction-count gate (#944), on Linux x64 and Linux arm64. Each kernel in
 # benchmarks/regression/kernels.txt runs once under callgrind, through
 # `mtl5_bench --count`, and its instruction count (Ir) is compared with main's.
 # A rise of more than 2% fails the PR, unless benchmarks/regression/accepted.json
@@ -57,17 +57,33 @@ concurrency:
 jobs:
   ir-gate:
     name: Instruction counts (${{ matrix.config }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        # Each configuration has its own baseline artifact (ir-counts-<config>)
+        # and its own counts in accepted.json: an x64 and an arm64 build, or a
+        # native and a native-fast one, count a kernel differently. The x64
+        # names have no suffix, as they had before arm64 was added.
         include:
           # The portable kernels: what a default build runs.
           - config: native
+            runner: ubuntu-24.04
             cmake_flags: ""
           # The blocked GEMM and SIMD GEMV over Highway, the native-fast
           # variant of the platform benchmark.
           - config: native-fast
+            runner: ubuntu-24.04
+            cmake_flags: -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_FAST_GEMM=ON
+          # The same two on Linux arm64, where the SIMD paths are NEON (the
+          # Jetson and Ventuno Q's ISA). No -march=native: the build targets
+          # baseline armv8-a, so it runs on any arm64 runner, and valgrind does
+          # not support SVE, which the hosted runners' cores have.
+          - config: native-arm64
+            runner: ubuntu-24.04-arm
+            cmake_flags: ""
+          - config: native-fast-arm64
+            runner: ubuntu-24.04-arm
             cmake_flags: -DMTL5_WITH_HIGHWAY=ON -DMTL5_NATIVE_FAST_GEMM=ON
 
     # Same trusted-run gate as ci.yml: forked PRs skip sccache so they cannot
@@ -91,6 +107,11 @@ jobs:
 
       - name: Test the gate script
         run: python3 benchmarks/regression/test_ir_gate.py
+
+      # The wall-clock tracking runs on the benchmark machines, not here (#944);
+      # its comparison script is tested with the gate's.
+      - name: Test the tracking script
+        run: python3 benchmarks/tracking/test_track_sessions.py
 
       # MTL5_ENABLE_BLOCKING_OVERRIDE lets ir_gate.py pin the GEMM blocking,
       # which is otherwise derived from the runner's caches (ir_gate.py's

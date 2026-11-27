@@ -33,6 +33,9 @@ session committed under `benchmarks/data/<machine>/mtl5_bench/`, and shows the
 latest published session; earlier sessions stay in the data directory. A card
 marked *preliminary* was not measured under #737's methodology (pinned cores,
 the machine's clock policy, two sessions).
+The [tracking](tracking.md) sessions (#944) add to the same data directories
+without changing the cards: run by hand when the machines are on, each measures `main`, and
+that page compares each session with the machine's previous one.
 
 The sessions' `bench_interleave_rows` sweeps are compared across the machines
 on [Interleave width across the benchmark machines](interleave-width.md) (#780).

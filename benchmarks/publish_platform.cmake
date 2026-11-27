@@ -42,6 +42,9 @@
 #   SESSION=<stamp>    the session name, if neither the directory name nor
 #                      summary.md carries a time.
 #   DRY_RUN=ON         validate and report what would be written; write nothing.
+#   DATA_ONLY=ON       step 2 only: copy the session into benchmarks/data and
+#                      leave the page, FILE_MAP and systems.md alone. For the
+#                      wall-clock tracking sessions (#944, benchmarks/tracking/).
 #
 # Then review and commit the data directory, the page, sync-content.mjs and
 # systems.md; the script prints the paths.
@@ -262,6 +265,17 @@ elseif(NOT DRY_RUN)
     endforeach()
     list(LENGTH copy_list n_files)
     note("copied ${n_files} files to ${DATA_REL}")
+endif()
+
+# DATA_ONLY: a tracking session (#944) adds to the data and nothing else. The
+# card page stays on the paired sessions it was published from (#737), since one
+# session has no repeatability band; benchmarks/tracking/ reports the session.
+if(DATA_ONLY)
+    if(NOT DRY_RUN)
+        message(STATUS "publish_platform: done (DATA_ONLY: the card page, FILE_MAP and systems.md "
+                       "are left alone). Review, then commit:\n  git add ${DATA_REL}")
+    endif()
+    return()
 endif()
 
 # -- 3. the card page --------------------------------------------------------------

@@ -1,0 +1,13 @@
+# The machines track.sh measures (#944): <machine> <ssh host, or local> <profile>
+#
+# <machine> is the name in docs/benchmarks/systems.md and under benchmarks/data/;
+# <profile> is benchmarks/machines/<machine>-platform.sh (or .ps1 for Windows).
+# "local" runs the profile on the machine that runs track.sh. The ssh hosts are
+# the lab's names for the machines, from ~/.ssh/config or /etc/hosts on the
+# driving machine; edit them for another lab.
+i7-12700k          local               i7-12700k-platform.sh
+xeon-e5-2420v2     sw-13               xeon-e5-2420v2-platform.sh
+jetson-orin        jetson-nano         jetson-orin-platform.sh
+arduino-ventuno-q  arduino-ventuno     arduino-ventuno-q-platform.sh
+ryzen-7-8845hs     nuc-ryzen-7-8845hs  ryzen-7-8845hs-platform.ps1
+ryzen-9-8945hs     nuc-ryzen-9-8945hs  ryzen-9-8945hs-platform.ps1

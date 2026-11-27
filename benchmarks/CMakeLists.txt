@@ -20,6 +20,13 @@ target_link_libraries(mtl5_bench PRIVATE MTL5::mtl5)
 target_include_directories(mtl5_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set_target_properties(mtl5_bench PROPERTIES FOLDER "Benchmarks")
 add_dependencies(mtl5_bench mtl5_build_info)
+# Every registry entry instantiates its own kernels, and the native-fast and
+# blas builds of mtl5_bench.cpp exceed COFF's default 2^16 sections under
+# Visual Studio 2026 (C1128, found by the #944 tracking run on both Ryzen
+# NUCs). MSVC and clang-cl both take /bigobj.
+if(MSVC)
+    target_compile_options(mtl5_bench PRIVATE /bigobj)
+endif()
 
 # Reference entries for the direct solvers (#810, benchmarks/platform/
 # entries_direct.hpp): CHOLMOD and MKL PARDISO, each where it is found and

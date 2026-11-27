@@ -1,0 +1,936 @@
+{
+ "schema": "mtl5-track/1",
+ "machine": "i7-12700k",
+ "class": "medium",
+ "baseline": {
+  "session": "20261113T060838Z",
+  "commit": "8867b44b3f52"
+ },
+ "new": {
+  "session": "20261127T125653Z",
+  "commit": "f98777e6c6f7"
+ },
+ "run_band_pct": 2.0,
+ "entry_band_pct": 10.0,
+ "runs": [
+  {
+   "run": "blas-t1",
+   "entries": 156,
+   "median_ratio": 1.001440272648198,
+   "min_ratio": 0.02751577361333459,
+   "max_ratio": 1.4606948922450367,
+   "verdict": "steady",
+   "outside": [
+    {
+     "entry": "krylov/minres+diag/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0330008,
+     "new_s": 0.0482041,
+     "ratio": 1.4606948922450367
+    },
+    {
+     "entry": "pc/diagonal/f64 128^2 grid, rows scaled",
+     "baseline_s": 3.5622e-05,
+     "new_s": 4.0626e-05,
+     "ratio": 1.1404749873673572
+    },
+    {
+     "entry": "direct/supernodal_ldlt.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00452608,
+     "new_s": 0.00407071,
+     "ratio": 0.899389758908371
+    },
+    {
+     "entry": "factor/cholesky/f32 512x512",
+     "baseline_s": 0.00130438,
+     "new_s": 0.00116899,
+     "ratio": 0.896203560312179
+    },
+    {
+     "entry": "blas2/ger/f64 n=4096",
+     "baseline_s": 0.00766397,
+     "new_s": 0.00684544,
+     "ratio": 0.8931976508258775
+    },
+    {
+     "entry": "direct/sparse_cholesky.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00236106,
+     "new_s": 0.00209632,
+     "ratio": 0.8878723962965787
+    },
+    {
+     "entry": "direct/supernodal_lu.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00392871,
+     "new_s": 0.00345259,
+     "ratio": 0.8788100928803603
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0696438,
+     "new_s": 0.0600397,
+     "ratio": 0.8620968413555836
+    },
+    {
+     "entry": "ordering/rcm/f64 96^2 grid, nnz 45696, scrambled",
+     "baseline_s": 0.000220941,
+     "new_s": 0.000185719,
+     "ratio": 0.8405818747991545
+    },
+    {
+     "entry": "direct/supernodal_lu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0536067,
+     "new_s": 0.044699,
+     "ratio": 0.8338323381219139
+    },
+    {
+     "entry": "direct/supernodal_lu.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.04763,
+     "new_s": 0.0385627,
+     "ratio": 0.8096304849884527
+    },
+    {
+     "entry": "direct3d/supernodal_lu.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.666424,
+     "new_s": 0.451616,
+     "ratio": 0.6776706721246534
+    },
+    {
+     "entry": "direct3d/supernodal_lu.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0116293,
+     "new_s": 0.00726211,
+     "ratio": 0.6244666488954622
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.00949714,
+     "new_s": 0.00494234,
+     "ratio": 0.5204029844774322
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0187188,
+     "new_s": 0.00966225,
+     "ratio": 0.5161789217257516
+    },
+    {
+     "entry": "direct/sparse_qr/f64 48^2 grid, nnz 11328",
+     "baseline_s": 0.0998432,
+     "new_s": 0.0249974,
+     "ratio": 0.2503665747892696
+    },
+    {
+     "entry": "direct/sparse_cholesky/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0910447,
+     "new_s": 0.0149207,
+     "ratio": 0.16388323537778696
+    },
+    {
+     "entry": "direct/sparse_cholesky.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0884484,
+     "new_s": 0.012079,
+     "ratio": 0.1365655003369196
+    },
+    {
+     "entry": "factor/ldlt_bk/f64 512x512",
+     "baseline_s": 0.0466568,
+     "new_s": 0.00495182,
+     "ratio": 0.10613286809211091
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 7.4333,
+     "new_s": 0.204533,
+     "ratio": 0.02751577361333459
+    }
+   ],
+   "skipped": 1
+  },
+  {
+   "run": "blas-t8",
+   "entries": 156,
+   "median_ratio": 0.9993260849150072,
+   "min_ratio": 0.026641019409811034,
+   "max_ratio": 1.4478139279382758,
+   "verdict": "steady",
+   "outside": [
+    {
+     "entry": "krylov/minres+diag/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0320392,
+     "new_s": 0.0463868,
+     "ratio": 1.4478139279382758
+    },
+    {
+     "entry": "direct/native_klu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0170082,
+     "new_s": 0.0201971,
+     "ratio": 1.187491915664209
+    },
+    {
+     "entry": "pc/diagonal/f64 128^2 grid, rows scaled",
+     "baseline_s": 3.4359e-05,
+     "new_s": 4.0597e-05,
+     "ratio": 1.1815535958555254
+    },
+    {
+     "entry": "sparse/lower_solve_level/f64 192^2 grid, nnz(L) 1003564",
+     "baseline_s": 0.00137919,
+     "new_s": 0.00153838,
+     "ratio": 1.115422820641101
+    },
+    {
+     "entry": "direct/sparse_cholesky.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00228727,
+     "new_s": 0.00204917,
+     "ratio": 0.8959021016320766
+    },
+    {
+     "entry": "krylov/idr_s8+ilu0/f64 128^2 grid, n 16384",
+     "baseline_s": 0.020877,
+     "new_s": 0.0186969,
+     "ratio": 0.8955740767351631
+    },
+    {
+     "entry": "direct/supernodal_lu.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00380939,
+     "new_s": 0.00337397,
+     "ratio": 0.8856982351505096
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0652653,
+     "new_s": 0.0575965,
+     "ratio": 0.8824980502656082
+    },
+    {
+     "entry": "blas1/dot/f64 n=8388608",
+     "baseline_s": 0.00160139,
+     "new_s": 0.00139703,
+     "ratio": 0.8723858647799724
+    },
+    {
+     "entry": "ordering/rcm/f64 96^2 grid, nnz 45696, scrambled",
+     "baseline_s": 0.000214651,
+     "new_s": 0.000183324,
+     "ratio": 0.8540561190024738
+    },
+    {
+     "entry": "direct/supernodal_lu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0531658,
+     "new_s": 0.0446077,
+     "ratio": 0.8390299779181354
+    },
+    {
+     "entry": "direct/supernodal_lu.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0472403,
+     "new_s": 0.0386314,
+     "ratio": 0.8177636467168923
+    },
+    {
+     "entry": "direct3d/supernodal_lu.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.617762,
+     "new_s": 0.456374,
+     "ratio": 0.738753759538463
+    },
+    {
+     "entry": "direct3d/supernodal_lu.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0113655,
+     "new_s": 0.00709132,
+     "ratio": 0.6239338348510843
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.00930707,
+     "new_s": 0.00491064,
+     "ratio": 0.5276246982132937
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0182764,
+     "new_s": 0.00937357,
+     "ratio": 0.5128783567879888
+    },
+    {
+     "entry": "blas2/ger/f64 n=4096",
+     "baseline_s": 0.0077066,
+     "new_s": 0.00363698,
+     "ratio": 0.47193055303246567
+    },
+    {
+     "entry": "direct/sparse_qr/f64 48^2 grid, nnz 11328",
+     "baseline_s": 0.085593,
+     "new_s": 0.0245918,
+     "ratio": 0.28731087822602314
+    },
+    {
+     "entry": "direct/sparse_cholesky/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0898094,
+     "new_s": 0.0148731,
+     "ratio": 0.16560738630922822
+    },
+    {
+     "entry": "direct/sparse_cholesky.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0872541,
+     "new_s": 0.011817,
+     "ratio": 0.13543203127417508
+    },
+    {
+     "entry": "factor/ldlt_bk/f64 512x512",
+     "baseline_s": 0.0439455,
+     "new_s": 0.00475805,
+     "ratio": 0.10827160915224539
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 7.28343,
+     "new_s": 0.194038,
+     "ratio": 0.026641019409811034
+    }
+   ],
+   "skipped": 1
+  },
+  {
+   "run": "native-fast-t1",
+   "entries": 135,
+   "median_ratio": 1.0012062006667242,
+   "min_ratio": 0.03881765070538951,
+   "max_ratio": 1.4249142226228662,
+   "verdict": "steady",
+   "outside": [
+    {
+     "entry": "krylov/minres+diag/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0286206,
+     "new_s": 0.0407819,
+     "ratio": 1.4249142226228662
+    },
+    {
+     "entry": "pc/ssor/f64 128^2 grid",
+     "baseline_s": 2.2761e-05,
+     "new_s": 2.5193e-05,
+     "ratio": 1.1068494354378102
+    },
+    {
+     "entry": "direct/supernodal_lu.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00392097,
+     "new_s": 0.00348492,
+     "ratio": 0.8887902738353008
+    },
+    {
+     "entry": "ordering/rcm/f64 96^2 grid, nnz 45696, scrambled",
+     "baseline_s": 0.000225098,
+     "new_s": 0.000193291,
+     "ratio": 0.8586971008183103
+    },
+    {
+     "entry": "krylov/idr_s4+ilu0/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0159843,
+     "new_s": 0.0131977,
+     "ratio": 0.8256664351895298
+    },
+    {
+     "entry": "direct/supernodal_lu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0551782,
+     "new_s": 0.0440348,
+     "ratio": 0.7980470548151263
+    },
+    {
+     "entry": "krylov/idr_s8+ilu0/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0182048,
+     "new_s": 0.0144925,
+     "ratio": 0.7960812532958341
+    },
+    {
+     "entry": "direct/supernodal_lu.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0492785,
+     "new_s": 0.0381286,
+     "ratio": 0.773737025274714
+    },
+    {
+     "entry": "sparse_eig/arnoldi/f64 64x65 convection-diffusion, k=4, m=80",
+     "baseline_s": 0.0395469,
+     "new_s": 0.0293122,
+     "ratio": 0.7412009538042172
+    },
+    {
+     "entry": "direct3d/supernodal_lu.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0116675,
+     "new_s": 0.00734805,
+     "ratio": 0.629787872294836
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0187388,
+     "new_s": 0.00964099,
+     "ratio": 0.5144934574252353
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.00959377,
+     "new_s": 0.00493154,
+     "ratio": 0.514035671065702
+    },
+    {
+     "entry": "blas2/symv/f64 n=4096",
+     "baseline_s": 0.00617638,
+     "new_s": 0.00294169,
+     "ratio": 0.47628060449648496
+    },
+    {
+     "entry": "blas3/syrk/f64 512x512x512",
+     "baseline_s": 0.00949112,
+     "new_s": 0.00257306,
+     "ratio": 0.2711018299210209
+    },
+    {
+     "entry": "direct/sparse_qr/f64 48^2 grid, nnz 11328",
+     "baseline_s": 0.0999411,
+     "new_s": 0.025733,
+     "ratio": 0.2574816566957938
+    },
+    {
+     "entry": "blas3/syr2k/f64 512x512x512",
+     "baseline_s": 0.0202605,
+     "new_s": 0.00502022,
+     "ratio": 0.24778361837072133
+    },
+    {
+     "entry": "direct/sparse_cholesky/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0729748,
+     "new_s": 0.0152557,
+     "ratio": 0.20905435849087628
+    },
+    {
+     "entry": "direct/sparse_cholesky.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0701241,
+     "new_s": 0.0134898,
+     "ratio": 0.19237038336320894
+    },
+    {
+     "entry": "factor/ldlt_bk/f64 512x512",
+     "baseline_s": 0.0463744,
+     "new_s": 0.00441264,
+     "ratio": 0.09515249792989235
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 5.3233,
+     "new_s": 0.206638,
+     "ratio": 0.03881765070538951
+    }
+   ],
+   "skipped": 1
+  },
+  {
+   "run": "native-fast-t8",
+   "entries": 135,
+   "median_ratio": 0.9975355041915157,
+   "min_ratio": 0.037989977899195775,
+   "max_ratio": 1.4281020752768152,
+   "verdict": "steady",
+   "outside": [
+    {
+     "entry": "krylov/minres+diag/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0283673,
+     "new_s": 0.0405114,
+     "ratio": 1.4281020752768152
+    },
+    {
+     "entry": "pc/ssor/f64 128^2 grid",
+     "baseline_s": 2.1321e-05,
+     "new_s": 2.4297e-05,
+     "ratio": 1.1395806950893486
+    },
+    {
+     "entry": "sparse/lower_solve_level/f64 192^2 grid, nnz(L) 1003564",
+     "baseline_s": 0.00138573,
+     "new_s": 0.00153692,
+     "ratio": 1.1091049482944009
+    },
+    {
+     "entry": "direct/supernodal_lu.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00379476,
+     "new_s": 0.00339054,
+     "ratio": 0.8934794295291402
+    },
+    {
+     "entry": "factor/lu_iterative_refine/f32>f64 512x512",
+     "baseline_s": 0.00478044,
+     "new_s": 0.00424193,
+     "ratio": 0.8873513735137349
+    },
+    {
+     "entry": "blas3/trsm/f64 512x512x512",
+     "baseline_s": 0.00214177,
+     "new_s": 0.00185386,
+     "ratio": 0.8655738011084291
+    },
+    {
+     "entry": "blas3/trsm/f32 512x512x512",
+     "baseline_s": 0.00110532,
+     "new_s": 0.000945353,
+     "ratio": 0.8552753953606196
+    },
+    {
+     "entry": "ordering/rcm/f64 96^2 grid, nnz 45696, scrambled",
+     "baseline_s": 0.000221858,
+     "new_s": 0.000188198,
+     "ratio": 0.848281333104959
+    },
+    {
+     "entry": "krylov/idr_s4+ilu0/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0158476,
+     "new_s": 0.0129857,
+     "ratio": 0.8194111411191599
+    },
+    {
+     "entry": "blas3/symm/f64 512x512x512",
+     "baseline_s": 0.00112007,
+     "new_s": 0.000917018,
+     "ratio": 0.8187149017472123
+    },
+    {
+     "entry": "krylov/idr_s8+ilu0/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0179091,
+     "new_s": 0.0143584,
+     "ratio": 0.8017376640925563
+    },
+    {
+     "entry": "factor/lu/f32 512x512",
+     "baseline_s": 0.00356984,
+     "new_s": 0.00285787,
+     "ratio": 0.8005596889496449
+    },
+    {
+     "entry": "direct/supernodal_lu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0553886,
+     "new_s": 0.044025,
+     "ratio": 0.7948386491083003
+    },
+    {
+     "entry": "direct/supernodal_lu.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0492453,
+     "new_s": 0.0383586,
+     "ratio": 0.7789291566910954
+    },
+    {
+     "entry": "sparse_eig/arnoldi/f64 64x65 convection-diffusion, k=4, m=80",
+     "baseline_s": 0.0396821,
+     "new_s": 0.0283423,
+     "ratio": 0.7142338737113207
+    },
+    {
+     "entry": "direct3d/supernodal_lu.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0113635,
+     "new_s": 0.00730345,
+     "ratio": 0.6427113125357504
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.00926246,
+     "new_s": 0.0048626,
+     "ratio": 0.5249793251468832
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0182592,
+     "new_s": 0.00943413,
+     "ratio": 0.5166781677181914
+    },
+    {
+     "entry": "blas2/symv/f64 n=4096",
+     "baseline_s": 0.00619229,
+     "new_s": 0.00286812,
+     "ratio": 0.46317598174504104
+    },
+    {
+     "entry": "direct/sparse_qr/f64 48^2 grid, nnz 11328",
+     "baseline_s": 0.0856977,
+     "new_s": 0.0246364,
+     "ratio": 0.2874802941035757
+    },
+    {
+     "entry": "direct/sparse_cholesky/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.071877,
+     "new_s": 0.0150075,
+     "ratio": 0.20879419007471098
+    },
+    {
+     "entry": "direct/sparse_cholesky.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0689258,
+     "new_s": 0.0124289,
+     "ratio": 0.1803228979569334
+    },
+    {
+     "entry": "blas3/syr2k/f64 512x512x512",
+     "baseline_s": 0.0166745,
+     "new_s": 0.00230509,
+     "ratio": 0.13824042699931036
+    },
+    {
+     "entry": "blas3/syrk/f64 512x512x512",
+     "baseline_s": 0.0107657,
+     "new_s": 0.00127678,
+     "ratio": 0.11859702573915305
+    },
+    {
+     "entry": "factor/ldlt_bk/f64 512x512",
+     "baseline_s": 0.0431694,
+     "new_s": 0.00431072,
+     "ratio": 0.09985591645934389
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 5.21248,
+     "new_s": 0.198022,
+     "ratio": 0.037989977899195775
+    }
+   ],
+   "skipped": 1
+  },
+  {
+   "run": "native-t1",
+   "entries": 135,
+   "median_ratio": 1.0008605381422793,
+   "min_ratio": 0.027701604439253597,
+   "max_ratio": 1.4487147506889824,
+   "verdict": "steady",
+   "outside": [
+    {
+     "entry": "krylov/minres+diag/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0332737,
+     "new_s": 0.0482041,
+     "ratio": 1.4487147506889824
+    },
+    {
+     "entry": "blas3/gemmt/f64 512x512x512",
+     "baseline_s": 0.0107544,
+     "new_s": 0.0125288,
+     "ratio": 1.1649929331250464
+    },
+    {
+     "entry": "pc/diagonal/f64 128^2 grid, rows scaled",
+     "baseline_s": 3.6277e-05,
+     "new_s": 4.1657e-05,
+     "ratio": 1.1483033326901342
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0674216,
+     "new_s": 0.0599159,
+     "ratio": 0.8886751426842436
+    },
+    {
+     "entry": "direct/sparse_cholesky.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00235539,
+     "new_s": 0.00209069,
+     "ratio": 0.8876194600469561
+    },
+    {
+     "entry": "direct/supernodal_lu.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00393201,
+     "new_s": 0.00345306,
+     "ratio": 0.8781920697048076
+    },
+    {
+     "entry": "ordering/rcm/f64 96^2 grid, nnz 45696, scrambled",
+     "baseline_s": 0.000224213,
+     "new_s": 0.000185313,
+     "ratio": 0.826504261572701
+    },
+    {
+     "entry": "direct/supernodal_lu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.053724,
+     "new_s": 0.0440954,
+     "ratio": 0.8207765616856526
+    },
+    {
+     "entry": "direct/supernodal_lu.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0476629,
+     "new_s": 0.0383102,
+     "ratio": 0.8037740045192383
+    },
+    {
+     "entry": "factor/lu/f32 512x512",
+     "baseline_s": 0.00631437,
+     "new_s": 0.00448905,
+     "ratio": 0.7109260306253831
+    },
+    {
+     "entry": "direct3d/supernodal_lu.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.644323,
+     "new_s": 0.453938,
+     "ratio": 0.7045193171747711
+    },
+    {
+     "entry": "sparse_eig/arnoldi/f64 64x65 convection-diffusion, k=4, m=80",
+     "baseline_s": 0.0449028,
+     "new_s": 0.0306994,
+     "ratio": 0.6836856498926571
+    },
+    {
+     "entry": "direct3d/supernodal_lu.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0116479,
+     "new_s": 0.00725427,
+     "ratio": 0.6227963838975267
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.00948012,
+     "new_s": 0.00491962,
+     "ratio": 0.5189406885144914
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.018787,
+     "new_s": 0.00963388,
+     "ratio": 0.5127950178314791
+    },
+    {
+     "entry": "blas2/symv/f64 n=4096",
+     "baseline_s": 0.00657665,
+     "new_s": 0.00318206,
+     "ratio": 0.4838420776535166
+    },
+    {
+     "entry": "direct/sparse_qr/f64 48^2 grid, nnz 11328",
+     "baseline_s": 0.099545,
+     "new_s": 0.0249334,
+     "ratio": 0.25047365513084535
+    },
+    {
+     "entry": "direct/sparse_cholesky/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0911346,
+     "new_s": 0.0145365,
+     "ratio": 0.15950582983850262
+    },
+    {
+     "entry": "direct/sparse_cholesky.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0886242,
+     "new_s": 0.0128037,
+     "ratio": 0.14447182597981137
+    },
+    {
+     "entry": "factor/ldlt_bk/f64 512x512",
+     "baseline_s": 0.0458771,
+     "new_s": 0.00483352,
+     "ratio": 0.1053580108594484
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 7.43188,
+     "new_s": 0.205875,
+     "ratio": 0.027701604439253597
+    }
+   ],
+   "skipped": 1
+  },
+  {
+   "run": "native-t8",
+   "entries": 135,
+   "median_ratio": 1.000989040363539,
+   "min_ratio": 0.02707059469853042,
+   "max_ratio": 1.4641853318509452,
+   "verdict": "steady",
+   "outside": [
+    {
+     "entry": "krylov/minres+diag/f64 128^2 grid, n 16384",
+     "baseline_s": 0.0320204,
+     "new_s": 0.0468838,
+     "ratio": 1.4641853318509452
+    },
+    {
+     "entry": "direct/native_klu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0167657,
+     "new_s": 0.0208025,
+     "ratio": 1.240777301275819
+    },
+    {
+     "entry": "pc/diagonal/f64 128^2 grid, rows scaled",
+     "baseline_s": 3.203e-05,
+     "new_s": 3.8506e-05,
+     "ratio": 1.2021854511395567
+    },
+    {
+     "entry": "blas3/gemmt/f64 512x512x512",
+     "baseline_s": 0.00901398,
+     "new_s": 0.0106901,
+     "ratio": 1.1859467183197654
+    },
+    {
+     "entry": "blas3/symm/f64 512x512x512",
+     "baseline_s": 0.0166443,
+     "new_s": 0.018503,
+     "ratio": 1.1116718636410061
+    },
+    {
+     "entry": "pc/ssor/f64 128^2 grid",
+     "baseline_s": 1.9771e-05,
+     "new_s": 2.195e-05,
+     "ratio": 1.1102119265591017
+    },
+    {
+     "entry": "sparse/lower_solve_level/f64 192^2 grid, nnz(L) 1003564",
+     "baseline_s": 0.00137978,
+     "new_s": 0.00152126,
+     "ratio": 1.1025380857817912
+    },
+    {
+     "entry": "direct/supernodal_lu.analyze/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.00378318,
+     "new_s": 0.00340208,
+     "ratio": 0.8992646398003795
+    },
+    {
+     "entry": "blas3/gemm/f32 512x512x512",
+     "baseline_s": 0.00152925,
+     "new_s": 0.00135229,
+     "ratio": 0.8842831453326794
+    },
+    {
+     "entry": "blas1/dot/f64 n=8388608",
+     "baseline_s": 0.00161815,
+     "new_s": 0.00139526,
+     "ratio": 0.8622562803201186
+    },
+    {
+     "entry": "direct/supernodal_lu/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0523006,
+     "new_s": 0.0448409,
+     "ratio": 0.8573687491156889
+    },
+    {
+     "entry": "direct/supernodal_lu.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0466578,
+     "new_s": 0.0387652,
+     "ratio": 0.8308407168790641
+    },
+    {
+     "entry": "ordering/rcm/f64 96^2 grid, nnz 45696, scrambled",
+     "baseline_s": 0.000219551,
+     "new_s": 0.000182196,
+     "ratio": 0.8298572996706916
+    },
+    {
+     "entry": "direct3d/supernodal_lu.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.655625,
+     "new_s": 0.45491,
+     "ratio": 0.6938570066730219
+    },
+    {
+     "entry": "sparse_eig/arnoldi/f64 64x65 convection-diffusion, k=4, m=80",
+     "baseline_s": 0.0442713,
+     "new_s": 0.0300671,
+     "ratio": 0.6791555703130471
+    },
+    {
+     "entry": "direct3d/supernodal_lu.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0113324,
+     "new_s": 0.00709135,
+     "ratio": 0.625758886025908
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.00924792,
+     "new_s": 0.00490588,
+     "ratio": 0.5304846927741589
+    },
+    {
+     "entry": "direct3d/supernodal_ldlt.analyze/f64 20^3 grid, nnz 53600",
+     "baseline_s": 0.0182825,
+     "new_s": 0.00946686,
+     "ratio": 0.517809927526323
+    },
+    {
+     "entry": "blas2/symv/f64 n=4096",
+     "baseline_s": 0.00646523,
+     "new_s": 0.00313703,
+     "ratio": 0.4852155298419391
+    },
+    {
+     "entry": "direct/sparse_qr/f64 48^2 grid, nnz 11328",
+     "baseline_s": 0.0854283,
+     "new_s": 0.0247164,
+     "ratio": 0.28932332728147464
+    },
+    {
+     "entry": "direct/sparse_cholesky/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0893461,
+     "new_s": 0.0146453,
+     "ratio": 0.16391649999272492
+    },
+    {
+     "entry": "direct/sparse_cholesky.factor/f64 96^2 grid, nnz 45696",
+     "baseline_s": 0.0866801,
+     "new_s": 0.0124454,
+     "ratio": 0.14357851456101228
+    },
+    {
+     "entry": "factor/ldlt_bk/f64 512x512",
+     "baseline_s": 0.045293,
+     "new_s": 0.00455008,
+     "ratio": 0.10045879054158478
+    },
+    {
+     "entry": "direct3d/sparse_cholesky.factor/f64 20^3 grid, nnz 53600",
+     "baseline_s": 7.281,
+     "new_s": 0.197101,
+     "ratio": 0.02707059469853042
+    }
+   ],
+   "skipped": 1
+  }
+ ],
+ "runs_not_compared": [],
+ "env_changes": {
+  "os_version": {
+   "blas-t1.json": [
+    "Ubuntu 26.04.1 LTS (7.0.0-43-generic)",
+    "Ubuntu 26.04.1 LTS (7.0.0-44-generic)"
+   ],
+   "blas-t8.json": [
+    "Ubuntu 26.04.1 LTS (7.0.0-43-generic)",
+    "Ubuntu 26.04.1 LTS (7.0.0-44-generic)"
+   ],
+   "native-fast-t1.json": [
+    "Ubuntu 26.04.1 LTS (7.0.0-43-generic)",
+    "Ubuntu 26.04.1 LTS (7.0.0-44-generic)"
+   ],
+   "native-fast-t8.json": [
+    "Ubuntu 26.04.1 LTS (7.0.0-43-generic)",
+    "Ubuntu 26.04.1 LTS (7.0.0-44-generic)"
+   ],
+   "native-t1.json": [
+    "Ubuntu 26.04.1 LTS (7.0.0-43-generic)",
+    "Ubuntu 26.04.1 LTS (7.0.0-44-generic)"
+   ],
+   "native-t8.json": [
+    "Ubuntu 26.04.1 LTS (7.0.0-43-generic)",
+    "Ubuntu 26.04.1 LTS (7.0.0-44-generic)"
+   ]
+  },
+  "preflight_kernel": {
+   "blas-t1.json": [
+    "Linux 7.0.0-43-generic",
+    "Linux 7.0.0-44-generic"
+   ],
+   "blas-t8.json": [
+    "Linux 7.0.0-43-generic",
+    "Linux 7.0.0-44-generic"
+   ],
+   "native-fast-t1.json": [
+    "Linux 7.0.0-43-generic",
+    "Linux 7.0.0-44-generic"
+   ],
+   "native-fast-t8.json": [
+    "Linux 7.0.0-43-generic",
+    "Linux 7.0.0-44-generic"
+   ],
+   "native-t1.json": [
+    "Linux 7.0.0-43-generic",
+    "Linux 7.0.0-44-generic"
+   ],
+   "native-t8.json": [
+    "Linux 7.0.0-43-generic",
+    "Linux 7.0.0-44-generic"
+   ]
+  }
+ }
+}

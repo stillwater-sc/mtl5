@@ -1,0 +1,10 @@
+derived_by=benchmarks/tracking/track_sessions.py compare
+schema=mtl5-track/1
+machine=jetson-orin
+class=medium
+baseline_session=20261113T140622Z
+baseline_commit=967d20ac6b04
+new_session=20261127T125653Z
+new_commit=f98777e6c6f7
+run_band_pct=2
+entry_band_pct=10

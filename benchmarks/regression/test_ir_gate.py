@@ -45,7 +45,7 @@ class Compare(unittest.TestCase):
         self.assertEqual(statuses(rows)["a"], "faster")
 
     def test_accepted_increase_passes_up_to_max_ir(self):
-        acc = {"kernels": {"a": {"max_ir": 2000, "reason": "#1: packs twice"}}}
+        acc = {"kernels": {"a": {"max_ir": {"native": 2000}, "reason": "#1: packs twice"}}}
         rows, _, failed = ir_gate.compare(run({"a": 1000}), run({"a": 2000}), acc, T)
         self.assertFalse(failed)
         self.assertEqual(statuses(rows)["a"], "accepted")
@@ -54,13 +54,25 @@ class Compare(unittest.TestCase):
         self.assertTrue(any("above its accepted max_ir" in n for n in notes))
 
     def test_acceptance_needs_a_reason_and_a_count(self):
-        for bad in ({"max_ir": 2000}, {"max_ir": 2000, "reason": "  "}, {"reason": "x"},
-                    {"max_ir": -1, "reason": "x"}, {"max_ir": 1.5, "reason": "x"}):
+        for bad in ({"max_ir": {"native": 2000}}, {"max_ir": {"native": 2000}, "reason": "  "},
+                    {"reason": "x"}, {"max_ir": {"native": -1}, "reason": "x"},
+                    {"max_ir": {"native": 1.5}, "reason": "x"}, {"max_ir": {"native": True}, "reason": "x"},
+                    {"max_ir": {}, "reason": "x"},
+                    # A bare count would accept the change in every configuration at once.
+                    {"max_ir": 2000, "reason": "x"}):
             _, _, failed = ir_gate.compare(run({"a": 1000}), run({"a": 1000}), {"kernels": {"a": bad}}, T)
             self.assertTrue(failed, bad)
 
+    def test_acceptance_is_per_configuration(self):
+        # Accepted for native only: the same rise in native-fast-arm64 still fails.
+        acc = {"kernels": {"a": {"max_ir": {"native": 2000}, "reason": "#1"}}}
+        for cfg, want in (("native", False), ("native-fast-arm64", True)):
+            rows, _, failed = ir_gate.compare(run({"a": 1000}, config=cfg), run({"a": 2000}, config=cfg), acc, T)
+            self.assertEqual(failed, want, cfg)
+            self.assertEqual(statuses(rows)["a"], "REGRESSION" if want else "accepted")
+
     def test_stale_acceptance_is_reported_not_failed(self):
-        acc = {"kernels": {"a": {"max_ir": 2000, "reason": "#1"}}}
+        acc = {"kernels": {"a": {"max_ir": {"native": 2000}, "reason": "#1"}}}
         _, notes, failed = ir_gate.compare(run({"a": 2000}), run({"a": 2000}), acc, T)
         self.assertFalse(failed)
         self.assertTrue(any("stale" in n for n in notes))

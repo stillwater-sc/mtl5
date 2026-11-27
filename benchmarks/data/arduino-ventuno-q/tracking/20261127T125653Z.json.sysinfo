@@ -1,0 +1,10 @@
+derived_by=benchmarks/tracking/track_sessions.py compare
+schema=mtl5-track/1
+machine=arduino-ventuno-q
+class=medium
+baseline_session=20261113T174232Z
+baseline_commit=bf315e4604cf
+new_session=20261127T125653Z
+new_commit=f98777e6c6f7
+run_band_pct=2
+entry_band_pct=10
