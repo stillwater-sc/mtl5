@@ -30,6 +30,9 @@ It also lists what changed in the build and the machine between the sessions
 (compiler, flags, kernel, pin list, clock policy, ...): a shift that comes with
 a new compiler is not a regression in MTL5.
 
+--json also writes FILE.sysinfo, the report's provenance (the two sessions),
+since every JSON under benchmarks/data carries a sidecar (check_sidecars.sh).
+
 page: collects the --json reports under DATA/<machine>/tracking/ and writes
 the tracking page: per machine, the latest report's runs, and its history.
 
@@ -204,6 +207,21 @@ def cmd_compare(a):
     if a.json:
         Path(a.json).parent.mkdir(parents=True, exist_ok=True)
         Path(a.json).write_text(json.dumps(report, indent=1) + "\n")
+        # Every committed JSON under benchmarks/data carries a sidecar (#477,
+        # check_sidecars.sh). A report is derived data: its provenance is the two
+        # sessions it compares, whose own sidecars hold the build and machine.
+        Path(a.json + ".sysinfo").write_text("".join(f"{k}={v}\n" for k, v in (
+            ("derived_by", "benchmarks/tracking/track_sessions.py compare"),
+            ("schema", report["schema"]),
+            ("machine", nm),
+            ("class", nc),
+            ("baseline_session", base_dir.name),
+            ("baseline_commit", bcommit),
+            ("new_session", new_dir.name),
+            ("new_commit", ncommit),
+            ("run_band_pct", f"{a.run_band:g}"),
+            ("entry_band_pct", f"{a.entry_band:g}"),
+        )))
     return 0
 
 

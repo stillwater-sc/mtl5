@@ -91,6 +91,7 @@ export default defineConfig({
             { slug: 'benchmarks' },
             { slug: 'benchmarks/systems' },
             { slug: 'benchmarks/run-contract' },
+            { slug: 'benchmarks/tracking' },
             {
               label: 'Across the machines',
               items: [

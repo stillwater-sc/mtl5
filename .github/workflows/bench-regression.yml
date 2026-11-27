@@ -92,6 +92,11 @@ jobs:
       - name: Test the gate script
         run: python3 benchmarks/regression/test_ir_gate.py
 
+      # The wall-clock tracking runs on the benchmark machines, not here (#944);
+      # its comparison script is tested with the gate's.
+      - name: Test the tracking script
+        run: python3 benchmarks/tracking/test_track_sessions.py
+
       # MTL5_ENABLE_BLOCKING_OVERRIDE lets ir_gate.py pin the GEMM blocking,
       # which is otherwise derived from the runner's caches (ir_gate.py's
       # PINNED_ENV says why). ir_gate.py refuses a build without it.
