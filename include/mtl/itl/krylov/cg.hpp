@@ -140,16 +140,31 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
                     const mag_t a = abs(p(i));
                     if (a > pmax) pmax = a;
                 }
-                const int e = math::pow2_scaling<mag_t>::exponent(pmax);   // 0 for 0, NaN or inf
-                const mag_t f = math::pow2_scaling<mag_t>::scale(mag_t(1), -e);
-                for (size_type i = 0; i < n; ++i) q(i) = p(i) * f;           // q holds p-hat
+                // e = 0 for a zero or infinite pmax (NaN cannot win the max):
+                // std::ilogb, which the floating-point specialization calls,
+                // gives INT_MIN-like and INT_MAX values there, and -e would
+                // overflow. A zero p then gives a zero p-hat^T A p-hat, the
+                // breakdown below; an infinite one a non-finite step (code 6).
+                const int e = (pmax > mag_t(0) && pmax <= std::numeric_limits<mag_t>::max())
+                                  ? math::pow2_scaling<mag_t>::exponent(pmax) : 0;
+                // 2^-e per value, through pow2_scaling::scale, which is exact
+                // also where 2^-e itself is not representable (a subnormal
+                // pmax, e down to -1074): a factor 2^1074 would be inf.
+                auto by_pow2 = [](const value_type& v, int k) -> value_type {
+                    if constexpr (is_complex_v<value_type>)
+                        return value_type(math::pow2_scaling<mag_t>::scale(v.real(), k),
+                                          math::pow2_scaling<mag_t>::scale(v.imag(), k));
+                    else
+                        return math::pow2_scaling<value_type>::scale(v, k);
+                };
+                for (size_type i = 0; i < n; ++i) q(i) = by_pow2(p(i), -e);   // q holds p-hat
                 apply_operator<Accumulator>(A, q, Ax);                       // Ax = A p-hat
                 const value_type pqh = mtl::dot<Accumulator, value_type>(q, Ax);
                 if (pqh == value_type(0)) {
                     iter.fail(2, "cg breakdown: dot(p, A p) == 0");
                     return iter;
                 }
-                c = (rho / pqh) * f;
+                c = by_pow2(rho / pqh, -e);
                 u = &q;
                 w = &Ax;
             }

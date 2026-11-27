@@ -91,7 +91,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 - **CG with a preconditioner scaled far from 1** (issue 955). For M scaled by s, ρ = rᵀM⁻¹r scales as 1/s, but pᵀAp scales as 1/s², so it left double's range beyond 2^±512.
   - **What failed:** at M = 4·2^600·I, pᵀAp underflowed to 0 and CG reported a false breakdown (code 2) after one iteration. At 4·2^-600·I it overflowed, α was 0, and CG ran to its limit (code 1).
-  - **The fix:** when pᵀAp is not a normal number, `cg` redoes the step on p̂ = 2^-e p, where 2^e ≤ max|pᵢ|, and applies α p = (ρ/p̂ᵀAp̂)·2^-e·p̂. That is exact, since a power of two scales without rounding.
+  - **The fix:** when pᵀAp is not a normal number, `cg` redoes the step on p̂ = 2^-e p, where 2^e ≤ max|pᵢ|, and applies α p = (ρ/p̂ᵀAp̂)·2^-e·p̂. That is exact, since a power of two scales without rounding. The scaling is applied per value, through `pow2_scaling::scale`, so it stays exact when p has become subnormal (where 2^-e itself would overflow), and e is kept at 0 for a zero or infinite max|pᵢ|.
     - Where pᵀAp is normal nothing changes, bit for bit, and the normal step costs nothing extra.
     - A pᵀAp that is still 0 after rescaling is a true zero, as on an indefinite A (issue 866), and is still a breakdown.
   - **The result:** CG now converges in the same 17 iterations, to the same bits, from 2^±300 to 2^±900. Past about 2^±950, z = M⁻¹r itself reaches the subnormal range.

@@ -271,3 +271,26 @@ TEST_CASE("cg: a true p^T A p = 0 is still a breakdown after the rescaling (issu
         CHECK(x(1) == 0.0);
     }
 }
+
+TEST_CASE("cg: the rescaled step when p reaches the subnormal range (issue 955)", "[itl][cg][955]") {
+    // M^-1 = 2^-1000 I: z starts at 2^-1000 and becomes subnormal as the
+    // residual falls, and so does p. The rescaling's 2^-e is then 2^1040 and
+    // more: as one factor it overflowed to inf (the step went NaN, code 6, in
+    // the first form of the fix); scaled per value it is exact.
+    struct times_pow2 {
+        int k;
+        void solve(vec::dense_vector<double>& z, const vec::dense_vector<double>& v) const {
+            for (std::size_t i = 0; i < v.size(); ++i) z(i) = std::ldexp(v(i), -k);
+        }
+    };
+    const std::size_t n = 50;
+    const auto A = laplacian_949(n);
+    vec::dense_vector<double> b(n, 1.0), x(n, 0.0), x1(n, 0.0);
+    itl::basic_iteration<double> iter1(b, 500, 1e-10), iter(b, 500, 1e-10);
+    REQUIRE(itl::cg(A, x1, b, times_pow2{0}, iter1) == 0);
+    REQUIRE(itl::cg(A, x, b, times_pow2{1000}, iter) == 0);
+    CHECK(iter.iterations() == iter1.iterations());
+    double err = 0.0;
+    for (std::size_t i = 0; i < n; ++i) err = std::max(err, std::abs(x(i) - x1(i)));
+    CHECK(err < 1e-12);
+}
