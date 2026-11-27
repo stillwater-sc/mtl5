@@ -168,6 +168,7 @@ itl/krylov/tfqmr.hpp                bench   krylov/tfqmr+
 itl/krylov/idr_s.hpp                bench   krylov/idr_s*
 itl/krylov/apply_operator.hpp       via     krylov/cg+           # the A*x every solver calls
 itl/krylov/scaled_rhs.hpp           via     krylov/cg+           # the copy of b every solver takes
+itl/krylov/spd_check.hpp            via     krylov/cg+           # the rho < 0 test cg and minres make (#949)
 
 # -- preconditioners, smoothers, multigrid --------------------------------------
 itl/pc/diagonal.hpp                 bench   pc/diagonal/
