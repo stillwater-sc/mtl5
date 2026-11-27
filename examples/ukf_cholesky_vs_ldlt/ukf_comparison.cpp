@@ -1132,10 +1132,11 @@ int main() {
         std::cout << "- On SPD matrices up to cond 1e15 both factorizations' residuals stay at rounding\n"
                   << "  level: at most " << spd_max_cr << " (Cholesky) and " << spd_max_lr << " (LDL^T).\n"
                   << "  When Cholesky completes, its backward error is small at any condition number; it\n"
-                  << "  is guaranteed to complete for c n^(3/2) cond(P) eps < 1, and beyond that it stops\n"
-                  << "  rather than return a poor factor (as LDL^T's D gets an entry <= 0). A scalar\n"
-                  << "  square root halves a relative error. Neither method is the safer choice above\n"
-                  << "  some condition number, and LDL^T's sigma points take sqrt(D_k) anyway.\n";
+                  << "  is guaranteed to complete for c n^(3/2) cond(P) eps < 1; beyond that it may stop,\n"
+                  << "  if a rounded pivot comes out non-positive, rather than return a poor factor (as\n"
+                  << "  LDL^T's D may get an entry <= 0). A scalar square root halves a relative error.\n"
+                  << "  Neither method is the safer choice above some condition number, and LDL^T's\n"
+                  << "  sigma points take sqrt(D_k) anyway.\n";
     std::cout << "- On an indefinite matrix the two differ in kind: Cholesky "
               << (indef_chol_all_fail ? "stops on every one" : "does not always stop") << ", while\n"
               << "  LDL^T returns, with a negative D entry. Unpivoted LDL^T is not stable there: its\n"
