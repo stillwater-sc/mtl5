@@ -218,7 +218,7 @@ Value condest_1(const mat::compressed2D<Value, Parameters>& A, Solve&& solve, So
     int e = 0;
     const Value m = csr_norm1_scaled(A, e);
     if (!(m == m)) return m;
-    if (m == Value{0}) return Value{0} / Value{0};   // A = 0: singular, as no factorization would allow
+    if (m == Value{0}) return std::numeric_limits<Value>::quiet_NaN();   // A = 0: singular, as no factorization would allow
     using lim = std::numeric_limits<Value>;
     const int lo = lim::min_exponent + 2 * lim::digits;
     const int pe = std::max(e - 2, lo);
