@@ -460,6 +460,17 @@ TEMPLATE_TEST_CASE("genericity: sparse Cholesky, QR, LU refinement and shift-inv
         const auto lus = fz::sparse_lu_numeric(As, fz::sparse_lu_symbolic(As));
         agree(lus.rgrowth(As), lu.rgrowth(A), 1.0, true);
         agree(lus.rcond(), lu.rcond(), 1.0, true);
+        // condest and the transposed solves under it (issue 946).
+        agree(facs.condest(As), fac.condest(A), 1.0, true);
+        agree(lus.condest(As), lu.condest(A), 1.0, true);
+        vec::dense_vector<N> x(n);
+        vec::dense_vector<S> xs(n);
+        fac.solve_transpose(x, b);
+        facs.solve_transpose(xs, bs);
+        agree(xs, x, true);
+        lu.solve_transpose(x, b);
+        lus.solve_transpose(xs, bs);
+        agree(xs, x, true);
     }
     SECTION("shift_invert_operator") {
         const sparse::shift_invert_operator<N> op(A, N(1));
