@@ -53,6 +53,32 @@ Latest: session `20261127T125653Z` (commit `f98777e6c6f7`) against `20261113T140
 | native-t1 | 1.000 | 23 | steady |
 | native-t6 | 1.000 | 27 | steady |
 
+## ryzen-7-8845hs
+
+Latest: session `20261127T143612Z` (commit `57512adcb8fe`) against `20261112T035709Z` (commit `cd6762a6e989`), class medium. [Full report](https://github.com/stillwater-sc/mtl5/blob/main/benchmarks/data/ryzen-7-8845hs/tracking/20261127T143612Z.md).
+
+| run | median ratio | outside ±10% | verdict |
+|---|---:|---:|---|
+| blas-t1 | 1.001 | 18 | steady |
+| blas-t8 | 1.028 | 26 | slower |
+| native-fast-t1 | 0.992 | 20 | steady |
+| native-fast-t8 | 0.981 | 27 | steady |
+| native-t1 | 1.000 | 18 | steady |
+| native-t8 | 0.994 | 18 | steady |
+
+## ryzen-9-8945hs
+
+Latest: session `20261127T143612Z` (commit `57512adcb8fe`) against `20261112T032806Z` (commit `cd6762a6e989`), class medium. [Full report](https://github.com/stillwater-sc/mtl5/blob/main/benchmarks/data/ryzen-9-8945hs/tracking/20261127T143612Z.md).
+
+| run | median ratio | outside ±10% | verdict |
+|---|---:|---:|---|
+| blas-t1 | 1.000 | 24 | steady |
+| blas-t8 | 0.998 | 20 | steady |
+| native-fast-t1 | 0.996 | 34 | steady |
+| native-fast-t8 | 0.994 | 28 | steady |
+| native-t1 | 0.997 | 20 | steady |
+| native-t8 | 0.982 | 25 | steady |
+
 ## xeon-e5-2420v2
 
 Latest: session `20261127T125653Z` (commit `f98777e6c6f7`) against `20261111T193510Z` (commit `bfa1c2822688`), class medium. [Full report](https://github.com/stillwater-sc/mtl5/blob/main/benchmarks/data/xeon-e5-2420v2/tracking/20261127T125653Z.md).
