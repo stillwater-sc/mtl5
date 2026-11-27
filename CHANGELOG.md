@@ -7,6 +7,21 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **Every benchmark harness writes the full sidecar, and `check_sidecars.sh` checks its keys** (issue 930; #975). Ingested by mtl5-python at c9118b8, 152 of 290 committed runs were incomplete, and so excluded from every trend. Most came from harnesses that never wrote `clock_policy` or `bench_cpus`.
+  - **`benchmarks/sidecar_keys.txt`** is mtl5-python's `REQUIRED_KEYS`: the 27 keys a run needs. `cxx_flags` and `cpu_vendor` may be empty.
+  - **A key that doesn't apply still gets a value,** such as `pool_size=1`, `bench_cpus=unpinned` or `clock_policy=not applied`. There are no per-producer exemptions, because mtl5-python has none.
+  - **Two halves.**
+    - **The binary** writes the build and the machine's identity through `benchmarks/harness/sidecar.hpp` (`write_build_keys`). `bench_sparse`, `bench_klu` and `bench_superlu` now write a sidecar at all; the scoreboards' sidecars had been written by hand. `bench_column_sweep`, compiled without CMake, prints its half with `--sysinfo`.
+    - **The harness** adds the run's keys through `benchmarks/sidecar.sh` and `sidecar.ps1`: benchmark, machine (`$BENCH_MACHINE`, which the profiles set from their file name), class, pinning, clock policy and the preflight record. Every `run_*.sh` and `.ps1` harness fails if a sidecar is still incomplete, or was not written at all.
+  - **Other producers.**
+    - `run_column_sweep` drops its own key dialect.
+    - `run_scaling_297.sh` writes sidecars now.
+    - `benchmarks/run_with_sidecar.sh` wraps any binary that has no script of its own.
+    - `interleave_table.py` writes the sweep's own values for the four keys it used to drop.
+    - `run_int_bench.sh` writes `bench_all`'s console banner as comments. mtl5-python's parser counted those lines as faults, so the int runs were incomplete with every key present.
+  - **`check_sidecars.sh`** requires every key, non-empty unless `empty-ok`. It also rejects a key with two different values, and a line that is not `key=value`, a comment or blank. A derived report (`derived_by=`, the tracking comparisons) needs its provenance keys instead. The 154 sidecars that were already incomplete are grandfathered in `benchmarks/data/.sidecar-incomplete`. That list is a ratchet like `.sidecar-exempt`, and a line goes only when its sidecar is removed or completed from recorded evidence.
+  - **Verified:** fresh sidecars from seven harnesses, among them the Windows column sweep on the Ryzen 9 NUC, are in the complete tier by mtl5-python's own `parse_sysinfo` and `REQUIRED_KEYS`. `run_nc_bench`, `run_vendor_nested` and three `.ps1` harnesses were not run, because they need several library builds, a vendor BLAS or a long session.
+  - Docs: "Every sidecar carries every required key" in `benchmarks/README.md`.
 - **`mtl5_bench` results carry a definition version and their sample spread** (issues 928 and 929; #973). Both are for mtl5-python's trend analysis (stillwater-sc/mtl5-python#121). The fields are additive, so the schema stays `mtl5-bench/1`.
   - **`version` (#928):** each registered entry has an integer definition version (`r.add(area, op, dtype, make, version)`, default 1), written beside `area`, `op`, `dtype` and `shape`.
     - Bump it when a run would no longer measure the same thing: the problem (also at the same shape string), the work model (`flops`, `bytes`) or what the check compares. A faster implementation does not bump it.
