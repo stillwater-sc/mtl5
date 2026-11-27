@@ -89,6 +89,17 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **The UKF examples' conclusions now match their output** (issue 953). `ukf_comparison` and `bearing_only_ukf` concluded that Cholesky's square roots lose precision on an ill-conditioned P, and that LDLᵀ avoids them. Their own output showed the opposite.
+  - **`ukf_comparison`.** Both filters complete every scenario, with final errors that agree to 2.2e-7. cond(P) never exceeds 6.8e3, because the process noise keeps P's eigenvalues up. On SPD matrices up to cond 1e15 both residuals stay at 1e-16.
+    - The conclusion is now computed from the run. The "cond(P) > 1e8 → prefer LDLᵀ" rule is gone.
+    - The indefinite test adds a shifted Hilbert matrix and a matrix of ones with a tiny diagonal. On the latter, unpivoted LDLᵀ's solve has a backward error of 1.8e-4. The test also adds a Bunch–Kaufman (`ldlt_bk`) column, which gets the inertia of every matrix right, with a backward error of 1e-16.
+    - LDLᵀ's sigma points now refuse a D_k ≤ 0, as Cholesky does, instead of taking √|D_k|, which belongs to another covariance.
+  - **`bearing_only_ukf`** ran one filter and tested its P with both factorizations, so its two columns could not differ. It now runs two filters, one per factorization, on one shared scenario, in float64 and float32. It also sweeps α = 1e-3 … 1.
+    - The float32 trouble comes from the weights: W₀ = −986894 at α = 1e-3. The step-0 bias is already 2.2e-2 at cond(P) = 1, and the two float32 filters drift up to 1.9 apart.
+    - At α = 1 the gap is 6.6e-5, and both filters end at the float64 error. In float64 the gap is 7.8e-8 at α = 1e-3 and 3.1e-13 at α = 1.
+    - The program no longer says LDLᵀ "avoids sqrt": its sigma points take √D_k.
+  - **Both programs** now wrap each sigma point's bearing relative to the central point's before the sums, so a set that straddles atan2's cut at ±π stays consistent.
+  - **Notes and docs.** The stale "Future: Bunch–Kaufman (#46)" notes are gone. `docs/examples/ukf-cholesky-vs-ldlt.md` and both READMEs are rewritten around the measured results.
 - **Phase 13 examples: a multigrid that scales, and preconditioners that fit their solvers** (issues 942 and 943).
   - **`multigrid_poisson`** promised a cost independent of problem size, but it hard-coded 3 levels with 100 forward Gauss–Seidel sweeps as the "effectively exact" coarse solve. At n = 1023 that stops converging. It also used a nonsymmetric V-cycle as CG's preconditioner.
     - The hierarchy now coarsens to 3 points, with a dense-LU coarse solve. A sweep from n = 63 to 4095 takes 5 V-cycles and 4 MG-PCG iterations at every size, while the original 3 levels need 76 V-cycles at n = 255 and fail from n = 1023.
