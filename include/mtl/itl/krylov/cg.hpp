@@ -8,6 +8,8 @@
 #include <mtl/itl/krylov/apply_operator.hpp>
 #include <mtl/itl/krylov/scaled_rhs.hpp>
 #include <mtl/itl/krylov/spd_check.hpp>
+#include <mtl/math/pow2_scaling.hpp>
+#include <limits>
 
 namespace mtl::itl {
 
@@ -108,25 +110,75 @@ int cg(const LinearOp& A, VecX& x, const VecB& b, const PC& M, Iter& iter) {
             // q = A * p
             apply_operator<Accumulator>(A, p, q);
 
-            // alpha = rho / dot(p, q). On an indefinite A, p^T A p can be zero for
-            // p != 0: alpha was rho / 0 and x became inf or NaN (issue 866).
+            // alpha = rho / dot(p, q), then x += alpha p and r -= alpha q.
+            //
+            // p^T A p leaves the range first (issue 955). For a preconditioner
+            // scaled by s, z = M^{-1} r and p scale as 1/s, rho = r^T z as 1/s,
+            // but p^T A p as 1/s^2: at M = 4 * 2^600 I it underflowed to 0 (a
+            // false breakdown, code 2), at 4 * 2^-600 I it overflowed, alpha
+            // was 0 and x never moved. So when p^T A p is not a normal number,
+            // the step is redone on p-hat = 2^-e p, with 2^e <= max |p_i|:
+            // p-hat^T A p-hat is near the scale of A, and
+            //   alpha p = (rho / p-hat^T A p-hat) 2^-e p-hat,
+            //   alpha q = (rho / p-hat^T A p-hat) 2^-e A p-hat,
+            // exactly, since a power of two scales without rounding. Where
+            // p^T A p is normal, nothing changes, bit for bit. A p^T A p that
+            // is zero after the rescaling is a true zero, as on an indefinite A
+            // (issue 866): a breakdown.
             const value_type pq = mtl::dot<Accumulator, value_type>(p, q);
-            if (pq == value_type(0)) {
-                iter.fail(2, "cg breakdown: dot(p, A p) == 0");
-                return iter;
+            using mag_t = magnitude_t<value_type>;
+            using std::abs;
+            const mag_t apq = abs(pq);
+            value_type c = value_type(0);       // the step: x += c u, r -= c w
+            const vec::dense_vector<value_type>* u = &p;
+            const vec::dense_vector<value_type>* w = &q;
+            if (apq >= std::numeric_limits<mag_t>::min() && apq <= std::numeric_limits<mag_t>::max()) {
+                c = rho / pq;
+            } else {
+                mag_t pmax(0);
+                for (size_type i = 0; i < n; ++i) {
+                    const mag_t a = abs(p(i));
+                    if (a > pmax) pmax = a;
+                }
+                // e = 0 for a zero or infinite pmax (NaN cannot win the max):
+                // std::ilogb, which the floating-point specialization calls,
+                // gives INT_MIN-like and INT_MAX values there, and -e would
+                // overflow. A zero p then gives a zero p-hat^T A p-hat, the
+                // breakdown below; an infinite one a non-finite step (code 6).
+                const int e = (pmax > mag_t(0) && pmax <= std::numeric_limits<mag_t>::max())
+                                  ? math::pow2_scaling<mag_t>::exponent(pmax) : 0;
+                // 2^-e per value, through pow2_scaling::scale, which is exact
+                // also where 2^-e itself is not representable (a subnormal
+                // pmax, e down to -1074): a factor 2^1074 would be inf.
+                auto by_pow2 = [](const value_type& v, int k) -> value_type {
+                    if constexpr (is_complex_v<value_type>)
+                        return value_type(math::pow2_scaling<mag_t>::scale(v.real(), k),
+                                          math::pow2_scaling<mag_t>::scale(v.imag(), k));
+                    else
+                        return math::pow2_scaling<value_type>::scale(v, k);
+                };
+                for (size_type i = 0; i < n; ++i) q(i) = by_pow2(p(i), -e);   // q holds p-hat
+                apply_operator<Accumulator>(A, q, Ax);                       // Ax = A p-hat
+                const value_type pqh = mtl::dot<Accumulator, value_type>(q, Ax);
+                if (pqh == value_type(0)) {
+                    iter.fail(2, "cg breakdown: dot(p, A p) == 0");
+                    return iter;
+                }
+                c = by_pow2(rho / pqh, -e);
+                u = &q;
+                w = &Ax;
             }
-            value_type alpha = rho / pq;
 
             // x += alpha * p
             for (size_type i = 0; i < n; ++i)
-                x(i) += alpha * p(i);
+                x(i) += c * (*u)(i);
 
             // Save rho for next iteration
             rho_1 = rho;
 
             // r -= alpha * q
             for (size_type i = 0; i < n; ++i)
-                r(i) -= alpha * q(i);
+                r(i) -= c * (*w)(i);
 
             // z = M^{-1} r
             M.solve(z, r);

@@ -166,11 +166,11 @@ TEST_CASE("cg: a preconditioner that is not positive definite returns 7 (issue 9
         for (std::size_t i = 0; i < n; ++i) CHECK(x(i) == y(i));
     }
 
-    SECTION("an SPD M, also at 2^+-300, is unaffected") {
-        // At 2^+-600 CG fails on main as well (2, or 1 at the limit): its dot
-        // products are not range-scaled as minres's are (#671). Not this check.
+    SECTION("an SPD M, also at 2^+-600, is unaffected") {
+        // 2^+-600 needs issue 955's rescaled step; the code-7 check is exercised
+        // on the same path there.
         vec::dense_vector<double> b(n, 1.0);
-        for (const double s : {1.0, 0x1p300, 0x1p-300}) {
+        for (const double s : {1.0, 0x1p300, 0x1p-300, 0x1p600, 0x1p-600}) {
             vec::dense_vector<double> x(n, 0.0), d(n, 4.0 * s);
             given_diagonal_949 M{d};
             itl::basic_iteration<double> iter(b, 500, 1e-10);
@@ -225,4 +225,72 @@ TEST_CASE("not_positive_definite: the tolerance's rounding unit and range (issue
     CHECK_FALSE(d::not_positive_definite(-1e-17, 5, norms));
     CHECK_FALSE(d::not_positive_definite(1.0, 5, norms));
     CHECK_FALSE(d::not_positive_definite(std::nan(""), 5, norms));
+}
+
+// Issue 955: an SPD preconditioner scaled by s leaves CG's iterates unchanged in
+// exact arithmetic (alpha scales as s, p as 1/s), but p^T A p scales as 1/s^2
+// and left double's range beyond 2^+-512: 0 at 2^600 (a false breakdown, 2),
+// inf at 2^-600 (alpha = 0, the limit, 1).
+TEST_CASE("cg: a preconditioner scaled beyond 2^+-512 (issue 955)", "[itl][cg][955]") {
+    const std::size_t n = 50;
+    const auto A = laplacian_949(n);
+    vec::dense_vector<double> b(n, 1.0);
+    auto solve = [&](double s, vec::dense_vector<double>& x) {
+        vec::dense_vector<double> d(n, 4.0 * s);
+        given_diagonal_949 M{d};
+        itl::basic_iteration<double> iter(b, 500, 1e-10);
+        const int code = itl::cg(A, x, b, M, iter);
+        return std::pair{code, iter.iterations()};
+    };
+    vec::dense_vector<double> x1(n, 0.0);
+    const auto [c1, it1] = solve(1.0, x1);
+    REQUIRE(c1 == 0);
+    REQUIRE(it1 == 17);
+    for (const double s : {0x1p300, 0x1p-300, 0x1p600, 0x1p-600, 0x1p900, 0x1p-900}) {
+        CAPTURE(std::ilogb(s));
+        vec::dense_vector<double> x(n, 0.0);
+        const auto [c, it] = solve(s, x);
+        REQUIRE(c == 0);
+        CHECK(it == it1);
+        // A power of two scales without rounding, and the rescaled step undoes
+        // it exactly: the iterates are those of s = 1, bit for bit.
+        for (std::size_t i = 0; i < n; ++i) CHECK(x(i) == x1(i));
+    }
+}
+
+TEST_CASE("cg: a true p^T A p = 0 is still a breakdown after the rescaling (issue 955)", "[itl][cg][955]") {
+    // diag(1, -1) with b = (1, 1) and M = I: p = r = b, p^T A p = 1 - 1 = 0
+    // exactly, at every scale of M.
+    mat::dense2D<double> A = {{1.0, 0.0}, {0.0, -1.0}};
+    for (const double s : {1.0, 0x1p600, 0x1p-600}) {
+        vec::dense_vector<double> b(2, 1.0), x(2, 0.0), d(2, s);
+        given_diagonal_949 M{d};
+        itl::basic_iteration<double> iter(b, 50, 1e-10);
+        CHECK(itl::cg(A, x, b, M, iter) == 2);
+        CHECK(x(0) == 0.0);
+        CHECK(x(1) == 0.0);
+    }
+}
+
+TEST_CASE("cg: the rescaled step when p reaches the subnormal range (issue 955)", "[itl][cg][955]") {
+    // M^-1 = 2^-1000 I: z starts at 2^-1000 and becomes subnormal as the
+    // residual falls, and so does p. The rescaling's 2^-e is then 2^1040 and
+    // more: as one factor it overflowed to inf (the step went NaN, code 6, in
+    // the first form of the fix); scaled per value it is exact.
+    struct times_pow2 {
+        int k;
+        void solve(vec::dense_vector<double>& z, const vec::dense_vector<double>& v) const {
+            for (std::size_t i = 0; i < v.size(); ++i) z(i) = std::ldexp(v(i), -k);
+        }
+    };
+    const std::size_t n = 50;
+    const auto A = laplacian_949(n);
+    vec::dense_vector<double> b(n, 1.0), x(n, 0.0), x1(n, 0.0);
+    itl::basic_iteration<double> iter1(b, 500, 1e-10), iter(b, 500, 1e-10);
+    REQUIRE(itl::cg(A, x1, b, times_pow2{0}, iter1) == 0);
+    REQUIRE(itl::cg(A, x, b, times_pow2{1000}, iter) == 0);
+    CHECK(iter.iterations() == iter1.iterations());
+    double err = 0.0;
+    for (std::size_t i = 0; i < n; ++i) err = std::max(err, std::abs(x(i) - x1(i)));
+    CHECK(err < 1e-12);
 }
