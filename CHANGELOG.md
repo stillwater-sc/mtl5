@@ -7,6 +7,18 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- **`mtl5_bench` results carry a definition version and their sample spread** (issues 928 and 929; #973). Both are for mtl5-python's trend analysis (stillwater-sc/mtl5-python#121). The fields are additive, so the schema stays `mtl5-bench/1`.
+  - **`version` (#928):** each registered entry has an integer definition version (`r.add(area, op, dtype, make, version)`, default 1), written beside `area`, `op`, `dtype` and `shape`.
+    - Bump it when a run would no longer measure the same thing: the problem (also at the same shape string), the work model (`flops`, `bytes`) or what the check compares. A faster implementation does not bump it.
+    - `blas2/symv/f64` (#745, its byte model) and `krylov/tfqmr+ilu0/f64` (#752, its matrix) start at 2. Every published session was measured after both changes.
+    - `tracking/track_sessions.py` and `compare_sessions.py` report an entry whose version changed as not compared, a new series. A session from before #928 records no version and is compared as before.
+  - **The spread (#929):** each timed result also has `p10_s`, `p25_s`, `p75_s`, `p90_s` and `max_s`, from the samples already sorted for the median.
+    - The rule is `sorted[min(n − 1, floor(q·n))]`, so every value is a measured sample. `median_s` is unchanged, and `p10_s == min_s` below ten samples.
+    - `mtl5_bench --samples` also writes the sorted samples (`samples_s`).
+  - **`benchmarks/platform/check_results.py`** checks the fields. Every time must be a finite number and the quantiles must be in order. With `samples_s`, each quantile must equal the sample the rule picks.
+    - CI runs it on the bench lane with `--samples`, and on every OS's platform smoke session.
+    - Two review fixes: a NaN timing passed the order checks, since every comparison with NaN is false, and a non-numeric sample crashed the checker.
+  - Tests: `test_check_results.py` (11) and `test_track_sessions.py` (16). Docs: "What each result records" in `benchmarks/README.md`.
 - **`randsym_indefinite(n, kappa, mode, num_negative)`: a symmetric indefinite matrix with cond₂ = κ** (issue 961; #970). `randsym(n, kappa, mode)` draws its eigenvalues from `make_sigma` in [1/κ, 1], so it only ever built SPD matrices. There was no way to ask for a symmetric matrix with a given condition number, spectrum mode and number of negative eigenvalues, the usual specification for testing LDLᵀ, MINRES and `inertia` / `is_indefinite`. mtl5-python binds it (stillwater-sc/mtl5-python#165).
   - **What it builds:** `make_sigma`'s spectrum with `num_negative` of it negated. For n ≥ 2, cond₂(A) = κ, and the inertia is (n − `num_negative`, `num_negative`, 0). n = 1 gives [±1] whatever κ is, and n = 0 an empty matrix.
   - **Which eigenvalues are negated:** a random subset of positions, drawn from the engine after the spectrum, as LAPACK's `DLATMS` does with `RSIGN = 'T'`. The draw is a partial Fisher–Yates over the raw engine stream, so a seed negates the same positions with every standard library. A test pins seed 961's positions, {0, 4, 5}, so CI's eight platforms check it.
