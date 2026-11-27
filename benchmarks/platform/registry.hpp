@@ -66,11 +66,25 @@ struct problem {
     bool roofline = true;
 };
 
+/// An entry's definition version (#928), written into each result beside
+/// area/op/dtype/shape. A trend compares results of one version only, so a
+/// changed benchmark starts a new series instead of showing as a change in
+/// MTL5.
+///
+/// BUMP IT whenever a run of the new code would not measure the same thing:
+///   - the problem: its size, generator, matrix, sparsity pattern or right-hand
+///     side, also when the shape string stays the same;
+///   - the work model: flops or bytes;
+///   - what the check compares (its metric or reference).
+/// Do NOT bump it for a faster implementation of the same thing: that change is
+/// what a trend is for. An entry starts at 1. The entries that changed since
+/// #721 start at 2 (benchmarks/README.md lists them).
 struct entry {
     std::string area;    // "blas1", "blas2", "blas3", ... (the card's sections)
     std::string op;      // "dot", "gemm", ...
     std::string dtype;   // "f64", "f32", ...
     std::function<problem(size_class)> make;
+    int version = 1;
 };
 
 /// An entry this build cannot run (its library was not found, say), with the
@@ -83,8 +97,8 @@ struct skipped_entry {
 class registry {
 public:
     void add(std::string area, std::string op, std::string dtype,
-             std::function<problem(size_class)> make) {
-        entries_.push_back({std::move(area), std::move(op), std::move(dtype), std::move(make)});
+             std::function<problem(size_class)> make, int version = 1) {
+        entries_.push_back({std::move(area), std::move(op), std::move(dtype), std::move(make), version});
     }
     void skip(std::string area, std::string op, std::string dtype, std::string reason) {
         skipped_.push_back({std::move(area), std::move(op), std::move(dtype), std::move(reason)});

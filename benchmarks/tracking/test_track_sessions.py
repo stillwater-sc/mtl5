@@ -15,15 +15,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import track_sessions  # noqa: E402
 
 
-def write_run(sdir, run, times, machine="m1", cls="medium", commit="aaaa", sc_extra=None, failed=()):
-    """A <run>.json with one entry per name in times (median_s), and its sidecar."""
+def write_run(sdir, run, times, machine="m1", cls="medium", commit="aaaa", sc_extra=None, failed=(),
+              versions=None):
+    """A <run>.json with one entry per name in times (median_s), and its sidecar.
+    versions: {name: version}; a name not in it has no version field (before #928)."""
     sdir.mkdir(parents=True, exist_ok=True)
     results = []
     for name, t in times.items():
-        results.append({
-            "area": "blas1", "op": name, "dtype": "f64", "shape": "n=8",
-            "median_s": t, "check": {"ok": name not in failed},
-        })
+        r = {"area": "blas1", "op": name, "dtype": "f64", "shape": "n=8",
+             "median_s": t, "check": {"ok": name not in failed}}
+        if versions and name in versions:
+            r["version"] = versions[name]
+        results.append(r)
     (sdir / f"{run}.json").write_text(json.dumps({
         "schema": "mtl5-bench/1", "label": run.split("-t")[0], "machine": machine,
         "class": cls, "results": results,
@@ -117,6 +120,31 @@ class Compare(unittest.TestCase):
         r = self.report()[0]["runs"][0]
         self.assertEqual(r["entries"], 8)
         self.assertEqual(r["skipped"], 2)
+
+    def test_a_changed_definition_starts_a_new_series(self):
+        # #928: op3 is version 1 in the baseline and 2 now, 3x slower. It is
+        # not compared, so it neither shows as a regression nor moves the median.
+        t = dict(TIMES)
+        t["op3"] *= 3
+        v1 = {k: 1 for k in TIMES}
+        v2 = dict(v1, op3=2)
+        write_run(self.base, "native-t1", TIMES, versions=v1)
+        write_run(self.new, "native-t1", t, commit="bbbb", versions=v2)
+        rep, out = self.report()
+        r = rep["runs"][0]
+        self.assertEqual(r["entries"], 8)
+        self.assertEqual(r["skipped"], 1)
+        self.assertEqual(r["outside"], [])
+        self.assertEqual(r["redefined"], [{"entry": "blas1/op3/f64 n=8", "from": 1, "to": 2}])
+        self.assertIn("Entries whose definition changed", out)
+
+    def test_a_session_without_versions_is_compared(self):
+        # A baseline from before #928 records no version: compared as before.
+        write_run(self.base, "native-t1", TIMES)
+        write_run(self.new, "native-t1", TIMES, commit="bbbb", versions={k: 2 for k in TIMES})
+        r = self.report()[0]["runs"][0]
+        self.assertEqual(r["entries"], 9)
+        self.assertEqual(r["redefined"], [])
 
     def test_runs_in_one_session_are_reported_not_compared(self):
         write_run(self.base, "native-t1", TIMES)

@@ -43,14 +43,15 @@ def sidecar(path):
 
 
 def entries(path):
-    """The run's entries by (area, op, dtype, shape): (median_s or None, ok)."""
+    """The run's entries by (area, op, dtype, shape): (median_s or None, ok, version or None)."""
     data = json.loads(Path(path).read_text())
     res = {}
     for r in data.get("results", []):
         key = (r.get("area"), r.get("op"), r.get("dtype"), r.get("shape"))
         check = r.get("check") or {}
         ok = bool(check.get("ok")) and not r.get("error")
-        res[key] = (r.get("median_s") or None, ok)
+        v = r.get("version")   # absent before #928
+        res[key] = (r.get("median_s") or None, ok, v if isinstance(v, int) and not isinstance(v, bool) else None)
     return data, res
 
 
@@ -110,9 +111,11 @@ def main():
         ratios = []
         n_unc = 0
         for key in sorted(set(e1) | set(e2), key=str):
-            m1, ok1 = e1.get(key, (None, False))
-            m2, ok2 = e2.get(key, (None, False))
+            m1, ok1, v1 = e1.get(key, (None, False, None))
+            m2, ok2, v2 = e2.get(key, (None, False, None))
             why = []
+            if v1 is not None and v2 is not None and v1 != v2:
+                why.append(f"definition version {v1} in session 1, {v2} in session 2 (#928)")
             if key not in e1 or key not in e2:
                 why.append("missing in session " + ("1" if key not in e1 else "2"))
             if not (m1 and m2):

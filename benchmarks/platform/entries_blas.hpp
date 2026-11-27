@@ -629,7 +629,7 @@ inline void register_all(registry& r) {
     r.add("blas2", "gemv", "f32", gemv<float>);
     r.add("blas2", "gemv_colmajor", "f64", gemv_colmajor<double>);
     r.add("blas2", "gemv_colmajor", "f32", gemv_colmajor<float>);
-    r.add("blas2", "symv", "f64", symv<double>);
+    r.add("blas2", "symv", "f64", symv<double>, 2);   // v2: one triangle of A in bytes (#745)
     r.add("blas2", "trmv", "f64", trmv<double>);
     r.add("blas2", "trmv", "f32", trmv<float>);
     r.add("blas2", "trsv", "f64", trsv<double>);
