@@ -38,6 +38,7 @@
 #include <mtl/parallel/thread_pool.hpp>
 #include <mtl/util/system_info.hpp>
 #include <mtl/build_info.hpp>
+#include <benchmarks/harness/sidecar.hpp>
 
 #ifdef MTL5_HAS_BLAS
 #include <mtl/interface/blas.hpp>
@@ -199,14 +200,9 @@ int main(int argc, char** argv) {
     // thread settings the numbers are for.
     if (!csv.empty()) {
         if (std::ofstream si{csv + ".sysinfo"}) {
-            si << "label=vendor-nested-" << vendor << "\n"
-               << mtl::util::to_keyvals(mtl::util::identify())
-               << "git_commit="  << mtl::build_git_commit  << "\n"
-               << "git_dirty="   << mtl::build_git_dirty   << "\n"
-               << "cxx_flags="   << mtl::build_cxx_flags   << "\n"
-               << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-               << "pool_size="   << P << "\n"
-               << "blas_vendor=" << vendor << "\n"
+            si << "label=vendor-nested-" << vendor << "\n";
+            mtl::bench::write_build_keys(si, P);
+            si << "blas_vendor=" << vendor << "\n"
                << "vendor_env="  << vendor_env() << "\n"
                << "vendor_threads_caller=" << iface::blas_vendor_threads() << "\n"
                << "capped_in_region=" << (iface::blas_capped_in_region() ? 1 : 0) << "\n"

@@ -212,12 +212,24 @@ case "$AFTER_KV" in
     *) AFTER_KV="thermal_after_c=unavailable" ;;
 esac
 
+. "$(dirname "${BASH_SOURCE[0]}")/sidecar.sh"
+SIDECAR_FAIL=0
 for s in "${SIDECARS[@]}"; do
-    [[ -f "$s" ]] || continue
+    # The binary writes the sidecar; one it did not write is a CSV without
+    # provenance, so it fails the session rather than being skipped (#975 review).
+    [[ -f "$s" ]] || { echo "run_sweeps.sh: $s was not written" >&2; SIDECAR_FAIL=1; continue; }
     printf '%s\n%s\n' "$PREFLIGHT_KV" "$AFTER_KV" >> "$s"
     printf 'harness=run_sweeps.sh\nharness_pinned_cpus=%s\nharness_interleaved=0\n' \
            "${BENCH_CPU:-none}" >> "$s"
+    # The run's keys (#930): the suite and its sweep are the class.
+    suite=$(basename "$s"); suite=${suite%%_sweep_*}
+    sidecar_finish "$s" "benchmark=bench_all" "class=${BENCH_CLASS:-$suite $SWEEP}" \
+                   "bench_cpus=${BENCH_CPU:-unpinned}" || SIDECAR_FAIL=1
 done
+if [[ "$SIDECAR_FAIL" != 0 ]]; then
+    echo "run_sweeps.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
+    exit 1
+fi
 
 echo
 echo "Done. CSVs in $DATA/. Plot with e.g.:"

@@ -280,6 +280,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 if (-not ($AfterKv -match 'thermal_after_c=')) { $AfterKv = "thermal_after_c=unavailable" }
 
+. (Join-Path $PSScriptRoot 'sidecar.ps1')
+$SidecarFail = $false
 foreach ($s in $script:Sidecars) {
     if (Test-Path $s) {
         Add-Content -Path $s -Value $PreflightKv
@@ -288,7 +290,22 @@ foreach ($s in $script:Sidecars) {
             "harness=run_sweeps.ps1",
             "harness_pinned_mask=0x$($PinMask.ToString('x'))",
             "harness_interleaved=0")
+        # The run's keys (#930): the suite and its sweep are the class, and the
+        # pin is the affinity mask the runs were started with.
+        $suite = ([System.IO.Path]::GetFileName($s)) -replace '_sweep_.*$', ''
+        if (-not (Complete-Sidecar $s @{ benchmark = 'bench_all'; class = "$suite $Sweep";
+                                         bench_cpus = "mask 0x$($PinMask.ToString('x'))" })) {
+            $SidecarFail = $true
+        }
+    } else {
+        # A sidecar the binary did not write fails the session (#975 review).
+        Write-Host "run_sweeps.ps1: $s was not written"
+        $SidecarFail = $true
     }
+}
+if ($SidecarFail) {
+    Write-Host "run_sweeps.ps1: a sidecar lacks required keys (above); do not commit it as is"
+    exit 1
 }
 
 Write-Host "`nDone. CSVs in $DataDir (each with a .sysinfo tag). Plot with e.g.:"

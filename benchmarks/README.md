@@ -959,6 +959,60 @@ CSV together with its sidecar, and delete the line. The checker also fails when
 an exempt file has *gained* a sidecar, so a stale exemption cannot sit there as a
 permanent amnesty.
 
+### Every sidecar carries every required key (#930)
+
+A sidecar that exists can still say too little. mtl5-python's ingest
+(stillwater-sc/mtl5-python#121) keeps a run out of every trend and comparison
+when its sidecar lacks any key of its `REQUIRED_KEYS`. Ingested at c9118b8, that
+was 152 of 290 committed runs, most of them from harnesses that never wrote
+`clock_policy` or `bench_cpus`. [`sidecar_keys.txt`](sidecar_keys.txt) lists
+the same 27 keys, and `check_sidecars.sh` now checks each sidecar for them:
+- every key is present;
+- its value is non-empty, except where `sidecar_keys.txt` marks it `empty-ok`
+  (`cxx_flags`, `cpu_vendor`);
+- no key is given two different values.
+
+**A key that doesn't apply still gets a value.** For example `pool_size=1` for
+a single-threaded harness, `bench_cpus=unpinned`, `clock_policy=not applied`.
+There are no per-producer exemptions, because mtl5-python has none.
+
+A sidecar is written in two halves:
+
+| half | who writes it | the keys |
+|---|---|---|
+| the build and the machine | the binary, through [`harness/sidecar.hpp`](harness/sidecar.hpp) (`write_build_keys`) | `cpu_*`, `os_name`, `compiler`, `compiler_version`, `cpp_standard`, `build_type`, `build_isa`, `simd_backend`, `git_commit`, `git_dirty`, `cxx_flags`, `pool_size` |
+| the run | the harness script, through [`sidecar.sh`](sidecar.sh) (`sidecar_finish`), or [`sidecar.ps1`](sidecar.ps1) (`Complete-Sidecar`) on Windows | `benchmark`, `machine`, `class`, `bench_cpus`, `clock_policy`, and preflight's `preflight_host`, `governor`, `turbo`, `power_mode`, `cpu_affinity`, `preflight_gates` |
+
+Every `run_*.sh` and `.ps1` harness ends by completing its sidecars, and fails
+if one is still incomplete.
+- **`machine`** is `$BENCH_MACHINE`. A machine profile sets it from its file
+  name (`i7-12700k-int.sh` gives `i7-12700k`, its directory under `data/`);
+  otherwise it falls back to the CPU brand.
+- **`clock_policy`** is `$CLOCK_POLICY`, otherwise `not applied`.
+- **`bench_column_sweep`** is compiled without CMake by `run_column_sweep.sh`,
+  so it has no generated build header. It prints its half with `--sysinfo`.
+- **A binary with no script of its own,** such as the KLU and SuperLU
+  scoreboards or a one-off `bench_sparse`, goes through
+  [`run_with_sidecar.sh`](run_with_sidecar.sh):
+
+```bash
+BENCH_CPUS=4 BENCH_MACHINE=i7-12700k \
+    benchmarks/run_with_sidecar.sh out/klu.csv suitesparse -- build/benchmarks/bench_klu --csv out/klu.csv data/klu/*/*.mtx
+```
+
+A derived report, such as a tracking comparison (`tracking/`), has a
+`derived_by=` key. It describes no run of its own, so it needs its provenance
+keys instead: `derived_by`, `baseline_session` and `new_session`.
+
+**The same ratchet.** The 154 sidecars that were already incomplete are listed
+in `benchmarks/data/.sidecar-incomplete`, and cost nothing. They are not
+rewritten: their gaps are real, because the state was not recorded. A new
+incomplete sidecar fails, and so does a listed one that is complete now or gone.
+- **A re-run** adds a new session, with its own complete sidecar. It does not
+  change the old one, so the old session stays listed.
+- **A line goes** only when its sidecar is removed from the repository, or
+  completed from evidence that was recorded at the time.
+
 Run it locally before committing benchmark data:
 
 ```bash

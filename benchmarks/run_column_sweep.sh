@@ -15,8 +15,8 @@
 # without root they are recorded as not applied.
 #
 # Output: OUT (default build-platform/column-sweep/<host>-<UTC time>) holds
-# <compiler>-<variant>.csv, each with its .csv.sysinfo sidecar, and the
-# session's sysinfo.txt.
+# <compiler>-<variant>.csv, each with its .csv.sysinfo sidecar (every key in
+# benchmarks/sidecar_keys.txt, #930), and the session's sysinfo.txt.
 #
 # Usage: CPU=0 NATIVE_FLAGS='-march=...' benchmarks/run_column_sweep.sh [bench args]
 set -euo pipefail
@@ -57,17 +57,25 @@ if command -v jetson_clocks > /dev/null 2>&1; then
     fi
 fi
 
+# The session's record: preflight's machine state (report only, as before:
+# the sweep has never gated on it), and what identifies the run. Each CSV's
+# sidecar is this, plus its binary's --sysinfo and its compile (#930).
+. "$ROOT/benchmarks/sidecar.sh"
 {
-    echo "host=$(hostname -s)"
+    "$ROOT/benchmarks/preflight.sh" --repo "$ROOT" --ignore-path "$OUT" --report-only 2>/dev/null || true
     if [ -r /proc/device-tree/model ]; then echo "model=$(tr -d '\0' < /proc/device-tree/model)"; fi
-    echo "cpu=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ //')"
     echo "cpu_part=$(awk -v c="$CPU" '/^processor/{p=$3} /^CPU part/{if (p==c) print $4}' /proc/cpuinfo)"
-    echo "kernel=$(uname -sr)"
-    echo "bench_cpu=$CPU"
+    echo "bench_cpus=$CPU"
     echo "clock_policy=$clock_policy"
-    echo "commit=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || cat "$ROOT/COMMIT" 2>/dev/null || echo unknown)"
-    echo "flags=-std=c++20 -O3 -DNDEBUG; native: $NATIVE"
+    echo "git_commit=$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || cat "$ROOT/COMMIT" 2>/dev/null || echo unknown)"
+    if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        echo "git_dirty=1"
+    else
+        echo "git_dirty=0"
+    fi
+    echo "cmake_build_type=none (compiled directly: -O3 -DNDEBUG, CMake Release's optimization)"
 } > "$OUT/sysinfo.txt"
+SIDECAR_FAIL=0
 
 for cxx in g++ clang++; do
     command -v "$cxx" > /dev/null 2>&1 || continue
@@ -81,11 +89,19 @@ for cxx in g++ clang++; do
         "$cxx" "${flags[@]}" -I"$ROOT/include" "$ROOT/benchmarks/bench_column_sweep.cpp" -o "$bin"
         echo "running $cxx $variant on cpu $CPU" >&2
         taskset -c "$CPU" "$bin" "$@" > "$OUT/$cxx-$variant.csv"
+        # The CSV's sidecar (benchmarks/check_sidecars.sh): the binary's keys,
+        # the session's record, and this build's flags.
+        si="$OUT/$cxx-$variant.csv.sysinfo"
+        { echo "label=$cxx-$variant"; "$bin" --sysinfo; cat "$OUT/sysinfo.txt"
+          echo "cxx_flags=${flags[*]}"; } > "$si"
         rm -f "$bin"
-        # The CSV's sidecar (benchmarks/check_sidecars.sh): the session's
-        # record, and this build's compiler and flags.
-        { cat "$OUT/sysinfo.txt"; echo "compiler=$($cxx --version | head -1)"; echo "build_flags=${flags[*]}"; } \
-            > "$OUT/$cxx-$variant.csv.sysinfo"
+        class=full
+        for a in "$@"; do [ "$a" = --quick ] && class=quick; done
+        sidecar_finish "$si" "benchmark=bench_column_sweep" "class=${BENCH_CLASS:-$class}" || SIDECAR_FAIL=1
     done
 done
 echo "results: $OUT" >&2
+if [ "$SIDECAR_FAIL" != 0 ]; then
+    echo "run_column_sweep.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
+    exit 1
+fi

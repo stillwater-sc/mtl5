@@ -40,6 +40,19 @@ mtl5_machine_id() {
 
 MTL5_MACHINE_ID="$(mtl5_machine_id)"
 
+# The machine's name for the sidecars' machine key (#930): the profile's file
+# name without its harness suffix (i7-12700k-int.sh -> i7-12700k), which is
+# also its directory under benchmarks/data/. benchmarks/sidecar.sh reads it;
+# an explicit BENCH_MACHINE wins.
+if [ -z "${BENCH_MACHINE:-}" ]; then
+    _profile=$(basename "$0" .sh)
+    for _suffix in -nc-bench -nc-sweep -platform -tile -int -mc; do
+        _profile=${_profile%"$_suffix"}
+    done
+    case "$_profile" in _*|'') ;; *) export BENCH_MACHINE="$_profile" ;; esac
+    unset _profile _suffix
+fi
+
 # require_machine <substring> [<friendly name>]
 require_machine() {
     local want="$1" friendly="${2:-$1}"

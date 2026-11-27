@@ -27,6 +27,7 @@
 #include "nc_shapes.hpp"
 
 #include <mtl/build_info.hpp>
+#include <benchmarks/harness/sidecar.hpp>
 #include <mtl/detail/gemm_blocked.hpp>
 #include <mtl/detail/nc_model.hpp>
 #include <mtl/detail/thread_pool.hpp>
@@ -492,13 +493,9 @@ int main(int argc, char* argv[]) {
     side += ".sysinfo";
     std::ofstream si{side};
     if (si) {
-        si << "label=nc_model_timing\n"
-           << mtl::util::to_keyvals(mtl::util::identify())
-           << "git_commit="       << mtl::build_git_commit << "\n"
-           << "git_dirty="        << mtl::build_git_dirty  << "\n"
-           << "cxx_flags="        << mtl::build_cxx_flags  << "\n"
-           << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-           << "harness=bench_nc_models\n"
+        si << "label=nc_model_timing\n";
+        mtl::bench::write_build_keys(si, pool);
+        si << "harness=bench_nc_models\n"
            << "measures=gemm throughput per nc model\n"
            << "dtype="   << dtype  << "\n"
            << "threads=" << tmax   << "\n"

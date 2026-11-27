@@ -11,6 +11,7 @@
 // 1.5x neighbours so a plain run measures padding / odd-size overhead.
 
 #include <benchmarks/harness/runner.hpp>
+#include <benchmarks/harness/sidecar.hpp>
 #include <mtl/build_info.hpp>
 #include <mtl/detail/thread_pool.hpp>
 #include <mtl/simd/batch.hpp>
@@ -378,14 +379,8 @@ int main(int argc, char* argv[]) {
         // it decides the SIMD width that every blocking parameter divides by.
         const std::string sysinfo_path = csv_path + ".sysinfo";
         if (std::ofstream si_out{sysinfo_path}) {
-            si_out << "label=" << label << "\n"
-                   << mtl::util::to_keyvals(mtl::util::identify())
-                   << "git_commit="       << mtl::build_git_commit << "\n"
-                   << "git_dirty="        << mtl::build_git_dirty  << "\n"
-                   << "cxx_flags="        << mtl::build_cxx_flags  << "\n"
-                   << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-                   << "pool_size="
-                   << mtl::detail::thread_pool::instance().size() << "\n";
+            si_out << "label=" << label << "\n";
+            mtl::bench::write_build_keys(si_out, mtl::detail::thread_pool::instance().size());
         }
     }
 

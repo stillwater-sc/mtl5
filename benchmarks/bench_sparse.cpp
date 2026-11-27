@@ -33,6 +33,10 @@
 #include <string>
 #include <vector>
 
+#include <benchmarks/harness/sidecar.hpp>
+#include <mtl/detail/thread_pool.hpp>
+#include <fstream>
+
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/mat/inserter.hpp>
 #include <mtl/vec/dense_vector.hpp>
@@ -316,6 +320,14 @@ int main(int argc, char** argv) {
         } catch (const std::exception& e) { std::fprintf(stderr, "  [%s not SPD: %s]\n", f.c_str(), e.what()); }
     }
 
-    if (!csv.empty()) { rep.write_csv(csv); std::printf("\nResults written to: %s\n", csv.c_str()); }
+    if (!csv.empty()) {
+        rep.write_csv(csv);
+        // The binary's half of the sidecar (#930); the harness adds the run's.
+        if (std::ofstream si{csv + ".sysinfo"}) {
+            si << "label=" << label << "\n";
+            mtl::bench::write_build_keys(si, mtl::detail::thread_pool::instance().size());
+        }
+        std::printf("\nResults written to: %s\n", csv.c_str());
+    }
     return 0;
 }

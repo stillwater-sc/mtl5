@@ -42,6 +42,8 @@
 #include <mtl/util/system_info.hpp>
 #include <mtl/build_info.hpp>
 
+#include <benchmarks/harness/sidecar.hpp>
+
 using clk = std::chrono::steady_clock;
 
 namespace {
@@ -324,26 +326,21 @@ int main(int argc, char** argv) {
     // Sidecar, matching the convention bench_all uses, plus the cache figures --
     // a result is not interpretable without the hierarchy it was blocked for.
     if (std::ofstream si{csv + ".sysinfo"}) {
-        si << "label=" << label << "\n"
-           << mtl::util::to_keyvals(mtl::util::identify())
-           << "cache_l1d_bytes="  << ci.l1d_bytes  << "\n"
+        si << "label=" << label << "\n";
+        // The build and the machine's identity, as every benchmark writes them
+        // (harness/sidecar.hpp, #930). Provenance (#442): what CODE and what
+        // BUILD produced these numbers. cxx_flags in particular decides the
+        // SIMD width that every blocking parameter divides by -- the Zen 4 run
+        // was AVX2 when AVX-512 was intended and nothing in the data could say so.
+        mtl::bench::write_build_keys(si, mtl::detail::thread_pool::instance().size());
+        si << "cache_l1d_bytes="  << ci.l1d_bytes  << "\n"
            << "cache_l1d_assoc="  << ci.l1d_assoc  << "\n"
            << "cache_l1d_sharing_cores=" << ci.l1d_sharing_cores << "\n"
            << "cache_l2_bytes="   << ci.l2_bytes   << "\n"
            << "cache_l2_sharing_cores="  << ci.l2_sharing_cores  << "\n"
            << "cache_l3_bytes="   << ci.l3_bytes   << "\n"
            << "cache_l3_sharing_cores="  << ci.l3_sharing_cores  << "\n"
-           << "cache_line_bytes=" << ci.line_bytes << "\n"
-           // Provenance (#442): what CODE and what BUILD produced these numbers.
-           // Without it a committed CSV cannot be re-derived, and cxx_flags in
-           // particular decides the SIMD width that every blocking parameter
-           // divides by -- the Zen 4 run was AVX2 when AVX-512 was intended and
-           // nothing in the data could say so.
-           << "git_commit="  << mtl::build_git_commit  << "\n"
-           << "git_dirty="   << mtl::build_git_dirty   << "\n"
-           << "cxx_flags="   << mtl::build_cxx_flags   << "\n"
-           << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-           << "pool_size="   << mtl::detail::thread_pool::instance().size() << "\n";
+           << "cache_line_bytes=" << ci.line_bytes << "\n";
         // The LEVELS this arm detects, as the console banner reports them. This
         // once tested MTL5_ENABLE_CACHE_DETECTION alone, so the kconly and mconly
         // arms recorded detection_enabled=0 while detecting L1 or L2 -- and an

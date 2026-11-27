@@ -243,6 +243,7 @@ set_target_properties(fig_loop_orders PROPERTIES FOLDER "Benchmarks")
 # with MTL5_WITH_BLAS=ON; benchmarks/run_vendor_nested.sh builds one tree per
 # vendor.
 add_executable(bench_vendor_nested bench_vendor_nested.cpp)
+target_include_directories(bench_vendor_nested PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(bench_vendor_nested PRIVATE MTL5::mtl5)
 set_target_properties(bench_vendor_nested PROPERTIES FOLDER "Benchmarks")
 add_dependencies(bench_vendor_nested mtl5_build_info)
@@ -250,6 +251,7 @@ add_dependencies(bench_vendor_nested mtl5_build_info)
 # Dispatch and join latency of thread_pool and spin_pool (#636), as
 # percentiles; benchmarks/run_pool_latency.sh runs every arm in its own process.
 add_executable(bench_pool_latency bench_pool_latency.cpp)
+target_include_directories(bench_pool_latency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(bench_pool_latency PRIVATE MTL5::mtl5)
 set_target_properties(bench_pool_latency PROPERTIES FOLDER "Benchmarks")
 add_dependencies(bench_pool_latency mtl5_build_info)
@@ -258,6 +260,7 @@ add_dependencies(bench_pool_latency mtl5_build_info)
 # the forward substitution at each width and prints the -D defines for the
 # fastest on this machine.
 add_executable(bench_interleave_rows bench_interleave_rows.cpp)
+target_include_directories(bench_interleave_rows PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(bench_interleave_rows PRIVATE MTL5::mtl5)
 # Reports the run-time choice (#778); the sweeps call each width directly.
 target_compile_definitions(bench_interleave_rows PRIVATE MTL5_INTERLEAVE_RUNTIME)
@@ -265,10 +268,12 @@ target_compile_definitions(bench_interleave_rows PRIVATE MTL5_INTERLEAVE_RUNTIME
 # What run-time selection costs per call (#778): the same generic gemv built
 # with the compile-time width and with run-time selection, to compare.
 add_executable(bench_interleave_dispatch bench_interleave_dispatch.cpp)
+target_include_directories(bench_interleave_dispatch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(bench_interleave_dispatch PRIVATE MTL5::mtl5)
 target_compile_definitions(bench_interleave_dispatch PRIVATE BENCH_COMPILE_TIME_WIDTH)
 set_target_properties(bench_interleave_dispatch PROPERTIES FOLDER "Benchmarks")
 add_executable(bench_interleave_dispatch_runtime bench_interleave_dispatch.cpp)
+target_include_directories(bench_interleave_dispatch_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(bench_interleave_dispatch_runtime PRIVATE MTL5::mtl5)
 target_compile_definitions(bench_interleave_dispatch_runtime PRIVATE MTL5_INTERLEAVE_RUNTIME)
 set_target_properties(bench_interleave_dispatch_runtime PROPERTIES FOLDER "Benchmarks")
@@ -278,6 +283,7 @@ set_target_properties(bench_interleave_rows PROPERTIES FOLDER "Benchmarks")
 # column-major A for square, short-wide and tall shapes and prints CSV with
 # the ratio, to find where the sweep stops paying.
 add_executable(bench_column_sweep bench_column_sweep.cpp)
+target_include_directories(bench_column_sweep PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(bench_column_sweep PRIVATE MTL5::mtl5)
 set_target_properties(bench_column_sweep PROPERTIES FOLDER "Benchmarks")
 

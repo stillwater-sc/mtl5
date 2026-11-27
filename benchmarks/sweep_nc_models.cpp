@@ -33,6 +33,7 @@
 #include "nc_shapes.hpp"
 
 #include <mtl/build_info.hpp>
+#include <benchmarks/harness/sidecar.hpp>
 #include <mtl/detail/gemm_blocked.hpp>
 #include <mtl/detail/nc_model.hpp>
 #include <mtl/detail/thread_pool.hpp>
@@ -227,13 +228,10 @@ int main(int argc, char* argv[]) {
         side += ".sysinfo";
         std::ofstream si{side};
         if (si) {
-            si << "label=nc_model_sweep\n"
-               << mtl::util::to_keyvals(mtl::util::identify())
-               << "git_commit="       << mtl::build_git_commit << "\n"
-               << "git_dirty="        << mtl::build_git_dirty  << "\n"
-               << "cxx_flags="        << mtl::build_cxx_flags  << "\n"
-               << "cmake_build_type=" << mtl::build_cmake_type << "\n"
-               << "harness=sweep_nc_models\n"
+            si << "label=nc_model_sweep\n";
+            // A pure enumeration: no kernel runs, so no pool is used (#930).
+            mtl::bench::write_build_keys(si, 1);
+            si << "harness=sweep_nc_models\n"
                << "measures=nothing (pure enumeration)\n"
                << "dtype="            << dtype << "\n"
                << "threads="          << tmax << "\n"

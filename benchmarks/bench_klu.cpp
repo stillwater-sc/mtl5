@@ -29,6 +29,10 @@
 #include <string>
 #include <vector>
 
+#include <benchmarks/harness/sidecar.hpp>
+#include <mtl/detail/thread_pool.hpp>
+#include <fstream>
+
 #include <mtl/mat/compressed2D.hpp>
 #include <mtl/vec/dense_vector.hpp>
 #include <mtl/io/matrix_market.hpp>
@@ -269,6 +273,14 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (!csv_path.empty()) { write_csv(csv_path, rows); std::printf("\nCSV: %s\n", csv_path.c_str()); }
+    if (!csv_path.empty()) {
+        write_csv(csv_path, rows);
+        // The binary's half of the sidecar (#930); a harness adds the run's.
+        if (std::ofstream si{csv_path + ".sysinfo"}) {
+            si << "label=bench_klu\nbenchmark=bench_klu\n";
+            mtl::bench::write_build_keys(si, mtl::detail::thread_pool::instance().size());
+        }
+        std::printf("\nCSV: %s\n", csv_path.c_str());
+    }
     return 0;
 }

@@ -147,6 +147,8 @@ done
 # appended to both sidecars below, so the machine state travels with the data
 # instead of living in the operator's memory of the session.
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$SCRIPT_DIR/sidecar.sh"
+SIDECAR_FAIL=0
 if ! PREFLIGHT_KV=$("$SCRIPT_DIR/preflight.sh" --threads "$TMAX" --repo "$SCRIPT_DIR/.." \
                         --ignore-path "$OUTDIR"); then
     echo "preflight failed -- not measuring. Fix the above, or set ALLOW_DIRTY=1 if" >&2
@@ -250,6 +252,16 @@ for a in $ARMS; do
                "$ROUNDS" "$REPS" "$(echo "$ARMS" | tr ' ' ',')" >> "$s"
         printf 'harness_pcpus=%s\nharness_threads=%s\nharness_dtype=%s\n' \
                "$BENCH_PCPUS" "$(echo "$THREADS" | tr ' ' ',')" "$DTYPE" >> "$s"
+        # The run's keys (#930). Each invocation rewrote the sidecar, so the
+        # binary's pool_size is the last run's; the CSV holds every T.
+        sidecar_put "$s" "pool_size=$(echo "$THREADS" | tr ' ' ',')"
+        sidecar_finish "$s" "benchmark=bench_blocking_ab" "class=${BENCH_CLASS:-$DTYPE}" \
+                       "bench_cpus=$(pin_for "$TMAX")" || SIDECAR_FAIL=1
+    else
+        # The binary writes the sidecar only when it can open it; a CSV left
+        # without one has no provenance, so the session fails (#975 review).
+        echo "run_blocking_ab.sh: $s was not written" >&2
+        SIDECAR_FAIL=1
     fi
 done
 
@@ -328,3 +340,10 @@ for a in $ARMS; do
     [ "$a" = "$BASE" ] && continue
     echo "  benchmarks/analyze_blocking_ab.py $(arm_csv "$a") $(arm_csv "$BASE")"
 done
+
+# A sidecar that still lacks a required key (#930) is a run mtl5-python cannot
+# place: the CSVs stay, but the session is not complete.
+if [ "$SIDECAR_FAIL" != 0 ]; then
+    echo "run_blocking_ab.sh: a sidecar lacks required keys (above); do not commit it as is" >&2
+    exit 1
+fi

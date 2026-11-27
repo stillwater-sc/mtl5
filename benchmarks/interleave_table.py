@@ -116,9 +116,18 @@ def cmd_import(machine, stamp, session):
         if len({(h["compiler_version"], h["cpu"]) for h in heads.values()}) != 1:
             fail(f"{session}: the {comp} runs disagree on the compiler or the CPU")
         first = heads[min(heads)]
+        # The card session's sidecar describes mtl5_bench, so the keys that
+        # describe the interleave sweep's own binary are replaced with its
+        # values, never dropped: every sidecar carries every required key
+        # (benchmarks/sidecar_keys.txt, #930). The sweep is built with each
+        # compiler's defaults, runs the generic row kernels on one pinned CPU
+        # and uses no thread pool and no simd::batch.
         override = {"label": f"interleave-{comp}", "benchmark": "bench_interleave_rows",
-                    "compiler": first["compiler_version"], "bench_cpus": first["cpu"]}
-        drop = {"class", "compiler_version", "simd_backend", "pool_size", "blas_vendor", "blas_vendor_threads"}
+                    "class": f"n={first['n']}",
+                    "compiler": first["compiler_version"], "compiler_version": first["compiler_version"],
+                    "simd_backend": "none (bench_interleave_rows uses no simd::batch)",
+                    "pool_size": "1", "bench_cpus": first["cpu"]}
+        drop = {"blas_vendor", "blas_vendor_threads"}
         with open(os.path.join(out, f"interleave-{comp}.csv.sysinfo"), "w", encoding="ascii", newline="\n") as h:
             seen = set()
             for line in sidecar:
