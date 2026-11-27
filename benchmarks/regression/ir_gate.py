@@ -135,8 +135,17 @@ def validate_accepted(accepted):
         if not isinstance(v, dict):
             problems.append(f"accepted.json: {k}: not an object")
             continue
-        if not isinstance(v.get("max_ir"), int) or v["max_ir"] <= 0:
-            problems.append(f"accepted.json: {k}: max_ir must be a positive integer")
+        # One count per configuration: each build (native, native-fast, and
+        # each architecture) counts a kernel differently, so no single number
+        # could accept the same change in all of them.
+        m = v.get("max_ir")
+        if not isinstance(m, dict) or not m:
+            problems.append(f"accepted.json: {k}: max_ir must map each configuration "
+                            f"to its count, e.g. {{\"native\": 4812000}}")
+        else:
+            for cfg, n in m.items():
+                if type(n) is not int or n <= 0:
+                    problems.append(f"accepted.json: {k}: max_ir[{cfg!r}] must be a positive integer")
         if not str(v.get("reason", "")).strip():
             problems.append(f"accepted.json: {k}: a reason is required")
     return problems
@@ -151,7 +160,14 @@ def compare(baseline, current, accepted, threshold):
     if problems:
         notes += problems
         failed = True
-    acc = accepted.get("kernels", {}) if not problems else {}
+    # This configuration's acceptances: kernel -> (max_ir, entry). A kernel
+    # accepted only for other configurations is not accepted here.
+    config = current.get("config")
+    acc = {}
+    if not problems:
+        for k, v in accepted.get("kernels", {}).items():
+            if config in v["max_ir"]:
+                acc[k] = v["max_ir"][config]
 
     if baseline is None:
         notes.append("No baseline from main: nothing to compare (the first run, or the "
@@ -181,13 +197,13 @@ def compare(baseline, current, accepted, threshold):
         ratio = c / b if b > 0 else float("inf")
         if ratio > 1.0 + threshold:
             a = acc.get(k)
-            if a is not None and c <= a["max_ir"]:
+            if a is not None and c <= a:
                 status = "accepted"
             else:
                 status = "REGRESSION"
                 failed = True
                 if a is not None:
-                    notes.append(f"{k}: {c:,} is above its accepted max_ir {a['max_ir']:,}.")
+                    notes.append(f"{k}: {c:,} is above its accepted max_ir {a:,} for {config}.")
         elif ratio < 1.0 - threshold:
             status = "faster"
         else:
@@ -196,8 +212,8 @@ def compare(baseline, current, accepted, threshold):
 
     for k, a in sorted(acc.items()):
         b = base_k.get(k)
-        if b is not None and a["max_ir"] <= b * (1.0 + threshold):
-            notes.append(f"{k}: the acceptance (max_ir {a['max_ir']:,}) is stale: main's "
+        if b is not None and a <= b * (1.0 + threshold):
+            notes.append(f"{k}: the acceptance for {config} (max_ir {a:,}) is stale: main's "
                          f"baseline {b:,} already carries it. Remove it from accepted.json.")
         elif k not in cur_k:
             notes.append(f"{k}: accepted, but not measured by this run.")
