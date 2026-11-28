@@ -906,7 +906,11 @@ jobs:
           card=docs/benchmarks/cards/i7-12700k-small.md
           link='[small](cards/i7-12700k-small.md) (preliminary)'
           # The i7-12700K row's last cell, as written.
-          cell_of() { tr -d '\r' < "$sys" | sed -n "/^| \`i7-12700K\` |/{s/.*| \([^|]*\) |\$/\1/p}"; }
+          # awk, not sed: BSD sed (macOS) rejects "{s/.../p}" without a ';'.
+          cell_of() {
+            tr -d '\r' < "$sys" | awk -F'|' 'index($0, "| `i7-12700K` |") == 1 {
+              c = $(NF - 1); sub(/^ +/, "", c); sub(/ +$/, "", c); print c }'
+          }
           publish() {
             cmake "-DRESULTS=$results" -DMACHINE=i7-12700k "-DPRELIMINARY=$prelim" -DALLOW_DIRTY=ON "$@" \
                   -P benchmarks/publish_platform.cmake 2>&1
