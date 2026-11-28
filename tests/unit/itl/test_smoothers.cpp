@@ -11,6 +11,11 @@
 #include <mtl/itl/smoother/jacobi.hpp>
 #include <mtl/itl/smoother/sor.hpp>
 #include <mtl/math/accumulator_traits.hpp>
+#include <type_traits>
+#include <cstring>
+#include <cstdint>
+#include <limits>
+#include <cmath>
 
 using namespace mtl;
 
@@ -613,4 +618,143 @@ TEST_CASE("backward / symmetric SOR edge cases: 1x1 and empty (#291)",
         bwd_s(xb, b); REQUIRE(xb.size() == 0);
         ssor_s(xs, b); REQUIRE(xs.size() == 0);
     }
+}
+
+// Issue 964: the compressed2D SOR and Gauss-Seidel sweeps sum the off-diagonal
+// terms as two loops around the diagonal's position, instead of one loop that
+// tests every column index. The same terms in the same order, so every sweep
+// matches the per-entry-test form, forward and backward, with and without an
+// Accumulator, on rows whose diagonal is first, last or in between:
+//   - bit for bit where multiply-adds are not fused (no FMA hardware, or
+//     -ffp-contract=off);
+//   - to rounding where they may be (__FP_FAST_FMA: GCC's default GNU dialect
+//     contracts, and fuses data[k] * x(j) into sigma in one loop form and not
+//     the other -- on x86-64-v3 the old branchy loop's products were not
+//     fused, the new loops' are). Two roundings of the same sum, not a change
+//     of algorithm.
+namespace {
+// The per-entry-test reference: x_i = omega * d_i (b_i - sigma_i) + (1 - omega) x_i.
+// omega = 1 is Gauss-Seidel's x_i = d_i (b_i - sigma_i), which is not the same
+// expression, so it is done separately.
+template <typename Acc>
+void reference_sweep_964(const mat::compressed2D<double>& A, vec::dense_vector<double>& x,
+                         const vec::dense_vector<double>& b, double omega, bool gs, bool ascending) {
+    const auto& st = A.ref_major();
+    const auto& ix = A.ref_minor();
+    const auto& dt = A.ref_data();
+    const std::size_t n = A.num_rows();
+    for (std::size_t step = 0; step < n; ++step) {
+        const std::size_t i = ascending ? step : n - 1 - step;
+        double sigma, dinv = 0.0;
+        for (std::size_t k = st[i]; k < st[i + 1]; ++k)
+            if (ix[k] == i) dinv = 1.0 / dt[k];
+        if constexpr (std::is_void_v<Acc>) {
+            sigma = 0.0;
+            for (std::size_t k = st[i]; k < st[i + 1]; ++k)
+                if (ix[k] != i) sigma += dt[k] * x(ix[k]);
+        } else {
+            using AT = math::accumulator_traits<Acc, double>;
+            Acc acc{};
+            AT::clear(acc);
+            for (std::size_t k = st[i]; k < st[i + 1]; ++k)
+                if (ix[k] != i) AT::add_product(acc, dt[k], x(ix[k]));
+            sigma = AT::template value<double>(acc);
+        }
+        if (gs) {
+            x(i) = dinv * (b(i) - sigma);
+        } else {
+            const double gs_update = dinv * (b(i) - sigma);
+            x(i) = omega * gs_update + (1.0 - omega) * x(i);
+        }
+    }
+}
+// Unsymmetric, varying row lengths, and the diagonal first in row 0, last in
+// the last row, and in between elsewhere.
+mat::compressed2D<double> matrix_964(std::size_t n) {
+    mat::compressed2D<double> A(n, n);
+    {
+        mat::inserter<mat::compressed2D<double>> ins(A);
+        for (std::size_t i = 0; i < n; ++i) {
+            ins[i][i] << 5.0 + 0.1 * double(i % 7);
+            if (i > 0)     ins[i][i - 1] << -1.3 + 0.01 * double(i % 5);
+            if (i > 2)     ins[i][i - 3] << 0.37;
+            if (i + 1 < n) ins[i][i + 1] << -0.71;
+            if (i + 4 < n && i % 2 == 0) ins[i][i + 4] << 0.123 * double(i % 3 + 1);
+        }
+    }
+    return A;
+}
+// The distance between two finite doubles in units in the last place: the
+// number of representable doubles between them. The bit patterns, mapped so
+// that their integer order is the doubles' order (negative values reflected
+// below zero), differ by exactly that count; +0 and -0 are 0 apart.
+std::uint64_t ulp_distance_964(double a, double b) {
+    auto key = [](double v) {
+        std::int64_t i;
+        std::memcpy(&i, &v, sizeof i);
+        return i < 0 ? std::numeric_limits<std::int64_t>::min() - i : i;
+    };
+    const std::int64_t ka = key(a), kb = key(b);
+    return ka > kb ? std::uint64_t(ka) - std::uint64_t(kb) : std::uint64_t(kb) - std::uint64_t(ka);
+}
+bool same_bits_964(const vec::dense_vector<double>& a, const vec::dense_vector<double>& b) {
+#if defined(__FP_FAST_FMA)
+    // A fused product rounds once where an unfused one rounds twice: each row
+    // differs by a few ulps, and two sweeps carry it to later rows. At most 64
+    // ulps, counted as representable doubles (#979 review: 64 eps |b| allowed
+    // up to 128 ulps for |b| in [1, 2)).
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!(std::isfinite(a(i)) && std::isfinite(b(i)) && ulp_distance_964(a(i), b(i)) <= 64)) return false;
+#else
+    for (std::size_t i = 0; i < a.size(); ++i) if (!(a(i) == b(i))) return false;
+#endif
+    return true;
+}
+template <typename Acc>
+void check_964() {
+    const std::size_t n = 40;
+    const auto A = matrix_964(n);
+    vec::dense_vector<double> b(n), x0(n);
+    for (std::size_t i = 0; i < n; ++i) { b(i) = 1.0 + 0.3 * double(i % 4); x0(i) = 0.1 * double(i % 9) - 0.2; }
+    for (const bool asc : {true, false}) {
+        CAPTURE(asc);
+        // SOR, omega = 1.5: two sweeps, so the second reads the first's x.
+        itl::smoother::sor<mat::compressed2D<double>, Acc> sor(A, 1.5);
+        vec::dense_vector<double> x = x0, r = x0;
+        for (int s = 0; s < 2; ++s) {
+            if (asc) sor.forward(x, b); else sor.backward(x, b);
+            reference_sweep_964<Acc>(A, r, b, 1.5, false, asc);
+        }
+        CHECK(same_bits_964(x, r));
+        // Gauss-Seidel.
+        itl::smoother::gauss_seidel<mat::compressed2D<double>, Acc> gs(A);
+        x = x0; r = x0;
+        for (int s = 0; s < 2; ++s) {
+            if (asc) gs.forward(x, b); else gs.backward(x, b);
+            reference_sweep_964<Acc>(A, r, b, 1.0, true, asc);
+        }
+        CHECK(same_bits_964(x, r));
+    }
+}
+} // namespace
+
+TEST_CASE("ulp_distance_964 counts representable doubles (issue 964)", "[itl][smoother][964]") {
+    CHECK(ulp_distance_964(1.5, 1.5) == 0);
+    CHECK(ulp_distance_964(1.5, std::nextafter(1.5, 2.0)) == 1);
+    // 1.5 + 90 ulps: the old relative bound, 64 eps * 1.5 = 96 ulps of 1.5's
+    // binade, accepted it; the ulp count does not.
+    double far = 1.5;
+    for (int k = 0; k < 90; ++k) far = std::nextafter(far, 2.0);
+    CHECK(ulp_distance_964(1.5, far) == 90);
+    CHECK(ulp_distance_964(far, 1.5) == 90);
+    CHECK(ulp_distance_964(0.0, -0.0) == 0);
+    CHECK(ulp_distance_964(-std::numeric_limits<double>::denorm_min(),
+                           std::numeric_limits<double>::denorm_min()) == 2);
+    CHECK(ulp_distance_964(1.0, std::nextafter(1.0, 0.0)) == 1);   // across a binade
+}
+
+TEST_CASE("CSR SOR and Gauss-Seidel sweeps match the per-entry form bit for bit (issue 964)",
+          "[itl][smoother][sparse][964]") {
+    check_964<void>();
+    check_964<long double>();
 }

@@ -199,7 +199,7 @@ The `main` branch is protected:
 |------|---------|-----------|------|
 | **Tier 1** (`ci.yml`) | Every PR (draft or ready), every push to `main`, release tags | Unit tests on 8 platforms (Linux GCC/Clang x64+ARM64, macOS, Windows MSVC/Clang-CL) | ~2 min |
 | **Tier 2** (`regression.yml`) | Non-draft PRs only: on open, on each push, and when a draft is promoted | Regression tests on Linux GCC — dense, sparse, iterative solvers at 100–50K DOF | ~10 min |
-| **Benchmark gate** (`bench-regression.yml`) | Every PR (draft or ready), every push to `main` | Instruction counts (callgrind) of 15 `mtl5_bench` kernels, native and native-fast on Linux x64 and Linux arm64, each against main's baseline artifact for that configuration; fails above +2% unless `benchmarks/regression/accepted.json` accepts it (#944) | ~5 min |
+| **Benchmark gate** (`bench-regression.yml`) | Every PR (draft or ready), every push to `main` | Instruction counts (callgrind) of 17 `mtl5_bench` kernels, native and native-fast on Linux x64 and Linux arm64, each against main's baseline artifact for that configuration; fails above +2% unless `benchmarks/regression/accepted.json` accepts it (#944) | ~5 min |
 
 Which changes run CI:
 - **Docs-only changes run no CI.** A commit that touches only `docs/`, `docs-site/`, Markdown, images, `LICENSE`, `.coderabbit.yaml` or `.nojekyll` skips `ci.yml` and `regression.yml` entirely; `docs.yml` builds the site for those. If a PR mixes docs with anything else, the full workflow runs.

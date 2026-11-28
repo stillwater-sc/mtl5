@@ -122,7 +122,7 @@ python3 benchmarks/regression/ir_gate.py compare --baseline before.json --curren
 python3 benchmarks/regression/test_ir_gate.py     # the script's own tests
 ```
 
-The 15 kernels take about 3 seconds under callgrind. Two counts of one binary are
+The 17 kernels take about 3 seconds under callgrind. Two counts of one binary are
 identical. A different compiler version gives different counts, so compare a
 local run only with another local run, never with CI's artifact.
 
@@ -135,7 +135,11 @@ small on purpose. It covers:
 - the dense factorizations: LU, Cholesky, QR;
 - sparse: SpMV, the level-scheduled triangular solve, native KLU;
 - iterative: CG, BiCGSTAB and MINRES. MINRES was added after #869 made each of
-  its iterations about 45% costlier without any count to show it (issue 963).
+  its iterations about 45% costlier without any count to show it (issue 963);
+- smoothers: Gauss-Seidel and SOR. A change to their inner loop's form shows
+  here; the code-alignment effect that made SOR's speed flip between commits on
+  AArch64 does not change a count, and only the wall-clock tracking sees it
+  (issue 964).
 
 Adding a kernel shows it as `new` in its first PR, which passes.
 

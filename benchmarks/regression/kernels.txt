@@ -28,3 +28,5 @@ direct/native_klu/f64
 krylov/cg+ic0/f64
 krylov/bicgstab+ilu0/f64
 krylov/minres+diag/f64     # its per-iteration cost rose 45% unseen (#869, issue 963)
+smoother/gauss_seidel/f64
+smoother/sor1.5/f64        # their inner loop's form decides an ARM speed of 1x or 1.7x (issue 964)

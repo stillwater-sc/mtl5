@@ -5,6 +5,7 @@
 #include <mtl/concepts/scalar.hpp>   // Field (#505)
 #include <mtl/concepts/matrix.hpp>   // FieldMatrix (#505)
 #include <cassert>
+#include <vector>
 #include <cstddef>
 #include <type_traits>
 #include <mtl/vec/dense_vector.hpp>
@@ -113,7 +114,7 @@ class sor<mat::compressed2D<Value, Parameters>, Accumulator> {
     using size_type   = typename matrix_type::size_type;
 public:
     explicit sor(const matrix_type& A, value_type omega = value_type(1))
-        : A_(A), omega_(omega), dia_inv_(A.num_rows())
+        : A_(A), omega_(omega), dia_inv_(A.num_rows()), dia_pos_(A.num_rows())
     {
         const auto& starts  = A.ref_major();
         const auto& indices = A.ref_minor();
@@ -122,6 +123,7 @@ public:
             bool found = false;
             for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
                 if (indices[k] == i) {
+                    dia_pos_[i] = k;
                     found = data[k] != math::zero<value_type>();
                     if (found) dia_inv_(i) = value_type(1) / data[k];
                     break;
@@ -153,22 +155,36 @@ private:
         const auto& data    = A_.ref_data();
         for (size_type step = 0; step < n; ++step) {
             const size_type i = ascending ? step : (n - 1 - step);
+            // The off-diagonal sum, as two loops around the diagonal's position
+            // (found once, at construction) instead of one loop that tests every
+            // column index (issue 964). The same terms in the same order: the
+            // same bits where multiply-adds are not fused, and a rounding apart
+            // where the compiler fuses them (it may fuse data[k] * x(j) into
+            // sigma in one form and not the other). The test-per-entry loop is short (a 5-point row has 4
+            // off-diagonal entries) and branchy, and on AArch64 its speed
+            // depended on where it fell relative to a 64-byte boundary: the same
+            // instructions ran a 512^2 SOR sweep in 2.9 or 5.0 ms on the Ventuno
+            // Q, flipping between commits that never touched this file.
+            // (compressed2D holds one entry per (row, column), so the diagonal
+            // is at one position.)
+            const size_type d = dia_pos_[i];
             value_type sigma;
             if constexpr (std::is_void_v<Accumulator>) {
                 sigma = math::zero<value_type>();
-                for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
-                    if (indices[k] != i)
-                        sigma += data[k] * x(indices[k]);
-                }
+                for (size_type k = starts[i]; k < d; ++k)
+                    sigma += data[k] * x(indices[k]);
+                for (size_type k = d + 1; k < starts[i + 1]; ++k)
+                    sigma += data[k] * x(indices[k]);
             } else {
                 using AT = math::accumulator_traits<Accumulator, value_type>;
                 Accumulator acc{};
                 AT::clear(acc);
-                for (size_type k = starts[i]; k < starts[i + 1]; ++k) {
-                    if (indices[k] != i)
-                        AT::add_product(acc, static_cast<value_type>(data[k]),
-                                             static_cast<value_type>(x(indices[k])));
-                }
+                for (size_type k = starts[i]; k < d; ++k)
+                    AT::add_product(acc, static_cast<value_type>(data[k]),
+                                         static_cast<value_type>(x(indices[k])));
+                for (size_type k = d + 1; k < starts[i + 1]; ++k)
+                    AT::add_product(acc, static_cast<value_type>(data[k]),
+                                         static_cast<value_type>(x(indices[k])));
                 sigma = AT::template value<value_type>(acc);
             }
             // omega blend stays outside the accumulator (scalar arithmetic).
@@ -181,6 +197,7 @@ private:
     const matrix_type& A_;
     value_type omega_;
     vec::dense_vector<value_type> dia_inv_;
+    std::vector<size_type> dia_pos_;   // the diagonal's position in each row (issue 964)
 };
 
 /// coordinate2D and ell_matrix: the compressed2D sweep on a copy made once, at
