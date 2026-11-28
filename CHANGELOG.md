@@ -5,6 +5,15 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`MTL5_NATIVE_ARCH=ON` on scalable-SVE AArch64 uses NEON, not a one-lane batch** (issue 720; #983). With GCC, `-march=native` on Neoverse N2, V1 and V2, Graviton 3 and 4, and Grace enables SVE without a fixed vector length. Highway then picked its scalable `SVE2`/`SVE` target, and `mtl::simd::batch`, which has no compile-time lane count for it (#427), fell to one lane. The most tuned build had no SIMD, and was slower than the portable default.
+  - **The fix:** with Highway on AArch64, CMake test-compiles the native flags. When they define `__ARM_FEATURE_SVE` without a fixed `__ARM_FEATURE_SVE_BITS`, it adds `HWY_DISABLED_TARGETS=HWY_ALL_SVE` (build interface only). Highway then takes the best NEON target the flags allow.
+  - **On N2:** `NEON_BF16` with 4 f32 lanes, and all 321 tests pass in CI's `native` lane. Without AES the target would be `NEON_WITHOUT_AES`, as measured under qemu.
+  - **`MTL5_NATIVE_SCALABLE_SVE=ON`** keeps the scalable target, with a configure warning. The new `native-scalable` CI lane uses it, and pins `size == 1` until #427.
+  - **Flags that fix the vector length** (`-msve-vector-bits=N` in `MTL5_NATIVE_ARCH_FLAGS`) keep SVE and are left alone.
+  - Docs: `MTL5_NATIVE_SCALABLE_SVE` in `docs/getting-started/build-options.md`; R4 in `docs/performance/arm64-simd-neon-sve.md`.
+
 ## [5.26.0] - 2026-11-28
 
 Features since 5.25.0, so it is a minor release. Among them is `randsym_indefinite` (#970), which mtl5-python needs. MAJOR stays at 5.
