@@ -116,14 +116,22 @@ So a fixed-length build needs both of the following:
 `svcntb()` is a single instruction, so a check per kernel call costs nothing
 measurable next to a GEMM. It turns a silent wrong answer into a diagnosis.
 
-**R4. `MTL5_NATIVE_ARCH=ON` on an SVE machine with GCC removes SIMD entirely.**
+**R4. `MTL5_NATIVE_ARCH=ON` on an SVE machine with GCC removed SIMD entirely; native builds now use NEON there (#720).**
 `-march=native` on N2, V1, V2 or Grace selects a scalable target, and `batch`
-falls to one lane. The user who asks for the *most* tuned build gets the
+falls to one lane. The user who asks for the *most* tuned build got the
 *least* vectorized one, slower than the portable default (NEON). Clang users
-don't hit this, but only because Highway refuses SVE for Clang (the table
-above). CI confirmed it on N2 with GCC 13: `HWY_TARGET` is `SVE2`, scalable,
-and `batch<float>::size` is 1. The #717 `native` lane pins the behaviour (`size == 1`) so it can't change
-unnoticed. Mitigations, in increasing cost:
+don't hit this, but only because Highway refuses SVE for Clang before 22 (the
+table above). CI confirmed it on N2 with GCC 13: `HWY_TARGET` was `SVE2`,
+scalable, and `batch<float>::size` was 1.
+
+The fix is mitigation 3 below, with mitigation 1's warning for the opt-out:
+- **Disabled SVE targets:** when `MTL5_NATIVE_ARCH` and `MTL5_WITH_HIGHWAY` are on, and the native flags define `__ARM_FEATURE_SVE` without a fixed `__ARM_FEATURE_SVE_BITS`, CMake adds `HWY_DISABLED_TARGETS=HWY_ALL_SVE`. Highway then takes the best NEON target the flags allow:
+  - `NEON_BF16` with crypto, bf16 and dotprod (GCC 13.2 or later), which is what N2 has;
+  - `NEON_WITHOUT_AES` without AES.
+- **The CI lanes:** the `native` lane asserts `NEON_BF16` and runs the full suite. A `native-scalable` lane sets `MTL5_NATIVE_SCALABLE_SVE=ON`, which keeps the scalable target with a configure warning, and pins `size == 1`.
+- **Fixed-length SVE:** flags that fix the vector length (`-msve-vector-bits=N` in `MTL5_NATIVE_ARCH_FLAGS`) keep SVE and are left alone. Such builds also need R2 and R3.
+
+The mitigations that were considered, in increasing cost:
 1. A configure-time warning when `MTL5_NATIVE_ARCH=ON`, `MTL5_WITH_HIGHWAY=ON`
    and the compiler defines `__ARM_FEATURE_SVE` without
    `__ARM_FEATURE_SVE_BITS`.
@@ -131,11 +139,10 @@ unnoticed. Mitigations, in increasing cost:
    on the machine that will run the binary, which is what "native" already
    means. This must also apply R2 and R3.
 3. Prefer NEON for a scalable target until #427 lands, by defining
-   `HWY_DISABLED_TARGETS=HWY_ALL_SVE` in native builds. Preprocessing confirms
-   that with GCC and `-mcpu=neoverse-n2` this selects `NEON_WITHOUT_AES`. It
-   always works and loses only what SVE adds over NEON at 128 bits (see below).
+   `HWY_DISABLED_TARGETS=HWY_ALL_SVE` in native builds. It always works and
+   loses only what SVE adds over NEON at 128 bits (see below).
 
-This needs its own issue.
+#427's dispatch design (below) or mitigation 2 can replace it later.
 
 **R5. Every SIMD lane must assert its target.** A lane that builds the wrong
 target still passes the suite, because every target computes correct answers.
@@ -239,8 +246,8 @@ from predication, and an unknown result for CRS gathers. On a V1 host,
 ### Scalable SVE2 (#427)
 
 **Where it stands.** It's demoted to scalar code: `size == 1`, no SIMD at all.
-This is what `-march=armv9-a`, `-mcpu=neoverse-n2` and GCC's `-march=native` on
-SVE hardware produce today (R4).
+This is what `-march=armv9-a` and `-mcpu=neoverse-n2` produce today, and GCC's
+`-march=native` on SVE hardware with `MTL5_NATIVE_SCALABLE_SVE=ON` (R4).
 
 **Why it is hard.** The vector length is a run-time value, and MTL5's dense
 kernels are built on it being a compile-time one:
@@ -278,13 +285,13 @@ kernels are built on it being a compile-time one:
 
 **Recommendation:** design 1 first. It reuses everything #717 built and covers
 every SVE implementation that ships. It also removes the native-build cliff
-(R4). Design 2 is the end state #427 describes, but it rewrites the dense core
-for hardware (VL > 512, RVV) MTL5 has no user on yet. The scalable CI lane
-(`native`) turns into the dispatch test: it should assert `size > 1` once the
-dispatcher picks the `SVE2_128` copy on N2.
+(R4) without giving up SVE. Design 2 is the end state #427 describes, but it
+rewrites the dense core for hardware (VL > 512, RVV) MTL5 has no user on yet.
+The scalable CI lane (`native-scalable`) turns into the dispatch test: it
+should assert `size > 1` once the dispatcher picks the `SVE2_128` copy on N2.
 
 **Experiment:** none possible until one design lands. At that point, the
-`native` CI lane becomes the correctness test. For performance, compare against
+`native-scalable` CI lane becomes the correctness test. For performance, compare against
 the `SVE2_128` build on the same host; dispatch overhead should be invisible
 above n = 64.
 

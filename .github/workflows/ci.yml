@@ -541,12 +541,15 @@ jobs:
   #             not -march=armv9-a: Highway compiles SVE2_128 with +i8mm,+bf16
   #             and armv9-a lacks them ("target specific option mismatch").
   #             GCC only: Highway 1.4.0 marks SVE2_128 broken before Clang 21.
-  #   native    MTL5_NATIVE_ARCH=ON, i.e. -march=native. With GCC on N2 that is
-  #             SCALABLE SVE2, which batch demotes to one lane: a native build
-  #             has no SIMD at all. Pinned (test_batch asserts size == 1) so it
-  #             cannot change unnoticed; #427 flips it. Only the SIMD tests run:
-  #             the rest of the suite on the scalar path is what the plain
-  #             ARM64 build job already covers.
+  #   native    MTL5_NATIVE_ARCH=ON, i.e. -march=native. With GCC on N2 that
+  #             enables SCALABLE SVE2, which batch would demote to one lane, so
+  #             CMake disables Highway's SVE targets there (#720) and the build
+  #             gets NEON_BF16: the only lane on that target, so the full suite
+  #             runs.
+  #   native-scalable  the same with MTL5_NATIVE_SCALABLE_SVE=ON, which keeps
+  #             scalable SVE2: test_batch pins its one-lane batch (size == 1)
+  #             until #427 flips it. Only the SIMD tests run: the rest of the
+  #             suite on the scalar path is what the plain ARM64 job covers.
   # Every lane names the Highway target it exists to cover, and test_batch
   # fails to COMPILE on any other (MTL5_TEST_EXPECT_HWY_TARGET), so a lane
   # cannot go green while testing the wrong code.
@@ -592,13 +595,21 @@ jobs:
               -mcpu=neoverse-n2 -msve-vector-bits=128
               -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE2_128
             require_sve_vl_bytes: 16
-          - name: Linux ARM64 Highway native, scalable SVE2 (g++-13)
+          - name: Linux ARM64 Highway native, NEON_BF16 (g++-13)
             os: ubuntu-24.04-arm
             lane: native
             cc: gcc-13
             cxx: g++-13
-            cxx_flags: -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE2
+            cxx_flags: -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_NEON_BF16
             cmake_args: -DMTL5_NATIVE_ARCH=ON
+            require_sve2: true
+          - name: Linux ARM64 Highway native, scalable SVE2 kept (g++-13)
+            os: ubuntu-24.04-arm
+            lane: native-scalable
+            cc: gcc-13
+            cxx: g++-13
+            cxx_flags: -DMTL5_TEST_EXPECT_HWY_TARGET=HWY_SVE2
+            cmake_args: -DMTL5_NATIVE_ARCH=ON -DMTL5_NATIVE_SCALABLE_SVE=ON
             require_sve2: true
             simd_tests_only: true
 
