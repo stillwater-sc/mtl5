@@ -890,8 +890,9 @@ jobs:
           test "$(grep -c '^<details>$' docs/benchmarks/cards/i7-12700k-small.md)" = 4
           test "$(grep -c '^</details>$' docs/benchmarks/cards/i7-12700k-small.md)" = 4
           grep -q "'benchmarks/cards/i7-12700k-small.md'" docs-site/sync-content.mjs
-          # The medium card stays in the cell; the small page is linked after it.
-          grep -q '^| `i7-12700K` |.*| \[Card\](cards/i7-12700k.md) · \[small\](cards/i7-12700k-small.md) (preliminary) |$' docs/benchmarks/systems.md
+          # The medium card stays in the cell, with any other class page the
+          # committed systems.md links (large, #885); the small page comes after.
+          grep -qE '^\| `i7-12700K` \|.*\| \[Card\]\(cards/i7-12700k\.md\)( · \[[a-z]+\]\(cards/i7-12700k-[a-z]+\.md\))* · \[small\]\(cards/i7-12700k-small\.md\) \(preliminary\) \|$' docs/benchmarks/systems.md
           if [ "$RUNNER_OS" != macOS ]; then benchmarks/check_sidecars.sh; fi
           # Every run's results carry a version and their quantiles (#928, #929).
           py=$(command -v python3 || command -v python)
