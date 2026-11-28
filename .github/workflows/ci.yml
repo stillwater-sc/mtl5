@@ -899,7 +899,10 @@ jobs:
           grep -q "'benchmarks/cards/i7-12700k-small.md'" docs-site/sync-content.mjs
           # The cell keeps exactly what it held (the medium card, any other class
           # page such as large, #885, and their marks); the small page comes after.
-          want="$before · [small](cards/i7-12700k-small.md) (preliminary)"
+          # As the publisher does: drop any small link the cell already had, then
+          # append the new one.
+          base=$(printf '%s' "$before" | sed -E 's/ · \[small\]\(cards\/i7-12700k-small\.md\)( \(preliminary\))?//')
+          want="$base · [small](cards/i7-12700k-small.md) (preliminary)"
           got=$(row_cell)
           [ "$got" = "$want" ] || { echo "cell '$got', expected '$want'"; exit 1; }
           if [ "$RUNNER_OS" != macOS ]; then benchmarks/check_sidecars.sh; fi
