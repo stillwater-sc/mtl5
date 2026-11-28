@@ -12,6 +12,8 @@
 #include <mtl/itl/smoother/sor.hpp>
 #include <mtl/math/accumulator_traits.hpp>
 #include <type_traits>
+#include <cstring>
+#include <cstdint>
 #include <limits>
 #include <cmath>
 
@@ -682,12 +684,27 @@ mat::compressed2D<double> matrix_964(std::size_t n) {
     }
     return A;
 }
+// The distance between two finite doubles in units in the last place: the
+// number of representable doubles between them. The bit patterns, mapped so
+// that their integer order is the doubles' order (negative values reflected
+// below zero), differ by exactly that count; +0 and -0 are 0 apart.
+std::uint64_t ulp_distance_964(double a, double b) {
+    auto key = [](double v) {
+        std::int64_t i;
+        std::memcpy(&i, &v, sizeof i);
+        return i < 0 ? std::numeric_limits<std::int64_t>::min() - i : i;
+    };
+    const std::int64_t ka = key(a), kb = key(b);
+    return ka > kb ? std::uint64_t(ka) - std::uint64_t(kb) : std::uint64_t(kb) - std::uint64_t(ka);
+}
 bool same_bits_964(const vec::dense_vector<double>& a, const vec::dense_vector<double>& b) {
 #if defined(__FP_FAST_FMA)
     // A fused product rounds once where an unfused one rounds twice: each row
-    // differs by a few ulps, and two sweeps carry it to later rows.
+    // differs by a few ulps, and two sweeps carry it to later rows. At most 64
+    // ulps, counted as representable doubles (#979 review: 64 eps |b| allowed
+    // up to 128 ulps for |b| in [1, 2)).
     for (std::size_t i = 0; i < a.size(); ++i)
-        if (!(std::abs(a(i) - b(i)) <= 64 * std::numeric_limits<double>::epsilon() * std::abs(b(i)))) return false;
+        if (!(std::isfinite(a(i)) && std::isfinite(b(i)) && ulp_distance_964(a(i), b(i)) <= 64)) return false;
 #else
     for (std::size_t i = 0; i < a.size(); ++i) if (!(a(i) == b(i))) return false;
 #endif
@@ -720,6 +737,21 @@ void check_964() {
     }
 }
 } // namespace
+
+TEST_CASE("ulp_distance_964 counts representable doubles (issue 964)", "[itl][smoother][964]") {
+    CHECK(ulp_distance_964(1.5, 1.5) == 0);
+    CHECK(ulp_distance_964(1.5, std::nextafter(1.5, 2.0)) == 1);
+    // 1.5 + 90 ulps: the old relative bound, 64 eps * 1.5 = 96 ulps of 1.5's
+    // binade, accepted it; the ulp count does not.
+    double far = 1.5;
+    for (int k = 0; k < 90; ++k) far = std::nextafter(far, 2.0);
+    CHECK(ulp_distance_964(1.5, far) == 90);
+    CHECK(ulp_distance_964(far, 1.5) == 90);
+    CHECK(ulp_distance_964(0.0, -0.0) == 0);
+    CHECK(ulp_distance_964(-std::numeric_limits<double>::denorm_min(),
+                           std::numeric_limits<double>::denorm_min()) == 2);
+    CHECK(ulp_distance_964(1.0, std::nextafter(1.0, 0.0)) == 1);   // across a binade
+}
 
 TEST_CASE("CSR SOR and Gauss-Seidel sweeps match the per-entry form bit for bit (issue 964)",
           "[itl][smoother][sparse][964]") {
