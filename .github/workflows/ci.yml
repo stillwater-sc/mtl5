@@ -870,6 +870,13 @@ jobs:
         run: |
           results=$(ls -d build-platform/results/*/ | head -1)
           results=${results%/}
+          # The i7-12700K row's last cell, as written (awk: BSD sed rejects "{s/.../p}").
+          row_cell() {
+            tr -d '\r' < docs/benchmarks/systems.md | awk -F'|' 'index($0, "| `i7-12700K` |") == 1 {
+              c = $(NF - 1); sub(/^ +/, "", c); sub(/ +$/, "", c); print c }'
+          }
+          before=$(row_cell)
+          test -n "$before"
           cmake "-DRESULTS=$results" -DMACHINE=i7-12700k -DPRELIMINARY=ON -DALLOW_DIRTY=ON \
                 -P benchmarks/publish_platform.cmake
           data=benchmarks/data/i7-12700k/mtl5_bench
@@ -890,8 +897,14 @@ jobs:
           test "$(grep -c '^<details>$' docs/benchmarks/cards/i7-12700k-small.md)" = 4
           test "$(grep -c '^</details>$' docs/benchmarks/cards/i7-12700k-small.md)" = 4
           grep -q "'benchmarks/cards/i7-12700k-small.md'" docs-site/sync-content.mjs
-          # The medium card stays in the cell; the small page is linked after it.
-          grep -q '^| `i7-12700K` |.*| \[Card\](cards/i7-12700k.md) · \[small\](cards/i7-12700k-small.md) (preliminary) |$' docs/benchmarks/systems.md
+          # The cell keeps exactly what it held (the medium card, any other class
+          # page such as large, #885, and their marks); the small page comes after.
+          # As the publisher does: drop any small link the cell already had, then
+          # append the new one.
+          base=$(printf '%s' "$before" | sed -E 's/ · \[small\]\(cards\/i7-12700k-small\.md\)( \(preliminary\))?//')
+          want="$base · [small](cards/i7-12700k-small.md) (preliminary)"
+          got=$(row_cell)
+          [ "$got" = "$want" ] || { echo "cell '$got', expected '$want'"; exit 1; }
           if [ "$RUNNER_OS" != macOS ]; then benchmarks/check_sidecars.sh; fi
           # Every run's results carry a version and their quantiles (#928, #929).
           py=$(command -v python3 || command -v python)
@@ -905,12 +918,7 @@ jobs:
           sys=docs/benchmarks/systems.md
           card=docs/benchmarks/cards/i7-12700k-small.md
           link='[small](cards/i7-12700k-small.md) (preliminary)'
-          # The i7-12700K row's last cell, as written.
-          # awk, not sed: BSD sed (macOS) rejects "{s/.../p}" without a ';'.
-          cell_of() {
-            tr -d '\r' < "$sys" | awk -F'|' 'index($0, "| `i7-12700K` |") == 1 {
-              c = $(NF - 1); sub(/^ +/, "", c); sub(/ +$/, "", c); print c }'
-          }
+          cell_of() { row_cell; }   # $sys is the same docs/benchmarks/systems.md
           publish() {
             cmake "-DRESULTS=$results" -DMACHINE=i7-12700k "-DPRELIMINARY=$prelim" -DALLOW_DIRTY=ON "$@" \
                   -P benchmarks/publish_platform.cmake 2>&1
