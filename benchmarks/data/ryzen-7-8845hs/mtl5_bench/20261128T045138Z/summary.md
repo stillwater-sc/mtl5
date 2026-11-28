@@ -1,0 +1,1076 @@
+# mtl5_bench platform characterization
+
+Class `medium`, variants native native-fast blas, threads 1,8, CPUs 0,2,4,6,8,10,12,14, clock policy power scheme copy of Balanced with processor state 100-100% and EPP 0, boost aggressive; AC, 2026-11-28T05:09:28Z.
+
+## ryzen-7-8845hs -- native, 1 thread, class medium
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 8845HS w/ Radeon 780M Graphics (x86_64, 16 logical cores) |
+| OS | Windows 10.0.26300 (26H2) |
+| compiler | MSVC 19.52.37029 |
+| build | `/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG`, SIMD scalar |
+| commit | `b2d022726b3d` |
+| FMA peak (ceiling) | f64 80.1 GFLOP/s, f32 160.1 GFLOP/s |
+| ... hardware, AVX-512F | f64 80.1, f32 160.1 GFLOP/s |
+| ... this build, scalar | f64 1.6, f32 1.9 GFLOP/s |
+| bandwidth | read 43.3, update 53.6, triad 39.1 GB/s (ceiling 53.6) |
+| last-level cache | 16 MiB |
+
+| area | entries | median %roof | best %roof | failed checks |
+|---|---:|---:|---:|---:|
+| blas1 | 10 | 25% | 109% | 0 |
+| blas2 | 10 | 55% | 82% | 0 |
+| blas3 | 10 | 15% | 20% | 0 |
+| factor | 12 | 3% | 5% | 0 |
+| eigen | 8 | 4% | 11% | 0 |
+| elementwise | 5 | 8% | 12% | 0 |
+| sparse | 5 | 25% | 57% | 0 |
+| direct | 19 | 1% | 20% | 0 |
+| ordering | 5 | n/a | n/a | 0 |
+| direct3d | 12 | 2% | 13% | 0 |
+| krylov | 13 | n/a | n/a | 0 |
+| pc | 7 | n/a | n/a | 0 |
+| smoother | 3 | 33% | 36% | 0 |
+| mg | 1 | 33% | 33% | 0 |
+| sparse_eig | 4 | n/a | n/a | 0 |
+| mixed | 3 | 12% | 23% | 0 |
+| integer | 9 | n/a | n/a | 0 |
+
+| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
+|---|---|---|---|---:|---:|---:|---:|---|
+| blas1 | dot | f64 | n=8388608 | 11.469 ms | 1.46 | 11.70 | 22% | ok |
+| blas1 | dot | f32 | n=8388608 | 9.782 ms | 1.72 | 6.86 | 13% | ok |
+| blas1 | axpy | f64 | n=8388608 | 11.908 ms | 1.41 | 16.91 | 32% | ok |
+| blas1 | axpy | f32 | n=8388608 | 11.889 ms | 1.41 | 8.47 | 16% | ok |
+| blas1 | scale | f64 | n=8388608 | 2.288 ms | 3.67 | 58.65 | 109% | ok |
+| blas1 | two_norm | f64 | n=8388608 | 10.594 ms | 1.58 | 6.33 | 12% | ok |
+| blas1 | one_norm | f64 | n=8388608 | 5.061 ms | 1.66 | 13.26 | 25% | ok |
+| blas1 | infinity_norm | f64 | n=8388608 | 5.073 ms | 1.65 | 13.23 | 25% | ok |
+| blas1 | sum | f64 | n=8388608 | 5.061 ms | 1.66 | 13.26 | 25% | ok |
+| blas1 | dot_k3 | f64 | n=8388608 | 92.443 ms | 2.00 | 1.45 | 3% | ok |
+| blas2 | gemv | f64 | n=4096 | 3.042 ms | 11.03 | 44.15 | 82% | ok |
+| blas2 | gemv | f32 | n=4096 | 2.283 ms | 14.70 | 29.41 | 55% | ok |
+| blas2 | gemv_colmajor | f64 | n=4096 | 7.065 ms | 4.75 | 19.01 | 35% | ok |
+| blas2 | gemv_colmajor | f32 | n=4096 | 2.207 ms | 15.20 | 30.42 | 57% | ok |
+| blas2 | symv | f64 | n=4096 | 2.822 ms | 11.89 | 23.80 | 44% | ok |
+| blas2 | trmv | f64 | n=4096 | 1.688 ms | 9.94 | 39.79 | 74% | ok |
+| blas2 | trmv | f32 | n=4096 | 1.484 ms | 11.30 | 22.63 | 42% | ok |
+| blas2 | trsv | f64 | n=4096 | 1.714 ms | 9.79 | 39.19 | 73% | ok |
+| blas2 | trsv | f32 | n=4096 | 1.505 ms | 11.15 | 22.32 | 42% | ok |
+| blas2 | ger | f64 | n=4096 | 13.519 ms | 2.48 | 19.86 | 37% | ok |
+| blas3 | gemm | f64 | 512x512x512 | 16.478 ms | 16.29 | 0.38 | 20% | ok |
+| blas3 | gemm | f32 | 512x512x512 | 8.235 ms | 32.60 | 0.38 | 20% | ok |
+| blas3 | gemmt | f64 | 512x512x512 | 11.320 ms | 11.86 | 0.56 | 15% | ok |
+| blas3 | symm | f64 | 512x512x512 | 17.036 ms | 15.76 | 0.37 | 20% | ok |
+| blas3 | syrk | f64 | 512x512x512 | 13.551 ms | 9.90 | 0.31 | 12% | ok |
+| blas3 | syr2k | f64 | 512x512x512 | 22.779 ms | 11.78 | 0.28 | 15% | ok |
+| blas3 | trmm | f64 | 512x512x512 | 25.092 ms | 5.35 | 0.21 | 7% | ok |
+| blas3 | trsm | f64 | 512x512x512 | 26.707 ms | 5.03 | 0.20 | 6% | ok |
+| blas3 | trsm | f32 | 512x512x512 | 25.969 ms | 5.17 | 0.10 | 3% | ok |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 9.196 ms | 0.58 | 4.62 | 9% | ok |
+| factor | lu | f64 | 512x512 | 32.711 ms | 2.74 | 0.13 | 3% | ok |
+| factor | lu | f32 | 512x512 | 31.041 ms | 2.88 | 0.07 | 2% | ok |
+| factor | cholesky | f64 | 512x512 | 11.350 ms | 3.94 | 0.37 | 5% | ok |
+| factor | cholesky | f32 | 512x512 | 10.894 ms | 4.11 | 0.19 | 3% | ok |
+| factor | ldlt | f64 | 512x512 | 11.432 ms | 3.91 | 0.37 | 5% | ok |
+| factor | ldlt_bk | f64 | 512x512 | 10.228 ms | 4.37 | 0.41 | 5% | ok |
+| factor | qr | f64 | 512x512 | 639.962 ms | 0.28 | 0.01 | 0% | ok |
+| factor | lq | f64 | 512x512 | 64.637 ms | 2.77 | 0.06 | 3% | ok |
+| factor | hessenberg | f64 | 512x512 | 738.391 ms | 0.61 | 0.01 | 1% | ok |
+| factor | householder | f64 | 512x512 | 3.906 ms | 0.27 | 1.07 | 2%\* | ok |
+| factor | inv | f64 | 512x512 | 89.159 ms | 3.01 | 0.05 | 4% | ok |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 33.928 ms | 2.64 | 0.12 | 3% | ok |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 37.645 ms | 0.59 | 0.03 | 1% | ok |
+| eigen | eigen_symmetric | f64 | 256x256 | 128.335 ms | 1.18 | 0.01 | 1% | ok |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 522.008 ms | 0.29 | 0.00 | 0% | ok |
+| eigen | eigenvalue | f64 | 256x256 | 59.466 ms | 2.82 | 0.02 | 4% | ok |
+| eigen | schur | f64 | 256x256 | 110.522 ms | 3.80 | 0.01 | 5% | ok |
+| eigen | svd | f64 | 256x256 | 117.815 ms | 3.13 | 0.01 | 4% | ok |
+| eigen | expm | f64 | 256x256 | 29.835 ms | 8.43 | 0.04 | 11% | ok |
+| eigen | sylvester | f64 | 256x256 | 259.733 ms | 3.88 | 0.01 | 5% | ok |
+| elementwise | exp | f64 | n=8388608 | 27.585 ms | 0.30 | 4.87 | 9% | ok |
+| elementwise | log | f64 | n=8388608 | 41.941 ms | 0.20 | 3.20 | 6% | ok |
+| elementwise | sin | f64 | n=8388608 | 39.378 ms | 0.21 | 3.41 | 6% | ok |
+| elementwise | sqrt | f64 | n=8388608 | 21.331 ms | 0.39 | 6.29 | 12% | ok |
+| elementwise | erf | f64 | n=8388608 | 31.669 ms | 0.26 | 4.24 | 8% | ok |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 0.892 ms | 2.93 | 30.53 | 57% | ok |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 1.322 ms | 1.98 | 20.60 | 38% | ok |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 6.471 ms | 6.47 | 13.61 | 25% | ok |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 18.263 ms | 0.18 | 0.63 | 1%\* | ok |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 1.692 ms | 1.19 | 9.84 | 18%\* | ok |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 18.845 ms | 0.59 | 0.04 | 1% | ok |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 30.850 ms | 0.36 | 0.02 | 0% | ok |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 15.525 ms | 0.72 | 0.05 | 1% | ok |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 53.620 ms | 0.42 | 0.01 | 1% | ok |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 57.981 ms | 0.39 | 0.01 | 0% | ok |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | 24.636 ms | 0.91 | 0.03 | 1% | ok |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | 37.651 ms | 0.05 | 0.00 | 0% | ok |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | 3.649 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | 5.655 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | nested_dissection | f64 | 96^2 grid, nnz 45696, scrambled | 59.700 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | 0.226 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 14.169 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_cholesky.analyze | f64 | 96^2 grid, nnz 45696 | 2.915 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_cholesky.factor | f64 | 96^2 grid, nnz 45696 | 14.199 ms | 0.79 | 0.05 | 1% | ok |
+| direct | sparse_cholesky.solve | f64 | 96^2 grid, nnz 45696 | 0.279 ms | 2.71 | 10.85 | 20%\* | ok |
+| direct | supernodal_ldlt.analyze | f64 | 96^2 grid, nnz 45696 | 6.542 ms | 0.00 | 0.00 | n/a | ok |
+| direct | supernodal_ldlt.factor | f64 | 96^2 grid, nnz 45696 | 5.981 ms | 1.87 | 0.12 | 2% | ok |
+| direct | supernodal_ldlt.solve | f64 | 96^2 grid, nnz 45696 | 0.289 ms | 2.62 | 10.48 | 20%\* | ok |
+| direct | sparse_lu.analyze | f64 | 96^2 grid, nnz 45696 | 3.316 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_lu.factor | f64 | 96^2 grid, nnz 45696 | 47.644 ms | 0.47 | 0.02 | 1% | ok |
+| direct | sparse_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.142 ms | 0.66 | 2.65 | 5%\* | ok |
+| direct | supernodal_lu.analyze | f64 | 96^2 grid, nnz 45696 | 4.757 ms | 0.00 | 0.00 | n/a | ok |
+| direct | supernodal_lu.factor | f64 | 96^2 grid, nnz 45696 | 49.203 ms | 0.45 | 0.01 | 1% | ok |
+| direct | supernodal_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.116 ms | 0.68 | 2.71 | 5%\* | ok |
+| direct3d | sparse_cholesky.analyze | f64 | 20^3 grid, nnz 53600 | 5.567 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | sparse_cholesky.factor | f64 | 20^3 grid, nnz 53600 | 253.130 ms | 1.22 | 0.00 | 2% | ok |
+| direct3d | sparse_cholesky.solve | f64 | 20^3 grid, nnz 53600 | 1.994 ms | 1.69 | 6.76 | 13%\* | ok |
+| direct3d | supernodal_ldlt.analyze | f64 | 20^3 grid, nnz 53600 | 13.766 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | supernodal_ldlt.factor | f64 | 20^3 grid, nnz 53600 | 68.540 ms | 4.50 | 0.01 | 6% | ok |
+| direct3d | supernodal_ldlt.solve | f64 | 20^3 grid, nnz 53600 | 2.031 ms | 1.66 | 6.63 | 12%\* | ok |
+| direct3d | sparse_lu.analyze | f64 | 20^3 grid, nnz 53600 | 6.156 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | sparse_lu.factor | f64 | 20^3 grid, nnz 53600 | 883.164 ms | 0.70 | 0.00 | 1% | ok |
+| direct3d | sparse_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.438 ms | 0.32 | 1.29 | 2%\* | ok |
+| direct3d | supernodal_lu.analyze | f64 | 20^3 grid, nnz 53600 | 8.543 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | supernodal_lu.factor | f64 | 20^3 grid, nnz 53600 | 495.209 ms | 1.25 | 0.00 | 2% | ok |
+| direct3d | supernodal_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.386 ms | 0.32 | 1.30 | 2%\* | ok |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 40.388 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 61.005 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 32.127 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 17.299 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 22.444 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 17.993 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 58.391 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 35.016 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 20.180 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 26.997 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 25.647 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 26.829 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 35.547 ms | 0.00 | 0.00 | n/a | ok |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | 0.043 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ilu_0 | f64 | 128^2 grid | 2.407 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ilut | f64 | 128^2 grid | 22.336 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ic_0 | f64 | 128^2 grid | 1.816 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ildl | f64 | 128^2 grid | 1.737 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ssor | f64 | 128^2 grid | 0.029 ms | 0.00 | 0.00 | n/a | ok |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 0.652 ms | 0.00 | 0.00 | n/a | ok |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 1.652 ms | 1.58 | 17.75 | 33% | ok |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 1.527 ms | 1.71 | 19.20 | 36% | ok |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 1.829 ms | 1.43 | 16.04 | 30% | ok |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 16.215 ms | 2.37 | 17.93 | 33% | ok |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 32.445 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 32.823 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 51.936 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 7.974 ms | 0.00 | 0.00 | n/a | ok |
+| mixed | dot | f32>f64 | n=8388608 | 11.383 ms | 1.47 | 5.90 | 11% | ok |
+| mixed | gemm | f32>f64 | 512x512x512 | 29.078 ms | 9.23 | 0.14 | 12% | ok |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 1.469 ms | 11.42 | 12.13 | 23% | ok |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 3.197 ms | 5.25 | 20.99 | n/a | ok |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 2.881 ms | 5.82 | 11.64 | n/a | ok |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 1.388 ms | 12.08 | 12.08 | n/a | ok |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.389 ms | 12.08 | 12.08 | n/a | ok |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 8.072 ms | 33.25 | 0.39 | n/a | ok |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 30.303 ms | 8.86 | 0.07 | n/a | ok |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 27.287 ms | 9.84 | 0.06 | n/a | ok |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 27.513 ms | 9.76 | 0.06 | n/a | ok |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 27.287 ms | 9.84 | 0.06 | n/a | ok |
+
+\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
+
+## ryzen-7-8845hs -- native, 8 threads, class medium
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 8845HS w/ Radeon 780M Graphics (x86_64, 16 logical cores) |
+| OS | Windows 10.0.26300 (26H2) |
+| compiler | MSVC 19.52.37029 |
+| build | `/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG`, SIMD scalar |
+| commit | `b2d022726b3d` |
+| FMA peak (ceiling) | f64 626.3 GFLOP/s, f32 1255.2 GFLOP/s |
+| ... hardware, AVX-512F | f64 626.3, f32 1255.2 GFLOP/s |
+| ... this build, scalar | f64 12.3, f32 14.3 GFLOP/s |
+| bandwidth | read 53.0, update 53.0, triad 41.2 GB/s (ceiling 53.0) |
+| last-level cache | 16 MiB |
+
+| area | entries | median %roof | best %roof | failed checks | median parallel efficiency |
+|---|---:|---:|---:|---:|---:|
+| blas1 | 10 | 95% | 129% | 0 | 42% |
+| blas2 | 10 | 75% | 111% | 0 | 13% |
+| blas3 | 10 | 2% | 18% | 0 | 12% |
+| factor | 12 | 1% | 8% | 0 | 19% |
+| eigen | 8 | 0% | 2% | 0 | 12% |
+| elementwise | 5 | 8% | 12% | 0 | 12% |
+| sparse | 5 | 37% | 249% | 0 | 13% |
+| direct | 19 | 0% | 20% | 0 | 12% |
+| ordering | 5 | n/a | n/a | 0 | 12% |
+| direct3d | 12 | 2% | 13% | 0 | 12% |
+| krylov | 13 | n/a | n/a | 0 | 12% |
+| pc | 7 | n/a | n/a | 0 | 12% |
+| smoother | 3 | 35% | 38% | 0 | 13% |
+| mg | 1 | 36% | 36% | 0 | 13% |
+| sparse_eig | 4 | n/a | n/a | 0 | 13% |
+| mixed | 3 | 11% | 23% | 0 | 12% |
+| integer | 9 | n/a | n/a | 0 | 86% |
+
+| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
+|---|---|---|---|---:|---:|---:|---:|---|---:|
+| blas1 | dot | f64 | n=8388608 | 2.289 ms | 7.33 | 58.63 | 111% | ok | 5.0x (63%) |
+| blas1 | dot | f32 | n=8388608 | 1.336 ms | 12.56 | 50.24 | 95% | ok | 7.3x (92%) |
+| blas1 | axpy | f64 | n=8388608 | 3.525 ms | 4.76 | 57.11 | 108% | ok | 3.4x (42%) |
+| blas1 | axpy | f32 | n=8388608 | 1.770 ms | 9.48 | 56.87 | 107% | ok | 6.7x (84%) |
+| blas1 | scale | f64 | n=8388608 | 1.966 ms | 4.27 | 68.26 | 129% | ok | 1.2x (15%) |
+| blas1 | two_norm | f64 | n=8388608 | 1.442 ms | 11.64 | 46.54 | 88% | ok | 7.3x (92%) |
+| blas1 | one_norm | f64 | n=8388608 | 5.062 ms | 1.66 | 13.26 | 25% | ok | 1.0x (12%) |
+| blas1 | infinity_norm | f64 | n=8388608 | 5.093 ms | 1.65 | 13.18 | 25% | ok | 1.0x (12%) |
+| blas1 | sum | f64 | n=8388608 | 5.063 ms | 1.66 | 13.26 | 25% | ok | 1.0x (12%) |
+| blas1 | dot_k3 | f64 | n=8388608 | 85.932 ms | 2.15 | 1.56 | 3% | ok | 1.1x (13%) |
+| blas2 | gemv | f64 | n=4096 | 2.378 ms | 14.11 | 56.46 | 107% | ok | 1.3x (16%) |
+| blas2 | gemv | f32 | n=4096 | 1.161 ms | 28.90 | 57.82 | 109% | ok | 2.0x (25%) |
+| blas2 | gemv_colmajor | f64 | n=4096 | 2.288 ms | 14.66 | 58.68 | 111% | ok | 3.1x (39%) |
+| blas2 | gemv_colmajor | f32 | n=4096 | 1.151 ms | 29.16 | 58.35 | 110% | ok | 1.9x (24%) |
+| blas2 | symv | f64 | n=4096 | 2.871 ms | 11.69 | 23.40 | 44% | ok | 1.0x (12%) |
+| blas2 | trmv | f64 | n=4096 | 1.698 ms | 9.88 | 39.56 | 75% | ok | 1.0x (12%) |
+| blas2 | trmv | f32 | n=4096 | 1.523 ms | 11.02 | 22.06 | 42% | ok | 1.0x (12%) |
+| blas2 | trsv | f64 | n=4096 | 1.704 ms | 9.85 | 39.43 | 74% | ok | 1.0x (13%) |
+| blas2 | trsv | f32 | n=4096 | 1.501 ms | 11.17 | 22.37 | 42% | ok | 1.0x (13%) |
+| blas2 | ger | f64 | n=4096 | 13.606 ms | 2.47 | 19.73 | 37% | ok | 1.0x (12%) |
+| blas3 | gemm | f64 | 512x512x512 | 2.467 ms | 108.83 | 2.55 | 17% | ok | 6.7x (84%) |
+| blas3 | gemm | f32 | 512x512x512 | 1.199 ms | 223.96 | 2.62 | 18% | ok | 6.9x (86%) |
+| blas3 | gemmt | f64 | 512x512x512 | 11.511 ms | 11.66 | 0.55 | 2% | ok | 1.0x (12%) |
+| blas3 | symm | f64 | 512x512x512 | 17.334 ms | 15.49 | 0.36 | 2% | ok | 1.0x (12%) |
+| blas3 | syrk | f64 | 512x512x512 | 13.735 ms | 9.77 | 0.31 | 2% | ok | 1.0x (12%) |
+| blas3 | syr2k | f64 | 512x512x512 | 23.265 ms | 11.54 | 0.27 | 2% | ok | 1.0x (12%) |
+| blas3 | trmm | f64 | 512x512x512 | 25.580 ms | 5.25 | 0.20 | 1% | ok | 1.0x (12%) |
+| blas3 | trsm | f64 | 512x512x512 | 26.927 ms | 4.98 | 0.19 | 1% | ok | 1.0x (12%) |
+| blas3 | trsm | f32 | 512x512x512 | 26.285 ms | 5.11 | 0.10 | 0% | ok | 1.0x (12%) |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 9.453 ms | 0.56 | 4.49 | 8% | ok | 1.0x (12%) |
+| factor | lu | f64 | 512x512 | 21.733 ms | 4.12 | 0.19 | 1% | ok | 1.5x (19%) |
+| factor | lu | f32 | 512x512 | 20.490 ms | 4.37 | 0.10 | 0% | ok | 1.5x (19%) |
+| factor | cholesky | f64 | 512x512 | 11.364 ms | 3.94 | 0.37 | 1%\* | ok | 1.0x (12%) |
+| factor | cholesky | f32 | 512x512 | 10.905 ms | 4.10 | 0.19 | 0%\* | ok | 1.0x (12%) |
+| factor | ldlt | f64 | 512x512 | 11.442 ms | 3.91 | 0.37 | 1%\* | ok | 1.0x (12%) |
+| factor | ldlt_bk | f64 | 512x512 | 10.482 ms | 4.27 | 0.40 | 1%\* | ok | 1.0x (12%) |
+| factor | qr | f64 | 512x512 | 397.787 ms | 0.45 | 0.01 | 0% | ok | 1.6x (20%) |
+| factor | lq | f64 | 512x512 | 41.206 ms | 4.34 | 0.10 | 1% | ok | 1.6x (20%) |
+| factor | hessenberg | f64 | 512x512 | 454.120 ms | 0.99 | 0.01 | 0% | ok | 1.6x (20%) |
+| factor | householder | f64 | 512x512 | 1.006 ms | 1.04 | 4.17 | 8%\* | ok | 3.9x (49%) |
+| factor | inv | f64 | 512x512 | 77.559 ms | 3.46 | 0.05 | 1% | ok | 1.1x (14%) |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 23.263 ms | 3.85 | 0.18 | 1% | ok | 1.5x (18%) |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 40.138 ms | 0.56 | 0.03 | 0% | ok | 0.9x (12%) |
+| eigen | eigen_symmetric | f64 | 256x256 | 132.422 ms | 1.14 | 0.01 | 0% | ok | 1.0x (12%) |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 515.030 ms | 0.29 | 0.00 | 0% | ok | 1.0x (13%) |
+| eigen | eigenvalue | f64 | 256x256 | 61.470 ms | 2.73 | 0.02 | 0% | ok | 1.0x (12%) |
+| eigen | schur | f64 | 256x256 | 114.178 ms | 3.67 | 0.01 | 1% | ok | 1.0x (12%) |
+| eigen | svd | f64 | 256x256 | 118.635 ms | 3.11 | 0.01 | 0% | ok | 1.0x (12%) |
+| eigen | expm | f64 | 256x256 | 18.513 ms | 13.59 | 0.06 | 2% | ok | 1.6x (20%) |
+| eigen | sylvester | f64 | 256x256 | 251.992 ms | 3.99 | 0.01 | 1% | ok | 1.0x (13%) |
+| elementwise | exp | f64 | n=8388608 | 27.914 ms | 0.30 | 4.81 | 9% | ok | 1.0x (12%) |
+| elementwise | log | f64 | n=8388608 | 42.403 ms | 0.20 | 3.17 | 6% | ok | 1.0x (12%) |
+| elementwise | sin | f64 | n=8388608 | 39.821 ms | 0.21 | 3.37 | 6% | ok | 1.0x (12%) |
+| elementwise | sqrt | f64 | n=8388608 | 21.267 ms | 0.39 | 6.31 | 12% | ok | 1.0x (13%) |
+| elementwise | erf | f64 | n=8388608 | 31.818 ms | 0.26 | 4.22 | 8% | ok | 1.0x (12%) |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 0.207 ms | 12.67 | 131.80 | 249% ! | ok | 4.3x (54%) |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 1.380 ms | 1.90 | 19.74 | 37% | ok | 1.0x (12%) |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 2.263 ms | 18.51 | 38.91 | 73% | ok | 2.9x (36%) |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 17.608 ms | 0.19 | 0.65 | 1%\* | ok | 1.0x (13%) |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 1.620 ms | 1.24 | 10.28 | 19%\* | ok | 1.0x (13%) |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 19.235 ms | 0.58 | 0.04 | 0% | ok | 1.0x (12%) |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 31.400 ms | 0.36 | 0.02 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 15.666 ms | 0.71 | 0.05 | 0% | ok | 1.0x (12%) |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 54.052 ms | 0.41 | 0.01 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 58.239 ms | 0.38 | 0.01 | 0% | ok | 1.0x (12%) |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | 25.671 ms | 0.87 | 0.03 | 0% | ok | 1.0x (12%) |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | 38.419 ms | 0.05 | 0.00 | 0%\* | ok | 1.0x (12%) |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | 3.730 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | 5.679 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | nested_dissection | f64 | 96^2 grid, nnz 45696, scrambled | 60.463 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | 0.228 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 14.256 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_cholesky.analyze | f64 | 96^2 grid, nnz 45696 | 3.028 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_cholesky.factor | f64 | 96^2 grid, nnz 45696 | 14.239 ms | 0.79 | 0.05 | 0% | ok | 1.0x (12%) |
+| direct | sparse_cholesky.solve | f64 | 96^2 grid, nnz 45696 | 0.278 ms | 2.72 | 10.86 | 20%\* | ok | 1.0x (13%) |
+| direct | supernodal_ldlt.analyze | f64 | 96^2 grid, nnz 45696 | 6.698 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | supernodal_ldlt.factor | f64 | 96^2 grid, nnz 45696 | 6.009 ms | 1.86 | 0.12 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_ldlt.solve | f64 | 96^2 grid, nnz 45696 | 0.278 ms | 2.72 | 10.86 | 20%\* | ok | 1.0x (13%) |
+| direct | sparse_lu.analyze | f64 | 96^2 grid, nnz 45696 | 3.366 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_lu.factor | f64 | 96^2 grid, nnz 45696 | 50.354 ms | 0.44 | 0.01 | 0% | ok | 0.9x (12%) |
+| direct | sparse_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.155 ms | 0.65 | 2.62 | 5%\* | ok | 1.0x (12%) |
+| direct | supernodal_lu.analyze | f64 | 96^2 grid, nnz 45696 | 4.834 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | supernodal_lu.factor | f64 | 96^2 grid, nnz 45696 | 49.100 ms | 0.46 | 0.01 | 0% | ok | 1.0x (13%) |
+| direct | supernodal_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.129 ms | 0.67 | 2.68 | 5%\* | ok | 1.0x (12%) |
+| direct3d | sparse_cholesky.analyze | f64 | 20^3 grid, nnz 53600 | 5.614 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | sparse_cholesky.factor | f64 | 20^3 grid, nnz 53600 | 257.362 ms | 1.20 | 0.00 | 0% | ok | 1.0x (12%) |
+| direct3d | sparse_cholesky.solve | f64 | 20^3 grid, nnz 53600 | 2.011 ms | 1.68 | 6.70 | 13%\* | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.analyze | f64 | 20^3 grid, nnz 53600 | 13.873 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.factor | f64 | 20^3 grid, nnz 53600 | 69.327 ms | 4.45 | 0.01 | 1% | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.solve | f64 | 20^3 grid, nnz 53600 | 2.090 ms | 1.61 | 6.45 | 12%\* | ok | 1.0x (12%) |
+| direct3d | sparse_lu.analyze | f64 | 20^3 grid, nnz 53600 | 6.168 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | sparse_lu.factor | f64 | 20^3 grid, nnz 53600 | 956.072 ms | 0.65 | 0.00 | 0% | ok | 0.9x (12%) |
+| direct3d | sparse_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.553 ms | 0.32 | 1.28 | 2%\* | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.analyze | f64 | 20^3 grid, nnz 53600 | 8.552 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.factor | f64 | 20^3 grid, nnz 53600 | 496.745 ms | 1.24 | 0.00 | 0% | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.543 ms | 0.32 | 1.28 | 2%\* | ok | 1.0x (12%) |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 40.397 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 60.780 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 32.112 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 17.347 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 22.583 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 18.143 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 61.249 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 38.421 ms | 0.00 | 0.00 | n/a | ok | 0.9x (11%) |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 20.326 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 28.144 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 26.341 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 27.108 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 36.011 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | 0.063 ms | 0.00 | 0.00 | n/a | ok | 0.7x (9%) |
+| pc | ilu_0 | f64 | 128^2 grid | 2.403 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| pc | ilut | f64 | 128^2 grid | 23.206 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ic_0 | f64 | 128^2 grid | 1.818 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ildl | f64 | 128^2 grid | 1.746 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ssor | f64 | 128^2 grid | 0.030 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 0.660 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 1.456 ms | 1.80 | 20.15 | 38% | ok | 1.1x (14%) |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 1.578 ms | 1.66 | 18.59 | 35% | ok | 1.0x (12%) |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 1.799 ms | 1.46 | 16.30 | 31% | ok | 1.0x (13%) |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 15.235 ms | 2.52 | 19.08 | 36% | ok | 1.1x (13%) |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 32.376 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 32.896 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 52.782 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 7.955 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| mixed | dot | f32>f64 | n=8388608 | 11.431 ms | 1.47 | 5.87 | 11% | ok | 1.0x (12%) |
+| mixed | gemm | f32>f64 | 512x512x512 | 4.020 ms | 66.78 | 1.04 | 11% | ok | 7.2x (90%) |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 1.490 ms | 11.26 | 11.96 | 23% | ok | 1.0x (12%) |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 3.275 ms | 5.12 | 20.49 | n/a | ok | 1.0x (12%) |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 2.887 ms | 5.81 | 11.62 | n/a | ok | 1.0x (12%) |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 1.402 ms | 11.97 | 11.97 | n/a | ok | 1.0x (12%) |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.402 ms | 11.97 | 11.97 | n/a | ok | 1.0x (12%) |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 1.170 ms | 229.41 | 2.69 | n/a | ok | 6.9x (86%) |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 4.164 ms | 64.47 | 0.50 | n/a | ok | 7.3x (91%) |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 3.767 ms | 71.27 | 0.42 | n/a | ok | 7.2x (91%) |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 3.775 ms | 71.11 | 0.42 | n/a | ok | 7.3x (91%) |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 3.788 ms | 70.86 | 0.42 | n/a | ok | 7.2x (90%) |
+
+\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
+
+! more than 150% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong.
+
+## ryzen-7-8845hs -- native-fast, 1 thread, class medium
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 8845HS w/ Radeon 780M Graphics (x86_64, 16 logical cores) |
+| OS | Windows 10.0.26300 (26H2) |
+| compiler | MSVC 19.52.37029 |
+| build | `/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG`, SIMD SSE2 |
+| commit | `b2d022726b3d` |
+| FMA peak (ceiling) | f64 80.1 GFLOP/s, f32 160.1 GFLOP/s |
+| ... hardware, AVX-512F | f64 80.1, f32 160.1 GFLOP/s |
+| ... this build, SSE2 | f64 40.0, f32 80.1 GFLOP/s |
+| bandwidth | read 46.9, update 53.2, triad 38.8 GB/s (ceiling 53.2) |
+| last-level cache | 16 MiB |
+
+| area | entries | median %roof | best %roof | failed checks |
+|---|---:|---:|---:|---:|
+| blas1 | 10 | 104% | 131% | 0 |
+| blas2 | 10 | 64% | 80% | 0 |
+| blas3 | 10 | 23% | 30% | 0 |
+| factor | 12 | 3% | 5% | 0 |
+| eigen | 8 | 4% | 12% | 0 |
+| elementwise | 5 | 8% | 12% | 0 |
+| sparse | 5 | 25% | 58% | 0 |
+| direct | 19 | 1% | 21% | 0 |
+| ordering | 5 | n/a | n/a | 0 |
+| direct3d | 12 | 2% | 13% | 0 |
+| krylov | 13 | n/a | n/a | 0 |
+| pc | 7 | n/a | n/a | 0 |
+| smoother | 3 | 31% | 37% | 0 |
+| mg | 1 | 34% | 34% | 0 |
+| sparse_eig | 4 | n/a | n/a | 0 |
+| mixed | 3 | 71% | 71% | 0 |
+| integer | 9 | n/a | n/a | 0 |
+
+| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
+|---|---|---|---|---:|---:|---:|---:|---|
+| blas1 | dot | f64 | n=8388608 | 2.424 ms | 6.92 | 55.36 | 104% | ok |
+| blas1 | dot | f32 | n=8388608 | 1.219 ms | 13.76 | 55.06 | 103% | ok |
+| blas1 | axpy | f64 | n=8388608 | 3.486 ms | 4.81 | 57.76 | 109% | ok |
+| blas1 | axpy | f32 | n=8388608 | 1.669 ms | 10.05 | 60.30 | 113% | ok |
+| blas1 | scale | f64 | n=8388608 | 1.932 ms | 4.34 | 69.45 | 131% | ok |
+| blas1 | two_norm | f64 | n=8388608 | 1.162 ms | 14.43 | 57.73 | 108% | ok |
+| blas1 | one_norm | f64 | n=8388608 | 5.062 ms | 1.66 | 13.26 | 25% | ok |
+| blas1 | infinity_norm | f64 | n=8388608 | 5.072 ms | 1.65 | 13.23 | 25% | ok |
+| blas1 | sum | f64 | n=8388608 | 5.062 ms | 1.66 | 13.26 | 25% | ok |
+| blas1 | dot_k3 | f64 | n=8388608 | 88.684 ms | 2.08 | 1.51 | 3% | ok |
+| blas2 | gemv | f64 | n=4096 | 3.349 ms | 10.02 | 40.09 | 75% | ok |
+| blas2 | gemv | f32 | n=4096 | 1.569 ms | 21.39 | 42.80 | 80% | ok |
+| blas2 | gemv_colmajor | f64 | n=4096 | 3.955 ms | 8.48 | 33.95 | 64% | ok |
+| blas2 | gemv_colmajor | f32 | n=4096 | 2.153 ms | 15.58 | 31.18 | 59% | ok |
+| blas2 | symv | f64 | n=4096 | 2.790 ms | 12.03 | 24.08 | 45% | ok |
+| blas2 | trmv | f64 | n=4096 | 1.817 ms | 9.23 | 36.97 | 69% | ok |
+| blas2 | trmv | f32 | n=4096 | 1.090 ms | 15.39 | 30.80 | 58% | ok |
+| blas2 | trsv | f64 | n=4096 | 1.795 ms | 9.35 | 37.43 | 70% | ok |
+| blas2 | trsv | f32 | n=4096 | 1.086 ms | 15.45 | 30.93 | 58% | ok |
+| blas2 | ger | f64 | n=4096 | 13.596 ms | 2.47 | 19.75 | 37% | ok |
+| blas3 | gemm | f64 | 512x512x512 | 11.027 ms | 24.34 | 0.57 | 30% | ok |
+| blas3 | gemm | f32 | 512x512x512 | 5.593 ms | 48.00 | 0.56 | 30% | ok |
+| blas3 | gemmt | f64 | 512x512x512 | 7.494 ms | 17.91 | 0.84 | 22% | ok |
+| blas3 | symm | f64 | 512x512x512 | 12.040 ms | 22.30 | 0.52 | 28% | ok |
+| blas3 | syrk | f64 | 512x512x512 | 7.407 ms | 18.12 | 0.57 | 23% | ok |
+| blas3 | syr2k | f64 | 512x512x512 | 14.202 ms | 18.90 | 0.44 | 24% | ok |
+| blas3 | trmm | f64 | 512x512x512 | 9.708 ms | 13.82 | 0.54 | 17% | ok |
+| blas3 | trsm | f64 | 512x512x512 | 9.830 ms | 13.65 | 0.53 | 17% | ok |
+| blas3 | trsm | f32 | 512x512x512 | 6.441 ms | 20.84 | 0.41 | 13% | ok |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 9.439 ms | 0.56 | 4.50 | 8% | ok |
+| factor | lu | f64 | 512x512 | 32.853 ms | 2.72 | 0.13 | 3% | ok |
+| factor | lu | f32 | 512x512 | 31.140 ms | 2.87 | 0.07 | 2% | ok |
+| factor | cholesky | f64 | 512x512 | 11.346 ms | 3.94 | 0.37 | 5% | ok |
+| factor | cholesky | f32 | 512x512 | 10.888 ms | 4.11 | 0.19 | 3% | ok |
+| factor | ldlt | f64 | 512x512 | 11.423 ms | 3.92 | 0.37 | 5% | ok |
+| factor | ldlt_bk | f64 | 512x512 | 10.331 ms | 4.33 | 0.41 | 5% | ok |
+| factor | qr | f64 | 512x512 | 649.118 ms | 0.28 | 0.01 | 0% | ok |
+| factor | lq | f64 | 512x512 | 65.056 ms | 2.75 | 0.06 | 3% | ok |
+| factor | hessenberg | f64 | 512x512 | 745.110 ms | 0.60 | 0.01 | 1% | ok |
+| factor | householder | f64 | 512x512 | 3.913 ms | 0.27 | 1.07 | 2%\* | ok |
+| factor | inv | f64 | 512x512 | 88.622 ms | 3.03 | 0.05 | 4% | ok |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 34.025 ms | 2.63 | 0.12 | 3% | ok |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 37.564 ms | 0.60 | 0.03 | 1% | ok |
+| eigen | eigen_symmetric | f64 | 256x256 | 127.855 ms | 1.18 | 0.01 | 1% | ok |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 516.999 ms | 0.29 | 0.00 | 0% | ok |
+| eigen | eigenvalue | f64 | 256x256 | 55.724 ms | 3.01 | 0.02 | 4% | ok |
+| eigen | schur | f64 | 256x256 | 114.140 ms | 3.67 | 0.01 | 5% | ok |
+| eigen | svd | f64 | 256x256 | 118.189 ms | 3.12 | 0.01 | 4% | ok |
+| eigen | expm | f64 | 256x256 | 25.631 ms | 9.82 | 0.04 | 12% | ok |
+| eigen | sylvester | f64 | 256x256 | 257.632 ms | 3.91 | 0.01 | 5% | ok |
+| elementwise | exp | f64 | n=8388608 | 27.505 ms | 0.30 | 4.88 | 9% | ok |
+| elementwise | log | f64 | n=8388608 | 42.005 ms | 0.20 | 3.20 | 6% | ok |
+| elementwise | sin | f64 | n=8388608 | 39.402 ms | 0.21 | 3.41 | 6% | ok |
+| elementwise | sqrt | f64 | n=8388608 | 21.319 ms | 0.39 | 6.30 | 12% | ok |
+| elementwise | erf | f64 | n=8388608 | 31.505 ms | 0.27 | 4.26 | 8% | ok |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 0.883 ms | 2.96 | 30.85 | 58% | ok |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 1.429 ms | 1.83 | 19.06 | 36% | ok |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 6.719 ms | 6.23 | 13.10 | 25% | ok |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 17.742 ms | 0.18 | 0.65 | 1%\* | ok |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 1.968 ms | 1.02 | 8.46 | 16%\* | ok |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 18.993 ms | 0.59 | 0.04 | 1% | ok |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 28.032 ms | 0.40 | 0.03 | 0% | ok |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 13.529 ms | 0.83 | 0.05 | 1% | ok |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 56.133 ms | 0.40 | 0.01 | 0% | ok |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 56.922 ms | 0.39 | 0.01 | 0% | ok |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | 24.904 ms | 0.90 | 0.03 | 1% | ok |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | 37.553 ms | 0.05 | 0.00 | 0% | ok |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | 3.614 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | 5.572 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | nested_dissection | f64 | 96^2 grid, nnz 45696, scrambled | 60.305 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | 0.222 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 13.932 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_cholesky.analyze | f64 | 96^2 grid, nnz 45696 | 2.931 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_cholesky.factor | f64 | 96^2 grid, nnz 45696 | 14.701 ms | 0.76 | 0.05 | 1% | ok |
+| direct | sparse_cholesky.solve | f64 | 96^2 grid, nnz 45696 | 0.274 ms | 2.76 | 11.05 | 21%\* | ok |
+| direct | supernodal_ldlt.analyze | f64 | 96^2 grid, nnz 45696 | 6.641 ms | 0.00 | 0.00 | n/a | ok |
+| direct | supernodal_ldlt.factor | f64 | 96^2 grid, nnz 45696 | 5.962 ms | 1.88 | 0.12 | 2% | ok |
+| direct | supernodal_ldlt.solve | f64 | 96^2 grid, nnz 45696 | 0.274 ms | 2.76 | 11.03 | 21%\* | ok |
+| direct | sparse_lu.analyze | f64 | 96^2 grid, nnz 45696 | 3.317 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_lu.factor | f64 | 96^2 grid, nnz 45696 | 47.431 ms | 0.47 | 0.02 | 1% | ok |
+| direct | sparse_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.155 ms | 0.65 | 2.62 | 5%\* | ok |
+| direct | supernodal_lu.analyze | f64 | 96^2 grid, nnz 45696 | 4.773 ms | 0.00 | 0.00 | n/a | ok |
+| direct | supernodal_lu.factor | f64 | 96^2 grid, nnz 45696 | 49.667 ms | 0.45 | 0.01 | 1% | ok |
+| direct | supernodal_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.052 ms | 0.72 | 2.88 | 5%\* | ok |
+| direct3d | sparse_cholesky.analyze | f64 | 20^3 grid, nnz 53600 | 5.580 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | sparse_cholesky.factor | f64 | 20^3 grid, nnz 53600 | 258.243 ms | 1.19 | 0.00 | 1% | ok |
+| direct3d | sparse_cholesky.solve | f64 | 20^3 grid, nnz 53600 | 1.986 ms | 1.70 | 6.78 | 13%\* | ok |
+| direct3d | supernodal_ldlt.analyze | f64 | 20^3 grid, nnz 53600 | 14.054 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | supernodal_ldlt.factor | f64 | 20^3 grid, nnz 53600 | 68.947 ms | 4.48 | 0.01 | 6% | ok |
+| direct3d | supernodal_ldlt.solve | f64 | 20^3 grid, nnz 53600 | 2.007 ms | 1.68 | 6.71 | 13%\* | ok |
+| direct3d | sparse_lu.analyze | f64 | 20^3 grid, nnz 53600 | 6.159 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | sparse_lu.factor | f64 | 20^3 grid, nnz 53600 | 898.538 ms | 0.69 | 0.00 | 1% | ok |
+| direct3d | sparse_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.416 ms | 0.32 | 1.29 | 2%\* | ok |
+| direct3d | supernodal_lu.analyze | f64 | 20^3 grid, nnz 53600 | 8.526 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | supernodal_lu.factor | f64 | 20^3 grid, nnz 53600 | 497.577 ms | 1.24 | 0.00 | 2% | ok |
+| direct3d | supernodal_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.457 ms | 0.32 | 1.29 | 2%\* | ok |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 32.654 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 45.638 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 28.331 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 13.486 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 17.930 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 15.730 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 34.401 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 29.491 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 17.312 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 18.607 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 17.499 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 17.631 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 21.526 ms | 0.00 | 0.00 | n/a | ok |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | 0.045 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ilu_0 | f64 | 128^2 grid | 2.382 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ilut | f64 | 128^2 grid | 23.022 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ic_0 | f64 | 128^2 grid | 1.798 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ildl | f64 | 128^2 grid | 1.738 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ssor | f64 | 128^2 grid | 0.030 ms | 0.00 | 0.00 | n/a | ok |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 0.665 ms | 0.00 | 0.00 | n/a | ok |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 1.472 ms | 1.78 | 19.92 | 37% | ok |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 1.776 ms | 1.47 | 16.52 | 31% | ok |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 1.792 ms | 1.46 | 16.37 | 31% | ok |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 16.137 ms | 2.38 | 18.01 | 34% | ok |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 32.399 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 32.845 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 51.939 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 6.456 ms | 0.00 | 0.00 | n/a | ok |
+| mixed | dot | f32>f64 | n=8388608 | 1.779 ms | 9.43 | 37.72 | 71% | ok |
+| mixed | gemm | f32>f64 | 512x512x512 | 15.236 ms | 17.62 | 0.28 | 22% | ok |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 0.473 ms | 35.49 | 37.71 | 71% | ok |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 1.220 ms | 13.75 | 55.00 | n/a | ok |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 0.474 ms | 35.39 | 70.78 | n/a | ok |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 0.348 ms | 48.25 | 48.25 | n/a | ok |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 0.316 ms | 53.06 | 53.06 | n/a | ok |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 14.931 ms | 17.98 | 0.21 | n/a | ok |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 17.330 ms | 15.49 | 0.12 | n/a | ok |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 17.715 ms | 15.15 | 0.09 | n/a | ok |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 3.697 ms | 72.61 | 0.43 | n/a | ok |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 3.677 ms | 73.01 | 0.43 | n/a | ok |
+
+\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
+
+## ryzen-7-8845hs -- native-fast, 8 threads, class medium
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 8845HS w/ Radeon 780M Graphics (x86_64, 16 logical cores) |
+| OS | Windows 10.0.26300 (26H2) |
+| compiler | MSVC 19.52.37029 |
+| build | `/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG`, SIMD SSE2 |
+| commit | `b2d022726b3d` |
+| FMA peak (ceiling) | f64 625.1 GFLOP/s, f32 1248.8 GFLOP/s |
+| ... hardware, AVX-512F | f64 625.1, f32 1248.8 GFLOP/s |
+| ... this build, SSE2 | f64 312.3, f32 624.4 GFLOP/s |
+| bandwidth | read 53.2, update 53.3, triad 41.2 GB/s (ceiling 53.3) |
+| last-level cache | 16 MiB |
+
+| area | entries | median %roof | best %roof | failed checks | median parallel efficiency |
+|---|---:|---:|---:|---:|---:|
+| blas1 | 10 | 113% | 126% | 0 | 13% |
+| blas2 | 10 | 69% | 113% | 0 | 14% |
+| blas3 | 10 | 9% | 18% | 0 | 38% |
+| factor | 12 | 1% | 8% | 0 | 19% |
+| eigen | 8 | 0% | 2% | 0 | 12% |
+| elementwise | 5 | 8% | 12% | 0 | 12% |
+| sparse | 5 | 41% | 292% | 0 | 15% |
+| direct | 19 | 0% | 20% | 0 | 12% |
+| ordering | 5 | n/a | n/a | 0 | 12% |
+| direct3d | 12 | 2% | 13% | 0 | 12% |
+| krylov | 13 | n/a | n/a | 0 | 12% |
+| pc | 7 | n/a | n/a | 0 | 12% |
+| smoother | 3 | 31% | 35% | 0 | 12% |
+| mg | 1 | 36% | 36% | 0 | 13% |
+| sparse_eig | 4 | n/a | n/a | 0 | 12% |
+| mixed | 3 | 68% | 71% | 0 | 12% |
+| integer | 9 | n/a | n/a | 0 | 69% |
+
+| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
+|---|---|---|---|---:|---:|---:|---:|---|---:|
+| blas1 | dot | f64 | n=8388608 | 2.229 ms | 7.53 | 60.22 | 113% | ok | 1.1x (14%) |
+| blas1 | dot | f32 | n=8388608 | 1.008 ms | 16.65 | 66.59 | 125% | ok | 1.2x (15%) |
+| blas1 | axpy | f64 | n=8388608 | 3.476 ms | 4.83 | 57.92 | 109% | ok | 1.0x (13%) |
+| blas1 | axpy | f32 | n=8388608 | 1.623 ms | 10.34 | 62.02 | 116% | ok | 1.0x (13%) |
+| blas1 | scale | f64 | n=8388608 | 1.997 ms | 4.20 | 67.20 | 126% | ok | 1.0x (12%) |
+| blas1 | two_norm | f64 | n=8388608 | 1.077 ms | 15.57 | 62.30 | 117% | ok | 1.1x (13%) |
+| blas1 | one_norm | f64 | n=8388608 | 5.064 ms | 1.66 | 13.25 | 25% | ok | 1.0x (12%) |
+| blas1 | infinity_norm | f64 | n=8388608 | 5.090 ms | 1.65 | 13.18 | 25% | ok | 1.0x (12%) |
+| blas1 | sum | f64 | n=8388608 | 5.062 ms | 1.66 | 13.26 | 25% | ok | 1.0x (12%) |
+| blas1 | dot_k3 | f64 | n=8388608 | 84.562 ms | 2.18 | 1.59 | 3% | ok | 1.0x (13%) |
+| blas2 | gemv | f64 | n=4096 | 2.284 ms | 14.69 | 58.79 | 110% | ok | 1.5x (18%) |
+| blas2 | gemv | f32 | n=4096 | 1.118 ms | 30.00 | 60.03 | 113% | ok | 1.4x (18%) |
+| blas2 | gemv_colmajor | f64 | n=4096 | 2.296 ms | 14.62 | 58.49 | 110% | ok | 1.7x (22%) |
+| blas2 | gemv_colmajor | f32 | n=4096 | 1.189 ms | 28.22 | 56.47 | 106% | ok | 1.8x (23%) |
+| blas2 | symv | f64 | n=4096 | 3.176 ms | 10.56 | 21.15 | 40% | ok | 0.9x (11%) |
+| blas2 | trmv | f64 | n=4096 | 1.834 ms | 9.15 | 36.63 | 69% | ok | 1.0x (12%) |
+| blas2 | trmv | f32 | n=4096 | 0.990 ms | 16.95 | 33.93 | 64% | ok | 1.1x (14%) |
+| blas2 | trsv | f64 | n=4096 | 1.829 ms | 9.17 | 36.72 | 69% | ok | 1.0x (12%) |
+| blas2 | trsv | f32 | n=4096 | 1.077 ms | 15.57 | 31.17 | 58% | ok | 1.0x (13%) |
+| blas2 | ger | f64 | n=4096 | 13.795 ms | 2.43 | 19.46 | 37% | ok | 1.0x (12%) |
+| blas3 | gemm | f64 | 512x512x512 | 2.377 ms | 112.92 | 2.65 | 18% | ok | 4.6x (58%) |
+| blas3 | gemm | f32 | 512x512x512 | 1.268 ms | 211.68 | 2.48 | 17% | ok | 4.4x (55%) |
+| blas3 | gemmt | f64 | 512x512x512 | 2.867 ms | 46.81 | 2.19 | 7% | ok | 2.6x (33%) |
+| blas3 | symm | f64 | 512x512x512 | 3.077 ms | 87.24 | 2.04 | 14% | ok | 3.9x (49%) |
+| blas3 | syrk | f64 | 512x512x512 | 2.430 ms | 55.23 | 1.73 | 9% | ok | 3.0x (38%) |
+| blas3 | syr2k | f64 | 512x512x512 | 4.693 ms | 57.20 | 1.34 | 9% | ok | 3.0x (38%) |
+| blas3 | trmm | f64 | 512x512x512 | 5.568 ms | 24.11 | 0.94 | 4% | ok | 1.7x (22%) |
+| blas3 | trsm | f64 | 512x512x512 | 5.839 ms | 22.99 | 0.90 | 4% | ok | 1.7x (21%) |
+| blas3 | trsm | f32 | 512x512x512 | 4.430 ms | 30.30 | 0.59 | 2% | ok | 1.5x (18%) |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 9.553 ms | 0.56 | 4.45 | 8% | ok | 1.0x (12%) |
+| factor | lu | f64 | 512x512 | 21.946 ms | 4.08 | 0.19 | 1% | ok | 1.5x (19%) |
+| factor | lu | f32 | 512x512 | 20.818 ms | 4.30 | 0.10 | 0% | ok | 1.5x (19%) |
+| factor | cholesky | f64 | 512x512 | 11.380 ms | 3.93 | 0.37 | 1%\* | ok | 1.0x (12%) |
+| factor | cholesky | f32 | 512x512 | 10.897 ms | 4.11 | 0.19 | 0%\* | ok | 1.0x (12%) |
+| factor | ldlt | f64 | 512x512 | 11.447 ms | 3.91 | 0.37 | 1%\* | ok | 1.0x (12%) |
+| factor | ldlt_bk | f64 | 512x512 | 10.243 ms | 4.37 | 0.41 | 1%\* | ok | 1.0x (13%) |
+| factor | qr | f64 | 512x512 | 399.855 ms | 0.45 | 0.01 | 0% | ok | 1.6x (20%) |
+| factor | lq | f64 | 512x512 | 41.864 ms | 4.27 | 0.10 | 1% | ok | 1.6x (19%) |
+| factor | hessenberg | f64 | 512x512 | 461.996 ms | 0.97 | 0.01 | 0% | ok | 1.6x (20%) |
+| factor | householder | f64 | 512x512 | 1.023 ms | 1.03 | 4.10 | 8%\* | ok | 3.8x (48%) |
+| factor | inv | f64 | 512x512 | 77.904 ms | 3.45 | 0.05 | 1% | ok | 1.1x (14%) |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 23.875 ms | 3.75 | 0.18 | 1% | ok | 1.4x (18%) |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 38.150 ms | 0.59 | 0.03 | 0% | ok | 1.0x (12%) |
+| eigen | eigen_symmetric | f64 | 256x256 | 127.871 ms | 1.18 | 0.01 | 0% | ok | 1.0x (12%) |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 506.029 ms | 0.30 | 0.00 | 0% | ok | 1.0x (13%) |
+| eigen | eigenvalue | f64 | 256x256 | 56.803 ms | 2.95 | 0.02 | 0% | ok | 1.0x (12%) |
+| eigen | schur | f64 | 256x256 | 115.081 ms | 3.64 | 0.01 | 1% | ok | 1.0x (12%) |
+| eigen | svd | f64 | 256x256 | 119.649 ms | 3.08 | 0.01 | 0% | ok | 1.0x (12%) |
+| eigen | expm | f64 | 256x256 | 18.071 ms | 13.93 | 0.06 | 2% | ok | 1.4x (18%) |
+| eigen | sylvester | f64 | 256x256 | 261.320 ms | 3.85 | 0.01 | 1% | ok | 1.0x (12%) |
+| elementwise | exp | f64 | n=8388608 | 28.115 ms | 0.30 | 4.77 | 9% | ok | 1.0x (12%) |
+| elementwise | log | f64 | n=8388608 | 42.594 ms | 0.20 | 3.15 | 6% | ok | 1.0x (12%) |
+| elementwise | sin | f64 | n=8388608 | 40.003 ms | 0.21 | 3.36 | 6% | ok | 1.0x (12%) |
+| elementwise | sqrt | f64 | n=8388608 | 21.301 ms | 0.39 | 6.30 | 12% | ok | 1.0x (13%) |
+| elementwise | erf | f64 | n=8388608 | 31.774 ms | 0.26 | 4.22 | 8% | ok | 1.0x (12%) |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 0.175 ms | 14.96 | 155.60 | 292% ! | ok | 5.0x (63%) |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 1.247 ms | 2.10 | 21.83 | 41% | ok | 1.1x (14%) |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 2.244 ms | 18.66 | 39.23 | 74% | ok | 3.0x (37%) |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 18.725 ms | 0.17 | 0.61 | 1%\* | ok | 0.9x (12%) |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 1.617 ms | 1.24 | 10.29 | 19%\* | ok | 1.2x (15%) |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 18.110 ms | 0.62 | 0.04 | 0% | ok | 1.0x (13%) |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 28.149 ms | 0.40 | 0.03 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 13.270 ms | 0.84 | 0.06 | 0% | ok | 1.0x (13%) |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 54.383 ms | 0.41 | 0.01 | 0% | ok | 1.0x (13%) |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 57.391 ms | 0.39 | 0.01 | 0% | ok | 1.0x (12%) |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | 25.677 ms | 0.87 | 0.03 | 0% | ok | 1.0x (12%) |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | 38.576 ms | 0.05 | 0.00 | 0%\* | ok | 1.0x (12%) |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | 3.719 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | 5.666 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | nested_dissection | f64 | 96^2 grid, nnz 45696, scrambled | 60.803 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | 0.226 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 14.173 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_cholesky.analyze | f64 | 96^2 grid, nnz 45696 | 2.979 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_cholesky.factor | f64 | 96^2 grid, nnz 45696 | 14.459 ms | 0.77 | 0.05 | 0% | ok | 1.0x (13%) |
+| direct | sparse_cholesky.solve | f64 | 96^2 grid, nnz 45696 | 0.278 ms | 2.72 | 10.90 | 20%\* | ok | 1.0x (12%) |
+| direct | supernodal_ldlt.analyze | f64 | 96^2 grid, nnz 45696 | 6.657 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | supernodal_ldlt.factor | f64 | 96^2 grid, nnz 45696 | 6.045 ms | 1.85 | 0.12 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_ldlt.solve | f64 | 96^2 grid, nnz 45696 | 0.280 ms | 2.70 | 10.80 | 20%\* | ok | 1.0x (12%) |
+| direct | sparse_lu.analyze | f64 | 96^2 grid, nnz 45696 | 3.361 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_lu.factor | f64 | 96^2 grid, nnz 45696 | 48.058 ms | 0.47 | 0.02 | 0% | ok | 1.0x (12%) |
+| direct | sparse_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.143 ms | 0.66 | 2.65 | 5%\* | ok | 1.0x (13%) |
+| direct | supernodal_lu.analyze | f64 | 96^2 grid, nnz 45696 | 4.832 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | supernodal_lu.factor | f64 | 96^2 grid, nnz 45696 | 49.158 ms | 0.46 | 0.01 | 0% | ok | 1.0x (13%) |
+| direct | supernodal_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.095 ms | 0.69 | 2.76 | 5%\* | ok | 1.0x (12%) |
+| direct3d | sparse_cholesky.analyze | f64 | 20^3 grid, nnz 53600 | 5.567 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| direct3d | sparse_cholesky.factor | f64 | 20^3 grid, nnz 53600 | 259.807 ms | 1.19 | 0.00 | 0% | ok | 1.0x (12%) |
+| direct3d | sparse_cholesky.solve | f64 | 20^3 grid, nnz 53600 | 1.998 ms | 1.69 | 6.74 | 13%\* | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.analyze | f64 | 20^3 grid, nnz 53600 | 13.857 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| direct3d | supernodal_ldlt.factor | f64 | 20^3 grid, nnz 53600 | 69.934 ms | 4.41 | 0.01 | 1% | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.solve | f64 | 20^3 grid, nnz 53600 | 2.061 ms | 1.63 | 6.54 | 12%\* | ok | 1.0x (12%) |
+| direct3d | sparse_lu.analyze | f64 | 20^3 grid, nnz 53600 | 6.203 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | sparse_lu.factor | f64 | 20^3 grid, nnz 53600 | 905.916 ms | 0.68 | 0.00 | 0% | ok | 1.0x (12%) |
+| direct3d | sparse_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.648 ms | 0.32 | 1.27 | 2%\* | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.analyze | f64 | 20^3 grid, nnz 53600 | 8.556 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.factor | f64 | 20^3 grid, nnz 53600 | 497.633 ms | 1.24 | 0.00 | 0% | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.560 ms | 0.32 | 1.28 | 2%\* | ok | 1.0x (12%) |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 32.647 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 46.226 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 28.470 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 13.521 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 17.972 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 15.737 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 34.393 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 29.202 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 17.306 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 18.604 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 17.518 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 17.644 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 21.570 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | 0.045 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ilu_0 | f64 | 128^2 grid | 2.447 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ilut | f64 | 128^2 grid | 22.472 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| pc | ic_0 | f64 | 128^2 grid | 1.790 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| pc | ildl | f64 | 128^2 grid | 1.739 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ssor | f64 | 128^2 grid | 0.030 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 0.669 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 1.575 ms | 1.66 | 18.62 | 35% | ok | 0.9x (12%) |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 1.778 ms | 1.47 | 16.49 | 31% | ok | 1.0x (12%) |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 1.768 ms | 1.48 | 16.59 | 31% | ok | 1.0x (13%) |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 15.271 ms | 2.52 | 19.03 | 36% | ok | 1.1x (13%) |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 32.490 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 32.797 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 52.581 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 6.471 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| mixed | dot | f32>f64 | n=8388608 | 1.784 ms | 9.40 | 37.61 | 71% | ok | 1.0x (12%) |
+| mixed | gemm | f32>f64 | 512x512x512 | 2.626 ms | 102.24 | 1.60 | 16% | ok | 5.8x (73%) |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 0.489 ms | 34.28 | 36.42 | 68% | ok | 1.0x (12%) |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 1.241 ms | 13.52 | 54.08 | n/a | ok | 1.0x (12%) |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 0.463 ms | 36.27 | 72.53 | n/a | ok | 1.0x (13%) |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 0.349 ms | 48.11 | 48.11 | n/a | ok | 1.0x (12%) |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 0.317 ms | 52.94 | 52.94 | n/a | ok | 1.0x (12%) |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 2.408 ms | 111.47 | 1.31 | n/a | ok | 6.2x (78%) |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 2.530 ms | 106.08 | 0.83 | n/a | ok | 6.8x (86%) |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 2.552 ms | 105.19 | 0.62 | n/a | ok | 6.9x (87%) |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 0.662 ms | 405.68 | 2.38 | n/a | ok | 5.6x (70%) |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 0.662 ms | 405.19 | 2.37 | n/a | ok | 5.6x (69%) |
+
+\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
+
+! more than 150% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong.
+
+## ryzen-7-8845hs -- blas, 1 thread, class medium
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 8845HS w/ Radeon 780M Graphics (x86_64, 16 logical cores) |
+| OS | Windows 10.0.26300 (26H2) |
+| compiler | MSVC 19.52.37029 |
+| build | `/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG`, SIMD scalar |
+| commit | `b2d022726b3d` |
+| FMA peak (ceiling) | f64 80.1 GFLOP/s, f32 160.1 GFLOP/s |
+| ... hardware, AVX-512F | f64 80.1, f32 160.1 GFLOP/s |
+| ... this build, scalar | f64 1.9, f32 1.9 GFLOP/s |
+| bandwidth | read 43.1, update 53.0, triad 38.8 GB/s (ceiling 53.0) |
+| last-level cache | 16 MiB |
+
+| area | entries | median %roof | best %roof | failed checks |
+|---|---:|---:|---:|---:|
+| blas1 | 10 | 25% | 111% | 0 |
+| blas2 | 10 | 79% | 90% | 0 |
+| blas3 | 10 | 69% | 92% | 0 |
+| factor | 12 | 13% | 23% | 0 |
+| eigen | 8 | 17% | 53% | 0 |
+| elementwise | 5 | 7% | 12% | 0 |
+| sparse | 5 | 25% | 60% | 0 |
+| direct | 19 | 1% | 20% | 0 |
+| ordering | 5 | n/a | n/a | 0 |
+| direct3d | 12 | 2% | 13% | 0 |
+| krylov | 13 | n/a | n/a | 0 |
+| pc | 7 | n/a | n/a | 0 |
+| smoother | 3 | 31% | 37% | 0 |
+| mg | 1 | 34% | 34% | 0 |
+| sparse_eig | 4 | n/a | n/a | 0 |
+| mixed | 3 | 13% | 23% | 0 |
+| integer | 9 | n/a | n/a | 0 |
+
+| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check |
+|---|---|---|---|---:|---:|---:|---:|---|
+| blas1 | dot | f64 | n=8388608 | 9.517 ms | 1.76 | 14.10 | 27% | ok |
+| blas1 | dot | f32 | n=8388608 | 9.822 ms | 1.71 | 6.83 | 13% | ok |
+| blas1 | axpy | f64 | n=8388608 | 11.989 ms | 1.40 | 16.79 | 32% | ok |
+| blas1 | axpy | f32 | n=8388608 | 11.951 ms | 1.40 | 8.42 | 16% | ok |
+| blas1 | scale | f64 | n=8388608 | 2.287 ms | 3.67 | 58.68 | 111% | ok |
+| blas1 | two_norm | f64 | n=8388608 | 9.797 ms | 1.71 | 6.85 | 13% | ok |
+| blas1 | one_norm | f64 | n=8388608 | 5.063 ms | 1.66 | 13.25 | 25% | ok |
+| blas1 | infinity_norm | f64 | n=8388608 | 5.073 ms | 1.65 | 13.23 | 25% | ok |
+| blas1 | sum | f64 | n=8388608 | 5.062 ms | 1.66 | 13.26 | 25% | ok |
+| blas1 | dot_k3 | f64 | n=8388608 | 89.533 ms | 2.06 | 1.50 | 3% | ok |
+| blas2 | gemv | f64 | n=4096 | 3.478 ms | 9.65 | 38.61 | 73% | ok |
+| blas2 | gemv | f32 | n=4096 | 1.424 ms | 23.56 | 47.14 | 89% | ok |
+| blas2 | gemv_colmajor | f64 | n=4096 | 3.213 ms | 10.44 | 41.79 | 79% | ok |
+| blas2 | gemv_colmajor | f32 | n=4096 | 1.400 ms | 23.96 | 47.95 | 90% | ok |
+| blas2 | symv | f64 | n=4096 | 1.818 ms | 18.46 | 36.95 | 70% | ok |
+| blas2 | trmv | f64 | n=4096 | 1.765 ms | 9.50 | 38.06 | 72% | ok |
+| blas2 | trmv | f32 | n=4096 | 0.989 ms | 16.97 | 33.98 | 64% | ok |
+| blas2 | trsv | f64 | n=4096 | 1.583 ms | 10.60 | 42.45 | 80% | ok |
+| blas2 | trsv | f32 | n=4096 | 0.865 ms | 19.41 | 38.85 | 73% | ok |
+| blas2 | ger | f64 | n=4096 | 6.316 ms | 5.31 | 42.51 | 80% | ok |
+| blas3 | gemm | f64 | 512x512x512 | 3.640 ms | 73.75 | 1.73 | 92% | ok |
+| blas3 | gemm | f32 | 512x512x512 | 1.900 ms | 141.31 | 1.66 | 88% | ok |
+| blas3 | gemmt | f64 | 512x512x512 | 2.731 ms | 49.15 | 2.30 | 61% | ok |
+| blas3 | symm | f64 | 512x512x512 | 3.782 ms | 70.97 | 1.66 | 89% | ok |
+| blas3 | syrk | f64 | 512x512x512 | 2.936 ms | 45.71 | 1.43 | 57% | ok |
+| blas3 | syr2k | f64 | 512x512x512 | 4.829 ms | 55.58 | 1.30 | 69% | ok |
+| blas3 | trmm | f64 | 512x512x512 | 1.889 ms | 71.06 | 2.78 | 89% | ok |
+| blas3 | trsm | f64 | 512x512x512 | 2.833 ms | 47.37 | 1.85 | 59% | ok |
+| blas3 | trsm | f32 | 512x512x512 | 1.341 ms | 100.10 | 1.96 | 63% | ok |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 9.114 ms | 0.58 | 4.66 | 9% | ok |
+| factor | lu | f64 | 512x512 | 4.980 ms | 17.97 | 0.84 | 22% | ok |
+| factor | lu | f32 | 512x512 | 2.473 ms | 36.18 | 0.85 | 23% | ok |
+| factor | cholesky | f64 | 512x512 | 4.362 ms | 10.26 | 0.96 | 13% | ok |
+| factor | cholesky | f32 | 512x512 | 1.720 ms | 26.01 | 1.22 | 16% | ok |
+| factor | ldlt | f64 | 512x512 | 11.767 ms | 3.80 | 0.36 | 5% | ok |
+| factor | ldlt_bk | f64 | 512x512 | 10.351 ms | 4.32 | 0.41 | 5% | ok |
+| factor | qr | f64 | 512x512 | 10.194 ms | 17.55 | 0.41 | 22% | ok |
+| factor | lq | f64 | 512x512 | 64.495 ms | 2.77 | 0.07 | 3% | ok |
+| factor | hessenberg | f64 | 512x512 | 747.227 ms | 0.60 | 0.01 | 1% | ok |
+| factor | householder | f64 | 512x512 | 3.870 ms | 0.27 | 1.08 | 2%\* | ok |
+| factor | inv | f64 | 512x512 | 60.075 ms | 4.47 | 0.07 | 6% | ok |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 5.511 ms | 16.24 | 0.76 | 20% | ok |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 1.702 ms | 13.15 | 0.62 | 16% | ok |
+| eigen | eigen_symmetric | f64 | 256x256 | 131.100 ms | 1.15 | 0.01 | 1% | ok |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 494.349 ms | 0.31 | 0.00 | 0% | ok |
+| eigen | eigenvalue | f64 | 256x256 | 16.977 ms | 9.88 | 0.06 | 12% | ok |
+| eigen | schur | f64 | 256x256 | 22.001 ms | 19.06 | 0.05 | 24% | ok |
+| eigen | svd | f64 | 256x256 | 8.646 ms | 42.69 | 0.12 | 53% | ok |
+| eigen | expm | f64 | 256x256 | 15.568 ms | 16.16 | 0.07 | 20% | ok |
+| eigen | sylvester | f64 | 256x256 | 73.102 ms | 13.77 | 0.02 | 17% | ok |
+| elementwise | exp | f64 | n=8388608 | 27.668 ms | 0.30 | 4.85 | 9% | ok |
+| elementwise | log | f64 | n=8388608 | 43.064 ms | 0.19 | 3.12 | 6% | ok |
+| elementwise | sin | f64 | n=8388608 | 38.982 ms | 0.22 | 3.44 | 6% | ok |
+| elementwise | sqrt | f64 | n=8388608 | 21.355 ms | 0.39 | 6.28 | 12% | ok |
+| elementwise | erf | f64 | n=8388608 | 34.487 ms | 0.24 | 3.89 | 7% | ok |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 0.856 ms | 3.06 | 31.81 | 60% | ok |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 1.298 ms | 2.02 | 20.98 | 40% | ok |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 6.617 ms | 6.33 | 13.31 | 25% | ok |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 17.916 ms | 0.18 | 0.64 | 1%\* | ok |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 1.701 ms | 1.18 | 9.79 | 18%\* | ok |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 19.374 ms | 0.58 | 0.04 | 1% | ok |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 30.979 ms | 0.36 | 0.02 | 0% | ok |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 15.469 ms | 0.72 | 0.05 | 1% | ok |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 53.705 ms | 0.42 | 0.01 | 1% | ok |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 57.279 ms | 0.39 | 0.01 | 0% | ok |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | 24.662 ms | 0.91 | 0.03 | 1% | ok |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | 36.040 ms | 0.05 | 0.01 | 0% | ok |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | 3.638 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | 5.633 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | nested_dissection | f64 | 96^2 grid, nnz 45696, scrambled | 60.805 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | 0.228 ms | 0.00 | 0.00 | n/a | ok |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 14.527 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_cholesky.analyze | f64 | 96^2 grid, nnz 45696 | 2.932 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_cholesky.factor | f64 | 96^2 grid, nnz 45696 | 14.106 ms | 0.79 | 0.05 | 1% | ok |
+| direct | sparse_cholesky.solve | f64 | 96^2 grid, nnz 45696 | 0.292 ms | 2.59 | 10.36 | 20%\* | ok |
+| direct | supernodal_ldlt.analyze | f64 | 96^2 grid, nnz 45696 | 6.852 ms | 0.00 | 0.00 | n/a | ok |
+| direct | supernodal_ldlt.factor | f64 | 96^2 grid, nnz 45696 | 6.013 ms | 1.86 | 0.12 | 2% | ok |
+| direct | supernodal_ldlt.solve | f64 | 96^2 grid, nnz 45696 | 0.290 ms | 2.60 | 10.42 | 20%\* | ok |
+| direct | sparse_lu.analyze | f64 | 96^2 grid, nnz 45696 | 3.355 ms | 0.00 | 0.00 | n/a | ok |
+| direct | sparse_lu.factor | f64 | 96^2 grid, nnz 45696 | 48.025 ms | 0.47 | 0.02 | 1% | ok |
+| direct | sparse_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.148 ms | 0.66 | 2.63 | 5%\* | ok |
+| direct | supernodal_lu.analyze | f64 | 96^2 grid, nnz 45696 | 4.788 ms | 0.00 | 0.00 | n/a | ok |
+| direct | supernodal_lu.factor | f64 | 96^2 grid, nnz 45696 | 49.118 ms | 0.46 | 0.01 | 1% | ok |
+| direct | supernodal_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.115 ms | 0.68 | 2.71 | 5%\* | ok |
+| direct3d | sparse_cholesky.analyze | f64 | 20^3 grid, nnz 53600 | 5.590 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | sparse_cholesky.factor | f64 | 20^3 grid, nnz 53600 | 263.897 ms | 1.17 | 0.00 | 1% | ok |
+| direct3d | sparse_cholesky.solve | f64 | 20^3 grid, nnz 53600 | 1.984 ms | 1.70 | 6.79 | 13%\* | ok |
+| direct3d | supernodal_ldlt.analyze | f64 | 20^3 grid, nnz 53600 | 13.918 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | supernodal_ldlt.factor | f64 | 20^3 grid, nnz 53600 | 69.158 ms | 4.46 | 0.01 | 6% | ok |
+| direct3d | supernodal_ldlt.solve | f64 | 20^3 grid, nnz 53600 | 2.032 ms | 1.66 | 6.63 | 13%\* | ok |
+| direct3d | sparse_lu.analyze | f64 | 20^3 grid, nnz 53600 | 6.168 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | sparse_lu.factor | f64 | 20^3 grid, nnz 53600 | 893.966 ms | 0.69 | 0.00 | 1% | ok |
+| direct3d | sparse_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.405 ms | 0.32 | 1.30 | 2%\* | ok |
+| direct3d | supernodal_lu.analyze | f64 | 20^3 grid, nnz 53600 | 8.505 ms | 0.00 | 0.00 | n/a | ok |
+| direct3d | supernodal_lu.factor | f64 | 20^3 grid, nnz 53600 | 511.891 ms | 1.21 | 0.00 | 2% | ok |
+| direct3d | supernodal_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.518 ms | 0.32 | 1.28 | 2%\* | ok |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 38.978 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 58.235 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 31.838 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 16.678 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 21.747 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 17.749 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 53.903 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 34.510 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 19.817 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 26.095 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 24.558 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 25.504 ms | 0.00 | 0.00 | n/a | ok |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 33.311 ms | 0.00 | 0.00 | n/a | ok |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | 0.043 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ilu_0 | f64 | 128^2 grid | 2.379 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ilut | f64 | 128^2 grid | 21.845 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ic_0 | f64 | 128^2 grid | 1.809 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ildl | f64 | 128^2 grid | 1.784 ms | 0.00 | 0.00 | n/a | ok |
+| pc | ssor | f64 | 128^2 grid | 0.029 ms | 0.00 | 0.00 | n/a | ok |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 1.327 ms | 0.00 | 0.00 | n/a | ok |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 1.515 ms | 1.73 | 19.36 | 37% | ok |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 1.775 ms | 1.47 | 16.53 | 31% | ok |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 1.796 ms | 1.46 | 16.33 | 31% | ok |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 16.106 ms | 2.39 | 18.05 | 34% | ok |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 32.367 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 33.099 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 52.271 ms | 0.00 | 0.00 | n/a | ok |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 7.772 ms | 0.00 | 0.00 | n/a | ok |
+| mixed | dot | f32>f64 | n=8388608 | 9.765 ms | 1.72 | 6.87 | 13% | ok |
+| mixed | gemm | f32>f64 | 512x512x512 | 29.601 ms | 9.07 | 0.14 | 11% | ok |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 1.477 ms | 11.36 | 12.07 | 23% | ok |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 3.260 ms | 5.15 | 20.59 | n/a | ok |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 2.859 ms | 5.87 | 11.74 | n/a | ok |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 1.392 ms | 12.06 | 12.06 | n/a | ok |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.390 ms | 12.07 | 12.07 | n/a | ok |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 8.464 ms | 31.71 | 0.37 | n/a | ok |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 30.281 ms | 8.86 | 0.07 | n/a | ok |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 27.280 ms | 9.84 | 0.06 | n/a | ok |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 27.279 ms | 9.84 | 0.06 | n/a | ok |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 27.269 ms | 9.84 | 0.06 | n/a | ok |
+
+\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
+
+Skipped in this build:
+
+- CHOLMOD not found when this build was configured: `direct/ref_cholmod/f64`, `direct/ref_cholmod.analyze/f64`, `direct/ref_cholmod.factor/f64`, `direct/ref_cholmod.solve/f64`, `direct3d/ref_cholmod.analyze/f64`, `direct3d/ref_cholmod.factor/f64`, `direct3d/ref_cholmod.solve/f64`
+- MKL PARDISO is loaded only on Linux and macOS: `direct/ref_pardiso_spd/f64`, `direct/ref_pardiso_spd.analyze/f64`, `direct/ref_pardiso_spd.factor/f64`, `direct/ref_pardiso_spd.solve/f64`, `direct/ref_pardiso_lu/f64`, `direct/ref_pardiso_lu.analyze/f64`, `direct/ref_pardiso_lu.factor/f64`, `direct/ref_pardiso_lu.solve/f64`, `direct3d/ref_pardiso_spd.analyze/f64`, `direct3d/ref_pardiso_spd.factor/f64`, `direct3d/ref_pardiso_spd.solve/f64`, `direct3d/ref_pardiso_lu.analyze/f64`, `direct3d/ref_pardiso_lu.factor/f64`, `direct3d/ref_pardiso_lu.solve/f64`
+
+## ryzen-7-8845hs -- blas, 8 threads, class medium
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 8845HS w/ Radeon 780M Graphics (x86_64, 16 logical cores) |
+| OS | Windows 10.0.26300 (26H2) |
+| compiler | MSVC 19.52.37029 |
+| build | `/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG`, SIMD scalar |
+| commit | `b2d022726b3d` |
+| FMA peak (ceiling) | f64 624.5 GFLOP/s, f32 1249.3 GFLOP/s |
+| ... hardware, AVX-512F | f64 624.5, f32 1249.3 GFLOP/s |
+| ... this build, scalar | f64 14.4, f32 14.4 GFLOP/s |
+| bandwidth | read 53.3, update 53.7, triad 41.2 GB/s (ceiling 53.7) |
+| last-level cache | 16 MiB |
+
+| area | entries | median %roof | best %roof | failed checks | median parallel efficiency |
+|---|---:|---:|---:|---:|---:|
+| blas1 | 10 | 94% | 125% | 0 | 43% |
+| blas2 | 10 | 100% | 109% | 0 | 17% |
+| blas3 | 10 | 40% | 71% | 0 | 63% |
+| factor | 12 | 2% | 8% | 0 | 11% |
+| eigen | 8 | 2% | 5% | 0 | 11% |
+| elementwise | 5 | 7% | 12% | 0 | 12% |
+| sparse | 5 | 19% | 296% | 0 | 13% |
+| direct | 19 | 0% | 20% | 0 | 12% |
+| ordering | 5 | n/a | n/a | 0 | 12% |
+| direct3d | 12 | 2% | 12% | 0 | 12% |
+| krylov | 13 | n/a | n/a | 0 | 12% |
+| pc | 7 | n/a | n/a | 0 | 12% |
+| smoother | 3 | 35% | 35% | 0 | 12% |
+| mg | 1 | 31% | 31% | 0 | 11% |
+| sparse_eig | 4 | n/a | n/a | 0 | 12% |
+| mixed | 3 | 13% | 22% | 0 | 12% |
+| integer | 9 | n/a | n/a | 0 | 89% |
+
+| area | op | type | shape | median | GFLOP/s | GB/s | %roof | check | speedup (efficiency) |
+|---|---|---|---|---:|---:|---:|---:|---|---:|
+| blas1 | dot | f64 | n=8388608 | 2.264 ms | 7.41 | 59.30 | 110% | ok | 4.2x (53%) |
+| blas1 | dot | f32 | n=8388608 | 1.335 ms | 12.57 | 50.27 | 94% | ok | 7.4x (92%) |
+| blas1 | axpy | f64 | n=8388608 | 3.501 ms | 4.79 | 57.50 | 107% | ok | 3.4x (43%) |
+| blas1 | axpy | f32 | n=8388608 | 1.748 ms | 9.60 | 57.57 | 107% | ok | 6.8x (85%) |
+| blas1 | scale | f64 | n=8388608 | 1.992 ms | 4.21 | 67.37 | 125% | ok | 1.1x (14%) |
+| blas1 | two_norm | f64 | n=8388608 | 1.346 ms | 12.47 | 49.87 | 93% | ok | 7.3x (91%) |
+| blas1 | one_norm | f64 | n=8388608 | 5.063 ms | 1.66 | 13.25 | 25% | ok | 1.0x (12%) |
+| blas1 | infinity_norm | f64 | n=8388608 | 5.096 ms | 1.65 | 13.17 | 25% | ok | 1.0x (12%) |
+| blas1 | sum | f64 | n=8388608 | 5.062 ms | 1.66 | 13.26 | 25% | ok | 1.0x (13%) |
+| blas1 | dot_k3 | f64 | n=8388608 | 83.179 ms | 2.22 | 1.61 | 3% | ok | 1.1x (13%) |
+| blas2 | gemv | f64 | n=4096 | 2.571 ms | 13.05 | 52.22 | 97% | ok | 1.4x (17%) |
+| blas2 | gemv | f32 | n=4096 | 1.158 ms | 28.97 | 57.98 | 108% | ok | 1.2x (15%) |
+| blas2 | gemv_colmajor | f64 | n=4096 | 2.567 ms | 13.07 | 52.32 | 97% | ok | 1.3x (16%) |
+| blas2 | gemv_colmajor | f32 | n=4096 | 1.276 ms | 26.29 | 52.60 | 98% | ok | 1.1x (14%) |
+| blas2 | symv | f64 | n=4096 | 1.245 ms | 26.95 | 53.95 | 100% | ok | 1.5x (18%) |
+| blas2 | trmv | f64 | n=4096 | 1.208 ms | 13.89 | 55.62 | 104% | ok | 1.5x (18%) |
+| blas2 | trmv | f32 | n=4096 | 0.574 ms | 29.22 | 58.49 | 109% | ok | 1.7x (22%) |
+| blas2 | trsv | f64 | n=4096 | 1.701 ms | 9.86 | 39.48 | 74% | ok | 0.9x (12%) |
+| blas2 | trsv | f32 | n=4096 | 0.849 ms | 19.77 | 39.57 | 74% | ok | 1.0x (13%) |
+| blas2 | ger | f64 | n=4096 | 4.661 ms | 7.20 | 57.60 | 107% | ok | 1.4x (17%) |
+| blas3 | gemm | f64 | 512x512x512 | 0.608 ms | 441.36 | 10.34 | 71% | ok | 6.0x (75%) |
+| blas3 | gemm | f32 | 512x512x512 | 0.338 ms | 793.72 | 9.30 | 64% | ok | 5.6x (70%) |
+| blas3 | gemmt | f64 | 512x512x512 | 1.354 ms | 99.13 | 4.65 | 16% | ok | 2.0x (25%) |
+| blas3 | symm | f64 | 512x512x512 | 0.611 ms | 439.63 | 10.30 | 70% | ok | 6.2x (77%) |
+| blas3 | syrk | f64 | 512x512x512 | 1.723 ms | 77.89 | 2.43 | 12% | ok | 1.7x (21%) |
+| blas3 | syr2k | f64 | 512x512x512 | 2.386 ms | 112.51 | 2.64 | 18% | ok | 2.0x (25%) |
+| blas3 | trmm | f64 | 512x512x512 | 0.388 ms | 345.65 | 13.50 | 55% | ok | 4.9x (61%) |
+| blas3 | trsm | f64 | 512x512x512 | 0.536 ms | 250.17 | 9.77 | 40% | ok | 5.3x (66%) |
+| blas3 | trsm | f32 | 512x512x512 | 0.267 ms | 503.44 | 9.83 | 40% | ok | 5.0x (63%) |
+| blas3 | kron | f64 | 48x48 (x) 48x48 | 9.246 ms | 0.57 | 4.59 | 9% | ok | 1.0x (12%) |
+| factor | lu | f64 | 512x512 | 9.191 ms | 9.74 | 0.46 | 2% | ok | 0.5x (7%) |
+| factor | lu | f32 | 512x512 | 4.346 ms | 20.59 | 0.48 | 2% | ok | 0.6x (7%) |
+| factor | cholesky | f64 | 512x512 | 5.932 ms | 7.54 | 0.71 | 1%\* | ok | 0.7x (9%) |
+| factor | cholesky | f32 | 512x512 | 2.343 ms | 19.09 | 0.89 | 2%\* | ok | 0.7x (9%) |
+| factor | ldlt | f64 | 512x512 | 11.807 ms | 3.79 | 0.36 | 1%\* | ok | 1.0x (12%) |
+| factor | ldlt_bk | f64 | 512x512 | 10.253 ms | 4.36 | 0.41 | 1%\* | ok | 1.0x (13%) |
+| factor | qr | f64 | 512x512 | 11.934 ms | 15.00 | 0.35 | 2% | ok | 0.9x (11%) |
+| factor | lq | f64 | 512x512 | 42.651 ms | 4.20 | 0.10 | 1% | ok | 1.5x (19%) |
+| factor | hessenberg | f64 | 512x512 | 456.085 ms | 0.98 | 0.01 | 0% | ok | 1.6x (20%) |
+| factor | householder | f64 | 512x512 | 1.014 ms | 1.04 | 4.14 | 8%\* | ok | 3.8x (48%) |
+| factor | inv | f64 | 512x512 | 66.556 ms | 4.03 | 0.06 | 1% | ok | 0.9x (11%) |
+| factor | lu_iterative_refine | f32>f64 | 512x512 | 7.288 ms | 12.28 | 0.58 | 2% | ok | 0.8x (9%) |
+| eigen | eigenvalue_symmetric | f64 | 256x256 | 3.628 ms | 6.17 | 0.29 | 1% | ok | 0.5x (6%) |
+| eigen | eigen_symmetric | f64 | 256x256 | 132.594 ms | 1.14 | 0.01 | 0% | ok | 1.0x (12%) |
+| eigen | eigen_symmetric_jacobi | f64 | 256x256 | 522.308 ms | 0.29 | 0.00 | 0% | ok | 0.9x (12%) |
+| eigen | eigenvalue | f64 | 256x256 | 21.066 ms | 7.96 | 0.05 | 1% | ok | 0.8x (10%) |
+| eigen | schur | f64 | 256x256 | 26.487 ms | 15.84 | 0.04 | 3% | ok | 0.8x (10%) |
+| eigen | svd | f64 | 256x256 | 11.978 ms | 30.82 | 0.09 | 5% | ok | 0.7x (9%) |
+| eigen | expm | f64 | 256x256 | 17.867 ms | 14.08 | 0.06 | 2% | ok | 0.9x (11%) |
+| eigen | sylvester | f64 | 256x256 | 82.444 ms | 12.21 | 0.02 | 2% | ok | 0.9x (11%) |
+| elementwise | exp | f64 | n=8388608 | 28.249 ms | 0.30 | 4.75 | 9% | ok | 1.0x (12%) |
+| elementwise | log | f64 | n=8388608 | 43.826 ms | 0.19 | 3.06 | 6% | ok | 1.0x (12%) |
+| elementwise | sin | f64 | n=8388608 | 39.359 ms | 0.21 | 3.41 | 6% | ok | 1.0x (12%) |
+| elementwise | sqrt | f64 | n=8388608 | 21.328 ms | 0.39 | 6.29 | 12% | ok | 1.0x (13%) |
+| elementwise | erf | f64 | n=8388608 | 34.988 ms | 0.24 | 3.84 | 7% | ok | 1.0x (12%) |
+| sparse | spmv | f64 | 512^2 grid, nnz 1308672 | 0.171 ms | 15.27 | 158.87 | 296% ! | ok | 5.0x (62%) |
+| sparse | spmv_trans | f64 | 512^2 grid, nnz 1308672 | 3.239 ms | 0.81 | 8.41 | 16% | ok | 0.4x (5%) |
+| sparse | crs_dense | f64 | 512^2 grid, nnz 1308672 x 16 | 2.253 ms | 18.58 | 39.07 | 73% | ok | 2.9x (37%) |
+| sparse | spgemm | f64 | 256^2 grid, nnz 326656 | 18.265 ms | 0.18 | 0.63 | 1%\* | ok | 1.0x (12%) |
+| sparse | lower_solve_level | f64 | 192^2 grid, nnz(L) 1003564 | 1.636 ms | 1.23 | 10.18 | 19%\* | ok | 1.0x (13%) |
+| direct | sparse_cholesky | f64 | 96^2 grid, nnz 45696 | 19.830 ms | 0.56 | 0.04 | 0% | ok | 1.0x (12%) |
+| direct | sparse_ldlt | f64 | 96^2 grid, nnz 45696 | 31.590 ms | 0.35 | 0.02 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_ldlt | f64 | 96^2 grid, nnz 45696 | 16.563 ms | 0.68 | 0.04 | 0% | ok | 0.9x (12%) |
+| direct | sparse_lu | f64 | 96^2 grid, nnz 45696 | 54.973 ms | 0.41 | 0.01 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_lu | f64 | 96^2 grid, nnz 45696 | 58.087 ms | 0.39 | 0.01 | 0% | ok | 1.0x (12%) |
+| direct | native_klu | f64 | 96^2 grid, nnz 45696 | 25.114 ms | 0.89 | 0.03 | 0% | ok | 1.0x (12%) |
+| direct | sparse_qr | f64 | 48^2 grid, nnz 11328 | 36.642 ms | 0.05 | 0.00 | 0%\* | ok | 1.0x (12%) |
+| ordering | amd | f64 | 96^2 grid, nnz 45696, scrambled | 3.762 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | colamd | f64 | 96^2 grid, nnz 45696, columns scrambled | 5.738 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | nested_dissection | f64 | 96^2 grid, nnz 45696, scrambled | 61.555 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | rcm | f64 | 96^2 grid, nnz 45696, scrambled | 0.229 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| ordering | block_triangular_form | f64 | 32 planted blocks, n 8192 | 14.370 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| direct | sparse_cholesky.analyze | f64 | 96^2 grid, nnz 45696 | 2.981 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_cholesky.factor | f64 | 96^2 grid, nnz 45696 | 14.412 ms | 0.78 | 0.05 | 0% | ok | 1.0x (12%) |
+| direct | sparse_cholesky.solve | f64 | 96^2 grid, nnz 45696 | 0.283 ms | 2.68 | 10.70 | 20%\* | ok | 1.0x (13%) |
+| direct | supernodal_ldlt.analyze | f64 | 96^2 grid, nnz 45696 | 7.034 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | supernodal_ldlt.factor | f64 | 96^2 grid, nnz 45696 | 6.029 ms | 1.86 | 0.12 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_ldlt.solve | f64 | 96^2 grid, nnz 45696 | 0.283 ms | 2.67 | 10.69 | 20%\* | ok | 1.0x (13%) |
+| direct | sparse_lu.analyze | f64 | 96^2 grid, nnz 45696 | 3.399 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | sparse_lu.factor | f64 | 96^2 grid, nnz 45696 | 49.639 ms | 0.45 | 0.01 | 0% | ok | 1.0x (12%) |
+| direct | sparse_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.143 ms | 0.66 | 2.65 | 5%\* | ok | 1.0x (13%) |
+| direct | supernodal_lu.analyze | f64 | 96^2 grid, nnz 45696 | 4.837 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct | supernodal_lu.factor | f64 | 96^2 grid, nnz 45696 | 50.035 ms | 0.45 | 0.01 | 0% | ok | 1.0x (12%) |
+| direct | supernodal_lu.solve | f64 | 96^2 grid, nnz 45696 | 1.079 ms | 0.70 | 2.80 | 5%\* | ok | 1.0x (13%) |
+| direct3d | sparse_cholesky.analyze | f64 | 20^3 grid, nnz 53600 | 5.649 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | sparse_cholesky.factor | f64 | 20^3 grid, nnz 53600 | 258.522 ms | 1.19 | 0.00 | 0% | ok | 1.0x (13%) |
+| direct3d | sparse_cholesky.solve | f64 | 20^3 grid, nnz 53600 | 2.010 ms | 1.68 | 6.70 | 12%\* | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.analyze | f64 | 20^3 grid, nnz 53600 | 14.158 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.factor | f64 | 20^3 grid, nnz 53600 | 70.168 ms | 4.40 | 0.01 | 1% | ok | 1.0x (12%) |
+| direct3d | supernodal_ldlt.solve | f64 | 20^3 grid, nnz 53600 | 2.050 ms | 1.64 | 6.57 | 12%\* | ok | 1.0x (12%) |
+| direct3d | sparse_lu.analyze | f64 | 20^3 grid, nnz 53600 | 6.227 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | sparse_lu.factor | f64 | 20^3 grid, nnz 53600 | 900.301 ms | 0.69 | 0.00 | 0% | ok | 1.0x (12%) |
+| direct3d | sparse_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.537 ms | 0.32 | 1.28 | 2%\* | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.analyze | f64 | 20^3 grid, nnz 53600 | 8.572 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.factor | f64 | 20^3 grid, nnz 53600 | 514.710 ms | 1.20 | 0.00 | 0% | ok | 1.0x (12%) |
+| direct3d | supernodal_lu.solve | f64 | 20^3 grid, nnz 53600 | 10.681 ms | 0.32 | 1.26 | 2%\* | ok | 1.0x (12%) |
+| krylov | cg+ic0 | f64 | 128^2 grid, n 16384 | 39.165 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | minres+diag | f64 | 128^2 grid, n 16384 | 58.248 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | bicg+ilu0 | f64 | 128^2 grid, n 16384 | 31.742 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | bicgstab+ilu0 | f64 | 128^2 grid, n 16384 | 16.717 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | bicgstab_ell+ilu0 | f64 | 128^2 grid, n 16384 | 21.730 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | cgs+ilu0 | f64 | 128^2 grid, n 16384 | 17.640 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | gmres30+ilu0 | f64 | 128^2 grid, n 16384 | 54.691 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | qmr+ilu0 | f64 | 128^2 grid, n 16384 | 34.468 ms | 0.00 | 0.00 | n/a | ok | 1.0x (13%) |
+| krylov | tfqmr+ilu0 | f64 | 128^2 grid, n 16384 | 20.010 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s1+ilu0 | f64 | 128^2 grid, n 16384 | 26.113 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s2+ilu0 | f64 | 128^2 grid, n 16384 | 24.681 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s4+ilu0 | f64 | 128^2 grid, n 16384 | 25.562 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| krylov | idr_s8+ilu0 | f64 | 128^2 grid, n 16384 | 33.400 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | diagonal | f64 | 128^2 grid, rows scaled | 0.044 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ilu_0 | f64 | 128^2 grid | 2.410 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ilut | f64 | 128^2 grid | 22.775 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ic_0 | f64 | 128^2 grid | 1.834 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ildl | f64 | 128^2 grid | 1.794 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | ssor | f64 | 128^2 grid | 0.029 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| pc | block_diagonal4 | f64 | 128^2 grid, rows scaled | 1.337 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| smoother | jacobi | f64 | 512^2 grid, nnz 1308672 | 1.567 ms | 1.67 | 18.71 | 35% | ok | 1.0x (12%) |
+| smoother | gauss_seidel | f64 | 512^2 grid, nnz 1308672 | 1.559 ms | 1.68 | 18.82 | 35% | ok | 1.1x (14%) |
+| smoother | sor1.5 | f64 | 512^2 grid, nnz 1308672 | 1.801 ms | 1.45 | 16.28 | 30% | ok | 1.0x (12%) |
+| mg | poisson2d_vcycle | f64 | 255^2 grid, 6 levels, 10 V(1,1) | 17.678 ms | 2.18 | 16.44 | 31% | ok | 0.9x (11%) |
+| sparse_eig | lanczos | f64 | 64x65 Laplacian, k=4, m=80 | 32.718 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| sparse_eig | arnoldi | f64 | 64x65 convection-diffusion, k=4, m=80 | 33.182 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| sparse_eig | shift_invert | f64 | 64x65 Laplacian, k=4 nearest 0, m=40 | 52.764 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| sparse_eig | power_iteration | f64 | 64x65 Laplacian, 300 steps | 7.810 ms | 0.00 | 0.00 | n/a | ok | 1.0x (12%) |
+| mixed | dot | f32>f64 | n=8388608 | 9.853 ms | 1.70 | 6.81 | 13% | ok | 1.0x (12%) |
+| mixed | gemm | f32>f64 | 512x512x512 | 4.069 ms | 65.97 | 1.03 | 11% | ok | 7.3x (91%) |
+| mixed | block_scaled_dot | i8+f32 | n=8388608, block 32 | 1.498 ms | 11.20 | 11.90 | 22% | ok | 1.0x (12%) |
+| integer | dot | i32 | n=8388608, \|v\| <= 15 | 3.261 ms | 5.14 | 20.58 | n/a | ok | 1.0x (12%) |
+| integer | dot | i16>i32 | n=8388608, \|v\| <= 15 | 2.870 ms | 5.85 | 11.69 | n/a | ok | 1.0x (12%) |
+| integer | dot | i8>i32 | n=8388608, \|v\| <= 15 | 1.394 ms | 12.03 | 12.03 | n/a | ok | 1.0x (12%) |
+| integer | dot | u8i8>i32 | n=8388608, \|v\| <= 15 | 1.394 ms | 12.04 | 12.04 | n/a | ok | 1.0x (12%) |
+| integer | gemm | i32 | 512^3, \|v\| <= 2047 | 1.185 ms | 226.55 | 2.65 | n/a | ok | 7.1x (89%) |
+| integer | gemm | i16>i32 | 512^3, \|v\| <= 2047 | 4.185 ms | 64.14 | 0.50 | n/a | ok | 7.2x (90%) |
+| integer | gemm | i8>i32 | 512^3, \|v\| <= 127 | 3.797 ms | 70.69 | 0.41 | n/a | ok | 7.2x (90%) |
+| integer | gemm_quad | i8>i32 | 512^3, \|v\| <= 127 | 3.800 ms | 70.63 | 0.41 | n/a | ok | 7.2x (90%) |
+| integer | gemm_quad | u8i8>i32 | 512^3, \|v\| <= 127 | 3.801 ms | 70.62 | 0.41 | n/a | ok | 7.2x (90%) |
+
+\* working set fits in the last-level cache: a cache rate, shown as a % of the DRAM roofline.
+
+! more than 150% of the DRAM roofline for a bandwidth-bound result: the entry's byte model is probably wrong.
+
+Skipped in this build:
+
+- CHOLMOD not found when this build was configured: `direct/ref_cholmod/f64`, `direct/ref_cholmod.analyze/f64`, `direct/ref_cholmod.factor/f64`, `direct/ref_cholmod.solve/f64`, `direct3d/ref_cholmod.analyze/f64`, `direct3d/ref_cholmod.factor/f64`, `direct3d/ref_cholmod.solve/f64`
+- MKL PARDISO is loaded only on Linux and macOS: `direct/ref_pardiso_spd/f64`, `direct/ref_pardiso_spd.analyze/f64`, `direct/ref_pardiso_spd.factor/f64`, `direct/ref_pardiso_spd.solve/f64`, `direct/ref_pardiso_lu/f64`, `direct/ref_pardiso_lu.analyze/f64`, `direct/ref_pardiso_lu.factor/f64`, `direct/ref_pardiso_lu.solve/f64`, `direct3d/ref_pardiso_spd.analyze/f64`, `direct3d/ref_pardiso_spd.factor/f64`, `direct3d/ref_pardiso_spd.solve/f64`, `direct3d/ref_pardiso_lu.analyze/f64`, `direct3d/ref_pardiso_lu.factor/f64`, `direct3d/ref_pardiso_lu.solve/f64`
+
