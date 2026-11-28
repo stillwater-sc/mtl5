@@ -5,8 +5,19 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ## [Unreleased]
 
+## [5.26.0] - 2026-11-28
+
+Features since 5.25.0, so it is a minor release. Among them is `randsym_indefinite` (#970), which mtl5-python needs. MAJOR stays at 5.
+
 ### Added
 
+- **The #885 campaign: every capability card from one commit, large cards on the x86 machines, and #778's run-time width checked** (issue 885; #980, #981).
+  - **One commit, `b2d022726b3d`.** A medium pair ran on the five #737 machines and the Ryzen 7 8845HS, and a large pair on the i7-12700K, the Xeon E5-2420 v2 and the Ryzen 9 8945HS. Each pair's second session started after a cold boot. The i7-12700K's did not, because the campaign ran from it. Within ±5% between each pair: 733-843 of 816-858 entries.
+  - **Large cards.** Memory was enough on all three x86 machines, the Xeon's 15 GB included. `publish_platform.cmake` now writes one page per class (#980): `medium` is the standard card, `cards/<machine>.md`. Another class gets `cards/<machine>-<class>.md`, linked after the card in the Systems table. Latest and earlier sessions count that class only.
+  - **Windows Update** installed during three of the Windows sessions, as their sidecars' `background_activity` records. They are not on the cards, and the pairs were re-run.
+  - **#778, with the run-time table in place:** within 3% on the Xeon (worst 1.9%) and the Ryzen 7 (1.000).
+    - **The Ryzen 9 misses for f32:** 1.136 under clang-cl, 1.055 under MSVC. In some runs its f32 kernels at W = 8 slow by 12-16% while W = 6 does not, and other runs of the same binary are at 1.000.
+    - **The Zen 4 entry stays 8.** The Ryzen 7 shares it, is at 1.000 in every run, and would lose about 10% at 6. CPUID can't tell the two parts apart. `docs/benchmarks/interleave-width.md` records this.
 - **Every benchmark harness writes the full sidecar, and `check_sidecars.sh` checks its keys** (issue 930; #975). Ingested by mtl5-python at c9118b8, 152 of 290 committed runs were incomplete, and so excluded from every trend. Most came from harnesses that never wrote `clock_policy` or `bench_cpus`.
   - **`benchmarks/sidecar_keys.txt`** is mtl5-python's `REQUIRED_KEYS`: the 27 keys a run needs. `cxx_flags` and `cpu_vendor` may be empty.
   - **A key that doesn't apply still gets a value,** such as `pool_size=1`, `bench_cpus=unpinned` or `clock_policy=not applied`. There are no per-producer exemptions, because mtl5-python has none.
@@ -56,6 +67,7 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
     - `sparse_cholesky.factor` on a 3-D grid is about 30× faster (#868);
     - `minres+diag` is 43–55% slower on all four, with the same iteration count. This is #869's overflow-safe M-norm (#963);
     - the native SOR sweep on AArch64 alternates between two speeds, 1.7× apart, across commits (#964).
+  - **The second run, at 57512adcb8fe** (session `20261127T143612Z`, #965), is published in the same data directories.
   - Tests: `test_track_sessions.py` (14) and `test_ir_gate.py` (16), both run in `bench-regression.yml`. Docs: `benchmarks/tracking/README.md`, `benchmarks/regression/README.md`.
 - **`condest()`, transposed solves and a checked refactor for native KLU** (issue 946, its optional items, after #951's `rgrowth()` and `rcond()`).
   - **`klu_numeric::condest(A)` and `lu_numeric::condest(A)`** estimate the 1-norm condition number ‖A‖₁‖A⁻¹‖₁, as SuiteSparse's `klu_condest` does. They use Hager's method with Higham's refinements (ACM TOMS 1988, Algorithm 4.1), in at most 11 solves with A and Aᵀ. The estimate is a lower bound. It matched the exact κ₁ (formed column by column) on all four test matrices, among them a 16 × 16 Poisson grid and a 1-D Laplacian of order 200 with κ₁ = 2.0e4.
@@ -139,6 +151,11 @@ Format follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- **The CSR SOR and Gauss-Seidel sweeps no longer depend on code alignment** (issue 964; #979). On AArch64 the native SOR sweep ran at one of two speeds, about 1.7× apart, from commit to commit, including commits that never touched it.
+  - **The cause:** the inner row loop, 40 bytes with a branch on every column index, was slow when it straddled a 64-byte boundary. `-falign-functions=64` alone put `main` in the slow mode (5.35 ms against 2.95 on the Ventuno Q).
+  - **The change:** `sor<compressed2D>` and `gauss_seidel<compressed2D>` sum the off-diagonal terms in two loops around the diagonal's position, which is found once at construction. The terms and their order are the same. Without fused multiply-adds, the results are bit for bit the same. Where the compiler contracts to FMA (GCC's default GNU dialect on FMA hardware), they differ by rounding.
+  - **Measured:** sor1.5 runs at 2.96-2.98 ms under all five alignment flags, against 2.94-5.36 before. It costs about 1% where the old form was fast, and nothing on the i7-12700K. `coordinate2D` and `ell_matrix` use the same sweep.
+  - **Tests and gate:** `test_smoothers.cpp` checks both against the per-entry-test form. The check is bit for bit without `__FP_FAST_FMA`, and within 64 ulps with it. `smoother/gauss_seidel/f64` and `smoother/sor1.5/f64` join the instruction-count gate, which now has 17 kernels.
 - **MINRES with a preconditioner scaled beyond about 2^±700** (issue 971; #977). The new Lanczos vector is formed before it is normalized, so for M scaled by s it scales as s^(−1/2), and its solve z_new = M⁻¹v_new as s^(−3/2). That solve left double's range first, while every other quantity of the step stayed in range out to about 2^±1000.
   - **What failed:** A = tridiag(−1, 4, −1), n = 50, M = diag(4s). From 2^750 up, a false breakdown (code 2) at the second iteration; from 2^−700 down, a non-finite step (code 6).
   - **The fix:** when the M-norm could not take its plain form, and the solve left the range (z_new non-finite, or zero or subnormal throughout while v_new is not), the solve is redone on v̂ = 2⁻ᵉv_new.
