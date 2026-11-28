@@ -322,9 +322,15 @@ Then it does three things:
      median %roof, and each entry's median time with the fastest run in bold.
    - The session's cards follow, one section per run. Each run's full entry
      table is folded into a `<details>` block.
-   - The page always shows the **latest** published session. Publishing an older
-     one archives its data and leaves the page alone. So does `DATA_ONLY=ON`,
-     which the tracking sessions use.
+   - The page always shows the **latest** published session of its class.
+     Publishing an older one archives its data and leaves the page alone. So
+     does `DATA_ONLY=ON`, which the tracking sessions use.
+   - **One page per class (#885).** `medium` is the standard card,
+     `cards/<machine>.md`. Another class gets its own page,
+     `cards/<machine>-<class>.md`, so a `large` session never replaces the
+     medium card. Its "latest" and "earlier sessions" count that class only, and
+     the Systems-table cell links it after the card:
+     `[Card](cards/<machine>.md) · [large](cards/<machine>-large.md)`.
    - The page is generated, so don't edit it by hand. Publish a new session
      instead.
 3. **Registers the page** in `docs-site/sync-content.mjs`'s `FILE_MAP`, if it
