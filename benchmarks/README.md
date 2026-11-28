@@ -322,9 +322,15 @@ Then it does three things:
      median %roof, and each entry's median time with the fastest run in bold.
    - The session's cards follow, one section per run. Each run's full entry
      table is folded into a `<details>` block.
-   - The page always shows the **latest** published session. Publishing an older
-     one archives its data and leaves the page alone. So does `DATA_ONLY=ON`,
-     which the tracking sessions use.
+   - The page always shows the **latest** published session of its class.
+     Publishing an older one archives its data and leaves the page alone. So
+     does `DATA_ONLY=ON`, which the tracking sessions use.
+   - **One page per class (#885).** `medium` is the standard card,
+     `cards/<machine>.md`. Another class gets its own page,
+     `cards/<machine>-<class>.md`, so a `large` session never replaces the
+     medium card. Its "latest" and "earlier sessions" count that class only, and
+     the Systems-table cell links it after the card:
+     `[Card](cards/<machine>.md) · [large](cards/<machine>-large.md)`.
    - The page is generated, so don't edit it by hand. Publish a new session
      instead.
 3. **Registers the page** in `docs-site/sync-content.mjs`'s `FILE_MAP`, if it
@@ -332,16 +338,20 @@ Then it does three things:
 4. **Links the page from `systems.md`.** It sets the last cell of the machine's
    Systems-table row, the "mtl5_bench card" column, to
    `[Card](cards/<machine>.md)`, followed by `(preliminary)` when the page
-   is. That cell belongs to the script: it follows the page, so a later final
+   is, and a class page's link after it (`· [large](cards/<machine>-large.md)`).
+   That cell belongs to the script: it follows the page, so a later final
    session drops the mark. Publishing an older session leaves the cell alone,
    like the page. If the row or the column isn't there, it warns instead.
 
-Then review and commit what the script lists:
+Then review and commit what the script lists. It names the page it wrote:
+`cards/<machine>.md` for a `medium` session, `cards/<machine>-<class>.md` for
+another class.
 
 ```bash
 git add benchmarks/data/<machine>/mtl5_bench/<session> \
         docs/benchmarks/cards/<machine>.md docs-site/sync-content.mjs \
         docs/benchmarks/systems.md
+# a large session's page instead: docs/benchmarks/cards/<machine>-large.md
 ```
 
 Options, each a `-D` before `-P`:

@@ -33,6 +33,11 @@ session committed under `benchmarks/data/<machine>/mtl5_bench/`, and shows the
 latest published session; earlier sessions stay in the data directory. A card
 marked *preliminary* was not measured under #737's methodology (pinned cores,
 the machine's clock policy, two sessions).
+**The standard card is the `medium` class** (#885): sized well past every
+machine's last-level cache, so its bandwidth-bound entries measure DRAM. Where a
+`large` session was also published, the cell links it after the card: a
+separate page, `cards/<machine>-large.md`, with larger problems. A machine
+without enough memory for `large` has none.
 The [tracking](tracking.md) sessions (#944) add to the same data directories
 without changing the cards: run by hand when the machines are on, each measures `main`, and
 that page compares each session with the machine's previous one.

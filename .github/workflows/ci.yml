@@ -881,15 +881,17 @@ jobs:
           for f in native-t1 native-t2 native-fast-t1 native-fast-t2; do
             test -f "$data/$session/$f.json" && test -f "$data/$session/$f.json.sysinfo" && test -f "$data/$session/$f.md"
           done
-          grep -q '^# mtl5_bench capability card -- i7-12700k' docs/benchmarks/cards/i7-12700k.md
-          grep -q "^| session | \`$session\` (UTC) |" docs/benchmarks/cards/i7-12700k.md
+          # A small session gets its own page (#885): medium is the standard card.
+          grep -q '^# mtl5_bench capability card -- i7-12700k, class small' docs/benchmarks/cards/i7-12700k-small.md
+          grep -q "^| session | \`$session\` (UTC) |" docs/benchmarks/cards/i7-12700k-small.md
           # The cross-run tables (#799), and one folded entry table per run.
-          grep -q '^## Across the runs$' docs/benchmarks/cards/i7-12700k.md
-          grep -q '^| area | op | type | shape | native 1T | native 2T | native-fast 1T | native-fast 2T |$' docs/benchmarks/cards/i7-12700k.md
-          test "$(grep -c '^<details>$' docs/benchmarks/cards/i7-12700k.md)" = 4
-          test "$(grep -c '^</details>$' docs/benchmarks/cards/i7-12700k.md)" = 4
-          grep -q "'benchmarks/cards/i7-12700k.md'" docs-site/sync-content.mjs
-          grep -q '^| `i7-12700K` |.*| \[Card\](cards/i7-12700k.md) (preliminary) |$' docs/benchmarks/systems.md
+          grep -q '^## Across the runs$' docs/benchmarks/cards/i7-12700k-small.md
+          grep -q '^| area | op | type | shape | native 1T | native 2T | native-fast 1T | native-fast 2T |$' docs/benchmarks/cards/i7-12700k-small.md
+          test "$(grep -c '^<details>$' docs/benchmarks/cards/i7-12700k-small.md)" = 4
+          test "$(grep -c '^</details>$' docs/benchmarks/cards/i7-12700k-small.md)" = 4
+          grep -q "'benchmarks/cards/i7-12700k-small.md'" docs-site/sync-content.mjs
+          # The medium card stays in the cell; the small page is linked after it.
+          grep -q '^| `i7-12700K` |.*| \[Card\](cards/i7-12700k.md) · \[small\](cards/i7-12700k-small.md) (preliminary) |$' docs/benchmarks/systems.md
           if [ "$RUNNER_OS" != macOS ]; then benchmarks/check_sidecars.sh; fi
           # Every run's results carry a version and their quantiles (#928, #929).
           py=$(command -v python3 || command -v python)
@@ -901,7 +903,14 @@ jobs:
           tmp=build-platform/publish-checks
           mkdir -p "$tmp"
           sys=docs/benchmarks/systems.md
-          card=docs/benchmarks/cards/i7-12700k.md
+          card=docs/benchmarks/cards/i7-12700k-small.md
+          link='[small](cards/i7-12700k-small.md) (preliminary)'
+          # The i7-12700K row's last cell, as written.
+          # awk, not sed: BSD sed (macOS) rejects "{s/.../p}" without a ';'.
+          cell_of() {
+            tr -d '\r' < "$sys" | awk -F'|' 'index($0, "| `i7-12700K` |") == 1 {
+              c = $(NF - 1); sub(/^ +/, "", c); sub(/ +$/, "", c); print c }'
+          }
           publish() {
             cmake "-DRESULTS=$results" -DMACHINE=i7-12700k "-DPRELIMINARY=$prelim" -DALLOW_DIRTY=ON "$@" \
                   -P benchmarks/publish_platform.cmake 2>&1
@@ -934,22 +943,27 @@ jobs:
           set_cell ''
           publish -DDRY_RUN=ON | tee publish3.log
           grep -q 'would set the systems.md card cell' publish3.log
-          absent '(cards/i7-12700k.md)' "$sys"
-          # A blank cell, and a cell holding something else, are both set.
+          absent '(cards/i7-12700k-small.md)' "$sys"
+          # A class page's link is added to what the cell holds: a blank cell
+          # gets a dash before it, and other text is kept (#885).
           for c in '' 'see the results page'; do
             set_cell "$c"
             publish | tee publish4.log
             grep -q 'set the systems.md card cell' publish4.log
-            same "$sys" "$tmp/systems.md"
+            want="${c:-—} · $link"
+            got=$(cell_of)
+            [ "$got" = "$want" ] || { echo "cell '$got', expected '$want'"; exit 1; }
           done
           # An older session leaves the page and the cell alone: a later session
           # directory (an empty one is enough for the session list) makes ours older.
+          # Sessions count by class (#885), so the later one carries a small sidecar.
           mkdir "$data/99991231T235959Z"
+          echo "class=small" > "$data/99991231T235959Z/native-t1.json.sysinfo"
           set_cell ''
           publish | tee publish5.log
-          rmdir "$data/99991231T235959Z"
-          grep -q 'is older than the latest published session' publish5.log
-          absent '(cards/i7-12700k.md)' "$sys"
+          rm -r "$data/99991231T235959Z"
+          grep -q 'is older than the latest published small session' publish5.log
+          absent '(cards/i7-12700k-small.md)' "$sys"
           same "$card" "$tmp/card.md"
           # A systems.md with no card column and no link gets a warning, not an edit.
           set_cell ''
@@ -957,7 +971,7 @@ jobs:
           cp "$tmp/no-column.md" "$sys"
           publish | tee publish6.log
           grep -q 'has no Systems-table row' publish6.log
-          absent '(cards/i7-12700k.md)' "$sys"
+          absent '(cards/i7-12700k-small.md)' "$sys"
           cp "$tmp/systems.md" "$sys"
           echo "publish checks: all passed"
 
