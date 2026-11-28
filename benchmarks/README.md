@@ -338,16 +338,20 @@ Then it does three things:
 4. **Links the page from `systems.md`.** It sets the last cell of the machine's
    Systems-table row, the "mtl5_bench card" column, to
    `[Card](cards/<machine>.md)`, followed by `(preliminary)` when the page
-   is. That cell belongs to the script: it follows the page, so a later final
+   is, and a class page's link after it (`· [large](cards/<machine>-large.md)`).
+   That cell belongs to the script: it follows the page, so a later final
    session drops the mark. Publishing an older session leaves the cell alone,
    like the page. If the row or the column isn't there, it warns instead.
 
-Then review and commit what the script lists:
+Then review and commit what the script lists. It names the page it wrote:
+`cards/<machine>.md` for a `medium` session, `cards/<machine>-<class>.md` for
+another class.
 
 ```bash
 git add benchmarks/data/<machine>/mtl5_bench/<session> \
         docs/benchmarks/cards/<machine>.md docs-site/sync-content.mjs \
         docs/benchmarks/systems.md
+# a large session's page instead: docs/benchmarks/cards/<machine>-large.md
 ```
 
 Options, each a `-D` before `-P`:
