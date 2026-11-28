@@ -1,0 +1,127 @@
+session,run,compiler,compiler_version,cpu,vector_registers,n,reps,kernel,type,width,is_default,ms,gbps
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,1,0,10.540,12.74
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,2,0,5.944,22.59
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,4,0,3.539,37.94
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,6,0,3.229,41.59
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,8,1,3.306,40.62
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,12,0,7.141,18.80
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,16,0,7.763,17.30
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,1,0,5.645,11.90
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,2,0,3.203,20.97
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,4,0,1.980,33.92
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,6,0,2.257,29.76
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,8,1,1.785,37.63
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,12,0,3.819,17.59
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,16,0,3.965,16.94
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,1,0,5.663,11.86
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,2,0,3.218,20.87
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,4,0,1.919,35.00
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,6,0,1.735,38.73
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,8,1,1.789,37.54
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,12,0,3.785,17.75
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,16,0,3.965,16.94
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,1,0,9.978,6.73
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,2,0,5.399,12.44
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,4,0,2.966,22.63
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,6,0,2.664,25.20
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,8,1,2.985,22.49
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,12,0,7.815,8.59
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,16,0,9.124,7.36
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,1,0,6.724,4.99
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,2,0,3.525,9.53
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,4,0,1.869,17.97
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,6,0,1.700,19.76
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,8,1,1.934,17.36
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,12,0,5.074,6.62
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,16,0,6.039,5.56
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,1,0,6.689,5.02
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,2,0,3.544,9.48
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,4,0,1.983,16.94
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,6,0,1.760,19.08
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,8,1,1.951,17.21
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,12,0,5.011,6.70
+20261128T043319Z,1,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,16,0,5.924,5.67
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,1,0,10.515,12.77
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,2,0,5.922,22.68
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,4,0,3.570,37.62
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,6,0,3.221,41.69
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,8,1,3.118,43.07
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,12,0,6.874,19.53
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,16,0,7.705,17.43
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,1,0,5.623,11.95
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,2,0,3.176,21.15
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,4,0,1.947,34.50
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,6,0,2.240,29.99
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,8,1,1.673,40.16
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,12,0,3.692,18.20
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,16,0,3.961,16.96
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,1,0,5.640,11.91
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,2,0,3.195,21.02
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,4,0,1.906,35.25
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,6,0,1.719,39.08
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,8,1,1.696,39.62
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,12,0,3.657,18.37
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,16,0,3.956,16.98
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,1,0,9.954,6.75
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,2,0,5.401,12.43
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,4,0,2.966,22.64
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,6,0,2.686,25.00
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,8,1,2.483,27.04
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,12,0,7.663,8.76
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,16,0,9.093,7.38
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,1,0,6.709,5.01
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,2,0,3.546,9.47
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,4,0,1.984,16.93
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,6,0,1.800,18.66
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,8,1,1.673,20.07
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,12,0,4.969,6.76
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,16,0,6.056,5.55
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,1,0,6.701,5.01
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,2,0,3.567,9.42
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,4,0,2.014,16.68
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,6,0,1.779,18.88
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,8,1,1.651,20.35
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,12,0,4.940,6.80
+20261128T043319Z,2,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,16,0,5.937,5.66
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,1,0,10.637,12.62
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,2,0,5.738,23.40
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,4,0,3.387,39.65
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,6,0,3.134,42.85
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,8,1,3.245,41.39
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,12,0,7.084,18.96
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f64,16,0,7.665,17.52
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,1,0,5.631,11.93
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,2,0,3.145,21.36
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,4,0,1.907,35.23
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,6,0,2.222,30.23
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,8,1,1.754,38.31
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,12,0,3.837,17.51
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f64,16,0,3.905,17.20
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,1,0,5.654,11.88
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,2,0,3.161,21.25
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,4,0,1.867,35.97
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,6,0,1.711,39.27
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,8,1,1.776,37.82
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,12,0,3.787,17.74
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f64,16,0,3.921,17.13
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,1,0,9.958,6.74
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,2,0,5.407,12.42
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,4,0,2.986,22.49
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,6,0,2.666,25.18
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,8,1,3.008,22.32
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,12,0,7.807,8.60
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,gemv,f32,16,0,9.144,7.34
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,1,0,6.721,5.00
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,2,0,3.527,9.52
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,4,0,1.917,17.53
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,6,0,1.727,19.45
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,8,1,1.972,17.03
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,12,0,5.020,6.69
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,trmv lower,f32,16,0,6.026,5.57
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,1,0,6.692,5.02
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,2,0,3.551,9.46
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,4,0,1.970,17.05
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,6,0,1.766,19.02
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,8,1,1.980,16.96
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,12,0,5.019,6.69
+20261128T043319Z,3,clang-cl,Clang 22.1.3 with MSVC-like command-line,0,16,4096,21,lower_trisolve,f32,16,0,5.902,5.69

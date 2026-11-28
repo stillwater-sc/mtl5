@@ -1,0 +1,53 @@
+# bench_interleave_rows, MSVC 19.52.37029.0, cpu 0, clock policy: power scheme copy of Balanced with processor state 100-100% and EPP 0, boost aggressive; AC
+# commit b2d022726b3d9328b6af5f7a7cff98d3a208b087, 2026-11-28T01:57:27Z
+interleave width sweep, n = 4096, median of 21; vector registers = 16; * = this build's default
+
+gemv            f64  W=1       10.672 ms    12.58 GB/s
+gemv            f64  W=2        5.963 ms    22.52 GB/s
+gemv            f64  W=4        3.667 ms    36.62 GB/s
+gemv            f64  W=6        3.231 ms    41.56 GB/s
+gemv            f64  W=8  *     3.070 ms    43.74 GB/s  <- fastest
+gemv            f64  W=12       4.198 ms    31.99 GB/s
+gemv            f64  W=16       8.753 ms    15.34 GB/s
+trmv lower      f64  W=1        5.817 ms    11.55 GB/s
+trmv lower      f64  W=2        3.266 ms    20.57 GB/s
+trmv lower      f64  W=4        2.050 ms    32.78 GB/s
+trmv lower      f64  W=6        1.886 ms    35.61 GB/s
+trmv lower      f64  W=8  *     1.779 ms    37.77 GB/s  <- fastest
+trmv lower      f64  W=12       2.614 ms    25.70 GB/s
+trmv lower      f64  W=16       4.580 ms    14.67 GB/s
+lower_trisolve  f64  W=1        5.906 ms    11.37 GB/s
+lower_trisolve  f64  W=2        3.302 ms    20.34 GB/s
+lower_trisolve  f64  W=4        2.066 ms    32.51 GB/s
+lower_trisolve  f64  W=6        1.869 ms    35.94 GB/s
+lower_trisolve  f64  W=8  *     1.762 ms    38.12 GB/s  <- fastest
+lower_trisolve  f64  W=12       2.579 ms    26.05 GB/s
+lower_trisolve  f64  W=16       4.519 ms    14.87 GB/s
+fastest f64: gemv 8, trmv 8, lower_trisolve 8  -> -DMTL5_INTERLEAVE_ROWS_F64=8
+run-time choice f64 (cpu zen4; time / fastest): gemv 8 (1.000) trmv 8 (1.000) lower_trisolve 8 (1.000)
+
+gemv            f32  W=1       10.073 ms     6.67 GB/s
+gemv            f32  W=2        5.387 ms    12.46 GB/s
+gemv            f32  W=4        3.063 ms    21.92 GB/s
+gemv            f32  W=6        2.522 ms    26.63 GB/s
+gemv            f32  W=8  *     2.335 ms    28.75 GB/s  <- fastest
+gemv            f32  W=12       4.358 ms    15.41 GB/s
+gemv            f32  W=16       9.064 ms     7.41 GB/s
+trmv lower      f32  W=1        5.476 ms     6.13 GB/s
+trmv lower      f32  W=2        2.878 ms    11.67 GB/s
+trmv lower      f32  W=4        1.593 ms    21.09 GB/s
+trmv lower      f32  W=6        1.548 ms    21.70 GB/s
+trmv lower      f32  W=8  *     1.514 ms    22.19 GB/s  <- fastest
+trmv lower      f32  W=12       2.513 ms    13.37 GB/s
+trmv lower      f32  W=16       4.735 ms     7.09 GB/s
+lower_trisolve  f32  W=1        5.399 ms     6.22 GB/s
+lower_trisolve  f32  W=2        2.914 ms    11.53 GB/s
+lower_trisolve  f32  W=4        1.665 ms    20.17 GB/s
+lower_trisolve  f32  W=6        1.614 ms    20.81 GB/s
+lower_trisolve  f32  W=8  *     1.531 ms    21.94 GB/s  <- fastest
+lower_trisolve  f32  W=12       2.493 ms    13.47 GB/s
+lower_trisolve  f32  W=16       4.677 ms     7.18 GB/s
+fastest f32: gemv 8, trmv 8, lower_trisolve 8  -> -DMTL5_INTERLEAVE_ROWS_F32=8
+run-time choice f32 (cpu zen4; time / fastest): gemv 8 (1.000) trmv 8 (1.000) lower_trisolve 8 (1.000)
+
+A width differing per kernel is set by specializing mtl::interface::interleave_rows<T, Kernel>.

@@ -102,6 +102,9 @@ const FILE_MAP = {
   'benchmarks/arduino-ventuno-q.md':            'benchmarks/arduino-ventuno-q.md',
   // mtl5_bench capability cards, one page per machine, written by
   // benchmarks/publish_platform.cmake (which also adds the entry here).
+  'benchmarks/cards/ryzen-9-8945hs-large.md':   'benchmarks/cards/ryzen-9-8945hs-large.md',
+  'benchmarks/cards/xeon-e5-2420v2-large.md':   'benchmarks/cards/xeon-e5-2420v2-large.md',
+  'benchmarks/cards/i7-12700k-large.md':        'benchmarks/cards/i7-12700k-large.md',
   'benchmarks/cards/arduino-ventuno-q.md':      'benchmarks/cards/arduino-ventuno-q.md',
   'benchmarks/cards/jetson-orin.md':            'benchmarks/cards/jetson-orin.md',
   'benchmarks/cards/ryzen-7-8845hs.md':         'benchmarks/cards/ryzen-7-8845hs.md',

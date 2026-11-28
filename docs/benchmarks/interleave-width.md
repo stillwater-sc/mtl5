@@ -2,8 +2,9 @@
 
 The generic row kernels (`gemv`, `trmv` and the forward substitution on a
 row-major matrix) sum W rows per pass, one accumulator per row (#749, #772).
-These sweeps were built with the earlier default, W = 6 for float and double,
-measured only on an i7-12700K (#775). This page measures W on every machine of
+The first sweeps were built with the earlier default, W = 6 for float and
+double, measured only on an i7-12700K (#775); the #885 sweeps with today's 8
+on x86-64. The default only marks a row (`*`), so the times compare. This page measures W on every machine of
 the #737 platform campaign (#780). The per-ISA defaults below come from it, and
 so does the table [run-time selection](#run-time-selection-778) uses (#778).
 
@@ -19,8 +20,9 @@ so does the table [run-time selection](#run-time-selection-778) uses (#778).
 - **Repeats:** three runs per compiler in each session, and two sessions per
   machine, the second after a cold boot. Those are the same sessions as the
   machines' capability cards ([benchmark systems](systems.md)). Each cell
-  below is the median of the 6 runs. Each run's value is already a median of
-  21.
+  below is the median of all the machine's runs: 6, or 9 and 12 where #885
+  added sessions at one commit (the Xeon and the Ryzen 7; the Ryzen 9). Each
+  run's value is already a median of 21.
 - **Compilers:** GCC and Clang on Linux, MSVC and clang-cl on Windows. The
   Jetson has no Clang.
 - **Why the median over runs:** each run's fastest width is listed too, but
@@ -30,13 +32,13 @@ so does the table [run-time selection](#run-time-selection-778) uses (#778).
 ## Findings
 
 - **x86-64: W = 8 is the better default.** Over every x86-64 machine,
-  compiler and kernel, W = 8 averages 1.5% slower than each kernel's fastest
+  compiler and kernel, W = 8 averages 1.4% slower than each kernel's fastest
   width, 10% at worst (Clang on the i7-12700K, f32 gemv). W = 6 averages 4.1%
-  slower, and 31% at worst: clang-cl's f64 `trmv`, slower at W = 6 than at
+  slower, and 33% at worst: clang-cl's f64 `trmv`, slower at W = 6 than at
   W = 4 on both Ryzens and in both sessions. On the two Zen 4 machines,
   under both compilers, W = 8 is the fastest width of every kernel or within
-  0.2% of it. The Ivy Bridge
-  Xeon is the exception: it prefers 4 for f64 and loses at most 6% at W = 8.
+  1% of it. The Ivy Bridge
+  Xeon is the exception: it prefers 4 for f64 and loses at most 7% at W = 8.
 - **AArch64: W = 6 is not safe; W = 4 is the better default.** With Clang
   (on the Arduino Ventuno Q), W = 4 is the fastest width in every kernel, and
   W = 6 is 18-24% slower than it. With GCC, gemv agrees: f64 and f32 are
@@ -74,7 +76,7 @@ was the default before #772 is capped there, as it is on 32-bit x86.
 
 | ISA class | float | double | worst loss against the fastest width |
 |---|---|---|---|
-| x86-64 (SSE2, generic build) | 8 | 8 | 10% (i7-12700K, Clang, f32 gemv); 6% on the Xeon |
+| x86-64 (SSE2, generic build) | 8 | 8 | 10% (i7-12700K, Clang, f32 gemv); 7% on the Xeon |
 | AArch64 (NEON, generic build) | 4 | 4 | 0% under Clang; 12% under GCC (Jetson, f64 `trmv` and forward substitution) |
 
 - **x86-64 with AVX-512:** none of these machines has it. The Zen 4 machines
@@ -122,11 +124,30 @@ fastest, against today's fixed default.
 | Jetson Orin, GCC | 3 | 1.000 | 1.128 (f64 trmv) |
 | Ventuno Q, GCC | 3 | 1.000 | 1.000 |
 | Ventuno Q, Clang | 3 | 1.000 | 1.000 |
+| Xeon E5-2420 v2, GCC | 3 | 1.019 (f64 trmv) | 1.051 (f64 gemv) |
+| Xeon E5-2420 v2, Clang | 3 | 1.000 | 1.081 (f32 trisolve) |
+| Ryzen 7 8845HS, MSVC | 3 | 1.000 | 1.000 |
+| Ryzen 7 8845HS, clang-cl | 3 | 1.000 | 1.000 |
+| Ryzen 9 8945HS, MSVC | 6 | 1.055 (f32 trmv) | 1.055 (f32 trmv) |
+| Ryzen 9 8945HS, clang-cl | 6 | 1.136 (f32 trmv) | 1.136 (f32 trmv) |
 
-The Xeon and the two Ryzens weren't reachable for this. Their entries are
-the sweeps' fastest widths, so in those sweeps the choice is the fastest by
-construction. Against the fixed default that is up to 6% (the Xeon) and
-0.2% (the Ryzens). They are still to be measured with the table in place.
+The Xeon and Ryzen rows are from #885, at `b2d022726b3d`: one session on the
+Xeon and the Ryzen 7, two on the Ryzen 9, each started after a cold boot. On
+the Zen 4 machines the table's width is the fixed default, 8, so the two
+columns agree.
+
+**The Ryzen 9 misses 3% for f32, and no table entry can fix it.** In some
+runs its f32 kernels at W = 8 slow down by 12-16% (`gemv` 2.46 ms in the
+2026-11-12 sessions, 3.0 ms in these), while W = 6 stays where it was
+(2.68 ms) and becomes the fastest. Other runs of the same binary in the same
+session are at 1.000: clang-cl's f32 worst was 1.122, 1.159, 1.154, 1.138,
+1.000 and 1.142 in its six runs, MSVC's 1.000 three times and then 1.110,
+1.125 and 1.140. So it is a state of the machine from run to run, not a width
+that suits it better. The Ryzen 7 8845HS shares the Zen 4 entry and was at
+1.000 in every run under both compilers, where W = 6 would be about 10%
+slower. The two parts can't be told apart by CPUID family and model, so the
+entry stays 8. The sweep tables below take the median over all sessions, and
+there W = 8 remains the Ryzen 9's fastest f32 width.
 
 f64 `gemv` on the i7 under GCC is bandwidth-bound at n = 4096. Widths 6 to 16
 are within about 5% of each other there, and run to run the fastest moves
@@ -158,12 +179,12 @@ Per machine and compiler: the fastest width of each kernel, and the worst cost o
 | i7-12700k | x86-64 | clang++ | 8, 8, 8 / 6, 6, 6 | 1.124 | 1.052 | 1.100 | 0.957 |
 | i7-12700k | x86-64 | g++ | 12, 12, 12 / 6, 8, 8 | 1.088 | 1.041 | 1.029 | 0.984 |
 | jetson-orin | AArch64 | g++ | 4, 2, 2 / 4, 2, 2 | 7.186 | 3.976 | 4.532 | 1.582 |
-| ryzen-7-8845hs | x86-64 | clang-cl | 8, 8, 6 / 8, 8, 8 | 1.189 | 1.310 | 1.002 | 1.149 |
-| ryzen-7-8845hs | x86-64 | msvc | 8, 8, 8 / 8, 8, 8 | 1.323 | 1.078 | 1.000 | 0.976 |
-| ryzen-9-8945hs | x86-64 | clang-cl | 8, 8, 8 / 8, 8, 8 | 1.216 | 1.315 | 1.000 | 1.137 |
-| ryzen-9-8945hs | x86-64 | msvc | 8, 8, 8 / 8, 8, 8 | 1.330 | 1.059 | 1.000 | 0.988 |
-| xeon-e5-2420v2 | x86-64 | clang++ | 4, 4, 4 / 6, 6, 6 | 1.092 | 1.039 | 1.063 | 1.039 |
-| xeon-e5-2420v2 | x86-64 | g++ | 4, 6, 4 / 8, 4, 4 | 1.038 | 1.026 | 1.046 | 1.019 |
+| ryzen-7-8845hs | x86-64 | clang-cl | 8, 8, 8 / 8, 8, 8 | 1.193 | 1.331 | 1.000 | 1.143 |
+| ryzen-7-8845hs | x86-64 | msvc | 8, 8, 8 / 8, 8, 8 | 1.320 | 1.081 | 1.000 | 0.981 |
+| ryzen-9-8945hs | x86-64 | clang-cl | 8, 8, 6 / 8, 8, 8 | 1.208 | 1.297 | 1.009 | 1.146 |
+| ryzen-9-8945hs | x86-64 | msvc | 8, 8, 8 / 8, 8, 8 | 1.327 | 1.071 | 1.000 | 0.973 |
+| xeon-e5-2420v2 | x86-64 | clang++ | 4, 4, 4 / 6, 6, 6 | 1.093 | 1.037 | 1.072 | 1.037 |
+| xeon-e5-2420v2 | x86-64 | g++ | 4, 4, 4 / 8, 4, 4 | 1.025 | 1.021 | 1.046 | 1.021 |
 
 ### A fixed default per ISA class
 
@@ -171,7 +192,7 @@ Time at a fixed width / time at the fastest width, over every machine, compiler,
 
 | ISA | W=2 | W=4 | W=6 | W=8 | W=12 |
 |---|---|---|---|---|---|
-| x86-64 | 1.628 / 2.683 | 1.102 / 1.330 | 1.041 / 1.315 | 1.015 / 1.100 | 1.518 / 3.119 |
+| x86-64 | 1.625 / 2.683 | 1.100 / 1.327 | 1.041 / 1.331 | 1.014 / 1.100 | 1.518 / 3.094 |
 | AArch64 | 1.242 / 1.708 | 1.523 / 7.186 | 1.500 / 4.408 | 1.640 / 4.532 | 2.053 / 3.799 |
 
 ### Per machine
@@ -243,81 +264,81 @@ ARMv8 Processor rev 1 (v8l); g++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0; vector
 
 ### ryzen-7-8845hs -- clang-cl
 
-AMD Ryzen 7 8845HS w/ Radeon 780M Graphics; Clang 22.1.3 with MSVC-like command-line; vector registers 16; built default W = 6 (f64), 6 (f32); median of 6 runs (2 sessions), each the median of 21. Data: `benchmarks/data/ryzen-7-8845hs/interleave_rows/`.
+AMD Ryzen 7 8845HS w/ Radeon 780M Graphics; Clang 22.1.3 with MSVC-like command-line; vector registers 16; built default W = 8 (f64), 8 (f32); median of 9 runs (3 sessions), each the median of 21. Data: `benchmarks/data/ryzen-7-8845hs/interleave_rows/`.
 
 | kernel | W=1 | W=2 | W=4 | W=6 | W=8 | W=12 | W=16 | fastest | W=6 / fastest | W=6 / W=4 | per-run fastest |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gemv f64 | 10.704 | 5.841 | 3.489 | 3.206 | **3.119** | 6.969 | 7.739 | 8 | 1.028 | 0.919 | 6: 2, 8: 4 |
-| trmv f64 | 5.734 | 3.212 | 1.971 | 2.265 | **1.728** | 3.738 | 3.986 | 8 | 1.310 | 1.149 | 8: 6 |
-| trisolve f64 | 5.745 | 3.236 | 1.925 | **1.762** | 1.765 | 3.715 | 3.929 | 6 | 1.000 | 0.915 | 6: 2, 8: 4 |
-| gemv f32 | 10.095 | 5.453 | 2.997 | 2.738 | **2.520** | 7.824 | 9.236 | 8 | 1.087 | 0.914 | 6: 2, 8: 4 |
-| trmv f32 | 5.428 | 2.894 | 1.614 | 1.448 | **1.439** | 3.975 | 4.825 | 8 | 1.006 | 0.897 | 6: 2, 8: 4 |
-| trisolve f32 | 5.408 | 2.911 | 1.700 | 1.481 | **1.431** | 3.925 | 4.713 | 8 | 1.035 | 0.871 | 6: 2, 8: 4 |
+| gemv f64 | 10.671 | 5.910 | 3.584 | 3.255 | **3.145** | 6.963 | 7.773 | 8 | 1.035 | 0.908 | 6: 2, 8: 7 |
+| trmv f64 | 5.748 | 3.259 | 1.999 | 2.285 | **1.717** | 3.745 | 4.007 | 8 | 1.331 | 1.143 | 8: 9 |
+| trisolve f64 | 5.754 | 3.263 | 1.949 | 1.768 | **1.740** | 3.694 | 3.975 | 8 | 1.016 | 0.907 | 6: 2, 8: 7 |
+| gemv f32 | 10.102 | 5.455 | 3.006 | 2.755 | **2.532** | 7.833 | 9.240 | 8 | 1.088 | 0.917 | 6: 2, 8: 7 |
+| trmv f32 | 5.430 | 2.901 | 1.617 | 1.492 | **1.443** | 3.969 | 4.834 | 8 | 1.034 | 0.923 | 6: 2, 8: 7 |
+| trisolve f32 | 5.415 | 2.925 | 1.707 | 1.490 | **1.431** | 3.922 | 4.716 | 8 | 1.041 | 0.873 | 6: 2, 8: 7 |
 
 ### ryzen-7-8845hs -- msvc
 
-AMD Ryzen 7 8845HS w/ Radeon 780M Graphics; MSVC 19.52.37029.0; vector registers 16; built default W = 6 (f64), 6 (f32); median of 6 runs (2 sessions), each the median of 21. Data: `benchmarks/data/ryzen-7-8845hs/interleave_rows/`.
+AMD Ryzen 7 8845HS w/ Radeon 780M Graphics; MSVC 19.52.37029.0; vector registers 16; built default W = 8 (f64), 8 (f32); median of 9 runs (3 sessions), each the median of 21. Data: `benchmarks/data/ryzen-7-8845hs/interleave_rows/`.
 
 | kernel | W=1 | W=2 | W=4 | W=6 | W=8 | W=12 | W=16 | fastest | W=6 / fastest | W=6 / W=4 | per-run fastest |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gemv f64 | 10.698 | 5.836 | 3.619 | 3.172 | **3.046** | 4.176 | 8.704 | 8 | 1.041 | 0.877 | 8: 6 |
-| trmv f64 | 5.753 | 3.180 | 1.929 | 1.804 | **1.710** | 2.575 | 4.574 | 8 | 1.055 | 0.935 | 6: 1, 8: 5 |
-| trisolve f64 | 5.814 | 3.224 | 1.933 | 1.785 | **1.697** | 2.549 | 4.504 | 8 | 1.052 | 0.923 | 8: 6 |
-| gemv f32 | 10.087 | 5.391 | 3.046 | 2.482 | **2.302** | 4.345 | 9.029 | 8 | 1.078 | 0.815 | 6: 1, 8: 5 |
-| trmv f32 | 5.432 | 2.832 | 1.558 | 1.520 | **1.480** | 2.489 | 4.731 | 8 | 1.027 | 0.976 | 6: 1, 8: 5 |
-| trisolve f32 | 5.389 | 2.864 | 1.621 | 1.567 | **1.493** | 2.474 | 4.663 | 8 | 1.049 | 0.966 | 6: 1, 8: 5 |
+| gemv f64 | 10.672 | 5.906 | 3.620 | 3.174 | **3.056** | 4.191 | 8.728 | 8 | 1.039 | 0.877 | 8: 9 |
+| trmv f64 | 5.740 | 3.204 | 1.944 | 1.803 | **1.715** | 2.577 | 4.563 | 8 | 1.051 | 0.927 | 6: 1, 8: 8 |
+| trisolve f64 | 5.815 | 3.226 | 1.948 | 1.790 | **1.701** | 2.554 | 4.501 | 8 | 1.052 | 0.919 | 8: 9 |
+| gemv f32 | 10.087 | 5.393 | 3.056 | 2.503 | **2.315** | 4.357 | 9.037 | 8 | 1.081 | 0.819 | 6: 1, 8: 8 |
+| trmv f32 | 5.436 | 2.843 | 1.566 | 1.537 | **1.498** | 2.492 | 4.737 | 8 | 1.026 | 0.981 | 6: 1, 8: 8 |
+| trisolve f32 | 5.394 | 2.887 | 1.631 | 1.571 | **1.496** | 2.483 | 4.671 | 8 | 1.050 | 0.963 | 6: 1, 8: 8 |
 
 ### ryzen-9-8945hs -- clang-cl
 
-AMD Ryzen 9 8945HS w/ Radeon 780M Graphics; Clang 22.1.3 with MSVC-like command-line; vector registers 16; built default W = 6 (f64), 6 (f32); median of 6 runs (2 sessions), each the median of 21. Data: `benchmarks/data/ryzen-9-8945hs/interleave_rows/`.
+AMD Ryzen 9 8945HS w/ Radeon 780M Graphics; Clang 22.1.3 with MSVC-like command-line; vector registers 16; built default W = 8 (f64), 8 (f32); median of 12 runs (4 sessions), each the median of 21. Data: `benchmarks/data/ryzen-9-8945hs/interleave_rows/`.
 
 | kernel | W=1 | W=2 | W=4 | W=6 | W=8 | W=12 | W=16 | fastest | W=6 / fastest | W=6 / W=4 | per-run fastest |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gemv f64 | 10.586 | 5.928 | 3.595 | 3.247 | **3.119** | 6.877 | 7.694 | 8 | 1.041 | 0.903 | 8: 6 |
-| trmv f64 | 5.694 | 3.229 | 2.002 | 2.277 | **1.731** | 3.752 | 3.994 | 8 | 1.315 | 1.137 | 8: 6 |
-| trisolve f64 | 5.697 | 3.224 | 1.939 | 1.776 | **1.741** | 3.665 | 3.963 | 8 | 1.020 | 0.916 | 8: 6 |
-| gemv f32 | 9.951 | 5.425 | 2.988 | 2.665 | **2.457** | 7.663 | 9.101 | 8 | 1.085 | 0.892 | 8: 6 |
-| trmv f32 | 6.704 | 3.550 | 1.895 | 1.716 | **1.647** | 4.951 | 6.056 | 8 | 1.043 | 0.906 | 8: 6 |
-| trisolve f32 | 6.674 | 3.547 | 1.996 | 1.772 | **1.644** | 4.931 | 5.927 | 8 | 1.078 | 0.888 | 8: 6 |
+| gemv f64 | 10.586 | 5.922 | 3.559 | 3.228 | **3.162** | 6.971 | 7.717 | 8 | 1.021 | 0.907 | 6: 5, 8: 7 |
+| trmv f64 | 5.655 | 3.208 | 1.978 | 2.266 | **1.746** | 3.766 | 3.994 | 8 | 1.297 | 1.146 | 8: 12 |
+| trisolve f64 | 5.675 | 3.212 | 1.908 | **1.744** | 1.760 | 3.697 | 3.973 | 6 | 1.000 | 0.914 | 6: 5, 8: 7 |
+| gemv f32 | 9.951 | 5.402 | 2.981 | 2.675 | **2.512** | 7.675 | 9.112 | 8 | 1.065 | 0.898 | 6: 5, 8: 7 |
+| trmv f32 | 6.722 | 3.549 | 1.914 | 1.734 | **1.675** | 4.995 | 6.054 | 8 | 1.035 | 0.906 | 6: 5, 8: 7 |
+| trisolve f32 | 6.686 | 3.556 | 2.006 | 1.776 | **1.660** | 4.953 | 5.927 | 8 | 1.070 | 0.885 | 6: 5, 8: 7 |
 
 ### ryzen-9-8945hs -- msvc
 
-AMD Ryzen 9 8945HS w/ Radeon 780M Graphics; MSVC 19.52.37029.0; vector registers 16; built default W = 6 (f64), 6 (f32); median of 6 runs (2 sessions), each the median of 21. Data: `benchmarks/data/ryzen-9-8945hs/interleave_rows/`.
+AMD Ryzen 9 8945HS w/ Radeon 780M Graphics; MSVC 19.52.37029.0; vector registers 16; built default W = 8 (f64), 8 (f32); median of 12 runs (4 sessions), each the median of 21. Data: `benchmarks/data/ryzen-9-8945hs/interleave_rows/`.
 
 | kernel | W=1 | W=2 | W=4 | W=6 | W=8 | W=12 | W=16 | fastest | W=6 / fastest | W=6 / W=4 | per-run fastest |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gemv f64 | 10.596 | 5.864 | 3.606 | 3.189 | **3.066** | 4.147 | 8.617 | 8 | 1.040 | 0.884 | 8: 6 |
-| trmv f64 | 5.752 | 3.201 | 1.972 | 1.797 | **1.721** | 2.583 | 4.561 | 8 | 1.044 | 0.911 | 8: 6 |
-| trisolve f64 | 5.775 | 3.217 | 1.966 | 1.785 | **1.696** | 2.552 | 4.457 | 8 | 1.053 | 0.908 | 8: 6 |
-| gemv f32 | 10.043 | 5.300 | 2.986 | 2.379 | **2.245** | 4.290 | 8.878 | 8 | 1.059 | 0.797 | 8: 6 |
-| trmv f32 | 5.351 | 2.808 | 1.880 | 1.857 | **1.769** | 3.107 | 5.933 | 8 | 1.049 | 0.988 | 4: 1, 6: 1, 8: 4 |
-| trisolve f32 | 6.700 | 3.521 | 1.940 | 1.869 | **1.792** | 3.082 | 5.856 | 8 | 1.043 | 0.964 | 8: 6 |
+| gemv f64 | 10.596 | 5.838 | 3.603 | 3.179 | **3.062** | 4.136 | 8.631 | 8 | 1.038 | 0.882 | 8: 12 |
+| trmv f64 | 5.704 | 3.192 | 1.963 | 1.789 | **1.704** | 2.575 | 4.563 | 8 | 1.050 | 0.912 | 8: 12 |
+| trisolve f64 | 5.775 | 3.229 | 1.959 | 1.777 | **1.690** | 2.552 | 4.458 | 8 | 1.052 | 0.907 | 8: 12 |
+| gemv f32 | 9.990 | 5.358 | 3.011 | 2.430 | **2.268** | 4.291 | 8.883 | 8 | 1.071 | 0.807 | 8: 12 |
+| trmv f32 | 5.383 | 2.827 | 1.874 | 1.823 | **1.772** | 3.113 | 5.929 | 8 | 1.028 | 0.973 | 4: 4, 6: 1, 8: 7 |
+| trisolve f32 | 6.682 | 3.526 | 1.942 | 1.875 | **1.796** | 3.088 | 5.860 | 8 | 1.044 | 0.966 | 6: 1, 8: 11 |
 
 ### xeon-e5-2420v2 -- clang++
 
-Intel(R) Xeon(R) CPU E5-2420 v2 @ 2.20GHz; Ubuntu clang version 21.1.8 (6ubuntu1); vector registers 16; built default W = 6 (f64), 6 (f32); median of 6 runs (2 sessions), each the median of 21. Data: `benchmarks/data/xeon-e5-2420v2/interleave_rows/`.
+Intel(R) Xeon(R) CPU E5-2420 v2 @ 2.20GHz; Ubuntu clang version 21.1.8 (6ubuntu1); vector registers 16; built default W = 8 (f64), 8 (f32); median of 9 runs (3 sessions), each the median of 21. Data: `benchmarks/data/xeon-e5-2420v2/interleave_rows/`.
 
 | kernel | W=1 | W=2 | W=4 | W=6 | W=8 | W=12 | W=16 | fastest | W=6 / fastest | W=6 / W=4 | per-run fastest |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gemv f64 | 19.770 | 13.851 | **13.125** | 13.496 | 13.701 | 15.127 | 17.516 | 4 | 1.028 | 1.028 | 4: 6 |
-| trmv f64 | 10.511 | 7.554 | **7.171** | 7.288 | 7.361 | 8.212 | 15.052 | 4 | 1.016 | 1.016 | 4: 4, 6: 2 |
-| trisolve f64 | 10.198 | 7.312 | **7.049** | 7.321 | 7.274 | 10.136 | 15.041 | 4 | 1.039 | 1.039 | 4: 6 |
-| gemv f32 | 19.439 | 10.723 | 9.085 | **8.521** | 8.698 | 10.037 | 11.502 | 6 | 1.000 | 0.938 | 6: 5, 8: 1 |
-| trmv f32 | 10.194 | 5.627 | 4.750 | **4.463** | 4.664 | 5.307 | 10.866 | 6 | 1.000 | 0.940 | 6: 5, 8: 1 |
-| trisolve f32 | 9.957 | 5.442 | 4.637 | **4.248** | 4.515 | 8.652 | 11.117 | 6 | 1.000 | 0.916 | 6: 6 |
+| gemv f64 | 19.778 | 13.911 | **13.241** | 13.698 | 13.724 | 15.183 | 17.592 | 4 | 1.035 | 1.035 | 4: 9 |
+| trmv f64 | 10.533 | 7.559 | **7.237** | 7.307 | 7.385 | 8.398 | 15.583 | 4 | 1.010 | 1.010 | 2: 1, 4: 6, 6: 2 |
+| trisolve f64 | 10.226 | 7.318 | **7.119** | 7.385 | 7.286 | 10.250 | 15.218 | 4 | 1.037 | 1.037 | 2: 2, 4: 7 |
+| gemv f32 | 19.420 | 10.719 | 9.066 | **8.560** | 8.712 | 10.037 | 11.475 | 6 | 1.000 | 0.944 | 6: 7, 8: 2 |
+| trmv f32 | 10.170 | 5.612 | 4.749 | **4.459** | 4.666 | 5.288 | 10.845 | 6 | 1.000 | 0.939 | 6: 8, 8: 1 |
+| trisolve f32 | 9.947 | 5.436 | 4.617 | **4.223** | 4.528 | 8.622 | 11.090 | 6 | 1.000 | 0.915 | 6: 9 |
 
 ### xeon-e5-2420v2 -- g++
 
-Intel(R) Xeon(R) CPU E5-2420 v2 @ 2.20GHz; g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0; vector registers 16; built default W = 6 (f64), 6 (f32); median of 6 runs (2 sessions), each the median of 21. Data: `benchmarks/data/xeon-e5-2420v2/interleave_rows/`.
+Intel(R) Xeon(R) CPU E5-2420 v2 @ 2.20GHz; g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0; vector registers 16; built default W = 8 (f64), 8 (f32); median of 9 runs (3 sessions), each the median of 21. Data: `benchmarks/data/xeon-e5-2420v2/interleave_rows/`.
 
 | kernel | W=1 | W=2 | W=4 | W=6 | W=8 | W=12 | W=16 | fastest | W=6 / fastest | W=6 / W=4 | per-run fastest |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| gemv f64 | 20.675 | 13.618 | **13.177** | 13.296 | 13.676 | 13.981 | 15.346 | 4 | 1.009 | 1.009 | 4: 5, 6: 1 |
-| trmv f64 | 10.344 | 7.333 | 7.067 | **7.050** | 7.270 | 7.674 | 9.014 | 6 | 1.000 | 0.998 | 4: 3, 6: 3 |
-| trisolve f64 | 10.091 | 7.210 | **6.854** | 6.931 | 7.169 | 7.363 | 8.803 | 4 | 1.011 | 1.011 | 4: 5, 6: 1 |
-| gemv f32 | 19.093 | 19.755 | 8.752 | 8.648 | **8.431** | 10.623 | 14.854 | 8 | 1.026 | 0.988 | 4: 1, 8: 5 |
-| trmv f32 | 9.998 | 5.471 | **4.471** | 4.523 | 4.627 | 5.483 | 7.484 | 4 | 1.012 | 1.012 | 4: 4, 6: 2 |
-| trisolve f32 | 10.029 | 5.353 | **4.283** | 4.364 | 4.406 | 5.237 | 7.024 | 4 | 1.019 | 1.019 | 4: 6 |
+| gemv f64 | 20.691 | 13.603 | **13.122** | 13.397 | 13.725 | 14.157 | 15.415 | 4 | 1.021 | 1.021 | 4: 8, 6: 1 |
+| trmv f64 | 10.387 | 7.340 | **7.074** | 7.205 | 7.354 | 7.709 | 9.178 | 4 | 1.019 | 1.019 | 4: 6, 6: 3 |
+| trisolve f64 | 10.131 | 7.213 | **6.911** | 7.037 | 7.203 | 7.494 | 9.010 | 4 | 1.018 | 1.018 | 4: 8, 6: 1 |
+| gemv f32 | 19.098 | 19.796 | 8.789 | 8.707 | **8.574** | 10.703 | 14.971 | 8 | 1.016 | 0.991 | 4: 1, 8: 8 |
+| trmv f32 | 10.025 | 5.460 | **4.513** | 4.516 | 4.620 | 5.517 | 7.666 | 4 | 1.001 | 1.001 | 4: 5, 6: 4 |
+| trisolve f32 | 10.054 | 5.348 | **4.373** | 4.397 | 4.451 | 5.430 | 7.177 | 4 | 1.005 | 1.005 | 4: 8, 6: 1 |
 
 <!-- END generated -->
 

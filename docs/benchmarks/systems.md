@@ -13,11 +13,11 @@ with the system description here.
 
 | System | CPU | Cores used | Results | mtl5_bench card |
 |--------|-----|-----------|---------|-----------------|
-| `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) | [Card](cards/i7-12700k.md) |
+| `i7-12700K` | 12th Gen Intel Core i7-12700K | 8 P-cores (E-cores excluded) | [Results](i7-12700k.md) | [Card](cards/i7-12700k.md) · [large](cards/i7-12700k-large.md) |
 | `ryzen-7-2700x` | AMD Ryzen 7 2700X (Zen+) | 8 cores (SMT) | — | [Card](cards/ryzen-7-2700x.md) (preliminary) |
 | `ryzen-7-8845hs` | AMD Ryzen 7 8845HS (Zen 4) | 8 cores (SMT siblings excluded) | — | [Card](cards/ryzen-7-8845hs.md) |
-| `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) | [Card](cards/ryzen-9-8945hs.md) |
-| `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | — | [Card](cards/xeon-e5-2420v2.md) |
+| `ryzen-9-8945hs` | AMD Ryzen 9 8945HS (Zen 4) | 8 cores (SMT siblings excluded) | [Results](ryzen-9-8945hs.md) | [Card](cards/ryzen-9-8945hs.md) · [large](cards/ryzen-9-8945hs-large.md) |
+| `xeon-e5-2420v2` | Intel Xeon E5-2420 v2 (Ivy Bridge-EP) | 6 cores (SMT siblings excluded) | — | [Card](cards/xeon-e5-2420v2.md) · [large](cards/xeon-e5-2420v2-large.md) |
 | `jetson-orin` | NVIDIA Jetson Orin, ARM Cortex-A78AE | 6 cores | [Results](jetson-orin.md) | [Card](cards/jetson-orin.md) |
 | `arduino-ventuno-q` | Qualcomm "Monaco", 4× Cortex-A78C + 4× Cortex-A55 | 4 A78C cores (A55 excluded) | [Results](arduino-ventuno-q.md) | [Card](cards/arduino-ventuno-q.md) |
 
@@ -38,6 +38,13 @@ machine's last-level cache, so its bandwidth-bound entries measure DRAM. Where a
 `large` session was also published, the cell links it after the card: a
 separate page, `cards/<machine>-large.md`, with larger problems. A machine
 without enough memory for `large` has none.
+**The cards are from one commit**, `b2d022726b3d` (#885, 2026-11-28): a medium
+pair on the five #737 machines and the Ryzen 7 8845HS, and a large pair on the
+three x86 ones among the five, the second
+session of each pair after a cold boot. The i7-12700K's second sessions were
+not: it is the host the campaign ran from. The Ryzen 7 2700X was not in the
+campaign; its card is from `e096dbbc6788`. The results pages linked above
+analyse earlier sessions, at the commits they name.
 The [tracking](tracking.md) sessions (#944) add to the same data directories
 without changing the cards: run by hand when the machines are on, each measures `main`, and
 that page compares each session with the machine's previous one.
