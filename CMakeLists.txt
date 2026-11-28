@@ -51,6 +51,7 @@ option(MTL5_WITH_HIGHWAY            "Use Google Highway for SIMD-accelerated nat
 option(MTL5_NATIVE_ARCH            "Tune in-tree builds for the host CPU (-march=native; non-portable binaries)" OFF)
 set(MTL5_NATIVE_ARCH_FLAGS "-march=native" CACHE STRING
     "The flags MTL5_NATIVE_ARCH adds (space-separated). Replace -march=native where it under-detects the host, e.g. on the Ventuno Q (#806)")
+option(MTL5_NATIVE_SCALABLE_SVE    "With MTL5_NATIVE_ARCH and Highway on scalable-SVE AArch64, keep Highway's scalable SVE target (one-lane batch until #427) instead of NEON (#720)" OFF)
 option(MTL5_NATIVE_FAST_GEMM       "Route mtl::mult through the native blocked GEMM / SIMD GEMV path" OFF)
 option(MTL5_WITH_UMFPACK            "Link UMFPACK library (SuiteSparse)"      OFF)
 option(MTL5_WITH_SUPERLU            "Link SuperLU library"                    OFF)
@@ -201,6 +202,47 @@ if(MTL5_NATIVE_ARCH AND NOT MSVC)
                 "SoCs such as the Ventuno Q's A78C + A55, #806); the build gets the "
                 "baseline ISA. Set MTL5_NATIVE_ARCH_FLAGS to what the CPU has, for example "
                 "'-march=armv8.2-a+dotprod+fp16+rcpc -mtune=cortex-a78c' on that board.")
+        endif()
+    endif()
+
+    # Scalable SVE (#720). On N2, V1, V2, Graviton 3/4 and Grace, -march=native
+    # enables SVE without a fixed vector length (__ARM_FEATURE_SVE_BITS), so
+    # Highway picks its scalable SVE/SVE2 target. mtl::simd::batch has no
+    # compile-time lane count for it and falls back to one lane (#427): the most
+    # tuned build would have no SIMD at all. Until #427, disable Highway's SVE
+    # targets there, so it takes the best NEON target the flags allow
+    # (NEON_BF16 with crypto, bf16 and dotprod; NEON_WITHOUT_AES without AES).
+    # That gives up predication and gathers, not width: these cores' SVE is 128
+    # bits, except V1's 256. Flags that fix the length (-msve-vector-bits=N)
+    # define __ARM_FEATURE_SVE_BITS and keep SVE.
+    if(MTL5_WITH_HIGHWAY AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+        include(CheckCXXSourceCompiles)
+        set(_mtl5_saved_flags "${CMAKE_REQUIRED_FLAGS}")
+        set(CMAKE_REQUIRED_FLAGS "${MTL5_NATIVE_ARCH_FLAGS}")
+        # Re-checked on every configure: the result depends on the flags.
+        unset(MTL5_NATIVE_ARCH_SCALABLE_SVE CACHE)
+        check_cxx_source_compiles("
+            #if !defined(__ARM_FEATURE_SVE) || (defined(__ARM_FEATURE_SVE_BITS) && __ARM_FEATURE_SVE_BITS > 0)
+            #error not scalable SVE
+            #endif
+            int main() { return 0; }" MTL5_NATIVE_ARCH_SCALABLE_SVE)
+        set(CMAKE_REQUIRED_FLAGS "${_mtl5_saved_flags}")
+        if(MTL5_NATIVE_ARCH_SCALABLE_SVE)
+            if(MTL5_NATIVE_SCALABLE_SVE)
+                message(WARNING
+                    "MTL5_NATIVE_ARCH: '${MTL5_NATIVE_ARCH_FLAGS}' enables scalable SVE, and "
+                    "MTL5_NATIVE_SCALABLE_SVE=ON keeps Highway's scalable target. "
+                    "mtl::simd::batch has one lane on it until #427: the SIMD kernels run "
+                    "scalar, slower than the portable NEON build. Leave "
+                    "MTL5_NATIVE_SCALABLE_SVE OFF for NEON, or add -msve-vector-bits=<bits> "
+                    "to MTL5_NATIVE_ARCH_FLAGS for fixed-length SVE (#720).")
+            else()
+                target_compile_definitions(mtl5 INTERFACE
+                    $<BUILD_INTERFACE:HWY_DISABLED_TARGETS=HWY_ALL_SVE>)
+                message(STATUS
+                    "MTL5_NATIVE_ARCH: scalable SVE detected; Highway's SVE targets are "
+                    "disabled so mtl::simd uses NEON (#720, MTL5_NATIVE_SCALABLE_SVE=ON keeps SVE)")
+            endif()
         endif()
     endif()
 endif()

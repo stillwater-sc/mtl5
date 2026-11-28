@@ -40,10 +40,12 @@ TEMPLATE_TEST_CASE("batch size is a positive compile-time constant", "[simd]", f
     // legitimately have a scalar baseline.
     //
     // The exception is a SCALABLE Highway target (SVE/SVE2 without
-    // -msve-vector-bits, e.g. -march=native on Neoverse N2 or Graviton 3/4 with
-    // GCC): batch has no compile-time lane count for it and demotes to scalar.
-    // That is pinned here so it cannot change unnoticed; #427 is the redesign
-    // that turns this assertion around.
+    // -msve-vector-bits, e.g. -march=armv9-a, or -march=native on Neoverse N2
+    // or Graviton 3/4 with GCC and MTL5_NATIVE_SCALABLE_SVE=ON; without that
+    // option a native build disables SVE and gets NEON, #720): batch has no
+    // compile-time lane count for it and demotes to scalar. That is pinned
+    // here so it cannot change unnoticed; #427 is the redesign that turns this
+    // assertion around.
 #if defined(MTL5_HAS_HIGHWAY) && \
     (defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64))
 #  if HWY_HAVE_SCALABLE
